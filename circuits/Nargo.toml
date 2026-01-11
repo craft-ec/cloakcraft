@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "lib",
+    "transfer/1x2",
+    "transfer/1x3",
+    "adapter/1x1",
+    "adapter/1x2",
+    "market/order_create",
+    "market/order_fill",
+    "market/order_cancel",
+    "swap/add_liquidity",
+    "swap/remove_liquidity",
+    "swap/swap",
+    "governance/encrypted_submit"
+]

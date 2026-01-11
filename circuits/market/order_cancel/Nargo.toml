@@ -1,0 +1,8 @@
+[package]
+name = "market_order_cancel"
+type = "bin"
+authors = ["CloakCraft"]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+cloakcraft_lib = { path = "../../lib" }

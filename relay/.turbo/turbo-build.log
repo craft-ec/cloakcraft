@@ -1,0 +1,18 @@
+
+> @cloakcraft/relay@0.1.0 build /Users/onlyabrak/dev/craftec/cloakcraft/relay
+> tsup src/index.ts --format cjs,esm --dts
+
+CLI Building entry: src/index.ts
+CLI Using tsconfig: tsconfig.json
+CLI tsup v8.5.1
+CLI Target: es2020
+CJS Build start
+ESM Build start
+CJS dist/index.js 16.97 KB
+CJS ⚡️ Build success in 13ms
+ESM dist/index.mjs 15.38 KB
+ESM ⚡️ Build success in 13ms
+DTS Build start
+DTS ⚡️ Build success in 438ms
+DTS dist/index.d.ts  5.53 KB
+DTS dist/index.d.mts 5.53 KB

@@ -1,0 +1,24 @@
+/**
+ * CloakCraft SDK
+ *
+ * Client library for interacting with the CloakCraft privacy protocol
+ */
+
+// Re-export types
+export * from '@cloakcraft/types';
+
+// Export client
+export { CloakCraftClient } from './client';
+export type { CloakCraftClientConfig } from './client';
+
+// Export crypto utilities
+export * from './crypto';
+
+// Export note management
+export * from './notes';
+
+// Export proof generation
+export * from './proofs';
+
+// Export wallet
+export * from './wallet';

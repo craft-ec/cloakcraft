@@ -1,0 +1,27 @@
+[package]
+name = "cloakcraft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "cloakcraft"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { workspace = true, features = ["init-if-needed"] }
+anchor-spl = { workspace = true }
+solana-bn254 = { workspace = true }
+solana-sha256-hasher = { workspace = true }
+solana-keccak-hasher = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]

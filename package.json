@@ -1,0 +1,35 @@
+{
+  "name": "cloakcraft",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Privacy protocol for Solana - Unified shielded pool with private transfers, swaps, trading, and voting",
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "circuits:build": "./scripts/build-circuits.sh",
+    "circuits:test": "./scripts/test-circuits.sh",
+    "circuits:setup": "./scripts/setup-sunspot.sh",
+    "circuits:deploy": "./scripts/deploy-verifiers.sh",
+    "anchor:build": "anchor build",
+    "anchor:test": "anchor test",
+    "dev": "turbo run dev"
+  },
+  "devDependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.10.0",
+    "chai": "^6.2.2",
+    "mocha": "^11.7.5",
+    "ts-mocha": "^11.1.0",
+    "tsx": "^4.21.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "pnpm@8.15.0"
+}
