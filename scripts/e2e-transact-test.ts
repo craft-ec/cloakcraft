@@ -404,16 +404,18 @@ out_randomness_2 = "${numberToHex64(privateInputs.out_randomness_2)}"
     return;
   }
 
-  // === Step 4: Get Light Protocol validity proof for nullifier ===
+  // === Step 4: Get Light Protocol validity proof for all addresses ===
   console.log("Step 4: Getting Light Protocol validity proof...");
 
   const addressTreeInfo = getBatchAddressTreeInfo();
   const nullifierBytes = hexToBytes(derivedValues.nullifier);
+  const commitment1Bytes = hexToBytes(derivedValues.out_commitment_1);
+  const commitment2Bytes = hexToBytes(derivedValues.out_commitment_2);
 
   // Derive nullifier address using Light SDK V2
+  // Must match Rust: seeds = [b"spend_nullifier", pool, nullifier]
   const nullifierSeeds = [
-    PROGRAM_ID.toBuffer(),
-    Buffer.from("nullifier"),
+    Buffer.from("spend_nullifier"),
     poolPda.toBuffer(),
     Buffer.from(nullifierBytes),
   ];
@@ -421,8 +423,29 @@ out_randomness_2 = "${numberToHex64(privateInputs.out_randomness_2)}"
   const nullifierAddress = deriveAddressV2(nullifierAddressSeed, addressTreeInfo.tree, PROGRAM_ID);
   console.log("  Nullifier address:", nullifierAddress.toBase58());
 
-  // Get validity proof (proves nullifier doesn't exist yet)
-  const lightProof = await lightRpc.getValidityProofV0(
+  // Derive commitment addresses using Light SDK V2
+  // Must match Rust: seeds = [b"commitment", pool_pubkey, commitment_bytes]
+  const commitment1Seeds = [
+    Buffer.from("commitment"),
+    poolPda.toBuffer(),
+    Buffer.from(commitment1Bytes),
+  ];
+  const commitment1AddressSeed = deriveAddressSeedV2(commitment1Seeds);
+  const commitment1Address = deriveAddressV2(commitment1AddressSeed, addressTreeInfo.tree, PROGRAM_ID);
+  console.log("  Commitment 1 address:", commitment1Address.toBase58());
+
+  const commitment2Seeds = [
+    Buffer.from("commitment"),
+    poolPda.toBuffer(),
+    Buffer.from(commitment2Bytes),
+  ];
+  const commitment2AddressSeed = deriveAddressSeedV2(commitment2Seeds);
+  const commitment2Address = deriveAddressV2(commitment2AddressSeed, addressTreeInfo.tree, PROGRAM_ID);
+  console.log("  Commitment 2 address:", commitment2Address.toBase58());
+
+  // Get validity proof for nullifier only
+  // Commitments are stored via separate store_commitment transactions
+  const nullifierProof = await lightRpc.getValidityProofV0(
     [],
     [{
       address: bn(nullifierAddress.toBytes()),
@@ -430,7 +453,7 @@ out_randomness_2 = "${numberToHex64(privateInputs.out_randomness_2)}"
       queue: addressTreeInfo.queue,
     }]
   );
-  console.log("  Validity proof received\n");
+  console.log("  Nullifier validity proof received\n");
 
   // Build remaining accounts using SDK
   const systemConfig = SystemAccountMetaConfig.new(PROGRAM_ID);
@@ -449,26 +472,36 @@ out_randomness_2 = "${numberToHex64(privateInputs.out_randomness_2)}"
   // === Step 5: Call transact instruction ===
   console.log("Step 5: Calling transact instruction...");
 
-  // Convert Light SDK proof to fixed-size arrays expected by Anchor
-  const proofA = new Uint8Array(32);
-  const proofB = new Uint8Array(64);
-  const proofC = new Uint8Array(32);
-  if (lightProof.compressedProof) {
-    proofA.set(lightProof.compressedProof.a.slice(0, 32));
-    proofB.set(lightProof.compressedProof.b.slice(0, 64));
-    proofC.set(lightProof.compressedProof.c.slice(0, 32));
+  // Read commitment counter before transact to know starting leaf index
+  const counterBefore = await connection.getAccountInfo(counterPda);
+  let startingLeafIndex = 0n;
+  if (counterBefore) {
+    // Layout: 8-byte discriminator + 32-byte pool + 8-byte next_leaf_index
+    startingLeafIndex = counterBefore.data.readBigUInt64LE(8 + 32);
+  }
+  console.log("  Starting leaf index:", startingLeafIndex.toString());
+
+  // Helper to convert Light SDK proof to fixed-size arrays expected by Anchor
+  function convertCompressedProof(proof: any) {
+    const proofA = new Uint8Array(32);
+    const proofB = new Uint8Array(64);
+    const proofC = new Uint8Array(32);
+    if (proof.compressedProof) {
+      proofA.set(proof.compressedProof.a.slice(0, 32));
+      proofB.set(proof.compressedProof.b.slice(0, 64));
+      proofC.set(proof.compressedProof.c.slice(0, 32));
+    }
+    return { a: Array.from(proofA), b: Array.from(proofB), c: Array.from(proofC) };
   }
 
+  // Build LightTransactParams with only nullifier proof
+  // Commitments are stored via separate store_commitment transactions
   const lightParams = {
-    validityProof: {
-      a: Array.from(proofA),
-      b: Array.from(proofB),
-      c: Array.from(proofC),
-    },
-    addressTreeInfo: {
+    nullifierProof: convertCompressedProof(nullifierProof),
+    nullifierAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex, // Same for v2
-      rootIndex: lightProof.rootIndices[0] ?? 0,
+      rootIndex: nullifierProof.rootIndices[0] ?? 0,
     },
     outputTreeIndex: outputTreeIndex,
   };
@@ -520,19 +553,96 @@ out_randomness_2 = "${numberToHex64(privateInputs.out_randomness_2)}"
 
     console.log("Transact successful:", tx);
 
-    // === Step 6: Verify state ===
-    console.log("\nStep 6: Verifying on-chain state...");
-    const counterAccount = await connection.getAccountInfo(counterPda);
-    if (counterAccount) {
-      // Read commitment counter data (after 8-byte discriminator)
-      const totalCommitments = counterAccount.data.readBigUInt64LE(8);
-      const nextLeafIndex = counterAccount.data.readBigUInt64LE(16);
-      console.log("  Total commitments:", totalCommitments.toString());
-      console.log("  Next leaf index:", nextLeafIndex.toString());
-    }
+    // === Step 6: Store commitments (one per transaction) ===
+    console.log("\nStep 6: Storing commitments as compressed accounts...");
+    console.log("  (Each commitment stored in separate transaction)");
+
+    // Store first commitment
+    console.log("\n  Storing commitment 1...");
+    const commitment1Proof = await lightRpc.getValidityProofV0(
+      [],
+      [
+        {
+          address: bn(commitment1Address.toBytes()),
+          tree: addressTreeInfo.tree,
+          queue: addressTreeInfo.queue,
+        },
+      ]
+    );
+    console.log("  Validity proof received for commitment 1");
+
+    const commitment1Params = {
+      commitment: Array.from(hexToBytes(derivedValues.out_commitment_1)),
+      leafIndex: new anchor.BN(startingLeafIndex.toString()),
+      encryptedNote: Buffer.alloc(0),
+      validityProof: convertCompressedProof(commitment1Proof),
+      addressTreeInfo: {
+        addressMerkleTreePubkeyIndex: addressTreeIndex,
+        addressQueuePubkeyIndex: addressTreeIndex,
+        rootIndex: commitment1Proof.rootIndices[0] ?? 0,
+      },
+      outputTreeIndex: outputTreeIndex,
+    };
+
+    const tx2a = await program.methods
+      .storeCommitment(commitment1Params)
+      .accountsStrict({
+        pool: poolPda,
+        relayer: wallet.publicKey,
+      })
+      .remainingAccounts(remainingAccounts)
+      .preInstructions([
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+      ])
+      .rpc();
+    console.log("  Commitment 1 stored:", tx2a);
+
+    // Store second commitment
+    console.log("\n  Storing commitment 2...");
+    const commitment2Proof = await lightRpc.getValidityProofV0(
+      [],
+      [
+        {
+          address: bn(commitment2Address.toBytes()),
+          tree: addressTreeInfo.tree,
+          queue: addressTreeInfo.queue,
+        },
+      ]
+    );
+    console.log("  Validity proof received for commitment 2");
+
+    const commitment2Params = {
+      commitment: Array.from(hexToBytes(derivedValues.out_commitment_2)),
+      leafIndex: new anchor.BN((startingLeafIndex + 1n).toString()),
+      encryptedNote: Buffer.alloc(0),
+      validityProof: convertCompressedProof(commitment2Proof),
+      addressTreeInfo: {
+        addressMerkleTreePubkeyIndex: addressTreeIndex,
+        addressQueuePubkeyIndex: addressTreeIndex,
+        rootIndex: commitment2Proof.rootIndices[0] ?? 0,
+      },
+      outputTreeIndex: outputTreeIndex,
+    };
+
+    const tx2b = await program.methods
+      .storeCommitment(commitment2Params)
+      .accountsStrict({
+        pool: poolPda,
+        relayer: wallet.publicKey,
+      })
+      .remainingAccounts(remainingAccounts)
+      .preInstructions([
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+      ])
+      .rpc();
+    console.log("  Commitment 2 stored:", tx2b);
 
     console.log("\n=== SUCCESS ===");
-    console.log("Full transact flow with real ZK proof completed!");
+    console.log("Full transact flow with ZK proof + commitment storage completed!");
+    console.log("  - Transact: 1 transaction");
+    console.log("  - Commitment storage: 2 transactions (1 per commitment)");
 
   } catch (err: any) {
     console.error("Transact failed:", err.message);

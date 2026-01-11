@@ -171,6 +171,9 @@ pub enum CloakCraftError {
     #[msg("Nullifier has already been spent (compressed account exists)")]
     NullifierAlreadySpent,
 
+    #[msg("Action nullifier has already been used (already voted)")]
+    ActionNullifierAlreadyUsed,
+
     #[msg("Failed to create commitment compressed account")]
     CommitmentCreationFailed,
 

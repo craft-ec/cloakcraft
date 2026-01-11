@@ -61,6 +61,8 @@ pub mod cloakcraft {
     /// The light_params parameter enables Light Protocol compressed account
     /// storage for nullifiers. If provided, a compressed account is created
     /// to prevent double-spending. If None, legacy event-only tracking is used.
+    ///
+    /// Commitments are emitted as events and can be stored separately via store_commitment.
     pub fn transact<'info>(
         ctx: Context<'_, '_, '_, 'info, Transact<'info>>,
         proof: Vec<u8>,
@@ -69,9 +71,20 @@ pub mod cloakcraft {
         out_commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         unshield_amount: u64,
-        light_params: Option<pool::LightNullifierParams>,
+        light_params: Option<pool::LightTransactParams>,
     ) -> Result<()> {
         pool::transact(ctx, proof, merkle_root, nullifier, out_commitments, encrypted_notes, unshield_amount, light_params)
+    }
+
+    /// Store a commitment as a Light Protocol compressed account
+    ///
+    /// Called after transact to persist commitments on-chain.
+    /// Can be called in separate transactions to avoid size limits.
+    pub fn store_commitment<'info>(
+        ctx: Context<'_, '_, '_, 'info, StoreCommitment<'info>>,
+        params: pool::StoreCommitmentParams,
+    ) -> Result<()> {
+        pool::store_commitment(ctx, params)
     }
 
     // ============ Adapter Operations (External DEX) ============

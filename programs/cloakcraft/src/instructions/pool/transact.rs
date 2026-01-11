@@ -8,10 +8,9 @@ use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use crate::state::{Pool, VerificationKey, PoolCommitmentCounter, LightValidityProof, LightAddressTreeInfo};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::events::{NoteCreated, NoteSpent, Unshielded};
+use crate::events::{NoteSpent, Unshielded};
 use crate::crypto::verify_proof;
-use crate::light_cpi::{create_nullifier_account, create_commitment_account};
-use crate::merkle::hash_pair;
+use crate::light_cpi::create_spend_nullifier_account;
 
 #[derive(Accounts)]
 pub struct Transact<'info> {
@@ -61,17 +60,14 @@ pub struct Transact<'info> {
     // Light Protocol accounts are passed via remaining_accounts
 }
 
-/// Parameters for Light Protocol operations
+/// Parameters for Light Protocol nullifier storage
+/// Commitments are stored in separate transactions via store_commitment instruction
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct LightTransactParams {
     /// Validity proof for nullifier (proves it doesn't exist)
     pub nullifier_proof: LightValidityProof,
     /// Address tree info for nullifier
     pub nullifier_address_tree_info: LightAddressTreeInfo,
-    /// Validity proof for output commitments
-    pub commitment_proof: LightValidityProof,
-    /// Address tree info for commitments
-    pub commitment_address_tree_info: LightAddressTreeInfo,
     /// Output state tree index
     pub output_tree_index: u8,
 }
@@ -93,9 +89,9 @@ pub fn transact<'info>(
     merkle_root: [u8; 32],
     nullifier: [u8; 32],
     out_commitments: Vec<[u8; 32]>,
-    encrypted_notes: Vec<Vec<u8>>,
+    _encrypted_notes: Vec<Vec<u8>>, // Passed to store_commitment separately
     unshield_amount: u64,
-    light_params: Option<LightNullifierParams>,
+    light_params: Option<LightTransactParams>,
 ) -> Result<()> {
     let pool = &mut ctx.accounts.pool;
     let commitment_counter = &mut ctx.accounts.commitment_counter;
@@ -148,13 +144,14 @@ pub fn transact<'info>(
         let _ = &proof; // Suppress unused warning
     }
 
-    // 2. Create nullifier compressed account via Light Protocol
+    // 2. Create spend nullifier compressed account via Light Protocol
+    // Seeds: ["spend_nullifier", pool, nullifier]
     if let Some(params) = &light_params {
-        create_nullifier_account(
+        create_spend_nullifier_account(
             &ctx.accounts.relayer.to_account_info(),
             ctx.remaining_accounts,
-            params.validity_proof.clone(),
-            params.address_tree_info.clone(),
+            params.nullifier_proof.clone(),
+            params.nullifier_address_tree_info.clone(),
             params.output_tree_index,
             pool.key(),
             nullifier,
@@ -168,50 +165,12 @@ pub fn transact<'info>(
         timestamp: clock.unix_timestamp,
     });
 
-    // 3. Create output commitment compressed accounts
-    for (i, commitment) in out_commitments.iter().enumerate() {
-        let leaf_index = commitment_counter.next_leaf_index;
-        commitment_counter.next_leaf_index += 1;
-        commitment_counter.total_commitments += 1;
-
-        let encrypted_note = encrypted_notes.get(i).cloned().unwrap_or_default();
-
-        // Create commitment compressed account if Light params provided
-        if let Some(params) = &light_params {
-            let encrypted_note_hash = hash_pair(
-                commitment,
-                &if encrypted_note.len() >= 32 {
-                    let mut arr = [0u8; 32];
-                    arr.copy_from_slice(&encrypted_note[..32]);
-                    arr
-                } else {
-                    let mut arr = [0u8; 32];
-                    arr[..encrypted_note.len()].copy_from_slice(&encrypted_note);
-                    arr
-                },
-            );
-
-            create_commitment_account(
-                &ctx.accounts.relayer.to_account_info(),
-                ctx.remaining_accounts,
-                params.validity_proof.clone(),
-                params.address_tree_info.clone(),
-                params.output_tree_index,
-                pool.key(),
-                *commitment,
-                leaf_index,
-                encrypted_note_hash,
-            )?;
-        }
-
-        emit!(NoteCreated {
-            pool: pool.key(),
-            commitment: *commitment,
-            leaf_index: leaf_index as u32,
-            encrypted_note,
-            timestamp: clock.unix_timestamp,
-        });
-    }
+    // 3. Update commitment counter for leaf index assignment
+    // Commitments are stored via separate store_commitment transactions
+    // Caller reads counter before transact to know starting leaf index
+    let commitment_count = out_commitments.len() as u64;
+    commitment_counter.next_leaf_index += commitment_count;
+    commitment_counter.total_commitments += commitment_count;
 
     // 4. Process unshield if amount > 0
     if unshield_amount > 0 {

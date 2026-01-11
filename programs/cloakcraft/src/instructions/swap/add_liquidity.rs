@@ -9,7 +9,7 @@ use crate::constants::seeds;
 use crate::errors::CloakCraftError;
 use crate::events::{NoteSpent, NoteCreated, AmmPoolStateChanged};
 use crate::crypto::verify_proof;
-use crate::light_cpi::{create_nullifier_account, create_commitment_account};
+use crate::light_cpi::{create_spend_nullifier_account, create_commitment_account};
 use crate::merkle::hash_pair;
 
 /// Parameters for Light Protocol operations in add liquidity
@@ -161,7 +161,7 @@ pub fn add_liquidity<'info>(
 
     // 3. Create nullifier compressed accounts via Light Protocol
     if let Some(ref params) = light_params {
-        create_nullifier_account(
+        create_spend_nullifier_account(
             &ctx.accounts.relayer.to_account_info(),
             ctx.remaining_accounts,
             params.nullifier_a_proof.clone(),
@@ -171,7 +171,7 @@ pub fn add_liquidity<'info>(
             nullifier_a,
         )?;
 
-        create_nullifier_account(
+        create_spend_nullifier_account(
             &ctx.accounts.relayer.to_account_info(),
             ctx.remaining_accounts,
             params.nullifier_b_proof.clone(),

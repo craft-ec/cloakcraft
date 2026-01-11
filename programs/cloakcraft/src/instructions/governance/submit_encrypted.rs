@@ -9,7 +9,7 @@ use crate::constants::seeds;
 use crate::errors::CloakCraftError;
 use crate::events::VoteSubmitted;
 use crate::crypto::verify_proof;
-use crate::light_cpi::create_nullifier_account;
+use crate::light_cpi::create_action_nullifier_account;
 
 /// Parameters for Light Protocol nullifier storage
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -85,14 +85,15 @@ pub fn submit_encrypted<'info>(
 
     // 4. Create action nullifier compressed account via Light Protocol
     // This prevents double-voting - if the nullifier already exists, the CPI will fail
+    // Seeds: ["action_nullifier", aggregation_id, nullifier]
     if let Some(params) = light_params {
-        create_nullifier_account(
+        create_action_nullifier_account(
             &ctx.accounts.relayer.to_account_info(),
             ctx.remaining_accounts,
             params.nullifier_proof,
             params.nullifier_address_tree_info,
             params.output_tree_index,
-            pool.key(),
+            aggregation.id,
             action_nullifier,
         )?;
     }

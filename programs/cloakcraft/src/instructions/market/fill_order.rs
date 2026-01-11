@@ -9,7 +9,7 @@ use crate::constants::seeds;
 use crate::errors::CloakCraftError;
 use crate::events::{NoteSpent, NoteCreated, OrderFilled};
 use crate::crypto::verify_proof;
-use crate::light_cpi::{create_nullifier_account, create_commitment_account};
+use crate::light_cpi::{create_spend_nullifier_account, create_commitment_account};
 use crate::merkle::hash_pair;
 
 /// Parameters for Light Protocol operations in fill order
@@ -150,7 +150,7 @@ pub fn fill_order<'info>(
     // 3. Create nullifier compressed accounts via Light Protocol
     if let Some(ref params) = light_params {
         // Escrow nullifier
-        create_nullifier_account(
+        create_spend_nullifier_account(
             &ctx.accounts.relayer.to_account_info(),
             ctx.remaining_accounts,
             params.escrow_nullifier_proof.clone(),
@@ -161,7 +161,7 @@ pub fn fill_order<'info>(
         )?;
 
         // Taker nullifier
-        create_nullifier_account(
+        create_spend_nullifier_account(
             &ctx.accounts.relayer.to_account_info(),
             ctx.remaining_accounts,
             params.taker_nullifier_proof.clone(),
