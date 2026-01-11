@@ -5,6 +5,15 @@ import { expect } from "chai";
 import * as fs from "fs";
 import * as path from "path";
 
+// Import from built SDK
+import {
+  ProofGenerator,
+  parseGroth16Proof,
+  serializeGroth16Proof,
+  computeCommitment,
+  createNote,
+} from "../packages/sdk/dist/index.mjs";
+
 /**
  * Integration tests for Groth16 proof generation and verification
  *
@@ -65,10 +74,7 @@ describe("Proof Integration", () => {
   });
 
   describe("Proof Generation", () => {
-    it("ProofGenerator initializes", async () => {
-      // Dynamic import to handle ESM/CJS
-      const { ProofGenerator } = await import("@cloakcraft/sdk");
-
+    it("ProofGenerator initializes", () => {
       const generator = new ProofGenerator({
         baseUrl: path.join(__dirname, "..", "circuits"),
       });
@@ -84,7 +90,6 @@ describe("Proof Integration", () => {
         return;
       }
 
-      const { ProofGenerator } = await import("@cloakcraft/sdk");
       const generator = new ProofGenerator({
         baseUrl: `file://${path.join(__dirname, "..", "circuits")}`,
       });
@@ -101,9 +106,7 @@ describe("Proof Integration", () => {
       expect(64 + 128 + 64).to.equal(PROOF_SIZE);
     });
 
-    it("can parse and serialize proof", async () => {
-      const { parseGroth16Proof, serializeGroth16Proof } = await import("@cloakcraft/sdk");
-
+    it("can parse and serialize proof", () => {
       // Create mock proof
       const mockProof = new Uint8Array(256);
       for (let i = 0; i < 256; i++) {
@@ -126,9 +129,7 @@ describe("Proof Integration", () => {
       }
     });
 
-    it("rejects invalid proof length", async () => {
-      const { parseGroth16Proof } = await import("@cloakcraft/sdk");
-
+    it("rejects invalid proof length", () => {
       const invalidProof = new Uint8Array(100);
       expect(() => parseGroth16Proof(invalidProof)).to.throw("Invalid proof length");
     });
@@ -172,21 +173,24 @@ describe("Proof Integration", () => {
       expect(bytes[30]).to.equal(0xcd);
     });
 
-    it("commitment is 32 bytes", async () => {
-      const { computeCommitment } = await import("@cloakcraft/sdk");
-
+    it("commitment is 32 bytes", () => {
       // These would be actual field elements in production
       const stealthPubX = new Uint8Array(32);
-      const tokenMint = new Uint8Array(32);
-      const amount = 1000n;
       const randomness = new Uint8Array(32);
 
       // Fill with test values
       stealthPubX[0] = 1;
-      tokenMint[0] = 2;
       randomness[0] = 3;
 
-      const commitment = computeCommitment(stealthPubX, tokenMint, amount, randomness);
+      // Create a note for commitment computation
+      const note = createNote(
+        stealthPubX,
+        new PublicKey(new Uint8Array(32)), // tokenMint
+        1000n, // amount
+        randomness
+      );
+
+      const commitment = computeCommitment(note);
       expect(commitment.length).to.equal(32);
     });
   });
