@@ -1,19 +1,20 @@
-//! Light Protocol CPI operations for compressed accounts
+//! Light Protocol CPI operations for compressed accounts (V2)
 //!
 //! Handles storage of nullifiers and commitments using Light Protocol's
 //! compressed accounts. This replaces the on-chain merkle tree with
-//! Light Protocol's state tree infrastructure.
+//! Light Protocol's batch state tree infrastructure.
 //!
 //! Benefits:
 //! - No rent for storage
 //! - Helius Photon provides merkle proofs
 //! - Scales to millions of entries
+//! - V2 batch trees for better throughput
 
 use anchor_lang::prelude::*;
 use light_sdk::{
     account::LightAccount,
-    address::v1::derive_address,
-    cpi::{v1::{LightSystemProgramCpi, CpiAccounts}, InvokeLightSystemProgram, LightCpiInstruction},
+    address::v2::derive_address,
+    cpi::{v2::{LightSystemProgramCpi, CpiAccounts}, InvokeLightSystemProgram, LightCpiInstruction},
     instruction::{PackedAddressTreeInfo, ValidityProof},
 };
 
@@ -42,7 +43,9 @@ pub fn create_nullifier_account<'info>(
     // Convert IDL-safe types to Light SDK types
     let proof: ValidityProof = proof.into();
     let address_tree_info: PackedAddressTreeInfo = address_tree_info.into();
-    // Setup Light CPI accounts
+
+    // Setup Light CPI accounts (v2)
+    // The JS SDK uses PackedAccounts.newWithSystemAccountsV2() without CPI context
     let light_cpi_accounts = CpiAccounts::new(
         fee_payer,
         remaining_accounts,
@@ -53,7 +56,7 @@ pub fn create_nullifier_account<'info>(
     let address_tree_pubkey = address_tree_info.get_tree_pubkey(&light_cpi_accounts)
         .map_err(|_| CloakCraftError::LightCpiError)?;
 
-    // Derive address from nullifier hash
+    // Derive address from nullifier hash (v2)
     // Address = hash(SEED_PREFIX || nullifier || address_tree || program_id)
     let (address, address_seed) = derive_address(
         &[NullifierAccount::SEED_PREFIX, nullifier.as_ref()],
@@ -61,9 +64,10 @@ pub fn create_nullifier_account<'info>(
         &crate::ID,
     );
 
-    // Create new address params for the compressed account
+    // Create new address params for the compressed account (V2 format)
+    // Second param is the output state tree index where the address will be created
     let new_address_params = address_tree_info
-        .into_new_address_params_packed(address_seed);
+        .into_new_address_params_assigned_packed(address_seed, Some(output_tree_index));
 
     // Initialize the compressed account
     let mut nullifier_account = LightAccount::<NullifierAccount>::new_init(
@@ -129,7 +133,7 @@ pub fn create_commitment_account<'info>(
     let proof: ValidityProof = proof.into();
     let address_tree_info: PackedAddressTreeInfo = address_tree_info.into();
 
-    // Setup Light CPI accounts
+    // Setup Light CPI accounts (v2)
     let light_cpi_accounts = CpiAccounts::new(
         fee_payer,
         remaining_accounts,
@@ -152,9 +156,10 @@ pub fn create_commitment_account<'info>(
         &crate::ID,
     );
 
-    // Create new address params for the compressed account
+    // Create new address params for the compressed account (V2 format)
+    // Second param is the output state tree index where the address will be created
     let new_address_params = address_tree_info
-        .into_new_address_params_packed(address_seed);
+        .into_new_address_params_assigned_packed(address_seed, Some(output_tree_index));
 
     // Initialize the compressed account
     let mut commitment_account = LightAccount::<CommitmentAccount>::new_init(

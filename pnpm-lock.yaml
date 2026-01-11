@@ -16,8 +16,8 @@ importers:
         specifier: ^0.32.1
         version: 0.32.1(typescript@5.9.3)
       '@lightprotocol/stateless.js':
-        specifier: ^0.22.0
-        version: 0.22.0(@solana/web3.js@1.98.4)
+        specifier: 0.22.1-alpha.7
+        version: 0.22.1-alpha.7(@solana/web3.js@1.98.4)
       '@noble/hashes':
         specifier: ^1.3.3
         version: 1.8.0
@@ -755,8 +755,8 @@ packages:
       '@jridgewell/sourcemap-codec': 1.5.5
     dev: true
 
-  /@lightprotocol/stateless.js@0.22.0(@solana/web3.js@1.98.4):
-    resolution: {integrity: sha512-2I7g/pIq/Bbm6Qax1djT4TEwBHmGWJpvhF2pdRyyO6k3f4a1ZR3hDdesbpZ99FPH7LysiCcMR1cJvVjw39ZNfA==}
+  /@lightprotocol/stateless.js@0.22.1-alpha.7(@solana/web3.js@1.98.4):
+    resolution: {integrity: sha512-U4RgLGcpaPojiNcOWCSRm/pK5O2fyU80W1E+PPGR8DPlEA4h0CelLsxJm/d1wNDZiXSpibZ5pBxeuHBUjSKRYg==}
     peerDependencies:
       '@solana/web3.js': '>=1.73.5'
     dependencies:

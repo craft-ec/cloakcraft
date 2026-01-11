@@ -29,11 +29,13 @@ import * as os from "os";
 import {
   createRpc,
   bn,
-  defaultTestStateTreeAccounts,
   defaultStaticAccountsStruct,
-  deriveAddressSeed,
-  deriveAddress,
+  deriveAddressSeedV2,
+  deriveAddressV2,
   LightSystemProgram,
+  PackedAccounts,
+  SystemAccountMetaConfig,
+  getBatchAddressTreeInfo,
 } from "@lightprotocol/stateless.js";
 import "dotenv/config";
 
@@ -53,10 +55,10 @@ const SEEDS = {
   COMMITMENT_COUNTER: Buffer.from("commitment_counter"),
 };
 
-// Light Protocol program IDs
-const LIGHT_SYSTEM_PROGRAM = new PublicKey("SySTEM1eSU2p4BGQfQpimFEWWSC1XDFeun3Nqzz3rT7");
-const ACCOUNT_COMPRESSION_PROGRAM = new PublicKey("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq");
-const NOOP_PROGRAM = new PublicKey("noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV");
+// V2 Batch Trees and CPI Context (Devnet)
+// See: https://www.zkcompression.com/resources/addresses-and-urls#v2
+const V2_OUTPUT_QUEUE = new PublicKey("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto");
+const V2_CPI_CONTEXT = new PublicKey("cpi15BoVPKgEPw5o8wc2T816GE7b378nMXnhH3Xbq4y");
 
 async function main() {
   console.log("=== Light Protocol E2E Test ===\n");
@@ -74,14 +76,14 @@ async function main() {
   const lightRpc = createRpc(heliusUrl, heliusUrl);
   const connection = new Connection(heliusUrl, "confirmed");
 
-  // Get Light Protocol tree accounts
-  const treeAccounts = defaultTestStateTreeAccounts();
+  // Get Light Protocol tree accounts (V2)
+  const addressTreeInfo = getBatchAddressTreeInfo();
   const staticAccounts = defaultStaticAccountsStruct();
-  console.log("Using Light Protocol accounts:");
-  console.log("  Address Tree:", treeAccounts.addressTree.toBase58());
-  console.log("  Address Queue:", treeAccounts.addressQueue.toBase58());
-  console.log("  State Tree:", treeAccounts.merkleTree.toBase58());
-  console.log("  Nullifier Queue:", treeAccounts.nullifierQueue.toBase58());
+  console.log("Using Light Protocol V2 accounts:");
+  console.log("  Address Tree (V2):", addressTreeInfo.tree.toBase58());
+  console.log("  Address Queue (V2):", addressTreeInfo.queue.toBase58());
+  console.log("  Output Queue (V2):", V2_OUTPUT_QUEUE.toBase58());
+  console.log("  CPI Context (V2):", V2_CPI_CONTEXT.toBase58());
   console.log("  Registered Program PDA:", staticAccounts.registeredProgramPda.toBase58());
 
   // Load wallet
@@ -209,15 +211,15 @@ async function main() {
   const commitment = crypto.randomBytes(32);
   console.log("Test commitment:", Buffer.from(commitment).toString("hex").slice(0, 16) + "...");
 
-  // Derive commitment address using Light SDK (matches on-chain logic)
+  // Derive commitment address using Light SDK V2 (matches on-chain logic)
   // Seeds: ["commitment", pool_pubkey, commitment_hash]
   const seeds = [
     Buffer.from("commitment"),
     poolPda.toBuffer(),
     commitment,
   ];
-  const addressSeed = deriveAddressSeed(seeds, PROGRAM_ID);
-  const commitmentAddress = deriveAddress(addressSeed, treeAccounts.addressTree, PROGRAM_ID);
+  const addressSeed = deriveAddressSeedV2(seeds, PROGRAM_ID);
+  const commitmentAddress = deriveAddressV2(addressSeed, addressTreeInfo.tree, PROGRAM_ID);
   console.log("Commitment address:", commitmentAddress.toBase58());
 
   try {
@@ -226,8 +228,8 @@ async function main() {
       [], // no existing accounts to prove
       [{
         address: bn(commitmentAddress.toBytes()),
-        tree: treeAccounts.addressTree,
-        queue: treeAccounts.addressQueue,
+        tree: addressTreeInfo.tree,
+        queue: addressTreeInfo.queue,
       }]
     );
 
@@ -243,27 +245,23 @@ async function main() {
     const shieldAmount = new anchor.BN(100_000_000); // 0.1 tokens
     const encryptedNote = Buffer.alloc(64); // Placeholder encrypted note
 
-    // Prepare Light params matching our on-chain types
-    // Indices must match the position in remaining_accounts array
-    // Based on CompressionCpiAccountIndex enum (light-sdk-types):
-    // [0] LightSystemProgram
-    // [1] Authority (CPI signer PDA)
-    // [2] RegisteredProgramPda
-    // [3] NoopProgram
-    // [4] AccountCompressionAuthority
-    // [5] AccountCompressionProgram
-    // [6] InvokingProgram (our program ID)
-    // [7] SolPoolPda (placeholder: Light System Program)
-    // [8] DecompressionRecipient (placeholder: Light System Program)
-    // [9] SystemProgram
-    // [10] CpiContext (placeholder: Light System Program)
-    // [11] State Merkle Tree (output tree)
-    // [12] Nullifier Queue
-    // [13] Address Tree
-    // [14] Address Queue
-    // Note: The SDK adds an offset of 8 to tree indices
-    // So for addressTree at remaining_accounts[13], pass: 13 - 8 = 5
-    const SDK_TREE_OFFSET = 8;
+    // Use SDK's PackedAccounts to build remaining accounts (v2)
+    // This handles all the account ordering and index calculation automatically
+    const systemConfig = SystemAccountMetaConfig.new(PROGRAM_ID);
+    const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
+
+    // Insert output tree (V2 batch state tree via output queue)
+    const outputTreeIndex = packedAccounts.insertOrGet(V2_OUTPUT_QUEUE);
+    console.log("  Output tree index:", outputTreeIndex);
+
+    // Insert address tree (for v2, tree and queue are the same account)
+    const addressTreeIndex = packedAccounts.insertOrGet(addressTreeInfo.tree);
+    // For v2 batch address tree, queue is the same as tree
+    const addressQueueIndex = addressTreeIndex;
+    console.log("  Address tree index:", addressTreeIndex);
+    console.log("  Address queue index:", addressQueueIndex, "(same as tree for v2)");
+
+    // Build lightParams using SDK-computed indices
     const lightParams = {
       validityProof: {
         a: Array.from(proof.compressedProof.a),
@@ -271,47 +269,29 @@ async function main() {
         c: Array.from(proof.compressedProof.c),
       },
       addressTreeInfo: {
-        addressMerkleTreePubkeyIndex: 13 - SDK_TREE_OFFSET, // addressTree at idx 13, pass 5
-        addressQueuePubkeyIndex: 14 - SDK_TREE_OFFSET,      // addressQueue at idx 14, pass 6
+        addressMerkleTreePubkeyIndex: addressTreeIndex,
+        addressQueuePubkeyIndex: addressQueueIndex,
         rootIndex: proof.rootIndices[0] ?? 0,
       },
-      outputTreeIndex: 11 - SDK_TREE_OFFSET, // merkleTree at idx 11, pass 3
+      outputTreeIndex: outputTreeIndex,
     };
 
-    // Build remaining accounts for Light Protocol CPI
-    // Order matches CompressionCpiAccountIndex enum
-    const remainingAccounts = [
-      // [0] LightSystemProgram
-      { pubkey: LIGHT_SYSTEM_PROGRAM, isSigner: false, isWritable: false },
-      // [1] Authority (CPI signer PDA derived with seeds ["cpi_authority"])
-      { pubkey: CPI_SIGNER_PDA, isSigner: false, isWritable: false },
-      // [2] RegisteredProgramPda
-      { pubkey: staticAccounts.registeredProgramPda, isSigner: false, isWritable: false },
-      // [3] NoopProgram
-      { pubkey: NOOP_PROGRAM, isSigner: false, isWritable: false },
-      // [4] AccountCompressionAuthority
-      { pubkey: staticAccounts.accountCompressionAuthority, isSigner: false, isWritable: false },
-      // [5] AccountCompressionProgram
-      { pubkey: ACCOUNT_COMPRESSION_PROGRAM, isSigner: false, isWritable: false },
-      // [6] InvokingProgram (our program ID)
-      { pubkey: PROGRAM_ID, isSigner: false, isWritable: false },
-      // [7] SolPoolPda (not used, placeholder)
-      { pubkey: LIGHT_SYSTEM_PROGRAM, isSigner: false, isWritable: false },
-      // [8] DecompressionRecipient (not used, placeholder)
-      { pubkey: LIGHT_SYSTEM_PROGRAM, isSigner: false, isWritable: false },
-      // [9] SystemProgram
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      // [10] CpiContext (not used, placeholder)
-      { pubkey: LIGHT_SYSTEM_PROGRAM, isSigner: false, isWritable: false },
-      // [11] State Merkle Tree (output tree)
-      { pubkey: treeAccounts.merkleTree, isSigner: false, isWritable: true },
-      // [12] Nullifier Queue
-      { pubkey: treeAccounts.nullifierQueue, isSigner: false, isWritable: true },
-      // [13] Address Tree
-      { pubkey: treeAccounts.addressTree, isSigner: false, isWritable: true },
-      // [14] Address Queue
-      { pubkey: treeAccounts.addressQueue, isSigner: false, isWritable: true },
-    ];
+    // Get remaining accounts from SDK
+    const { remainingAccounts: rawAccounts } = packedAccounts.toAccountMetas();
+
+    // Convert SDK account metas (which use numbers 0/1) to proper booleans for Anchor
+    const remainingAccounts = rawAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isWritable: Boolean(acc.isWritable),
+      isSigner: Boolean(acc.isSigner),
+    }));
+    console.log("  Remaining accounts count:", remainingAccounts.length);
+
+    // Debug: show account order
+    console.log("  Account order:");
+    remainingAccounts.slice(0, 12).forEach((acc: any, i: number) => {
+      console.log(`    [${i}] ${acc.pubkey.toBase58().slice(0, 12)}... (w:${acc.isWritable}, s:${acc.isSigner})`);
+    });
 
     try {
       const tx = await program.methods
