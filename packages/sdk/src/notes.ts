@@ -81,7 +81,7 @@ export class NoteManager {
 
     for (const note of this.cachedNotes.values()) {
       if (note.tokenMint.equals(tokenMint)) {
-        const nullifier = deriveSpendingNullifier(nullifierKey, note.commitment);
+        const nullifier = deriveSpendingNullifier(nullifierKey, note.commitment, note.leafIndex);
         const nullifierHex = Buffer.from(nullifier).toString('hex');
 
         if (!this.spentNullifiers.has(nullifierHex)) {
@@ -185,7 +185,7 @@ export class NoteManager {
     const nullifierKey = deriveNullifierKey(keypair.spending.sk);
 
     for (const note of this.cachedNotes.values()) {
-      const nullifier = deriveSpendingNullifier(nullifierKey, note.commitment);
+      const nullifier = deriveSpendingNullifier(nullifierKey, note.commitment, note.leafIndex);
       const nullifierHex = Buffer.from(nullifier).toString('hex');
 
       if (!this.spentNullifiers.has(nullifierHex)) {

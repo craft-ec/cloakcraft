@@ -77,7 +77,8 @@ export function useCreateOrder() {
       setState({ isCreating: true, error: null, result: null });
 
       try {
-        const result = await client.createOrder(
+        // prepareAndCreateOrder handles all cryptographic preparation
+        const result = await client.prepareAndCreateOrder(
           {
             input,
             terms,

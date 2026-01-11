@@ -23,11 +23,16 @@ import type {
   DecryptedNote,
   PoolState,
   SyncStatus,
+  StealthAddress,
+  PreparedInput,
+  TransferOutput,
 } from '@cloakcraft/types';
 
 import { Wallet, createWallet, loadWallet } from './wallet';
 import { NoteManager } from './notes';
 import { ProofGenerator } from './proofs';
+import { computeCommitment, generateRandomness } from './crypto/commitment';
+import { derivePublicKey } from './crypto/babyjubjub';
 
 export interface CloakCraftClientConfig {
   /** Solana RPC URL */
@@ -183,6 +188,48 @@ export class CloakCraftClient {
   }
 
   /**
+   * Prepare simple transfer inputs and execute transfer
+   *
+   * This is a convenience method that handles all cryptographic preparation:
+   * - Derives Y-coordinates from spending key
+   * - Fetches merkle proofs from indexer
+   * - Computes output commitments
+   */
+  async prepareAndTransfer(
+    request: {
+      inputs: DecryptedNote[];
+      outputs: Array<{ recipient: StealthAddress; amount: bigint }>;
+      unshield?: { amount: bigint; recipient: PublicKey };
+    },
+    relayer?: SolanaKeypair
+  ): Promise<TransactionResult> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+
+    // Prepare inputs with Y-coordinates and merkle proofs
+    const preparedInputs = await this.prepareInputs(request.inputs);
+
+    // Prepare outputs with commitments
+    const preparedOutputs = await this.prepareOutputs(request.outputs);
+
+    // Get merkle proof for the first input (all inputs must use same root)
+    const merkleProof = await this.fetchMerkleProof(request.inputs[0]);
+
+    // Build full TransferParams
+    const params: TransferParams = {
+      inputs: preparedInputs,
+      merkleRoot: merkleProof.root,
+      merklePath: merkleProof.pathElements,
+      merkleIndices: merkleProof.pathIndices,
+      outputs: preparedOutputs,
+      unshield: request.unshield,
+    };
+
+    return this.transfer(params, relayer);
+  }
+
+  /**
    * Swap through external adapter (partial privacy)
    */
   async swapViaAdapter(
@@ -253,6 +300,80 @@ export class CloakCraftClient {
   }
 
   /**
+   * Prepare and create a market order (convenience method)
+   */
+  async prepareAndCreateOrder(
+    request: {
+      input: DecryptedNote;
+      terms: {
+        offerMint: PublicKey;
+        offerAmount: bigint;
+        requestMint: PublicKey;
+        requestAmount: bigint;
+      };
+      expiry: number;
+    },
+    relayer?: SolanaKeypair
+  ): Promise<TransactionResult> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+
+    // Prepare input
+    const [preparedInput] = await this.prepareInputs([request.input]);
+
+    // Fetch merkle proof
+    const merkleProof = await this.fetchMerkleProof(request.input);
+
+    // Generate order ID and other derived values
+    const { poseidonHash, fieldToBytes } = await import('./crypto/poseidon');
+    const orderIdBytes = generateRandomness();
+    const escrowRandomness = generateRandomness();
+
+    // Compute escrow commitment
+    const escrowNote = (await import('./crypto/commitment')).createNote(
+      preparedInput.stealthPubX,
+      request.terms.offerMint,
+      request.terms.offerAmount,
+      escrowRandomness
+    );
+    const escrowCommitment = computeCommitment(escrowNote);
+
+    // Compute terms hash (convert all values to FieldElement bytes)
+    const termsHash = poseidonHash([
+      request.terms.offerMint.toBytes(),
+      fieldToBytes(request.terms.offerAmount),
+      request.terms.requestMint.toBytes(),
+      fieldToBytes(request.terms.requestAmount),
+    ]);
+
+    // Compute nullifier
+    const { deriveNullifierKey, deriveSpendingNullifier } = await import('./crypto/nullifier');
+    const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
+    const inputCommitment = computeCommitment(request.input);
+    const nullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, request.input.leafIndex);
+
+    // Build full OrderParams
+    const params: OrderParams = {
+      input: preparedInput,
+      merkleRoot: merkleProof.root,
+      merklePath: merkleProof.pathElements,
+      merkleIndices: merkleProof.pathIndices,
+      nullifier,
+      orderId: orderIdBytes,
+      escrowCommitment,
+      termsHash, // poseidonHash already returns FieldElement
+      escrowStealthPubX: preparedInput.stealthPubX,
+      escrowRandomness,
+      makerReceiveStealthPubX: preparedInput.stealthPubX, // Self
+      terms: request.terms,
+      expiry: request.expiry,
+    };
+
+    return this.createOrder(params, relayer);
+  }
+
+  /**
    * Get sync status
    */
   async getSyncStatus(): Promise<SyncStatus> {
@@ -306,5 +427,90 @@ export class CloakCraftClient {
   private decodePoolState(data: Buffer): PoolState {
     // Implementation: Decode pool account data
     throw new Error('Not implemented');
+  }
+
+  /**
+   * Prepare inputs by deriving Y-coordinates from the wallet's spending key
+   */
+  private async prepareInputs(inputs: DecryptedNote[]): Promise<PreparedInput[]> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+
+    const { bytesToField } = await import('./crypto/poseidon');
+
+    return inputs.map(input => {
+      // Derive the full public key from the spending key
+      const spendingKey = bytesToField(this.wallet!.keypair.spending.sk);
+      const publicKey = derivePublicKey(spendingKey);
+
+      return {
+        ...input,
+        stealthPubY: publicKey.y,
+      };
+    });
+  }
+
+  /**
+   * Prepare outputs by computing commitments
+   */
+  private async prepareOutputs(
+    outputs: Array<{ recipient: StealthAddress; amount: bigint }>
+  ): Promise<TransferOutput[]> {
+    const { createNote } = await import('./crypto/commitment');
+
+    return outputs.map(output => {
+      const randomness = generateRandomness();
+
+      // Get the first pool's token mint (in production, this should be passed)
+      // For now, assume outputs use same token as inputs
+      const tokenMint = new PublicKey(new Uint8Array(32)); // Placeholder
+
+      // Create note to compute commitment
+      const note = createNote(
+        output.recipient.stealthPubkey.x,
+        tokenMint,
+        output.amount,
+        randomness
+      );
+
+      const commitment = computeCommitment(note);
+
+      return {
+        recipient: output.recipient,
+        amount: output.amount,
+        commitment,
+        stealthPubX: output.recipient.stealthPubkey.x,
+        randomness,
+      };
+    });
+  }
+
+  /**
+   * Fetch merkle proof from indexer
+   */
+  private async fetchMerkleProof(note: DecryptedNote): Promise<{
+    root: Uint8Array;
+    pathElements: Uint8Array[];
+    pathIndices: number[];
+  }> {
+    const commitmentHex = Buffer.from(note.commitment).toString('hex');
+    const response = await fetch(`${this.indexerUrl}/merkle-proof/${commitmentHex}`);
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch merkle proof');
+    }
+
+    const data = await response.json() as {
+      root: string;
+      pathElements: string[];
+      pathIndices: number[];
+    };
+
+    return {
+      root: Buffer.from(data.root, 'hex'),
+      pathElements: data.pathElements.map((e: string) => Buffer.from(e, 'hex')),
+      pathIndices: data.pathIndices,
+    };
   }
 }

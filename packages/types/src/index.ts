@@ -65,7 +65,7 @@ export interface EncryptedNote {
   tag: Uint8Array;
 }
 
-/** Decrypted note with additional metadata */
+/** Decrypted note with additional metadata for spending */
 export interface DecryptedNote extends Note {
   /** Note commitment */
   commitment: Commitment;
@@ -174,6 +174,30 @@ export interface VoteProofInputs {
   thresholdPubkey: Point;
 }
 
+/** Vote parameters for proof generation */
+export interface VoteParams {
+  /** Input note with Y-coordinate */
+  input: PreparedInput;
+  /** Merkle root */
+  merkleRoot: MerkleRoot;
+  /** Merkle proof path */
+  merklePath: FieldElement[];
+  /** Merkle proof indices */
+  merkleIndices: number[];
+  /** Proposal/aggregation ID */
+  proposalId: FieldElement;
+  /** Vote choice (0, 1, 2 for yes/no/abstain) */
+  voteChoice: number;
+  /** Election public key */
+  electionPubkey: Point;
+  /** Encryption randomness for each option */
+  encryptionRandomness: {
+    yes: FieldElement;
+    no: FieldElement;
+    abstain: FieldElement;
+  };
+}
+
 // =============================================================================
 // Transaction Types
 // =============================================================================
@@ -188,15 +212,38 @@ export interface ShieldParams {
   recipient: StealthAddress;
 }
 
+/** Prepared input for proving (includes derived Y-coordinate) */
+export interface PreparedInput extends DecryptedNote {
+  /** Stealth public key Y-coordinate (derived from spending key) */
+  stealthPubY: FieldElement;
+}
+
+/** Transfer output (prepared for proving) */
+export interface TransferOutput {
+  /** Recipient stealth address */
+  recipient: StealthAddress;
+  /** Amount to transfer */
+  amount: bigint;
+  /** Output commitment */
+  commitment: Commitment;
+  /** Stealth public key X-coordinate */
+  stealthPubX: FieldElement;
+  /** Randomness for commitment */
+  randomness: FieldElement;
+}
+
 /** Transfer transaction parameters */
 export interface TransferParams {
-  /** Input notes to spend */
-  inputs: DecryptedNote[];
-  /** Output recipients and amounts */
-  outputs: Array<{
-    recipient: StealthAddress;
-    amount: bigint;
-  }>;
+  /** Input notes with derived Y-coordinate */
+  inputs: PreparedInput[];
+  /** Merkle root (must be valid for all inputs) */
+  merkleRoot: MerkleRoot;
+  /** Merkle proof path elements */
+  merklePath: FieldElement[];
+  /** Merkle proof path indices */
+  merkleIndices: number[];
+  /** Output recipients and amounts (prepared) */
+  outputs: TransferOutput[];
   /** Optional unshield */
   unshield?: {
     amount: bigint;
@@ -206,8 +253,14 @@ export interface TransferParams {
 
 /** Adapter swap parameters */
 export interface AdapterSwapParams {
-  /** Input note */
-  input: DecryptedNote;
+  /** Input note with derived Y-coordinate */
+  input: PreparedInput;
+  /** Merkle root */
+  merkleRoot: MerkleRoot;
+  /** Merkle proof path */
+  merklePath: FieldElement[];
+  /** Merkle proof indices */
+  merkleIndices: number[];
   /** Output token mint */
   outputMint: PublicKey;
   /** Minimum output amount */
@@ -216,14 +269,40 @@ export interface AdapterSwapParams {
   adapter: PublicKey;
   /** Adapter-specific params */
   adapterParams: Uint8Array;
-  /** Output recipient */
-  recipient: StealthAddress;
+  /** Output commitment */
+  outputCommitment: Commitment;
+  /** Change commitment (if any) */
+  changeCommitment: Commitment;
+  /** Output recipient stealth public key X */
+  outputStealthPubX: FieldElement;
+  /** Output randomness */
+  outputRandomness: FieldElement;
 }
 
 /** Market order parameters */
 export interface OrderParams {
-  /** Input note for escrow */
-  input: DecryptedNote;
+  /** Input note with derived Y-coordinate */
+  input: PreparedInput;
+  /** Merkle root */
+  merkleRoot: MerkleRoot;
+  /** Merkle proof path */
+  merklePath: FieldElement[];
+  /** Merkle proof indices */
+  merkleIndices: number[];
+  /** Nullifier */
+  nullifier: Nullifier;
+  /** Order ID */
+  orderId: FieldElement;
+  /** Escrow commitment */
+  escrowCommitment: Commitment;
+  /** Terms hash */
+  termsHash: FieldElement;
+  /** Escrow stealth public key X */
+  escrowStealthPubX: FieldElement;
+  /** Escrow randomness */
+  escrowRandomness: FieldElement;
+  /** Maker's receiving stealth public key X */
+  makerReceiveStealthPubX: FieldElement;
   /** Offer terms */
   terms: OrderTerms;
   /** Expiry timestamp */

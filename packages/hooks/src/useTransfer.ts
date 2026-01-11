@@ -1,5 +1,9 @@
 /**
  * Transfer operation hook
+ *
+ * Provides a simplified interface for transfers. The client handles
+ * the complex cryptographic preparation (deriving Y-coordinates,
+ * computing commitments, fetching merkle proofs, etc.)
  */
 
 import { useState, useCallback } from 'react';
@@ -13,9 +17,17 @@ interface TransferState {
   result: TransactionResult | null;
 }
 
-interface TransferOutput {
+/** Simple transfer output (client prepares the full cryptographic details) */
+interface SimpleTransferOutput {
   recipient: StealthAddress;
   amount: bigint;
+}
+
+/** Simple transfer request (client converts to full TransferParams) */
+interface SimpleTransferRequest {
+  inputs: DecryptedNote[];
+  outputs: SimpleTransferOutput[];
+  unshield?: { amount: bigint; recipient: PublicKey };
 }
 
 export function useTransfer() {
@@ -29,7 +41,7 @@ export function useTransfer() {
   const transfer = useCallback(
     async (
       inputs: DecryptedNote[],
-      outputs: TransferOutput[],
+      outputs: SimpleTransferOutput[],
       unshield?: { amount: bigint; recipient: PublicKey },
       relayer?: SolanaKeypair
     ): Promise<TransactionResult | null> => {
@@ -41,12 +53,9 @@ export function useTransfer() {
       setState({ isTransferring: true, error: null, result: null });
 
       try {
-        const result = await client.transfer(
-          {
-            inputs,
-            outputs,
-            unshield,
-          },
+        // Client's prepareAndTransfer handles all the cryptographic prep
+        const result = await client.prepareAndTransfer(
+          { inputs, outputs, unshield },
           relayer
         );
 

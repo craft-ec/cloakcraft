@@ -4,11 +4,15 @@
  * Uses Noir circuits compiled via Sunspot for Groth16 proofs
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import type {
   Keypair,
   TransferParams,
   AdapterSwapParams,
   OrderParams,
+  VoteParams,
   Groth16Proof,
   TransferProofInputs,
   DecryptedNote,
@@ -34,15 +38,75 @@ interface CircuitArtifacts {
 }
 
 /**
+ * Configuration for Node.js proof generation
+ */
+interface NodeProverConfig {
+  /** Path to circuits directory */
+  circuitsDir: string;
+  /** Path to sunspot binary */
+  sunspotPath: string;
+  /** Path to nargo binary */
+  nargoPath: string;
+}
+
+/**
+ * Circuit name mapping (SDK name -> file name)
+ */
+const CIRCUIT_FILE_MAP: Record<string, string> = {
+  'transfer/1x2': 'transfer_1x2',
+  'transfer/1x3': 'transfer_1x3',
+  'adapter/1x1': 'adapter_1x1',
+  'adapter/1x2': 'adapter_1x2',
+  'market/order_create': 'market_order_create',
+  'market/order_fill': 'market_order_fill',
+  'market/order_cancel': 'market_order_cancel',
+  'swap/add_liquidity': 'swap_add_liquidity',
+  'swap/remove_liquidity': 'swap_remove_liquidity',
+  'swap/swap': 'swap_swap',
+  'governance/encrypted_submit': 'governance_encrypted_submit',
+};
+
+/**
+ * Circuit directory mapping (SDK name -> circuit source dir)
+ */
+const CIRCUIT_DIR_MAP: Record<string, string> = {
+  'transfer/1x2': 'transfer/1x2',
+  'transfer/1x3': 'transfer/1x3',
+  'adapter/1x1': 'adapter/1x1',
+  'adapter/1x2': 'adapter/1x2',
+  'market/order_create': 'market/order_create',
+  'market/order_fill': 'market/order_fill',
+  'market/order_cancel': 'market/order_cancel',
+  'swap/add_liquidity': 'swap/add_liquidity',
+  'swap/remove_liquidity': 'swap/remove_liquidity',
+  'swap/swap': 'swap/swap',
+  'governance/encrypted_submit': 'governance/encrypted_submit',
+};
+
+/**
  * Proof generator using Noir circuits compiled via Sunspot
  */
 export class ProofGenerator {
   private circuits: Map<string, CircuitArtifacts> = new Map();
   private baseUrl: string;
   private isInitialized = false;
+  private nodeConfig?: NodeProverConfig;
 
-  constructor(config?: { baseUrl?: string }) {
+  constructor(config?: { baseUrl?: string; nodeConfig?: NodeProverConfig }) {
     this.baseUrl = config?.baseUrl ?? '/circuits';
+    this.nodeConfig = config?.nodeConfig;
+  }
+
+  /**
+   * Configure for Node.js proving (auto-detects paths if not provided)
+   */
+  configureForNode(config?: Partial<NodeProverConfig>): void {
+    const homeDir = os.homedir();
+    this.nodeConfig = {
+      circuitsDir: config?.circuitsDir ?? path.resolve(__dirname, '../../../circuits'),
+      sunspotPath: config?.sunspotPath ?? path.resolve(__dirname, '../../../scripts/sunspot'),
+      nargoPath: config?.nargoPath ?? path.join(homeDir, '.nargo/bin/nargo'),
+    };
   }
 
   /**
@@ -69,8 +133,59 @@ export class ProofGenerator {
 
   /**
    * Load a circuit's artifacts
+   *
+   * In Node.js with nodeConfig set, loads from file system.
+   * In browser, loads via fetch from baseUrl.
    */
   async loadCircuit(name: string): Promise<void> {
+    // Detect environment: Node.js vs browser
+    const isNode = typeof globalThis.process !== 'undefined'
+      && globalThis.process.versions != null
+      && globalThis.process.versions.node != null;
+
+    if (isNode && this.nodeConfig) {
+      return this.loadCircuitFromFs(name);
+    } else {
+      return this.loadCircuitFromUrl(name);
+    }
+  }
+
+  /**
+   * Load circuit from file system (Node.js)
+   */
+  private async loadCircuitFromFs(name: string): Promise<void> {
+    if (!this.nodeConfig) {
+      throw new Error('Node.js prover not configured');
+    }
+
+    const circuitFileName = CIRCUIT_FILE_MAP[name];
+    if (!circuitFileName) {
+      throw new Error(`Unknown circuit: ${name}`);
+    }
+
+    const targetDir = path.join(this.nodeConfig.circuitsDir, 'target');
+    const manifestPath = path.join(targetDir, `${circuitFileName}.json`);
+    const pkPath = path.join(targetDir, `${circuitFileName}.pk`);
+
+    try {
+      // Load compiled circuit manifest
+      const manifestData = fs.readFileSync(manifestPath, 'utf-8');
+      const manifest = JSON.parse(manifestData);
+
+      // Load proving key
+      const provingKey = new Uint8Array(fs.readFileSync(pkPath));
+
+      this.circuits.set(name, { manifest, provingKey });
+      console.log(`[${name}] Loaded circuit from ${targetDir}`);
+    } catch (err) {
+      console.warn(`Failed to load circuit ${name}:`, err);
+    }
+  }
+
+  /**
+   * Load circuit from URL (browser)
+   */
+  private async loadCircuitFromUrl(name: string): Promise<void> {
     const basePath = `${this.baseUrl}/${name}/target`;
 
     try {
@@ -124,7 +239,7 @@ export class ProofGenerator {
     const nullifierKey = deriveNullifierKey(keypair.spending.sk);
 
     // Build witness inputs
-    const witnessInputs = this.buildTransferWitness(params, nullifierKey);
+    const witnessInputs = this.buildTransferWitness(params, keypair.spending.sk, nullifierKey);
 
     return this.prove(circuitName, witnessInputs);
   }
@@ -144,23 +259,24 @@ export class ProofGenerator {
 
     const nullifierKey = deriveNullifierKey(keypair.spending.sk);
 
+    // Convert PublicKeys to bytes
+    const adapterBytes = params.adapter.toBytes();
+    const tokenMint = params.input.tokenMint instanceof Uint8Array
+      ? params.input.tokenMint
+      : params.input.tokenMint.toBytes();
+
+    // Compute commitment and nullifier from input note
+    const inputCommitment = computeCommitment(params.input);
+    const inputNullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, params.input.leafIndex);
+
     const witnessInputs = {
       // Public inputs
       merkle_root: fieldToHex(params.merkleRoot),
-      nullifier: fieldToHex(deriveSpendingNullifier(
-        nullifierKey,
-        computeCommitment(
-          params.input.stealthPubX,
-          params.input.tokenMint,
-          params.input.amount,
-          params.input.randomness
-        ),
-        params.input.leafIndex
-      )),
+      nullifier: fieldToHex(inputNullifier),
       input_amount: params.input.amount.toString(),
       output_commitment: fieldToHex(params.outputCommitment),
       change_commitment: fieldToHex(params.changeCommitment),
-      adapter_program: fieldToHex(params.adapter),
+      adapter_program: fieldToHex(adapterBytes),
       min_output: params.minOutput.toString(),
 
       // Private inputs
@@ -172,8 +288,9 @@ export class ProofGenerator {
       merkle_path: params.merklePath.map(fieldToHex),
       merkle_path_indices: params.merkleIndices.map(i => i.toString()),
       leaf_index: params.input.leafIndex.toString(),
-      token_mint: fieldToHex(params.input.tokenMint),
-      // ... other fields
+      token_mint: fieldToHex(tokenMint),
+      out_stealth_pub_x: fieldToHex(params.outputStealthPubX),
+      out_randomness: fieldToHex(params.outputRandomness),
     };
 
     return this.prove(circuitName, witnessInputs);
@@ -192,7 +309,9 @@ export class ProofGenerator {
       throw new Error(`Circuit not loaded: ${circuitName}`);
     }
 
-    const nullifierKey = deriveNullifierKey(keypair.spending.sk);
+    // Convert PublicKeys to bytes
+    const offerMintBytes = params.terms.offerMint.toBytes();
+    const requestMintBytes = params.terms.requestMint.toBytes();
 
     const witnessInputs = {
       // Public inputs
@@ -212,10 +331,10 @@ export class ProofGenerator {
       merkle_path: params.merklePath.map(fieldToHex),
       merkle_path_indices: params.merkleIndices.map(i => i.toString()),
       leaf_index: params.input.leafIndex.toString(),
-      offer_token: fieldToHex(params.terms.offerToken),
+      offer_token: fieldToHex(offerMintBytes),
       offer_amount: params.terms.offerAmount.toString(),
-      ask_token: fieldToHex(params.terms.askToken),
-      ask_amount: params.terms.askAmount.toString(),
+      ask_token: fieldToHex(requestMintBytes),
+      ask_amount: params.terms.requestAmount.toString(),
       escrow_stealth_pub_x: fieldToHex(params.escrowStealthPubX),
       escrow_randomness: fieldToHex(params.escrowRandomness),
       maker_receive_stealth_pub_x: fieldToHex(params.makerReceiveStealthPubX),
@@ -228,12 +347,8 @@ export class ProofGenerator {
    * Generate a vote proof
    */
   async generateVoteProof(
-    note: DecryptedNote,
-    keypair: Keypair,
-    proposalId: Uint8Array,
-    voteChoice: number,
-    electionPubkey: { x: Uint8Array; y: Uint8Array },
-    encryptionRandomness: { yes: Uint8Array; no: Uint8Array; abstain: Uint8Array }
+    params: VoteParams,
+    keypair: Keypair
   ): Promise<Uint8Array> {
     const circuitName = 'governance/encrypted_submit';
 
@@ -241,29 +356,32 @@ export class ProofGenerator {
       throw new Error(`Circuit not loaded: ${circuitName}`);
     }
 
-    const nullifierKey = deriveNullifierKey(keypair.spending.sk);
+    // Convert PublicKey to bytes if needed
+    const tokenMint = params.input.tokenMint instanceof Uint8Array
+      ? params.input.tokenMint
+      : params.input.tokenMint.toBytes();
 
     const witnessInputs = {
-      // Public inputs filled by circuit
-      merkle_root: fieldToHex(note.merkleRoot),
-      proposal_id: fieldToHex(proposalId),
-      token_mint: fieldToHex(note.tokenMint),
-      election_pubkey_x: fieldToHex(electionPubkey.x),
-      election_pubkey_y: fieldToHex(electionPubkey.y),
-      // Encrypted vote ciphertexts computed by circuit
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      proposal_id: fieldToHex(params.proposalId),
+      token_mint: fieldToHex(tokenMint),
+      election_pubkey_x: fieldToHex(params.electionPubkey.x),
+      election_pubkey_y: fieldToHex(params.electionPubkey.y),
 
       // Private inputs
-      in_stealth_pub_x: fieldToHex(note.stealthPubX),
-      in_stealth_pub_y: fieldToHex(note.stealthPubY),
-      in_amount: note.amount.toString(),
-      in_randomness: fieldToHex(note.randomness),
+      in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
+      in_stealth_pub_y: fieldToHex(params.input.stealthPubY),
+      in_amount: params.input.amount.toString(),
+      in_randomness: fieldToHex(params.input.randomness),
       in_stealth_spending_key: fieldToHex(keypair.spending.sk),
-      merkle_path: note.merklePath.map(fieldToHex),
-      merkle_path_indices: note.merkleIndices.map(i => i.toString()),
-      vote_choice: voteChoice.toString(),
-      encryption_randomness_yes: fieldToHex(encryptionRandomness.yes),
-      encryption_randomness_no: fieldToHex(encryptionRandomness.no),
-      encryption_randomness_abstain: fieldToHex(encryptionRandomness.abstain),
+      merkle_path: params.merklePath.map(fieldToHex),
+      merkle_path_indices: params.merkleIndices.map((i: number) => i.toString()),
+      leaf_index: params.input.leafIndex.toString(),
+      vote_choice: params.voteChoice.toString(),
+      encryption_randomness_yes: fieldToHex(params.encryptionRandomness.yes),
+      encryption_randomness_no: fieldToHex(params.encryptionRandomness.no),
+      encryption_randomness_abstain: fieldToHex(params.encryptionRandomness.abstain),
     };
 
     return this.prove(circuitName, witnessInputs);
@@ -311,9 +429,13 @@ export class ProofGenerator {
     // 2. Native Sunspot CLI via subprocess (Node.js)
     // 3. Remote proving service
 
-    // For development, check if we have the native prover
-    if (typeof window === 'undefined') {
-      // Node.js environment - could call native prover
+    // Detect environment: Node.js vs browser
+    const isNode = typeof globalThis.process !== 'undefined'
+      && globalThis.process.versions != null
+      && globalThis.process.versions.node != null;
+
+    if (isNode) {
+      // Node.js environment - use native Sunspot CLI
       return this.proveViaSubprocess(circuitName, inputs, artifacts);
     } else {
       // Browser environment - use WASM
@@ -323,44 +445,231 @@ export class ProofGenerator {
 
   /**
    * Prove via subprocess (Node.js)
+   *
+   * Workflow:
+   * 1. Write Prover.toml with inputs
+   * 2. Run nargo execute to generate witness
+   * 3. Run sunspot prove with witness, ACIR, CCS, PK
+   * 4. Parse proof output
    */
   private async proveViaSubprocess(
     circuitName: string,
     inputs: Record<string, any>,
     artifacts: CircuitArtifacts
   ): Promise<{ a: Uint8Array; b: Uint8Array; c: Uint8Array }> {
-    // In production: Write inputs to temp file, run sunspot prove, read result
-    // For now, return placeholder
-    console.log(`Generating ${circuitName} proof via subprocess...`);
-    console.log('Inputs:', JSON.stringify(inputs, null, 2).slice(0, 500) + '...');
+    // Dynamic import for Node.js child_process (avoids bundling issues)
+    const { execFileSync } = await import('child_process');
 
-    // Return placeholder proof
-    return {
-      a: new Uint8Array(64),
-      b: new Uint8Array(128),
-      c: new Uint8Array(64),
-    };
+    if (!this.nodeConfig) {
+      throw new Error('Node.js prover not configured. Call configureForNode() first.');
+    }
+
+    const { circuitsDir, sunspotPath, nargoPath } = this.nodeConfig;
+    const circuitFileName = CIRCUIT_FILE_MAP[circuitName];
+    const circuitDirName = CIRCUIT_DIR_MAP[circuitName];
+
+    if (!circuitFileName || !circuitDirName) {
+      throw new Error(`Unknown circuit: ${circuitName}`);
+    }
+
+    // Paths to circuit artifacts
+    const circuitDir = path.join(circuitsDir, circuitDirName);
+    const targetDir = path.join(circuitsDir, 'target');
+    const acirPath = path.join(targetDir, `${circuitFileName}.json`);
+    const ccsPath = path.join(targetDir, `${circuitFileName}.ccs`);
+    const pkPath = path.join(targetDir, `${circuitFileName}.pk`);
+
+    // Verify all required files exist
+    if (!fs.existsSync(acirPath)) throw new Error(`ACIR not found: ${acirPath}`);
+    if (!fs.existsSync(ccsPath)) throw new Error(`CCS not found: ${ccsPath}`);
+    if (!fs.existsSync(pkPath)) throw new Error(`PK not found: ${pkPath}`);
+
+    // Create temp directory for this proof
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cloakcraft-proof-'));
+
+    try {
+      // Step 1: Write Prover.toml
+      const proverToml = this.inputsToProverToml(inputs);
+      const proverPath = path.join(circuitDir, 'Prover.toml');
+      fs.writeFileSync(proverPath, proverToml);
+
+      // Step 2: Run nargo execute to generate witness
+      console.log(`[${circuitName}] Generating witness...`);
+      const witnessName = circuitFileName;
+
+      try {
+        execFileSync(nargoPath, ['execute', witnessName], {
+          cwd: circuitDir,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch (err: any) {
+        const stderr = err.stderr?.toString() || '';
+        const stdout = err.stdout?.toString() || '';
+        throw new Error(`nargo execute failed: ${stderr || stdout || err.message}`);
+      }
+
+      // Witness is output to target/<name>.gz
+      const witnessPath = path.join(targetDir, `${circuitFileName}.gz`);
+      if (!fs.existsSync(witnessPath)) {
+        throw new Error(`Witness not generated at ${witnessPath}`);
+      }
+
+      // Step 3: Run sunspot prove
+      console.log(`[${circuitName}] Generating Groth16 proof...`);
+      const proofPath = path.join(tempDir, 'proof.bin');
+
+      try {
+        // sunspot prove [acir] [witness] [ccs] [pk]
+        // Outputs proof.bin and public.bin in current directory
+        execFileSync(sunspotPath, ['prove', acirPath, witnessPath, ccsPath, pkPath], {
+          cwd: tempDir,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch (err: any) {
+        const stderr = err.stderr?.toString() || '';
+        const stdout = err.stdout?.toString() || '';
+        throw new Error(`sunspot prove failed: ${stderr || stdout || err.message}`);
+      }
+
+      // Step 4: Parse proof output
+      if (!fs.existsSync(proofPath)) {
+        throw new Error(`Proof not generated at ${proofPath}`);
+      }
+
+      const proofBytes = fs.readFileSync(proofPath);
+      console.log(`[${circuitName}] Proof generated (${proofBytes.length} bytes)`);
+
+      // Parse Groth16 proof structure
+      // Format: A (64 bytes) + B (128 bytes) + C (64 bytes) = 256 bytes
+      if (proofBytes.length !== 256) {
+        throw new Error(`Unexpected proof size: ${proofBytes.length} (expected 256)`);
+      }
+
+      return {
+        a: new Uint8Array(proofBytes.slice(0, 64)),
+        b: new Uint8Array(proofBytes.slice(64, 192)),
+        c: new Uint8Array(proofBytes.slice(192, 256)),
+      };
+    } finally {
+      // Cleanup temp directory
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   }
 
   /**
-   * Prove via WASM (browser)
+   * Convert witness inputs to Prover.toml format
+   */
+  private inputsToProverToml(inputs: Record<string, any>): string {
+    const lines: string[] = [];
+
+    for (const [key, value] of Object.entries(inputs)) {
+      if (Array.isArray(value)) {
+        // Array format: key = ["value1", "value2", ...]
+        const values = value.map(v => `"${v}"`).join(', ');
+        lines.push(`${key} = [${values}]`);
+      } else {
+        // Scalar format: key = "value"
+        lines.push(`${key} = "${value}"`);
+      }
+    }
+
+    return lines.join('\n') + '\n';
+  }
+
+  /** URL for remote Groth16 proving service (browser only) */
+  private remoteProverUrl?: string;
+
+  /**
+   * Configure remote prover for browser environments
+   *
+   * Since Groth16 proving requires heavy computation,
+   * browser environments should use a remote proving service.
+   */
+  configureRemoteProver(url: string): void {
+    this.remoteProverUrl = url;
+  }
+
+  /**
+   * Prove via WASM/remote service (browser)
+   *
+   * Workflow:
+   * 1. Use @noir-lang/noir_js to generate witness from inputs
+   * 2. Send witness + circuit artifacts to remote prover
+   * 3. Receive Groth16 proof
    */
   private async proveViaWasm(
     circuitName: string,
     inputs: Record<string, any>,
     artifacts: CircuitArtifacts
   ): Promise<{ a: Uint8Array; b: Uint8Array; c: Uint8Array }> {
-    // In production: Use @noir-lang/bb.js
-    // const { witness } = await Noir.execute(inputs, artifacts.manifest);
-    // return bb.groth16Prove(witness, artifacts.provingKey);
+    console.log(`[${circuitName}] Generating witness via noir_js...`);
 
-    console.log(`Generating ${circuitName} proof via WASM...`);
+    // Dynamic import to avoid bundling issues in Node.js
+    const { Noir } = await import('@noir-lang/noir_js');
 
-    // Return placeholder proof
+    // Create Noir instance from circuit manifest
+    const noir = new Noir(artifacts.manifest);
+
+    // Execute circuit to generate witness
+    const { witness } = await noir.execute(inputs);
+    console.log(`[${circuitName}] Witness generated (${witness.length} bytes)`);
+
+    // Use remote prover if configured
+    if (this.remoteProverUrl) {
+      return this.proveViaRemote(circuitName, witness, artifacts);
+    }
+
+    // Fallback: return error for browser without remote prover
+    throw new Error(
+      `Browser Groth16 proving requires a remote prover. ` +
+      `Call configureRemoteProver(url) before generating proofs.`
+    );
+  }
+
+  /**
+   * Send witness to remote Groth16 prover
+   */
+  private async proveViaRemote(
+    circuitName: string,
+    witness: Uint8Array,
+    artifacts: CircuitArtifacts
+  ): Promise<{ a: Uint8Array; b: Uint8Array; c: Uint8Array }> {
+    if (!this.remoteProverUrl) {
+      throw new Error('Remote prover URL not configured');
+    }
+
+    console.log(`[${circuitName}] Sending to remote prover...`);
+
+    const response = await fetch(`${this.remoteProverUrl}/prove`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Circuit-Name': circuitName,
+      },
+      body: new Blob([
+        // Pack witness length (4 bytes) + witness + proving key
+        new Uint32Array([witness.length]),
+        witness,
+        artifacts.provingKey,
+      ]),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Remote prover error: ${error}`);
+    }
+
+    const proofBytes = new Uint8Array(await response.arrayBuffer());
+    console.log(`[${circuitName}] Received proof (${proofBytes.length} bytes)`);
+
+    if (proofBytes.length !== 256) {
+      throw new Error(`Invalid proof size from remote prover: ${proofBytes.length}`);
+    }
+
     return {
-      a: new Uint8Array(64),
-      b: new Uint8Array(128),
-      c: new Uint8Array(64),
+      a: proofBytes.slice(0, 64),
+      b: proofBytes.slice(64, 192),
+      c: proofBytes.slice(192, 256),
     };
   }
 
@@ -398,16 +707,18 @@ export class ProofGenerator {
 
   private buildTransferWitness(
     params: TransferParams,
+    spendingKey: Uint8Array,
     nullifierKey: Uint8Array
   ): Record<string, any> {
     const input = params.inputs[0];
-    const commitment = computeCommitment(
-      input.stealthPubX,
-      input.tokenMint,
-      input.amount,
-      input.randomness
-    );
+    // input is a DecryptedNote which extends Note, so we can pass it directly
+    const commitment = computeCommitment(input);
     const nullifier = deriveSpendingNullifier(nullifierKey, commitment, input.leafIndex);
+
+    // Convert PublicKey to field if present
+    const tokenMint = input.tokenMint instanceof Uint8Array
+      ? input.tokenMint
+      : input.tokenMint.toBytes();
 
     return {
       // Public inputs
@@ -415,40 +726,31 @@ export class ProofGenerator {
       nullifier: fieldToHex(nullifier),
       out_commitment_1: fieldToHex(params.outputs[0].commitment),
       out_commitment_2: fieldToHex(params.outputs[1]?.commitment ?? new Uint8Array(32)),
+      token_mint: fieldToHex(tokenMint),
       unshield_amount: (params.unshield?.amount ?? 0n).toString(),
-      unshield_recipient: fieldToHex(params.unshield?.recipient ?? new Uint8Array(32)),
 
       // Private inputs
       in_stealth_pub_x: fieldToHex(input.stealthPubX),
       in_stealth_pub_y: fieldToHex(input.stealthPubY),
       in_amount: input.amount.toString(),
       in_randomness: fieldToHex(input.randomness),
-      in_stealth_spending_key: fieldToHex(input.spendingKey),
+      in_stealth_spending_key: fieldToHex(spendingKey),
       merkle_path: params.merklePath.map(fieldToHex),
       merkle_path_indices: params.merkleIndices.map(i => i.toString()),
       leaf_index: input.leafIndex.toString(),
-      token_mint: fieldToHex(input.tokenMint),
 
-      // Output 1
-      out_1_stealth_pub_x: fieldToHex(params.outputs[0].stealthPubX),
-      out_1_amount: params.outputs[0].amount.toString(),
-      out_1_randomness: fieldToHex(params.outputs[0].randomness),
+      // Output 1 (recipient)
+      out_stealth_pub_x_1: fieldToHex(params.outputs[0].stealthPubX),
+      out_amount_1: params.outputs[0].amount.toString(),
+      out_randomness_1: fieldToHex(params.outputs[0].randomness),
 
-      // Output 2
-      out_2_stealth_pub_x: fieldToHex(params.outputs[1]?.stealthPubX ?? new Uint8Array(32)),
-      out_2_amount: (params.outputs[1]?.amount ?? 0n).toString(),
-      out_2_randomness: fieldToHex(params.outputs[1]?.randomness ?? new Uint8Array(32)),
+      // Output 2 (change)
+      out_stealth_pub_x_2: fieldToHex(params.outputs[1]?.stealthPubX ?? new Uint8Array(32)),
+      out_amount_2: (params.outputs[1]?.amount ?? 0n).toString(),
+      out_randomness_2: fieldToHex(params.outputs[1]?.randomness ?? new Uint8Array(32)),
     };
   }
 
-  private buildMerkleProof(note: DecryptedNote): MerkleProof {
-    return {
-      root: note.merkleRoot,
-      pathElements: note.merklePath,
-      pathIndices: note.merkleIndices,
-      leafIndex: note.leafIndex,
-    };
-  }
 }
 
 // =============================================================================

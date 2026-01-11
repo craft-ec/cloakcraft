@@ -24,13 +24,18 @@ export function deriveNullifierKey(spendingKey: FieldElement): FieldElement {
 /**
  * Derive spending nullifier (consumes the note)
  *
- * spending_nullifier = poseidon(DOMAIN_SPENDING_NULLIFIER, nk, commitment)
+ * spending_nullifier = poseidon(DOMAIN_SPENDING_NULLIFIER, nk, commitment, leaf_index)
+ *
+ * The leaf_index is included to prevent nullifier collision attacks when the
+ * same note could theoretically appear at multiple positions.
  */
 export function deriveSpendingNullifier(
   nullifierKey: FieldElement,
-  commitment: Commitment
+  commitment: Commitment,
+  leafIndex: number
 ): Nullifier {
-  return poseidonHashDomain(DOMAIN_SPENDING_NULLIFIER, nullifierKey, commitment);
+  const leafIndexBytes = fieldToBytes(BigInt(leafIndex));
+  return poseidonHashDomain(DOMAIN_SPENDING_NULLIFIER, nullifierKey, commitment, leafIndexBytes);
 }
 
 /**
