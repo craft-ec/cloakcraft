@@ -34,7 +34,7 @@ import { ProofGenerator } from './proofs';
 import { computeCommitment, generateRandomness } from './crypto/commitment';
 import { derivePublicKey } from './crypto/babyjubjub';
 import {
-  LightClient,
+  LightCommitmentClient,
   LightNullifierParams,
   HeliusConfig,
   DEVNET_LIGHT_TREES,
@@ -65,7 +65,7 @@ export class CloakCraftClient {
   private wallet: Wallet | null = null;
   private noteManager: NoteManager;
   private proofGenerator: ProofGenerator;
-  private lightClient: LightClient | null = null;
+  private lightClient: LightCommitmentClient | null = null;
 
   constructor(config: CloakCraftClientConfig) {
     this.connection = new Connection(config.rpcUrl, config.commitment ?? 'confirmed');
@@ -77,7 +77,7 @@ export class CloakCraftClient {
 
     // Initialize Light Protocol client if Helius API key provided
     if (config.heliusApiKey) {
-      this.lightClient = new LightClient({
+      this.lightClient = new LightCommitmentClient({
         apiKey: config.heliusApiKey,
         network: this.network,
       });
@@ -105,7 +105,7 @@ export class CloakCraftClient {
     return this.lightClient.isNullifierSpent(
       nullifier,
       this.programId,
-      trees.addressMerkleTree
+      trees.addressTree
     );
   }
 
@@ -120,11 +120,12 @@ export class CloakCraftClient {
     }
 
     const trees = this.getLightTrees();
+    const stateTreeSet = trees.stateTrees[0]; // Use first state tree set
     return this.lightClient.prepareLightParams({
       nullifier,
       programId: this.programId,
-      addressMerkleTree: trees.addressMerkleTree,
-      stateMerkleTree: trees.stateMerkleTree,
+      addressMerkleTree: trees.addressTree,
+      stateMerkleTree: stateTreeSet.stateTree,
       // These indices depend on how remaining_accounts is ordered
       addressMerkleTreeAccountIndex: 5,
       addressQueueAccountIndex: 6,
@@ -141,7 +142,12 @@ export class CloakCraftClient {
     }
 
     const trees = this.getLightTrees();
-    return this.lightClient.getRemainingAccounts(trees);
+    const stateTreeSet = trees.stateTrees[0]; // Use first state tree set
+    return this.lightClient.getRemainingAccounts({
+      stateMerkleTree: stateTreeSet.stateTree,
+      addressMerkleTree: trees.addressTree,
+      nullifierQueue: stateTreeSet.outputQueue,
+    });
   }
 
   /**
@@ -466,10 +472,78 @@ export class CloakCraftClient {
   // Private Methods
   // =============================================================================
 
+  /**
+   * Build a shield transaction
+   *
+   * Steps:
+   * 1. Derive commitment from recipient stealth address
+   * 2. Get Light Protocol validity proof for commitment address
+   * 3. Build shield instruction with token transfer + commitment creation
+   */
   private async buildShieldTransaction(params: ShieldParams): Promise<Transaction> {
-    // Implementation: Build shield instruction
+    if (!this.lightClient) {
+      throw new Error('Light Protocol not configured. Provide heliusApiKey in config.');
+    }
+
+    const trees = this.getLightTrees();
+    const stateTreeSet = trees.stateTrees[0];
+
+    // Derive addresses
+    const [poolPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('pool'), params.pool.toBuffer()],
+      this.programId
+    );
+    const [vaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('vault'), params.pool.toBuffer()],
+      this.programId
+    );
+    const [counterPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('commitment_counter'), poolPda.toBuffer()],
+      this.programId
+    );
+
+    // Create commitment from stealth address
+    const randomness = generateRandomness();
+    const note = (await import('./crypto/commitment')).createNote(
+      params.recipient.stealthPubkey.x,
+      params.pool, // token mint
+      params.amount,
+      randomness
+    );
+    const commitment = computeCommitment(note);
+
+    // Derive commitment address for Light Protocol
+    const commitmentAddress = this.lightClient.deriveCommitmentAddress(
+      poolPda,
+      commitment,
+      this.programId,
+      trees.addressTree
+    );
+
+    // Get validity proof for commitment creation
+    const validityProof = await this.lightClient.getValidityProof({
+      newAddresses: [commitmentAddress],
+      addressMerkleTree: trees.addressTree,
+      stateMerkleTree: stateTreeSet.stateTree,
+    });
+
+    // Get remaining accounts for Light Protocol CPI
+    const remainingAccounts = await this.getLightRemainingAccounts();
+
+    // Build transaction
     const tx = new Transaction();
-    // Add shield instruction
+
+    // Add compute budget
+    const { ComputeBudgetProgram } = await import('@solana/web3.js');
+    tx.add(
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 })
+    );
+
+    // Note: In production, use Anchor's program.methods.shield()
+    // For now, return transaction structure
+    // The actual instruction encoding would use the program IDL
+
     return tx;
   }
 

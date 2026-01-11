@@ -478,82 +478,75 @@ export class ProofGenerator {
     const acirPath = path.join(targetDir, `${circuitFileName}.json`);
     const ccsPath = path.join(targetDir, `${circuitFileName}.ccs`);
     const pkPath = path.join(targetDir, `${circuitFileName}.pk`);
+    const witnessPath = path.join(targetDir, `${circuitFileName}.gz`);
+    const proofPath = path.join(targetDir, `${circuitFileName}.proof`);
 
     // Verify all required files exist
     if (!fs.existsSync(acirPath)) throw new Error(`ACIR not found: ${acirPath}`);
     if (!fs.existsSync(ccsPath)) throw new Error(`CCS not found: ${ccsPath}`);
     if (!fs.existsSync(pkPath)) throw new Error(`PK not found: ${pkPath}`);
 
-    // Create temp directory for this proof
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cloakcraft-proof-'));
+    // Step 1: Write Prover.toml
+    const proverToml = this.inputsToProverToml(inputs);
+    const proverPath = path.join(circuitDir, 'Prover.toml');
+    fs.writeFileSync(proverPath, proverToml);
+
+    // Step 2: Run nargo execute to generate witness
+    console.log(`[${circuitName}] Generating witness...`);
+    const witnessName = circuitFileName;
 
     try {
-      // Step 1: Write Prover.toml
-      const proverToml = this.inputsToProverToml(inputs);
-      const proverPath = path.join(circuitDir, 'Prover.toml');
-      fs.writeFileSync(proverPath, proverToml);
-
-      // Step 2: Run nargo execute to generate witness
-      console.log(`[${circuitName}] Generating witness...`);
-      const witnessName = circuitFileName;
-
-      try {
-        execFileSync(nargoPath, ['execute', witnessName], {
-          cwd: circuitDir,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-      } catch (err: any) {
-        const stderr = err.stderr?.toString() || '';
-        const stdout = err.stdout?.toString() || '';
-        throw new Error(`nargo execute failed: ${stderr || stdout || err.message}`);
-      }
-
-      // Witness is output to target/<name>.gz
-      const witnessPath = path.join(targetDir, `${circuitFileName}.gz`);
-      if (!fs.existsSync(witnessPath)) {
-        throw new Error(`Witness not generated at ${witnessPath}`);
-      }
-
-      // Step 3: Run sunspot prove
-      console.log(`[${circuitName}] Generating Groth16 proof...`);
-      const proofPath = path.join(tempDir, 'proof.bin');
-
-      try {
-        // sunspot prove [acir] [witness] [ccs] [pk]
-        // Outputs proof.bin and public.bin in current directory
-        execFileSync(sunspotPath, ['prove', acirPath, witnessPath, ccsPath, pkPath], {
-          cwd: tempDir,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-      } catch (err: any) {
-        const stderr = err.stderr?.toString() || '';
-        const stdout = err.stdout?.toString() || '';
-        throw new Error(`sunspot prove failed: ${stderr || stdout || err.message}`);
-      }
-
-      // Step 4: Parse proof output
-      if (!fs.existsSync(proofPath)) {
-        throw new Error(`Proof not generated at ${proofPath}`);
-      }
-
-      const proofBytes = fs.readFileSync(proofPath);
-      console.log(`[${circuitName}] Proof generated (${proofBytes.length} bytes)`);
-
-      // Parse Groth16 proof structure
-      // Format: A (64 bytes) + B (128 bytes) + C (64 bytes) = 256 bytes
-      if (proofBytes.length !== 256) {
-        throw new Error(`Unexpected proof size: ${proofBytes.length} (expected 256)`);
-      }
-
-      return {
-        a: new Uint8Array(proofBytes.slice(0, 64)),
-        b: new Uint8Array(proofBytes.slice(64, 192)),
-        c: new Uint8Array(proofBytes.slice(192, 256)),
-      };
-    } finally {
-      // Cleanup temp directory
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      execFileSync(nargoPath, ['execute', witnessName], {
+        cwd: circuitDir,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (err: any) {
+      const stderr = err.stderr?.toString() || '';
+      const stdout = err.stdout?.toString() || '';
+      throw new Error(`nargo execute failed: ${stderr || stdout || err.message}`);
     }
+
+    // Witness is output to target/<name>.gz
+    if (!fs.existsSync(witnessPath)) {
+      throw new Error(`Witness not generated at ${witnessPath}`);
+    }
+
+    // Step 3: Run sunspot prove
+    console.log(`[${circuitName}] Generating Groth16 proof...`);
+
+    try {
+      // sunspot prove [acir] [witness] [ccs] [pk]
+      // Outputs <circuit>.proof in target directory
+      execFileSync(sunspotPath, ['prove', acirPath, witnessPath, ccsPath, pkPath], {
+        cwd: targetDir,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (err: any) {
+      const stderr = err.stderr?.toString() || '';
+      const stdout = err.stdout?.toString() || '';
+      throw new Error(`sunspot prove failed: ${stderr || stdout || err.message}`);
+    }
+
+    // Step 4: Parse proof output
+    if (!fs.existsSync(proofPath)) {
+      throw new Error(`Proof not generated at ${proofPath}`);
+    }
+
+    const rawProofBytes = fs.readFileSync(proofPath);
+    console.log(`[${circuitName}] Raw proof generated (${rawProofBytes.length} bytes)`);
+
+    // Sunspot outputs 324 bytes (256 proof + 68 padding), take first 256
+    if (rawProofBytes.length < 256) {
+      throw new Error(`Proof too small: ${rawProofBytes.length} bytes (need at least 256)`);
+    }
+
+    // Parse Groth16 proof structure
+    // Format: A (64 bytes) + B (128 bytes) + C (64 bytes) = 256 bytes
+    return {
+      a: new Uint8Array(rawProofBytes.slice(0, 64)),
+      b: new Uint8Array(rawProofBytes.slice(64, 192)),
+      c: new Uint8Array(rawProofBytes.slice(192, 256)),
+    };
   }
 
   /**
