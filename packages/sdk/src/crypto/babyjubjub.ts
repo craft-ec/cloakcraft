@@ -4,7 +4,7 @@
  * BabyJubJub is a twisted Edwards curve over the BN254 scalar field.
  */
 
-import type { Point, FieldElement } from '@cloakcraft/types';
+import type { Point } from '@cloakcraft/types';
 import { fieldToBytes, bytesToField } from './poseidon';
 
 // BN254 scalar field modulus

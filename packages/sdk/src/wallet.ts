@@ -2,7 +2,7 @@
  * Wallet management for CloakCraft
  */
 
-import type { Keypair, SpendingKey, ViewingKey, Point, FieldElement } from '@cloakcraft/types';
+import type { Keypair, SpendingKey, ViewingKey, Point } from '@cloakcraft/types';
 import { derivePublicKey } from './crypto/babyjubjub';
 import { deriveNullifierKey } from './crypto/nullifier';
 import { poseidonHashDomain, bytesToField, fieldToBytes } from './crypto/poseidon';

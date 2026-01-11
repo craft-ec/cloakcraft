@@ -14,13 +14,9 @@ import type {
   OrderParams,
   VoteParams,
   Groth16Proof,
-  TransferProofInputs,
-  DecryptedNote,
-  MerkleProof,
 } from '@cloakcraft/types';
 import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier';
 import { computeCommitment } from './crypto/commitment';
-import { generateStealthAddress } from './crypto/stealth';
 
 // BN254 field modulus for Y-coordinate negation
 const BN254_FIELD_MODULUS = BigInt('21888242871839275222246405745257275088696311157297823662689037894645226208583');
@@ -89,7 +85,6 @@ const CIRCUIT_DIR_MAP: Record<string, string> = {
 export class ProofGenerator {
   private circuits: Map<string, CircuitArtifacts> = new Map();
   private baseUrl: string;
-  private isInitialized = false;
   private nodeConfig?: NodeProverConfig;
 
   constructor(config?: { baseUrl?: string; nodeConfig?: NodeProverConfig }) {
@@ -128,7 +123,6 @@ export class ProofGenerator {
     ];
 
     await Promise.all(circuits.map(name => this.loadCircuit(name)));
-    this.isInitialized = true;
   }
 
   /**
@@ -455,7 +449,7 @@ export class ProofGenerator {
   private async proveViaSubprocess(
     circuitName: string,
     inputs: Record<string, any>,
-    artifacts: CircuitArtifacts
+    _artifacts: CircuitArtifacts // Used in browser; Node.js builds paths from nodeConfig
   ): Promise<{ a: Uint8Array; b: Uint8Array; c: Uint8Array }> {
     // Dynamic import for Node.js child_process (avoids bundling issues)
     const { execFileSync } = await import('child_process');
@@ -569,26 +563,18 @@ export class ProofGenerator {
     return lines.join('\n') + '\n';
   }
 
-  /** URL for remote Groth16 proving service (browser only) */
-  private remoteProverUrl?: string;
+  /** zkey bytes for browser proving (loaded from URL) */
+  private zkeyCache: Map<string, Uint8Array> = new Map();
 
   /**
-   * Configure remote prover for browser environments
+   * Prove via WASM (browser) using snarkjs
    *
-   * Since Groth16 proving requires heavy computation,
-   * browser environments should use a remote proving service.
-   */
-  configureRemoteProver(url: string): void {
-    this.remoteProverUrl = url;
-  }
-
-  /**
-   * Prove via WASM/remote service (browser)
+   * Privacy-preserving: All proving happens client-side.
+   * The witness (containing spending keys) never leaves the browser.
    *
    * Workflow:
    * 1. Use @noir-lang/noir_js to generate witness from inputs
-   * 2. Send witness + circuit artifacts to remote prover
-   * 3. Receive Groth16 proof
+   * 2. Use snarkjs.groth16.prove() with zkey for Groth16 proof
    */
   private async proveViaWasm(
     circuitName: string,
@@ -607,63 +593,93 @@ export class ProofGenerator {
     const { witness } = await noir.execute(inputs);
     console.log(`[${circuitName}] Witness generated (${witness.length} bytes)`);
 
-    // Use remote prover if configured
-    if (this.remoteProverUrl) {
-      return this.proveViaRemote(circuitName, witness, artifacts);
+    // Load zkey if not cached
+    let zkey = this.zkeyCache.get(circuitName);
+    if (!zkey) {
+      const circuitFileName = CIRCUIT_FILE_MAP[circuitName];
+      const zkeyUrl = `${this.baseUrl}/${circuitName}/target/${circuitFileName}.zkey`;
+
+      console.log(`[${circuitName}] Loading zkey from ${zkeyUrl}...`);
+      const zkeyRes = await fetch(zkeyUrl);
+      if (!zkeyRes.ok) {
+        throw new Error(`Failed to load zkey: ${zkeyRes.status}`);
+      }
+      zkey = new Uint8Array(await zkeyRes.arrayBuffer());
+      this.zkeyCache.set(circuitName, zkey);
+      console.log(`[${circuitName}] zkey loaded (${zkey.length} bytes)`);
     }
 
-    // Fallback: return error for browser without remote prover
-    throw new Error(
-      `Browser Groth16 proving requires a remote prover. ` +
-      `Call configureRemoteProver(url) before generating proofs.`
+    // Generate Groth16 proof using snarkjs
+    // All computation happens in the browser - private data never leaves client
+    console.log(`[${circuitName}] Generating Groth16 proof via snarkjs...`);
+
+    // Dynamic import snarkjs for browser
+    const snarkjs = await import('snarkjs');
+
+    // Convert noir witness to snarkjs format
+    // snarkjs expects witness as array of field elements
+    const witnessArray = this.witnessToFieldArray(witness);
+
+    // Generate proof - this happens entirely in the browser
+    const { proof } = await snarkjs.groth16.prove(
+      { type: 'mem', data: zkey },
+      { type: 'mem', data: witnessArray }
     );
+
+    console.log(`[${circuitName}] Proof generated successfully`);
+
+    // Convert snarkjs proof format to raw bytes
+    return this.snarkjsProofToBytes(proof);
   }
 
   /**
-   * Send witness to remote Groth16 prover
+   * Convert Noir witness bytes to snarkjs field array format
    */
-  private async proveViaRemote(
-    circuitName: string,
-    witness: Uint8Array,
-    artifacts: CircuitArtifacts
-  ): Promise<{ a: Uint8Array; b: Uint8Array; c: Uint8Array }> {
-    if (!this.remoteProverUrl) {
-      throw new Error('Remote prover URL not configured');
-    }
+  private witnessToFieldArray(witness: Uint8Array): Uint8Array {
+    // Noir witness is already packed as field elements (32 bytes each)
+    // snarkjs expects the same format
+    return witness;
+  }
 
-    console.log(`[${circuitName}] Sending to remote prover...`);
+  /**
+   * Convert snarkjs proof object to raw bytes format
+   *
+   * snarkjs proof format:
+   * {
+   *   pi_a: [x, y, z],
+   *   pi_b: [[x1, y1], [x2, y2], [z1, z2]],
+   *   pi_c: [x, y, z],
+   *   protocol: "groth16"
+   * }
+   */
+  private snarkjsProofToBytes(proof: any): { a: Uint8Array; b: Uint8Array; c: Uint8Array } {
+    // A point: 2 field elements (x, y) - 64 bytes
+    const a = new Uint8Array(64);
+    a.set(this.fieldElementToBytes(proof.pi_a[0]), 0);
+    a.set(this.fieldElementToBytes(proof.pi_a[1]), 32);
 
-    const response = await fetch(`${this.remoteProverUrl}/prove`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'X-Circuit-Name': circuitName,
-      },
-      body: new Blob([
-        // Pack witness length (4 bytes) + witness + proving key
-        new Uint32Array([witness.length]),
-        witness,
-        artifacts.provingKey,
-      ]),
-    });
+    // B point: G2 point with 2 pairs of field elements - 128 bytes
+    // snarkjs format: [[x1, x2], [y1, y2], [z1, z2]]
+    const b = new Uint8Array(128);
+    b.set(this.fieldElementToBytes(proof.pi_b[0][1]), 0);   // x2
+    b.set(this.fieldElementToBytes(proof.pi_b[0][0]), 32);  // x1
+    b.set(this.fieldElementToBytes(proof.pi_b[1][1]), 64);  // y2
+    b.set(this.fieldElementToBytes(proof.pi_b[1][0]), 96);  // y1
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Remote prover error: ${error}`);
-    }
+    // C point: 2 field elements (x, y) - 64 bytes
+    const c = new Uint8Array(64);
+    c.set(this.fieldElementToBytes(proof.pi_c[0]), 0);
+    c.set(this.fieldElementToBytes(proof.pi_c[1]), 32);
 
-    const proofBytes = new Uint8Array(await response.arrayBuffer());
-    console.log(`[${circuitName}] Received proof (${proofBytes.length} bytes)`);
+    return { a, b, c };
+  }
 
-    if (proofBytes.length !== 256) {
-      throw new Error(`Invalid proof size from remote prover: ${proofBytes.length}`);
-    }
-
-    return {
-      a: proofBytes.slice(0, 64),
-      b: proofBytes.slice(64, 192),
-      c: proofBytes.slice(192, 256),
-    };
+  /**
+   * Convert snarkjs field element (bigint string) to 32-byte array
+   */
+  private fieldElementToBytes(field: string): Uint8Array {
+    const value = BigInt(field);
+    return bigIntToBytes(value, 32);
   }
 
   /**

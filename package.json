@@ -40,6 +40,7 @@
   },
   "packageManager": "pnpm@8.15.0",
   "dependencies": {
+    "@lightprotocol/compressed-token": "^0.22.0",
     "dotenv": "^17.2.3"
   }
 }

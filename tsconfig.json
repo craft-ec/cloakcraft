@@ -13,12 +13,11 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "rootDir": "src",
     "noImplicitAny": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true
+    "typeRoots": ["./node_modules/@types", "./types"]
   },
+  "include": ["scripts/**/*.ts", "packages/*/src/**/*.ts"],
   "exclude": ["node_modules", "dist", "build"]
 }

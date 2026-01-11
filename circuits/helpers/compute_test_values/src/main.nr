@@ -12,6 +12,7 @@ fn main(
     token_mint: Field,
     in_amount: Field,
     in_randomness: Field,
+    leaf_index: Field,
     out_pub_x_1: Field,
     out_amount_1: Field,
     out_randomness_1: Field,
@@ -38,7 +39,6 @@ fn main(
     let merkle_root = compute_merkle_root(in_commitment, merkle_path, merkle_path_indices);
 
     // Compute nullifier
-    let leaf_index: Field = 0;
     let nullifier = derive_spending_nullifier(spending_key, in_commitment, leaf_index);
 
     // Compute output commitments

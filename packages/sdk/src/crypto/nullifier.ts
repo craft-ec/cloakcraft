@@ -8,17 +8,19 @@ import {
   DOMAIN_SPENDING_NULLIFIER,
   DOMAIN_ACTION_NULLIFIER,
   DOMAIN_NULLIFIER_KEY,
-  bytesToField,
   fieldToBytes,
 } from './poseidon';
 
 /**
  * Derive nullifier key from spending key
  *
- * nk = poseidon(DOMAIN_NULLIFIER_KEY, sk)
+ * nk = poseidon(DOMAIN_NULLIFIER_KEY, sk, 0)
+ *
+ * Matches circuit: hash3(NULLIFIER_KEY_DOMAIN, stealth_spending_key, 0)
  */
 export function deriveNullifierKey(spendingKey: FieldElement): FieldElement {
-  return poseidonHashDomain(DOMAIN_NULLIFIER_KEY, spendingKey);
+  const zero = new Uint8Array(32); // 0 as field element
+  return poseidonHashDomain(DOMAIN_NULLIFIER_KEY, spendingKey, zero);
 }
 
 /**

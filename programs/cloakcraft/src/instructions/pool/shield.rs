@@ -8,9 +8,8 @@ use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use crate::state::{Pool, PoolCommitmentCounter, LightValidityProof, LightAddressTreeInfo};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::events::{Shielded, NoteCreated};
+use crate::events::Shielded;
 use crate::light_cpi::create_commitment_account;
-use crate::merkle::hash_pair;
 
 #[derive(Accounts)]
 pub struct Shield<'info> {
@@ -89,21 +88,8 @@ pub fn shield<'info>(
     commitment_counter.total_commitments += 1;
 
     // Create commitment compressed account via Light Protocol
+    // Encrypted note is stored inline for direct scanning via Light Protocol API
     if let Some(params) = light_params {
-        // Hash the encrypted note for storage reference
-        let encrypted_note_hash = hash_pair(
-            &commitment,
-            &if encrypted_note.len() >= 32 {
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&encrypted_note[..32]);
-                arr
-            } else {
-                let mut arr = [0u8; 32];
-                arr[..encrypted_note.len()].copy_from_slice(&encrypted_note);
-                arr
-            },
-        );
-
         create_commitment_account(
             &ctx.accounts.user.to_account_info(),
             ctx.remaining_accounts,
@@ -113,29 +99,19 @@ pub fn shield<'info>(
             pool.key(),
             commitment,
             leaf_index,
-            encrypted_note_hash,
+            encrypted_note,
         )?;
     }
-    // Note: If light_params is None, we're in legacy mode (event-only)
-    // This allows backwards compatibility during migration
 
     // Update pool totals (merkle tree is now in Light Protocol)
     pool.total_shielded = pool.total_shielded.checked_add(amount)
         .ok_or(CloakCraftError::AmountOverflow)?;
 
-    // Emit events
+    // Emit shielded event (for public tracking)
     emit!(Shielded {
         pool: pool.key(),
         amount,
         user: ctx.accounts.user.key(),
-        timestamp: clock.unix_timestamp,
-    });
-
-    emit!(NoteCreated {
-        pool: pool.key(),
-        commitment,
-        leaf_index: leaf_index as u32,
-        encrypted_note,
         timestamp: clock.unix_timestamp,
     });
 

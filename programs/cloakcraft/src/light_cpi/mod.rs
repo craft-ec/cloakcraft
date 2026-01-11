@@ -229,6 +229,7 @@ pub fn derive_action_nullifier_address(
 /// This stores a note commitment in Light Protocol's state tree.
 /// The commitment is stored as a compressed account, and Helius Photon
 /// provides merkle proofs for ZK circuit verification.
+/// Encrypted note is stored inline for direct scanning via Light Protocol API.
 pub fn create_commitment_account<'info>(
     fee_payer: &AccountInfo<'info>,
     remaining_accounts: &[AccountInfo<'info>],
@@ -238,7 +239,7 @@ pub fn create_commitment_account<'info>(
     pool: Pubkey,
     commitment: [u8; 32],
     leaf_index: u64,
-    encrypted_note_hash: [u8; 32],
+    encrypted_note: Vec<u8>,
 ) -> Result<()> {
     // Convert IDL-safe types to Light SDK types
     let proof: ValidityProof = proof.into();
@@ -284,7 +285,7 @@ pub fn create_commitment_account<'info>(
     commitment_account.pool = pool.to_bytes();
     commitment_account.commitment = commitment;
     commitment_account.leaf_index = leaf_index;
-    commitment_account.encrypted_note_hash = encrypted_note_hash;
+    commitment_account.encrypted_note = encrypted_note;
     commitment_account.created_at = clock.unix_timestamp;
 
     // Invoke Light System Program to create the compressed account

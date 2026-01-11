@@ -8,13 +8,11 @@ import {
   Connection,
   PublicKey,
   Transaction,
-  TransactionInstruction,
   Keypair as SolanaKeypair,
 } from '@solana/web3.js';
-import { Program, AnchorProvider } from '@coral-xyz/anchor';
+import { Program } from '@coral-xyz/anchor';
 
 import type {
-  Keypair,
   ShieldParams,
   TransferParams,
   AdapterSwapParams,
@@ -31,15 +29,22 @@ import type {
 import { Wallet, createWallet, loadWallet } from './wallet';
 import { NoteManager } from './notes';
 import { ProofGenerator } from './proofs';
-import { computeCommitment, generateRandomness } from './crypto/commitment';
+import { computeCommitment, generateRandomness, createNote } from './crypto/commitment';
 import { derivePublicKey } from './crypto/babyjubjub';
+import { poseidonHash, fieldToBytes, bytesToField, initPoseidon } from './crypto/poseidon';
+import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier';
 import {
   LightCommitmentClient,
   LightNullifierParams,
-  HeliusConfig,
   DEVNET_LIGHT_TREES,
   MAINNET_LIGHT_TREES,
 } from './light';
+import {
+  buildShieldWithProgram,
+  buildTransactWithProgram,
+  storeCommitments,
+  initializePool as initPool,
+} from './instructions';
 
 export interface CloakCraftClientConfig {
   /** Solana RPC URL */
@@ -54,11 +59,20 @@ export interface CloakCraftClientConfig {
   heliusApiKey?: string;
   /** Network for Light Protocol */
   network?: 'mainnet-beta' | 'devnet';
+  /** Base URL for circuit artifacts (browser only) */
+  circuitsBaseUrl?: string;
+  /** Node.js prover config (auto-detected if not provided) */
+  nodeProverConfig?: {
+    circuitsDir: string;
+    sunspotPath: string;
+    nargoPath: string;
+  };
 }
 
 export class CloakCraftClient {
   readonly connection: Connection;
   readonly programId: PublicKey;
+  readonly rpcUrl: string;
   readonly indexerUrl: string;
   readonly network: 'mainnet-beta' | 'devnet';
 
@@ -66,14 +80,30 @@ export class CloakCraftClient {
   private noteManager: NoteManager;
   private proofGenerator: ProofGenerator;
   private lightClient: LightCommitmentClient | null = null;
+  private program: Program | null = null;
 
   constructor(config: CloakCraftClientConfig) {
     this.connection = new Connection(config.rpcUrl, config.commitment ?? 'confirmed');
     this.programId = config.programId;
+    this.rpcUrl = config.rpcUrl;
     this.indexerUrl = config.indexerUrl;
     this.network = config.network ?? 'devnet';
     this.noteManager = new NoteManager(config.indexerUrl);
-    this.proofGenerator = new ProofGenerator();
+
+    // Configure proof generator for environment
+    this.proofGenerator = new ProofGenerator({
+      baseUrl: config.circuitsBaseUrl,
+      nodeConfig: config.nodeProverConfig,
+    });
+
+    // Auto-configure for Node.js if not explicitly configured
+    const isNode = typeof globalThis.process !== 'undefined'
+      && globalThis.process.versions != null
+      && globalThis.process.versions.node != null;
+
+    if (isNode && !config.nodeProverConfig) {
+      this.proofGenerator.configureForNode();
+    }
 
     // Initialize Light Protocol client if Helius API key provided
     if (config.heliusApiKey) {
@@ -82,6 +112,44 @@ export class CloakCraftClient {
         network: this.network,
       });
     }
+  }
+
+  /**
+   * Initialize proof generator
+   *
+   * Must be called before generating proofs.
+   * Loads circuit artifacts (manifests, proving keys, zkeys).
+   *
+   * @param circuits - Optional list of circuits to load (loads all by default)
+   */
+  async initializeProver(circuits?: string[]): Promise<void> {
+    // Initialize Poseidon hash function (required for circomlibjs)
+    await initPoseidon();
+    await this.proofGenerator.initialize(circuits);
+  }
+
+  /**
+   * Get the proof generator instance
+   *
+   * For advanced usage - direct proof generation
+   */
+  getProofGenerator(): ProofGenerator {
+    return this.proofGenerator;
+  }
+
+  /**
+   * Set the Anchor program instance
+   * Required for transaction building
+   */
+  setProgram(program: Program): void {
+    this.program = program;
+  }
+
+  /**
+   * Get the Anchor program instance
+   */
+  getProgram(): Program | null {
+    return this.program;
   }
 
   /**
@@ -95,8 +163,11 @@ export class CloakCraftClient {
    * Check if a nullifier has been spent
    *
    * Returns true if the nullifier compressed account exists
+   *
+   * @param nullifier - The nullifier bytes
+   * @param pool - The pool public key (used in address derivation seeds)
    */
-  async isNullifierSpent(nullifier: Uint8Array): Promise<boolean> {
+  async isNullifierSpent(nullifier: Uint8Array, pool: PublicKey): Promise<boolean> {
     if (!this.lightClient) {
       throw new Error('Light Protocol not configured. Provide heliusApiKey in config.');
     }
@@ -105,7 +176,8 @@ export class CloakCraftClient {
     return this.lightClient.isNullifierSpent(
       nullifier,
       this.programId,
-      trees.addressTree
+      trees.addressTree,
+      pool
     );
   }
 
@@ -113,8 +185,11 @@ export class CloakCraftClient {
    * Prepare Light Protocol params for a transact instruction
    *
    * This fetches the validity proof from Helius for nullifier creation
+   *
+   * @param nullifier - The nullifier bytes
+   * @param pool - The pool public key (used in address derivation seeds)
    */
-  async prepareLightParams(nullifier: Uint8Array): Promise<LightNullifierParams> {
+  async prepareLightParams(nullifier: Uint8Array, pool: PublicKey): Promise<LightNullifierParams> {
     if (!this.lightClient) {
       throw new Error('Light Protocol not configured. Provide heliusApiKey in config.');
     }
@@ -123,6 +198,7 @@ export class CloakCraftClient {
     const stateTreeSet = trees.stateTrees[0]; // Use first state tree set
     return this.lightClient.prepareLightParams({
       nullifier,
+      pool,
       programId: this.programId,
       addressMerkleTree: trees.addressTree,
       stateMerkleTree: stateTreeSet.stateTree,
@@ -160,8 +236,11 @@ export class CloakCraftClient {
 
   /**
    * Load wallet from spending key
+   * Async because it initializes Poseidon hash function if needed
    */
-  loadWallet(spendingKey: Uint8Array): Wallet {
+  async loadWallet(spendingKey: Uint8Array): Promise<Wallet> {
+    // Initialize Poseidon before deriving keys
+    await initPoseidon();
     this.wallet = loadWallet(spendingKey);
     return this.wallet;
   }
@@ -171,6 +250,20 @@ export class CloakCraftClient {
    */
   getWallet(): Wallet | null {
     return this.wallet;
+  }
+
+  /**
+   * Initialize a new pool for a token
+   */
+  async initializePool(
+    tokenMint: PublicKey,
+    payer: SolanaKeypair
+  ): Promise<{ poolTx: string; counterTx: string }> {
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    return initPool(this.program, tokenMint, payer.publicKey, payer.publicKey);
   }
 
   /**
@@ -214,34 +307,52 @@ export class CloakCraftClient {
 
   /**
    * Shield tokens into the pool
+   *
+   * Uses the new instruction builder for full Light Protocol integration
    */
   async shield(
     params: ShieldParams,
     payer: SolanaKeypair
-  ): Promise<TransactionResult> {
+  ): Promise<TransactionResult & { commitment: Uint8Array; randomness: Uint8Array }> {
     if (!this.wallet) {
       throw new Error('No wallet loaded');
     }
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
 
-    // Build shield transaction
-    const tx = await this.buildShieldTransaction(params);
+    // Build shield using instruction builder
+    const { tx, commitment, randomness } = await buildShieldWithProgram(
+      this.program,
+      {
+        tokenMint: params.pool,
+        amount: params.amount,
+        recipientPubkey: params.recipient.stealthPubkey,
+        userTokenAccount: params.userTokenAccount!,
+        user: payer.publicKey,
+      },
+      this.rpcUrl
+    );
 
-    // Sign and send
-    tx.feePayer = payer.publicKey;
-    tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
-    tx.sign(payer);
-
-    const signature = await this.connection.sendRawTransaction(tx.serialize());
-    const confirmation = await this.connection.confirmTransaction(signature);
+    // Execute transaction
+    const signature = await tx.rpc();
 
     return {
       signature,
-      slot: confirmation.context.slot,
+      slot: 0, // Slot is not available from rpc()
+      commitment,
+      randomness,
     };
   }
 
   /**
    * Private transfer
+   *
+   * Generates ZK proof client-side (privacy-preserving) and submits transaction.
+   * The proof generation happens entirely in the browser/local environment.
+   *
+   * @param params - Transfer parameters with prepared inputs
+   * @param relayer - Optional relayer keypair for transaction fees
    */
   async transfer(
     params: TransferParams,
@@ -250,29 +361,106 @@ export class CloakCraftClient {
     if (!this.wallet) {
       throw new Error('No wallet loaded');
     }
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
 
-    // Generate proof
+    // Ensure the required circuit is loaded
+    const circuitName = params.inputs.length === 1 ? 'transfer/1x2' : 'transfer/1x3';
+    if (!this.proofGenerator.hasCircuit(circuitName)) {
+      throw new Error(`Prover not initialized. Call initializeProver(['${circuitName}']) first.`);
+    }
+
+    // Get the token mint as PublicKey
+    const tokenMint = params.inputs[0].tokenMint instanceof Uint8Array
+      ? new PublicKey(params.inputs[0].tokenMint)
+      : params.inputs[0].tokenMint;
+
+    // Fetch current leaf index from PoolCommitmentCounter before transaction
+    const [poolPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('pool'), tokenMint.toBuffer()],
+      this.programId
+    );
+    const [counterPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('commitment_counter'), poolPda.toBuffer()],
+      this.programId
+    );
+    const counterAccount = await this.connection.getAccountInfo(counterPda);
+    if (!counterAccount) {
+      throw new Error('PoolCommitmentCounter not found. Initialize pool first.');
+    }
+    // Decode: 8 (discriminator) + 32 (pool) + 8 (next_leaf_index)
+    const baseLeafIndex = counterAccount.data.readBigUInt64LE(40);
+    console.log(`[transfer] Current leaf index: ${baseLeafIndex}`);
+
+    // Generate proof client-side (all private data stays local)
+    console.log('[transfer] Generating ZK proof...');
     const proof = await this.proofGenerator.generateTransferProof(
       params,
       this.wallet.keypair
     );
+    console.log(`[transfer] Proof generated (${proof.length} bytes)`);
 
-    // Build transaction
-    const tx = await this.buildTransferTransaction(params, proof);
+    // Build transaction using instruction builder
+    const { tx, result } = await buildTransactWithProgram(
+      this.program,
+      {
+        tokenMint,
+        input: {
+          stealthPubX: params.inputs[0].stealthPubX,
+          stealthPubY: params.inputs[0].stealthPubY,
+          amount: params.inputs[0].amount,
+          randomness: params.inputs[0].randomness,
+          leafIndex: params.inputs[0].leafIndex,
+          spendingKey: BigInt('0x' + Buffer.from(this.wallet.keypair.spending.sk).toString('hex')),
+        },
+        outputs: params.outputs.map(o => ({
+          recipientPubkey: o.recipient.stealthPubkey,
+          amount: o.amount,
+        })),
+        merkleRoot: params.merkleRoot,
+        merklePath: params.merklePath,
+        merklePathIndices: params.merkleIndices,
+        unshieldAmount: params.unshield?.amount,
+        unshieldRecipient: params.unshield?.recipient,
+        relayer: relayer?.publicKey ?? (await this.getRelayerPubkey()),
+        proof,
+      },
+      this.rpcUrl,
+      circuitName === 'transfer/1x2' ? 'transfer_1x2' : 'transfer_1x3'
+    );
 
-    // Sign and send
-    const payer = relayer ?? (await this.getRelayer());
-    tx.feePayer = payer.publicKey;
-    tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
-    tx.sign(payer);
+    // Execute transaction
+    const signature = await tx.rpc();
+    console.log(`[transfer] Transaction submitted: ${signature}`);
 
-    const signature = await this.connection.sendRawTransaction(tx.serialize());
-    const confirmation = await this.connection.confirmTransaction(signature);
+    // Store output commitments with correct leaf indices
+    if (result.outputCommitments.length > 0) {
+      await storeCommitments(
+        this.program,
+        tokenMint,
+        result.outputCommitments.map((c, i) => ({
+          commitment: c,
+          leafIndex: baseLeafIndex + BigInt(i),
+          encryptedNote: result.encryptedNotes[i],
+        })),
+        relayer?.publicKey ?? (await this.getRelayerPubkey()),
+        this.rpcUrl
+      );
+    }
 
     return {
       signature,
-      slot: confirmation.context.slot,
+      slot: 0,
     };
+  }
+
+  /**
+   * Get relayer public key (without requiring keypair)
+   */
+  private async getRelayerPubkey(): Promise<PublicKey> {
+    // In production: Connect to TunnelCraft relay network
+    throw new Error('No relayer configured. Pass relayer keypair to transfer().');
   }
 
   /**
@@ -414,12 +602,12 @@ export class CloakCraftClient {
     const merkleProof = await this.fetchMerkleProof(request.input);
 
     // Generate order ID and other derived values
-    const { poseidonHash, fieldToBytes } = await import('./crypto/poseidon');
+    
     const orderIdBytes = generateRandomness();
     const escrowRandomness = generateRandomness();
 
     // Compute escrow commitment
-    const escrowNote = (await import('./crypto/commitment')).createNote(
+    const escrowNote = createNote(
       preparedInput.stealthPubX,
       request.terms.offerMint,
       request.terms.offerAmount,
@@ -436,7 +624,7 @@ export class CloakCraftClient {
     ]);
 
     // Compute nullifier
-    const { deriveNullifierKey, deriveSpendingNullifier } = await import('./crypto/nullifier');
+    
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     const inputCommitment = computeCommitment(request.input);
     const nullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, request.input.leafIndex);
@@ -468,98 +656,74 @@ export class CloakCraftClient {
     return this.noteManager.getSyncStatus();
   }
 
-  // =============================================================================
-  // Private Methods
-  // =============================================================================
-
   /**
-   * Build a shield transaction
+   * Scan for notes belonging to the current wallet
    *
-   * Steps:
-   * 1. Derive commitment from recipient stealth address
-   * 2. Get Light Protocol validity proof for commitment address
-   * 3. Build shield instruction with token transfer + commitment creation
+   * Uses the Light Protocol scanner to find and decrypt notes
+   *
+   * @param tokenMint - Optional token mint to filter by (derives pool PDA internally)
    */
-  private async buildShieldTransaction(params: ShieldParams): Promise<Transaction> {
+  async scanNotes(tokenMint?: PublicKey): Promise<DecryptedNote[]> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
     if (!this.lightClient) {
       throw new Error('Light Protocol not configured. Provide heliusApiKey in config.');
     }
 
-    const trees = this.getLightTrees();
-    const stateTreeSet = trees.stateTrees[0];
+    const viewingKey = bytesToField(this.wallet.keypair.spending.sk);
 
-    // Derive addresses
-    const [poolPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('pool'), params.pool.toBuffer()],
-      this.programId
-    );
-    const [vaultPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('vault'), params.pool.toBuffer()],
-      this.programId
-    );
-    const [counterPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('commitment_counter'), poolPda.toBuffer()],
-      this.programId
-    );
+    // Derive pool PDA from token mint if provided
+    // Commitment accounts store pool PDA, not token mint
+    let poolPda: PublicKey | undefined;
+    if (tokenMint) {
+      [poolPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from('pool'), tokenMint.toBuffer()],
+        this.programId
+      );
+    }
 
-    // Create commitment from stealth address
-    const randomness = generateRandomness();
-    const note = (await import('./crypto/commitment')).createNote(
-      params.recipient.stealthPubkey.x,
-      params.pool, // token mint
-      params.amount,
-      randomness
-    );
-    const commitment = computeCommitment(note);
-
-    // Derive commitment address for Light Protocol
-    const commitmentAddress = this.lightClient.deriveCommitmentAddress(
-      poolPda,
-      commitment,
-      this.programId,
-      trees.addressTree
-    );
-
-    // Get validity proof for commitment creation
-    const validityProof = await this.lightClient.getValidityProof({
-      newAddresses: [commitmentAddress],
-      addressMerkleTree: trees.addressTree,
-      stateMerkleTree: stateTreeSet.stateTree,
-    });
-
-    // Get remaining accounts for Light Protocol CPI
-    const remainingAccounts = await this.getLightRemainingAccounts();
-
-    // Build transaction
-    const tx = new Transaction();
-
-    // Add compute budget
-    const { ComputeBudgetProgram } = await import('@solana/web3.js');
-    tx.add(
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
-      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 })
-    );
-
-    // Note: In production, use Anchor's program.methods.shield()
-    // For now, return transaction structure
-    // The actual instruction encoding would use the program IDL
-
-    return tx;
+    return this.lightClient.scanNotes(viewingKey, this.programId, poolPda);
   }
 
-  private async buildTransferTransaction(
-    params: TransferParams,
-    proof: Uint8Array
-  ): Promise<Transaction> {
-    // Implementation: Build transfer instruction
-    const tx = new Transaction();
-    // Add transfer instruction with proof
-    return tx;
+  /**
+   * Get balance for the current wallet
+   *
+   * Scans for unspent notes and sums their amounts
+   *
+   * @param tokenMint - Optional token mint to filter by (derives pool PDA internally)
+   */
+  async getPrivateBalance(tokenMint?: PublicKey): Promise<bigint> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+    if (!this.lightClient) {
+      throw new Error('Light Protocol not configured. Provide heliusApiKey in config.');
+    }
+
+    const viewingKey = bytesToField(this.wallet.keypair.spending.sk);
+    const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
+
+    // Derive pool PDA from token mint if provided
+    // Commitment accounts store pool PDA, not token mint
+    let poolPda: PublicKey | undefined;
+    if (tokenMint) {
+      [poolPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from('pool'), tokenMint.toBuffer()],
+        this.programId
+      );
+    }
+
+    return this.lightClient.getBalance(viewingKey, nullifierKey, this.programId, poolPda);
   }
+
+  // =============================================================================
+  // Private Methods
+  // =============================================================================
 
   private async buildAdapterSwapTransaction(
-    params: AdapterSwapParams,
-    proof: Uint8Array
+    _params: AdapterSwapParams,
+    _proof: Uint8Array
   ): Promise<Transaction> {
     // Implementation: Build adapter swap instruction
     const tx = new Transaction();
@@ -567,8 +731,8 @@ export class CloakCraftClient {
   }
 
   private async buildCreateOrderTransaction(
-    params: OrderParams,
-    proof: Uint8Array
+    _params: OrderParams,
+    _proof: Uint8Array
   ): Promise<Transaction> {
     // Implementation: Build create order instruction
     const tx = new Transaction();
@@ -580,7 +744,7 @@ export class CloakCraftClient {
     throw new Error('No relayer configured');
   }
 
-  private decodePoolState(data: Buffer): PoolState {
+  private decodePoolState(_data: Buffer): PoolState {
     // Implementation: Decode pool account data
     throw new Error('Not implemented');
   }
@@ -593,7 +757,7 @@ export class CloakCraftClient {
       throw new Error('No wallet loaded');
     }
 
-    const { bytesToField } = await import('./crypto/poseidon');
+    
 
     return inputs.map(input => {
       // Derive the full public key from the spending key
@@ -613,7 +777,7 @@ export class CloakCraftClient {
   private async prepareOutputs(
     outputs: Array<{ recipient: StealthAddress; amount: bigint }>
   ): Promise<TransferOutput[]> {
-    const { createNote } = await import('./crypto/commitment');
+    
 
     return outputs.map(output => {
       const randomness = generateRandomness();

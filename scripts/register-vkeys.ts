@@ -39,6 +39,12 @@ function padCircuitId(id: string): Buffer {
 }
 
 async function main() {
+  // Check for --force flag
+  const forceUpdate = process.argv.includes('--force');
+  if (forceUpdate) {
+    console.log("Force update mode: will overwrite existing VKs\n");
+  }
+
   // Setup connection
   const connection = new Connection("https://api.devnet.solana.com", "confirmed");
 
@@ -87,11 +93,15 @@ async function main() {
     if (accountInfo) {
       // Check if VK data is actually populated
       const vecLen = accountInfo.data.readUInt32LE(40);
-      if (vecLen > 0) {
+      if (vecLen > 0 && !forceUpdate) {
         console.log("  Status: Already registered ✓");
         continue;
       }
-      console.log("  Account exists but VK data is empty, uploading...");
+      if (vecLen > 0 && forceUpdate) {
+        console.log("  Status: Already registered, will overwrite...");
+      } else {
+        console.log("  Account exists but VK data is empty, uploading...");
+      }
     }
 
     // Load VK data
@@ -110,6 +120,54 @@ async function main() {
 
       // Determine if account already exists (from previous failed attempt)
       const accountExists = accountInfo !== null;
+
+      // Force update: clear existing data then append in chunks
+      if (forceUpdate && accountExists) {
+        console.log("  Clearing existing VK data...");
+        // First clear the VK data
+        await program.methods
+          .setVerificationKeyData(
+            Array.from(circuitId) as any,
+            Buffer.from([]) // Empty data to clear
+          )
+          .accounts({
+            verificationKey: vkPda,
+            authority: wallet.publicKey,
+          })
+          .rpc();
+        console.log("  VK data cleared ✓");
+
+        // Wait for confirmation
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // Upload VK data in chunks
+        const chunks = [];
+        for (let i = 0; i < vkData.length; i += CHUNK_SIZE) {
+          chunks.push(vkData.slice(i, i + CHUNK_SIZE));
+        }
+        console.log(`  Uploading ${chunks.length} chunks...`);
+
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
+          await program.methods
+            .appendVerificationKeyData(
+              Array.from(circuitId) as any,
+              Buffer.from(chunk)
+            )
+            .accounts({
+              verificationKey: vkPda,
+              authority: wallet.publicKey,
+            })
+            .rpc();
+          console.log(`  Chunk ${i + 1}/${chunks.length}: ✓`);
+
+          // Small delay between chunks
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+
+        console.log("  Status: Updated ✓");
+        continue;
+      }
 
       if (!accountExists && vkData.length <= SINGLE_TX_VK_LIMIT) {
         // Small VK, no existing account - register in single transaction

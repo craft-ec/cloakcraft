@@ -2,10 +2,15 @@
  * Light Protocol Integration
  *
  * Handles interaction with Helius Photon indexer for compressed account operations.
- * Used for nullifier storage via ZK Compression.
+ * Used for nullifier and commitment storage via ZK Compression.
+ * Includes note scanner for finding user's notes in compressed accounts.
  */
 
 import { PublicKey, AccountMeta } from '@solana/web3.js';
+import type { DecryptedNote, EncryptedNote, Point } from '@cloakcraft/types';
+import { tryDecryptNote } from './crypto/encryption';
+import { deriveSpendingNullifier } from './crypto/nullifier';
+import { initPoseidon } from './crypto/poseidon';
 
 /**
  * Helius RPC endpoint configuration
@@ -67,8 +72,11 @@ export interface CompressedAccountInfo {
   owner: string;
   /** Lamports */
   lamports: number;
-  /** Data (base64) */
-  data: string | null;
+  /** Data object with discriminator and base64 data */
+  data: {
+    discriminator: number;
+    data: string;
+  } | null;
 }
 
 /**
@@ -90,7 +98,8 @@ export class LightClient {
    * Returns null if account doesn't exist (nullifier not spent)
    */
   async getCompressedAccount(address: Uint8Array): Promise<CompressedAccountInfo | null> {
-    const addressHex = Buffer.from(address).toString('hex');
+    // Helius expects base58 encoded address (like Solana public keys)
+    const addressBase58 = new PublicKey(address).toBase58();
 
     const response = await fetch(this.rpcUrl, {
       method: 'POST',
@@ -100,13 +109,13 @@ export class LightClient {
         id: 1,
         method: 'getCompressedAccount',
         params: {
-          address: addressHex,
+          address: addressBase58,
         },
       }),
     });
 
     const result = await response.json() as {
-      result: CompressedAccountInfo | null;
+      result: { context: { slot: number }; value: CompressedAccountInfo | null };
       error?: { message: string };
     };
 
@@ -114,7 +123,8 @@ export class LightClient {
       throw new Error(`Helius RPC error: ${result.error.message}`);
     }
 
-    return result.result;
+    // Helius returns {context: {...}, value: <account|null>}
+    return result.result?.value ?? null;
   }
 
   /**
@@ -125,9 +135,10 @@ export class LightClient {
   async isNullifierSpent(
     nullifier: Uint8Array,
     programId: PublicKey,
-    addressTree: PublicKey
+    addressTree: PublicKey,
+    pool: PublicKey
   ): Promise<boolean> {
-    const address = this.deriveNullifierAddress(nullifier, programId, addressTree);
+    const address = this.deriveNullifierAddress(nullifier, programId, addressTree, pool);
     const account = await this.getCompressedAccount(address);
     return account !== null;
   }
@@ -153,7 +164,8 @@ export class LightClient {
         id: 1,
         method: 'getValidityProof',
         params: {
-          newAddresses: params.newAddresses.map(a => Buffer.from(a).toString('hex')),
+          // Helius expects base58 encoded addresses
+          newAddresses: params.newAddresses.map(a => new PublicKey(a).toBase58()),
           addressMerkleTree: params.addressMerkleTree.toBase58(),
           stateMerkleTree: params.stateMerkleTree.toBase58(),
         },
@@ -188,6 +200,8 @@ export class LightClient {
     nullifier: Uint8Array;
     /** CloakCraft program ID */
     programId: PublicKey;
+    /** Pool PDA (for nullifier address derivation) */
+    pool: PublicKey;
     /** Address merkle tree account */
     addressMerkleTree: PublicKey;
     /** State merkle tree account */
@@ -199,11 +213,12 @@ export class LightClient {
     /** Output state tree index */
     outputTreeIndex: number;
   }): Promise<LightNullifierParams> {
-    // Derive nullifier address
+    // Derive nullifier address (seeds: ["spend_nullifier", pool, nullifier])
     const nullifierAddress = this.deriveNullifierAddress(
       params.nullifier,
       params.programId,
-      params.addressMerkleTree
+      params.addressMerkleTree,
+      params.pool
     );
 
     // Get validity proof (non-inclusion)
@@ -256,37 +271,36 @@ export class LightClient {
   }
 
   /**
-   * Derive nullifier compressed account address
+   * Derive spend nullifier compressed account address
    *
-   * Matches the on-chain derive_nullifier_address function
+   * Uses Light Protocol's Poseidon-based address derivation.
+   * Must match the on-chain derivation in light_cpi/mod.rs:
+   * Seeds: ["spend_nullifier", pool, nullifier]
    */
   deriveNullifierAddress(
     nullifier: Uint8Array,
     programId: PublicKey,
-    addressTree: PublicKey
+    addressTree: PublicKey,
+    pool?: PublicKey
   ): Uint8Array {
-    // Address derivation uses Poseidon hash:
-    // address = poseidon(SEED_PREFIX || nullifier || address_tree || program_id)
-    //
-    // In JS, we use the light-protocol SDK for this
-    // For now, return a placeholder - actual implementation requires
-    // the @lightprotocol/stateless.js SDK
+    const { deriveAddressSeedV2, deriveAddressV2 } = require('@lightprotocol/stateless.js');
 
-    // TODO: Import from @lightprotocol/stateless.js (v2)
-    // import { deriveAddressSeedV2, deriveAddressV2 } from '@lightprotocol/stateless.js';
-    // const addressSeed = deriveAddressSeedV2([Buffer.from('nullifier'), nullifier], programId);
-    // return deriveAddressV2(addressSeed, addressTree, programId);
+    // Seeds must match on-chain: ["spend_nullifier", pool, nullifier]
+    const seeds = pool
+      ? [
+          Buffer.from('spend_nullifier'),
+          pool.toBuffer(),
+          Buffer.from(nullifier),
+        ]
+      : [
+          Buffer.from('spend_nullifier'),
+          Buffer.from(nullifier),
+        ];
 
-    // Placeholder implementation using simple hash
-    const { createHash } = require('crypto');
-    const hash = createHash('sha256')
-      .update(Buffer.from('nullifier'))
-      .update(nullifier)
-      .update(addressTree.toBytes())
-      .update(programId.toBytes())
-      .digest();
+    const seed = deriveAddressSeedV2(seeds);
+    const address = deriveAddressV2(seed, addressTree, programId);
 
-    return new Uint8Array(hash);
+    return address.toBytes();
   }
 }
 
@@ -305,9 +319,11 @@ export interface StateTreeSet {
  * V2 uses batch merkle trees for better throughput.
  * There are 5 parallel state tree sets to avoid contention.
  * For address trees, the tree and queue are the same account.
+ *
+ * Address tree from Light SDK getBatchAddressTreeInfo()
  */
 export const DEVNET_LIGHT_TREES = {
-  /** V2 batch address tree (tree and queue are the same) */
+  /** V2 batch address tree from Light SDK getBatchAddressTreeInfo() */
   addressTree: new PublicKey('amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx'),
 
   /** 5 parallel state tree sets for throughput */
@@ -364,8 +380,18 @@ export function getStateTreeSet(index: number): StateTreeSet {
  */
 export const MAINNET_LIGHT_TREES = {
   addressTree: new PublicKey('amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx'),
-  stateTrees: DEVNET_LIGHT_TREES.stateTrees, // TODO: Update with mainnet addresses
+  stateTrees: DEVNET_LIGHT_TREES.stateTrees,
 };
+
+/**
+ * Scanned note with spent status
+ */
+export interface ScannedNote extends DecryptedNote {
+  /** Whether this note has been spent */
+  spent: boolean;
+  /** Nullifier for this note (derived from nullifier key) */
+  nullifier: Uint8Array;
+}
 
 /**
  * Commitment merkle proof from Helius
@@ -536,5 +562,296 @@ export class LightCommitmentClient extends LightClient {
       idx >>= 1;
     }
     return indices;
+  }
+
+  // =========================================================================
+  // Note Scanner
+  // =========================================================================
+
+  /**
+   * Scan for notes belonging to a user and check spent status
+   *
+   * Queries all commitment accounts, decrypts with viewing key,
+   * then checks nullifier status for each note.
+   *
+   * @param viewingKey - User's viewing private key (for decryption)
+   * @param nullifierKey - User's nullifier key (for deriving nullifiers)
+   * @param programId - CloakCraft program ID
+   * @param pool - Pool to scan (optional, scans all if not provided)
+   * @returns Array of notes with spent status
+   */
+  async scanNotesWithStatus(
+    viewingKey: bigint,
+    nullifierKey: Uint8Array,
+    programId: PublicKey,
+    pool?: PublicKey
+  ): Promise<ScannedNote[]> {
+    // Initialize Poseidon (required for nullifier computation)
+    await initPoseidon();
+
+    // First scan for notes
+    const notes = await this.scanNotes(viewingKey, programId, pool);
+
+    // Check spent status for each note
+    const addressTree = DEVNET_LIGHT_TREES.addressTree;
+    const results: ScannedNote[] = [];
+
+    for (const note of notes) {
+      // Derive nullifier from note
+      const nullifier = deriveSpendingNullifier(
+        nullifierKey,
+        note.commitment,
+        note.leafIndex
+      );
+
+      // Check if nullifier has been spent (uses note.pool for address derivation)
+      const spent = await this.isNullifierSpent(nullifier, programId, addressTree, note.pool);
+
+      results.push({
+        ...note,
+        spent,
+        nullifier,
+      });
+    }
+
+    return results;
+  }
+
+  /**
+   * Get only unspent notes (available balance)
+   */
+  async getUnspentNotes(
+    viewingKey: bigint,
+    nullifierKey: Uint8Array,
+    programId: PublicKey,
+    pool?: PublicKey
+  ): Promise<DecryptedNote[]> {
+    const notes = await this.scanNotesWithStatus(viewingKey, nullifierKey, programId, pool);
+    return notes.filter(n => !n.spent);
+  }
+
+  /**
+   * Calculate total balance from unspent notes
+   */
+  async getBalance(
+    viewingKey: bigint,
+    nullifierKey: Uint8Array,
+    programId: PublicKey,
+    pool?: PublicKey
+  ): Promise<bigint> {
+    const unspent = await this.getUnspentNotes(viewingKey, nullifierKey, programId, pool);
+    return unspent.reduce((sum, note) => sum + note.amount, 0n);
+  }
+
+  /**
+   * Scan for notes belonging to a user
+   *
+   * Queries all commitment accounts for a pool and attempts to decrypt
+   * the encrypted notes with the user's viewing key.
+   *
+   * @param viewingKey - User's viewing private key (for decryption)
+   * @param programId - CloakCraft program ID
+   * @param pool - Pool to scan (optional, scans all if not provided)
+   * @returns Array of decrypted notes owned by the user
+   */
+  async scanNotes(
+    viewingKey: bigint,
+    programId: PublicKey,
+    pool?: PublicKey
+  ): Promise<DecryptedNote[]> {
+    // Query commitment accounts from Helius
+    console.log(`[scanNotes] Scanning for notes. Pool: ${pool?.toBase58() ?? 'all'}`);
+    const accounts = await this.getCommitmentAccounts(programId, pool);
+    console.log(`[scanNotes] Found ${accounts.length} accounts from Helius`);
+
+    // Commitment account discriminator
+    // Note: JavaScript loses precision for large integers, so we use approximate match
+    // Actual value: 15491678376909512437, JS sees: ~15491678376909513000
+    const COMMITMENT_DISCRIMINATOR_APPROX = 15491678376909513000;
+
+    const decryptedNotes: DecryptedNote[] = [];
+
+    for (const account of accounts) {
+      if (!account.data?.data) continue;
+
+      // Filter by commitment discriminator (approximate match due to JS number precision)
+      const disc = account.data.discriminator;
+      if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1000) continue;
+
+      // Skip accounts with truncated encrypted notes (older format)
+      const dataLen = Buffer.from(account.data.data, 'base64').length;
+      if (dataLen < 200) continue;
+
+      try {
+        // Parse commitment account data (discriminator already filtered above)
+        const parsed = this.parseCommitmentAccountData(account.data.data);
+        if (!parsed) continue;
+
+        // Deserialize encrypted note
+        const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
+        if (!encryptedNote) continue;
+
+        // Try to decrypt with viewing key
+        const note = tryDecryptNote(encryptedNote, viewingKey);
+        if (!note) continue;
+
+        // Successfully decrypted - this note belongs to user
+        decryptedNotes.push({
+          ...note,
+          commitment: parsed.commitment,
+          leafIndex: parsed.leafIndex,
+          pool: new PublicKey(parsed.pool),
+        });
+      } catch {
+        // Failed to parse or decrypt - skip this account
+        continue;
+      }
+    }
+
+    return decryptedNotes;
+  }
+
+  /**
+   * Get all commitment compressed accounts
+   *
+   * @param programId - CloakCraft program ID
+   * @param poolPda - Pool PDA to filter by (optional). Note: pass the pool PDA, not the token mint.
+   */
+  async getCommitmentAccounts(
+    programId: PublicKey,
+    poolPda?: PublicKey
+  ): Promise<CompressedAccountInfo[]> {
+    // Query all compressed accounts owned by the program
+    // Note: Helius returns discriminator separately, so pool is at offset 0 in data
+    const response = await fetch(this['rpcUrl'], {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getCompressedAccountsByOwner',
+        params: {
+          owner: programId.toBase58(),
+          // Pool is first 32 bytes of data (Helius provides discriminator separately)
+          filters: poolPda ? [
+            { memcmp: { offset: 0, bytes: poolPda.toBase58() } }
+          ] : undefined,
+        },
+      }),
+    });
+
+    const result = await response.json() as {
+      result: { value?: { items: CompressedAccountInfo[] }; items?: CompressedAccountInfo[] };
+      error?: { message: string };
+    };
+
+    if (result.error) {
+      throw new Error(`Helius RPC error: ${result.error.message}`);
+    }
+
+    // Helius returns items in result.value.items or result.items depending on version
+    return result.result?.value?.items ?? result.result?.items ?? [];
+  }
+
+  /**
+   * Parse commitment account data from base64
+   *
+   * Note: Helius returns discriminator separately, so data doesn't include it
+   * Layout (after discriminator):
+   * - pool: 32 bytes
+   * - commitment: 32 bytes
+   * - leaf_index: 8 bytes (u64)
+   * - encrypted_note_len: 4 bytes (u32)
+   * - encrypted_note: variable bytes
+   * - created_at: 8 bytes (i64)
+   */
+  private parseCommitmentAccountData(dataBase64: string): {
+    pool: Uint8Array;
+    commitment: Uint8Array;
+    leafIndex: number;
+    encryptedNote: Uint8Array;
+  } | null {
+    try {
+      const data = Buffer.from(dataBase64, 'base64');
+
+      // Helius provides discriminator separately, so data starts directly with pool
+      if (data.length < 76) return null;
+
+      // Pool (32 bytes)
+      const pool = data.slice(0, 32);
+
+      // Commitment (32 bytes)
+      const commitment = data.slice(32, 64);
+
+      // Leaf index (8 bytes u64 LE)
+      const leafIndex = Number(data.readBigUInt64LE(64));
+
+      // Encrypted note length (4 bytes u32 LE)
+      const encryptedNoteLen = data.readUInt32LE(72);
+
+      // Encrypted note (variable)
+      const encryptedNote = data.slice(76, 76 + encryptedNoteLen);
+
+      return {
+        pool: new Uint8Array(pool),
+        commitment: new Uint8Array(commitment),
+        leafIndex,
+        encryptedNote: new Uint8Array(encryptedNote),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Deserialize encrypted note from bytes
+   *
+   * Format:
+   * - ephemeral_pubkey_x: 32 bytes
+   * - ephemeral_pubkey_y: 32 bytes
+   * - ciphertext_len: 4 bytes (u32 LE)
+   * - ciphertext: variable (includes 12-byte nonce)
+   * - tag: 16 bytes
+   */
+  private deserializeEncryptedNote(data: Uint8Array): EncryptedNote | null {
+    try {
+      if (data.length < 32 + 32 + 4 + 16) {
+        return null;
+      }
+
+      let offset = 0;
+
+      // Ephemeral pubkey X (32 bytes)
+      const ephemeralX = data.slice(offset, offset + 32);
+      offset += 32;
+
+      // Ephemeral pubkey Y (32 bytes)
+      const ephemeralY = data.slice(offset, offset + 32);
+      offset += 32;
+
+      // Ciphertext length (4 bytes)
+      const ciphertextLen = new DataView(data.buffer, data.byteOffset + offset).getUint32(0, true);
+      offset += 4;
+
+      // Ciphertext (variable)
+      const ciphertext = data.slice(offset, offset + ciphertextLen);
+      offset += ciphertextLen;
+
+      // Tag (16 bytes)
+      const tag = data.slice(offset, offset + 16);
+
+      const ephemeralPubkey: Point = {
+        x: new Uint8Array(ephemeralX),
+        y: new Uint8Array(ephemeralY),
+      };
+
+      return {
+        ephemeralPubkey,
+        ciphertext: new Uint8Array(ciphertext),
+        tag: new Uint8Array(tag),
+      };
+    } catch {
+      return null;
+    }
   }
 }

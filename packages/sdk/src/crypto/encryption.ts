@@ -4,8 +4,8 @@
 
 import { sha256 } from '@noble/hashes/sha256';
 import type { EncryptedNote, Note, Point, FieldElement } from '@cloakcraft/types';
-import { scalarMul, derivePublicKey, GENERATOR } from './babyjubjub';
-import { bytesToField, fieldToBytes } from './poseidon';
+import { scalarMul, derivePublicKey } from './babyjubjub';
+import { bytesToField } from './poseidon';
 
 // BabyJubJub subgroup order
 const SUBGROUP_ORDER = 2736030358979909402780800718157159386076813972158567259200215660948447373041n;
@@ -244,4 +244,86 @@ function generateRandomScalar(): bigint {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return bytesToField(bytes) % SUBGROUP_ORDER;
+}
+
+/**
+ * Serialize encrypted note for on-chain storage
+ *
+ * Format:
+ * - ephemeral_pubkey_x: 32 bytes
+ * - ephemeral_pubkey_y: 32 bytes
+ * - ciphertext_len: 4 bytes (u32 LE)
+ * - ciphertext: variable (includes 12-byte nonce)
+ * - tag: 16 bytes
+ *
+ * Total: 32 + 32 + 4 + ciphertext.length + 16 bytes
+ */
+export function serializeEncryptedNote(encrypted: EncryptedNote): Uint8Array {
+  const totalLen = 32 + 32 + 4 + encrypted.ciphertext.length + 16;
+  const buffer = new Uint8Array(totalLen);
+  let offset = 0;
+
+  // Ephemeral pubkey X (32 bytes)
+  buffer.set(encrypted.ephemeralPubkey.x, offset);
+  offset += 32;
+
+  // Ephemeral pubkey Y (32 bytes)
+  buffer.set(encrypted.ephemeralPubkey.y, offset);
+  offset += 32;
+
+  // Ciphertext length (4 bytes LE)
+  new DataView(buffer.buffer).setUint32(offset, encrypted.ciphertext.length, true);
+  offset += 4;
+
+  // Ciphertext (variable)
+  buffer.set(encrypted.ciphertext, offset);
+  offset += encrypted.ciphertext.length;
+
+  // Tag (16 bytes)
+  buffer.set(encrypted.tag, offset);
+
+  return buffer;
+}
+
+/**
+ * Deserialize encrypted note from bytes
+ */
+export function deserializeEncryptedNote(data: Uint8Array): EncryptedNote | null {
+  try {
+    if (data.length < 32 + 32 + 4 + 16) {
+      return null;
+    }
+
+    let offset = 0;
+
+    // Ephemeral pubkey X (32 bytes)
+    const ephemeralX = data.slice(offset, offset + 32);
+    offset += 32;
+
+    // Ephemeral pubkey Y (32 bytes)
+    const ephemeralY = data.slice(offset, offset + 32);
+    offset += 32;
+
+    // Ciphertext length (4 bytes)
+    const ciphertextLen = new DataView(data.buffer, data.byteOffset + offset).getUint32(0, true);
+    offset += 4;
+
+    // Ciphertext (variable)
+    const ciphertext = data.slice(offset, offset + ciphertextLen);
+    offset += ciphertextLen;
+
+    // Tag (16 bytes)
+    const tag = data.slice(offset, offset + 16);
+
+    return {
+      ephemeralPubkey: {
+        x: new Uint8Array(ephemeralX),
+        y: new Uint8Array(ephemeralY),
+      },
+      ciphertext: new Uint8Array(ciphertext),
+      tag: new Uint8Array(tag),
+    };
+  } catch {
+    return null;
+  }
 }

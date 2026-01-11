@@ -16,6 +16,7 @@ use light_sdk::LightDiscriminator;
 ///
 /// Stores a note commitment in the Light Protocol state tree.
 /// The commitment hash is encoded in the address derivation for uniqueness.
+/// Encrypted note is stored inline for scanning without external indexer.
 #[derive(Clone, Debug, Default, LightDiscriminator, AnchorSerialize, AnchorDeserialize)]
 pub struct CommitmentAccount {
     /// Pool this commitment belongs to (32 bytes)
@@ -29,9 +30,10 @@ pub struct CommitmentAccount {
     /// Assigned sequentially per pool
     pub leaf_index: u64,
 
-    /// Encrypted note data (variable, stored separately or as reference)
-    /// For compressed accounts, we store a hash/reference to off-chain data
-    pub encrypted_note_hash: [u8; 32],
+    /// Encrypted note data stored inline
+    /// Contains: ephemeral pubkey (64) + ciphertext (~100) + tag (16) = ~180 bytes
+    /// Scannable via Light Protocol API without external indexer
+    pub encrypted_note: Vec<u8>,
 
     /// Timestamp when commitment was created (8 bytes)
     pub created_at: i64,

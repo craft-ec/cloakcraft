@@ -204,12 +204,14 @@ export interface VoteParams {
 
 /** Shield transaction parameters */
 export interface ShieldParams {
-  /** Pool to shield into */
+  /** Pool (token mint) to shield into */
   pool: PublicKey;
   /** Amount to shield */
   amount: bigint;
   /** Recipient stealth address */
   recipient: StealthAddress;
+  /** User's token account (source of funds) */
+  userTokenAccount?: PublicKey;
 }
 
 /** Prepared input for proving (includes derived Y-coordinate) */

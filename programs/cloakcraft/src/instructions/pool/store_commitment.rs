@@ -12,7 +12,6 @@ use anchor_lang::prelude::*;
 use crate::state::{Pool, LightValidityProof, LightAddressTreeInfo};
 use crate::constants::seeds;
 use crate::light_cpi::create_commitment_account;
-use crate::merkle::hash_pair;
 
 #[derive(Accounts)]
 pub struct StoreCommitment<'info> {
@@ -53,18 +52,8 @@ pub fn store_commitment<'info>(
 ) -> Result<()> {
     let pool = &ctx.accounts.pool;
 
-    // Compute encrypted note hash
-    let encrypted_note_hash = if params.encrypted_note.len() >= 32 {
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&params.encrypted_note[..32]);
-        hash_pair(&params.commitment, &arr)
-    } else {
-        let mut arr = [0u8; 32];
-        arr[..params.encrypted_note.len()].copy_from_slice(&params.encrypted_note);
-        hash_pair(&params.commitment, &arr)
-    };
-
-    // Create commitment compressed account
+    // Create commitment compressed account with full encrypted note inline
+    // This allows scanning via Light Protocol API without external indexer
     create_commitment_account(
         &ctx.accounts.relayer.to_account_info(),
         ctx.remaining_accounts,
@@ -74,7 +63,7 @@ pub fn store_commitment<'info>(
         pool.key(),
         params.commitment,
         params.leaf_index,
-        encrypted_note_hash,
+        params.encrypted_note,
     )?;
 
     msg!("Commitment stored: leaf_index={}", params.leaf_index);

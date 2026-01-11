@@ -25,3 +25,6 @@ export * from './wallet';
 
 // Export Light Protocol / Helius integration
 export * from './light';
+
+// Export instruction builders
+export * from './instructions';

@@ -1,8 +1,11 @@
 /**
  * Poseidon hash implementation for BN254 scalar field
+ *
+ * Uses circomlibjs which matches Noir's Poseidon implementation (not Poseidon2)
+ * Compatible with Solana's sol_poseidon syscall
  */
 
-import { sha256 } from '@noble/hashes/sha256';
+import { buildPoseidon, type Poseidon } from 'circomlibjs';
 import type { FieldElement, PoseidonHash } from '@cloakcraft/types';
 
 // Domain separators matching the circuits
@@ -14,8 +17,47 @@ export const DOMAIN_STEALTH = 0x05n;
 export const DOMAIN_MERKLE = 0x06n;
 export const DOMAIN_EMPTY_LEAF = 0x07n;
 
-// BN254 scalar field modulus
-const FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+// BN254 base field (Fq) modulus - must match on-chain pubkey_to_field
+// Fq is used for converting pubkeys to field elements
+const FIELD_MODULUS = 21888242871839275222246405745257275088696311157297823662689037894645226208583n;
+
+// Singleton Poseidon instance
+let poseidonInstance: Poseidon | null = null;
+
+/**
+ * Initialize Poseidon hash function (async, call once at startup)
+ */
+export async function initPoseidon(): Promise<Poseidon> {
+  if (!poseidonInstance) {
+    poseidonInstance = await buildPoseidon();
+  }
+  return poseidonInstance;
+}
+
+// Promise for ongoing initialization (prevents race conditions)
+let initPromise: Promise<Poseidon> | null = null;
+
+/**
+ * Get Poseidon instance, auto-initializing if needed
+ * Uses a blocking pattern since circomlibjs requires async init
+ */
+async function getPoseidonAsync(): Promise<Poseidon> {
+  if (poseidonInstance) {
+    return poseidonInstance;
+  }
+  return initPoseidon();
+}
+
+/**
+ * Get Poseidon instance (throws if not initialized)
+ * For sync usage, call initPoseidon() first
+ */
+function getPoseidon(): Poseidon {
+  if (!poseidonInstance) {
+    throw new Error('Poseidon not initialized. Call initPoseidon() first.');
+  }
+  return poseidonInstance;
+}
 
 /**
  * Convert bytes to field element (big-endian)
@@ -44,26 +86,30 @@ export function fieldToBytes(field: bigint): FieldElement {
 /**
  * Poseidon hash with domain separation
  *
- * Note: This is a placeholder implementation using SHA-256.
- * In production, use a proper Poseidon implementation for BN254.
+ * Uses circomlibjs which matches Noir's Poseidon implementation.
+ * Domain is included as the first element in the hash input.
  */
 export function poseidonHash(inputs: FieldElement[], domain?: bigint): PoseidonHash {
-  // Placeholder: Use SHA-256 for now
-  // In production: Implement actual Poseidon for BN254
-  const hasher = sha256.create();
+  const poseidon = getPoseidon();
 
+  // Convert inputs to bigints
+  const fieldInputs: bigint[] = [];
+
+  // Add domain as first element if provided
   if (domain !== undefined) {
-    hasher.update(fieldToBytes(domain));
+    fieldInputs.push(domain);
   }
 
+  // Convert byte arrays to field elements
   for (const input of inputs) {
-    hasher.update(input);
+    fieldInputs.push(bytesToField(input));
   }
 
-  const hash = hasher.digest();
+  // Compute Poseidon hash
+  // circomlibjs returns a Uint8Array in F format, need to convert to bigint then to bytes
+  const hashResult = poseidon(fieldInputs);
+  const hashBigInt = poseidon.F.toObject(hashResult) as bigint;
 
-  // Reduce to field
-  const hashBigInt = bytesToField(hash);
   return fieldToBytes(hashBigInt);
 }
 
@@ -79,4 +125,20 @@ export function poseidonHash2(left: FieldElement, right: FieldElement): Poseidon
  */
 export function poseidonHashDomain(domain: bigint, ...inputs: FieldElement[]): PoseidonHash {
   return poseidonHash(inputs, domain);
+}
+
+/**
+ * Async version of poseidonHash that auto-initializes
+ */
+export async function poseidonHashAsync(inputs: FieldElement[], domain?: bigint): Promise<PoseidonHash> {
+  await initPoseidon();
+  return poseidonHash(inputs, domain);
+}
+
+/**
+ * Async version of poseidonHashDomain that auto-initializes
+ */
+export async function poseidonHashDomainAsync(domain: bigint, ...inputs: FieldElement[]): Promise<PoseidonHash> {
+  await initPoseidon();
+  return poseidonHashDomain(domain, ...inputs);
 }

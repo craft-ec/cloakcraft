@@ -1,0 +1,163 @@
+/**
+ * Light Protocol Helpers
+ *
+ * Utilities for working with Light Protocol compressed accounts
+ */
+
+import { PublicKey, AccountMeta } from '@solana/web3.js';
+import {
+  createRpc,
+  bn,
+  deriveAddressSeedV2,
+  deriveAddressV2,
+  PackedAccounts,
+  SystemAccountMetaConfig,
+  getBatchAddressTreeInfo,
+  Rpc,
+} from '@lightprotocol/stateless.js';
+import { DEVNET_V2_TREES, PROGRAM_ID } from './constants';
+
+/**
+ * Light Protocol RPC client wrapper
+ */
+export class LightProtocol {
+  readonly rpc: Rpc;
+  readonly programId: PublicKey;
+
+  constructor(rpcUrl: string, programId: PublicKey = PROGRAM_ID) {
+    this.rpc = createRpc(rpcUrl, rpcUrl);
+    this.programId = programId;
+  }
+
+  /**
+   * Get batch address tree info
+   */
+  getAddressTreeInfo() {
+    return getBatchAddressTreeInfo();
+  }
+
+  /**
+   * Derive commitment address using Light SDK V2
+   */
+  deriveCommitmentAddress(pool: PublicKey, commitment: Uint8Array): PublicKey {
+    const addressTreeInfo = this.getAddressTreeInfo();
+    const seeds = [
+      Buffer.from('commitment'),
+      pool.toBuffer(),
+      Buffer.from(commitment),
+    ];
+    const addressSeed = deriveAddressSeedV2(seeds);
+    return deriveAddressV2(addressSeed, addressTreeInfo.tree, this.programId);
+  }
+
+  /**
+   * Derive nullifier address using Light SDK V2
+   */
+  deriveNullifierAddress(pool: PublicKey, nullifier: Uint8Array): PublicKey {
+    const addressTreeInfo = this.getAddressTreeInfo();
+    const seeds = [
+      Buffer.from('spend_nullifier'),
+      pool.toBuffer(),
+      Buffer.from(nullifier),
+    ];
+    const addressSeed = deriveAddressSeedV2(seeds);
+    return deriveAddressV2(addressSeed, addressTreeInfo.tree, this.programId);
+  }
+
+  /**
+   * Get validity proof for creating a new compressed account (non-inclusion)
+   */
+  async getValidityProof(addresses: PublicKey[]) {
+    const addressTreeInfo = this.getAddressTreeInfo();
+    return this.rpc.getValidityProofV0(
+      [], // No existing hashes
+      addresses.map(addr => ({
+        address: bn(addr.toBytes()),
+        tree: addressTreeInfo.tree,
+        queue: addressTreeInfo.queue,
+      }))
+    );
+  }
+
+  /**
+   * Build remaining accounts for Light Protocol CPI
+   */
+  buildRemainingAccounts(): { accounts: AccountMeta[]; outputTreeIndex: number; addressTreeIndex: number } {
+    const systemConfig = SystemAccountMetaConfig.new(this.programId);
+    const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
+
+    const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES.OUTPUT_QUEUE);
+    const addressTreeInfo = this.getAddressTreeInfo();
+    const addressTreeIndex = packedAccounts.insertOrGet(addressTreeInfo.tree);
+
+    const { remainingAccounts } = packedAccounts.toAccountMetas();
+    const accounts = remainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isWritable: Boolean(acc.isWritable),
+      isSigner: Boolean(acc.isSigner),
+    }));
+
+    return { accounts, outputTreeIndex, addressTreeIndex };
+  }
+
+  /**
+   * Convert Light SDK compressed proof to Anchor format
+   */
+  static convertCompressedProof(proof: any): { a: number[]; b: number[]; c: number[] } {
+    const proofA = new Uint8Array(32);
+    const proofB = new Uint8Array(64);
+    const proofC = new Uint8Array(32);
+    if (proof.compressedProof) {
+      proofA.set(proof.compressedProof.a.slice(0, 32));
+      proofB.set(proof.compressedProof.b.slice(0, 64));
+      proofC.set(proof.compressedProof.c.slice(0, 32));
+    }
+    return {
+      a: Array.from(proofA),
+      b: Array.from(proofB),
+      c: Array.from(proofC),
+    };
+  }
+}
+
+/**
+ * Light params for shield instruction
+ */
+export interface LightShieldParams {
+  validityProof: { a: number[]; b: number[]; c: number[] };
+  addressTreeInfo: {
+    addressMerkleTreePubkeyIndex: number;
+    addressQueuePubkeyIndex: number;
+    rootIndex: number;
+  };
+  outputTreeIndex: number;
+}
+
+/**
+ * Light params for transact instruction
+ */
+export interface LightTransactParams {
+  nullifierProof: { a: number[]; b: number[]; c: number[] };
+  nullifierAddressTreeInfo: {
+    addressMerkleTreePubkeyIndex: number;
+    addressQueuePubkeyIndex: number;
+    rootIndex: number;
+  };
+  outputTreeIndex: number;
+}
+
+/**
+ * Light params for store_commitment instruction
+ */
+export interface LightStoreCommitmentParams {
+  commitment: number[];
+  leafIndex: bigint;
+  encryptedNote: Buffer;
+  validityProof: { a: number[]; b: number[]; c: number[] };
+  addressTreeInfo: {
+    addressMerkleTreePubkeyIndex: number;
+    addressQueuePubkeyIndex: number;
+    rootIndex: number;
+  };
+  outputTreeIndex: number;
+}

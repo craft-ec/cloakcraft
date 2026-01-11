@@ -4,7 +4,7 @@
 
 import type { Point, FieldElement, StealthAddress, Keypair } from '@cloakcraft/types';
 import { scalarMul, GENERATOR, derivePublicKey } from './babyjubjub';
-import { poseidonHashDomain, DOMAIN_STEALTH, bytesToField, fieldToBytes } from './poseidon';
+import { poseidonHashDomain, DOMAIN_STEALTH, bytesToField } from './poseidon';
 
 // BabyJubJub subgroup order
 const SUBGROUP_ORDER = 2736030358979909402780800718157159386076813972158567259200215660948447373041n;

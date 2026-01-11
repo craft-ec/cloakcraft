@@ -12,5 +12,6 @@ members = [
     "swap/remove_liquidity",
     "swap/swap",
     "governance/encrypted_submit",
-    "helpers/compute_test_values"
+    "helpers/compute_test_values",
+    "helpers/nullifier_test"
 ]
