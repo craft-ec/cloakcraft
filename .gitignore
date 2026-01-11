@@ -5,6 +5,8 @@ node_modules/
 target/
 dist/
 .turbo/
+.next/
+out/
 
 # Anchor
 .anchor/test-ledger/
