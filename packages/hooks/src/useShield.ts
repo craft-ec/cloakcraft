@@ -1,5 +1,7 @@
 /**
  * Shield operation hook
+ *
+ * Shields tokens into the privacy pool
  */
 
 import { useState, useCallback } from 'react';
@@ -11,11 +13,22 @@ import type { TransactionResult } from '@cloakcraft/types';
 interface ShieldState {
   isShielding: boolean;
   error: string | null;
-  result: TransactionResult | null;
+  result: (TransactionResult & { commitment: Uint8Array; randomness: Uint8Array }) | null;
+}
+
+interface ShieldOptions {
+  /** Token mint to shield */
+  tokenMint: PublicKey;
+  /** Amount to shield (in lamports/smallest unit) */
+  amount: bigint;
+  /** User's token account (source of tokens) */
+  userTokenAccount: PublicKey;
+  /** Optional: Shield to a different recipient */
+  recipient?: { x: Uint8Array; y: Uint8Array };
 }
 
 export function useShield() {
-  const { client, wallet } = useCloakCraft();
+  const { client, wallet, sync } = useCloakCraft();
   const [state, setState] = useState<ShieldState>({
     isShielding: false,
     error: null,
@@ -24,35 +37,44 @@ export function useShield() {
 
   const shield = useCallback(
     async (
-      tokenMint: PublicKey,
-      amount: bigint,
+      options: ShieldOptions,
       payer: SolanaKeypair
-    ): Promise<TransactionResult | null> => {
+    ): Promise<(TransactionResult & { commitment: Uint8Array; randomness: Uint8Array }) | null> => {
       if (!client || !wallet) {
         setState({ isShielding: false, error: 'Wallet not connected', result: null });
+        return null;
+      }
+
+      if (!client.getProgram()) {
+        setState({ isShielding: false, error: 'Program not set. Call setProgram() first.', result: null });
         return null;
       }
 
       setState({ isShielding: true, error: null, result: null });
 
       try {
-        // Generate stealth address for self
-        const { stealthAddress } = generateStealthAddress(wallet.publicKey);
+        // Generate stealth address for recipient (self if not specified)
+        const recipientPubkey = options.recipient ?? wallet.publicKey;
+        const { stealthAddress } = generateStealthAddress(recipientPubkey);
 
         // Get pool PDA
         const [poolPda] = PublicKey.findProgramAddressSync(
-          [Buffer.from('pool'), tokenMint.toBuffer()],
+          [Buffer.from('pool'), options.tokenMint.toBuffer()],
           client.programId
         );
 
         const result = await client.shield(
           {
             pool: poolPda,
-            amount,
+            amount: options.amount,
             recipient: stealthAddress,
+            userTokenAccount: options.userTokenAccount,
           },
           payer
         );
+
+        // Sync notes after successful shield
+        await sync(options.tokenMint);
 
         setState({ isShielding: false, error: null, result });
         return result;
@@ -62,7 +84,7 @@ export function useShield() {
         return null;
       }
     },
-    [client, wallet]
+    [client, wallet, sync]
   );
 
   const reset = useCallback(() => {

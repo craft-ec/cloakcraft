@@ -2,27 +2,65 @@
  * Wallet management hook
  */
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useCloakCraft } from './provider';
-import { deriveWalletFromSeed } from '@cloakcraft/sdk';
 
 export function useWallet() {
-  const { wallet, isConnected, connect, disconnect, createWallet } = useCloakCraft();
+  const { wallet, isConnected, isInitialized, isInitializing, connect, disconnect, createWallet, error } = useCloakCraft();
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   const importFromSeed = useCallback(
     async (seedPhrase: string) => {
-      const imported = await deriveWalletFromSeed(seedPhrase);
-      connect(imported.exportSpendingKey());
+      setIsConnecting(true);
+      setConnectError(null);
+      try {
+        const { deriveWalletFromSeed } = await import('@cloakcraft/sdk');
+        const imported = await deriveWalletFromSeed(seedPhrase);
+        await connect(imported.exportSpendingKey());
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to import wallet';
+        setConnectError(message);
+        throw err;
+      } finally {
+        setIsConnecting(false);
+      }
     },
     [connect]
   );
 
   const importFromKey = useCallback(
-    (spendingKey: Uint8Array) => {
-      connect(spendingKey);
+    async (spendingKey: Uint8Array) => {
+      setIsConnecting(true);
+      setConnectError(null);
+      try {
+        await connect(spendingKey);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to connect wallet';
+        setConnectError(message);
+        throw err;
+      } finally {
+        setIsConnecting(false);
+      }
     },
     [connect]
   );
+
+  const createAndConnect = useCallback(async () => {
+    setIsConnecting(true);
+    setConnectError(null);
+    try {
+      const newWallet = createWallet();
+      await connect(newWallet.exportSpendingKey());
+      return newWallet;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create wallet';
+      setConnectError(message);
+      throw err;
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [createWallet, connect]);
 
   const exportSpendingKey = useCallback(() => {
     if (!wallet) return null;
@@ -37,9 +75,14 @@ export function useWallet() {
     wallet,
     publicKey,
     isConnected,
-    connect,
+    isConnecting,
+    isInitialized,
+    isInitializing,
+    error: connectError || error,
+    connect: importFromKey,
     disconnect,
     createWallet,
+    createAndConnect,
     importFromSeed,
     importFromKey,
     exportSpendingKey,

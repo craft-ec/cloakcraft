@@ -16,8 +16,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --external react",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --external react --watch",
+    "build": "tsup src/index.ts --format cjs,esm --dts --external react --external @solana/web3.js",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --external react --external @solana/web3.js --watch",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit"
   },

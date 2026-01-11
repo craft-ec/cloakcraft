@@ -1,9 +1,8 @@
 /**
  * Transfer operation hook
  *
- * Provides a simplified interface for transfers. The client handles
- * the complex cryptographic preparation (deriving Y-coordinates,
- * computing commitments, fetching merkle proofs, etc.)
+ * Provides a simplified interface for private transfers.
+ * The client handles all cryptographic preparation.
  */
 
 import { useState, useCallback } from 'react';
@@ -17,17 +16,16 @@ interface TransferState {
   result: TransactionResult | null;
 }
 
-/** Simple transfer output (client prepares the full cryptographic details) */
-interface SimpleTransferOutput {
+/** Simple transfer output */
+interface TransferOutput {
   recipient: StealthAddress;
   amount: bigint;
 }
 
-/** Simple transfer request (client converts to full TransferParams) */
-interface SimpleTransferRequest {
-  inputs: DecryptedNote[];
-  outputs: SimpleTransferOutput[];
-  unshield?: { amount: bigint; recipient: PublicKey };
+/** Unshield option for partial withdrawal */
+interface UnshieldOption {
+  amount: bigint;
+  recipient: PublicKey;
 }
 
 export function useTransfer() {
@@ -41,12 +39,17 @@ export function useTransfer() {
   const transfer = useCallback(
     async (
       inputs: DecryptedNote[],
-      outputs: SimpleTransferOutput[],
-      unshield?: { amount: bigint; recipient: PublicKey },
+      outputs: TransferOutput[],
+      unshield?: UnshieldOption,
       relayer?: SolanaKeypair
     ): Promise<TransactionResult | null> => {
       if (!client || !wallet) {
         setState({ isTransferring: false, error: 'Wallet not connected', result: null });
+        return null;
+      }
+
+      if (!client.getProgram()) {
+        setState({ isTransferring: false, error: 'Program not set. Call setProgram() first.', result: null });
         return null;
       }
 
@@ -59,8 +62,10 @@ export function useTransfer() {
           relayer
         );
 
-        // Sync after successful transfer
-        await sync();
+        // Sync notes after successful transfer
+        if (inputs.length > 0 && inputs[0].tokenMint) {
+          await sync(inputs[0].tokenMint);
+        }
 
         setState({ isTransferring: false, error: null, result });
         return result;
@@ -81,5 +86,60 @@ export function useTransfer() {
     ...state,
     transfer,
     reset,
+  };
+}
+
+/**
+ * Hook for selecting notes for a transfer
+ */
+export function useNoteSelector(tokenMint: PublicKey) {
+  const { notes } = useCloakCraft();
+  const [selected, setSelected] = useState<DecryptedNote[]>([]);
+
+  // Filter notes by token mint
+  const availableNotes = notes.filter(
+    (note) => note.tokenMint && note.tokenMint.equals(tokenMint)
+  );
+
+  const selectNotesForAmount = useCallback(
+    (targetAmount: bigint): DecryptedNote[] => {
+      let total = 0n;
+      const selectedNotes: DecryptedNote[] = [];
+
+      // Sort by amount descending for efficient selection
+      const sorted = [...availableNotes].sort((a, b) =>
+        a.amount > b.amount ? -1 : a.amount < b.amount ? 1 : 0
+      );
+
+      for (const note of sorted) {
+        if (total >= targetAmount) break;
+        selectedNotes.push(note);
+        total += note.amount;
+      }
+
+      if (total < targetAmount) {
+        throw new Error(`Insufficient balance. Have ${total}, need ${targetAmount}`);
+      }
+
+      setSelected(selectedNotes);
+      return selectedNotes;
+    },
+    [availableNotes]
+  );
+
+  const clearSelection = useCallback(() => {
+    setSelected([]);
+  }, []);
+
+  const totalAvailable = availableNotes.reduce((sum, n) => sum + n.amount, 0n);
+  const totalSelected = selected.reduce((sum, n) => sum + n.amount, 0n);
+
+  return {
+    availableNotes,
+    selected,
+    totalAvailable,
+    totalSelected,
+    selectNotesForAmount,
+    clearSelection,
   };
 }

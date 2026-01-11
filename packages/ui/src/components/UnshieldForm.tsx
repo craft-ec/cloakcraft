@@ -1,19 +1,20 @@
 /**
- * Transfer form component
+ * Unshield form component
  *
- * Private transfer to another stealth address
+ * Withdraw tokens from the privacy pool back to a public wallet
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { PublicKey, Keypair as SolanaKeypair } from '@solana/web3.js';
-import { useTransfer, useNoteSelector, useWallet, useCloakCraft } from '@cloakcraft/hooks';
-import { generateStealthAddress } from '@cloakcraft/sdk';
+import { useUnshield, useNoteSelector, useWallet, useCloakCraft } from '@cloakcraft/hooks';
 import { styles, colors } from '../styles';
 
-interface TransferFormProps {
+interface UnshieldFormProps {
   tokenMint: PublicKey;
   decimals?: number;
   symbol?: string;
+  /** Default recipient token account */
+  defaultRecipient?: PublicKey;
   onSuccess?: (signature: string) => void;
   onError?: (error: string) => void;
   className?: string;
@@ -21,19 +22,20 @@ interface TransferFormProps {
   relayer?: SolanaKeypair;
 }
 
-export function TransferForm({
+export function UnshieldForm({
   tokenMint,
   decimals = 9,
   symbol = 'tokens',
+  defaultRecipient,
   onSuccess,
   onError,
   className,
   relayer,
-}: TransferFormProps) {
-  const [recipientPubkey, setRecipientPubkey] = useState('');
+}: UnshieldFormProps) {
+  const [recipient, setRecipient] = useState(defaultRecipient?.toBase58() ?? '');
   const [amount, setAmount] = useState('');
-  const { isTransferring, error, result, transfer, reset } = useTransfer();
-  const { isConnected, isInitialized, wallet } = useWallet();
+  const { isUnshielding, error, result, unshield, reset } = useUnshield();
+  const { isConnected, isInitialized } = useWallet();
   const { client } = useCloakCraft();
   const { availableNotes, totalAvailable, selectNotesForAmount } = useNoteSelector(tokenMint);
 
@@ -42,20 +44,6 @@ export function TransferForm({
     const whole = value / divisor;
     const fractional = value % divisor;
     return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 4)}`;
-  };
-
-  const parseRecipientPublicKey = (hex: string): { x: Uint8Array; y: Uint8Array } | null => {
-    try {
-      const clean = hex.trim().startsWith('0x') ? hex.trim().slice(2) : hex.trim();
-      if (clean.length !== 128) return null; // 64 bytes = 128 hex chars (x + y)
-      const bytes = Buffer.from(clean, 'hex');
-      return {
-        x: new Uint8Array(bytes.slice(0, 32)),
-        y: new Uint8Array(bytes.slice(32, 64)),
-      };
-    } catch {
-      return null;
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -68,12 +56,12 @@ export function TransferForm({
       return;
     }
 
-    const amountLamports = BigInt(Math.floor(amountNum * 10 ** decimals));
-
-    // Parse recipient public key
-    const recipientPoint = parseRecipientPublicKey(recipientPubkey);
-    if (!recipientPoint) {
-      onError?.('Invalid recipient public key. Expected 128 hex characters (x + y coordinates).');
+    // Validate recipient address
+    let recipientPubkey: PublicKey;
+    try {
+      recipientPubkey = new PublicKey(recipient);
+    } catch {
+      onError?.('Invalid recipient token account address');
       return;
     }
 
@@ -82,7 +70,9 @@ export function TransferForm({
       return;
     }
 
-    // Select notes for transfer
+    const amountLamports = BigInt(Math.floor(amountNum * 10 ** decimals));
+
+    // Select notes for unshield
     let selectedNotes;
     try {
       selectedNotes = selectNotesForAmount(amountLamports);
@@ -91,63 +81,72 @@ export function TransferForm({
       return;
     }
 
-    // Generate stealth address for recipient
-    const { stealthAddress } = generateStealthAddress(recipientPoint);
-
-    // Calculate change
-    const totalInput = selectedNotes.reduce((sum, n) => sum + n.amount, 0n);
-    const change = totalInput - amountLamports;
-
-    // Build outputs
-    const outputs = [
-      { recipient: stealthAddress, amount: amountLamports },
-    ];
-
-    // Add change output back to self if needed
-    if (change > 0n && wallet) {
-      const { stealthAddress: changeAddress } = generateStealthAddress(wallet.publicKey);
-      outputs.push({ recipient: changeAddress, amount: change });
-    }
-
-    const txResult = await transfer(selectedNotes, outputs, undefined, relayer);
+    const txResult = await unshield(
+      {
+        inputs: selectedNotes,
+        amount: amountLamports,
+        recipient: recipientPubkey,
+      },
+      relayer
+    );
 
     if (txResult) {
       onSuccess?.(txResult.signature);
       setAmount('');
-      setRecipientPubkey('');
     } else if (error) {
       onError?.(error);
     }
   };
 
-  const isDisabled = !isConnected || !isInitialized || isTransferring || !amount || !recipientPubkey;
+  const handleMax = () => {
+    const maxAmount = Number(totalAvailable) / 10 ** decimals;
+    setAmount(maxAmount.toString());
+  };
+
+  const isDisabled = !isConnected || !isInitialized || isUnshielding || !amount || !recipient;
 
   return (
     <div className={className} style={styles.card}>
-      <h3 style={styles.cardTitle}>Private Transfer</h3>
+      <h3 style={styles.cardTitle}>Withdraw Tokens</h3>
       <p style={styles.cardDescription}>
-        Send tokens privately. Only the recipient can decrypt the note.
+        Withdraw tokens from the privacy pool back to your public wallet.
       </p>
 
       <div style={{ marginBottom: '16px', ...styles.spaceBetween }}>
-        <span style={{ fontSize: '0.875rem', color: colors.textMuted }}>Available Balance</span>
+        <span style={{ fontSize: '0.875rem', color: colors.textMuted }}>Private Balance</span>
         <span style={{ fontWeight: 600 }}>{formatAmount(totalAvailable)} {symbol}</span>
       </div>
 
       <form onSubmit={handleSubmit} style={styles.form}>
         <label style={styles.label}>
-          Recipient Public Key
-          <textarea
-            value={recipientPubkey}
-            onChange={(e) => setRecipientPubkey(e.target.value)}
-            placeholder="Enter recipient's BabyJubJub public key (128 hex chars)"
-            disabled={isTransferring}
-            style={styles.textarea}
+          Recipient Token Account
+          <input
+            type="text"
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            placeholder="Enter token account address"
+            disabled={isUnshielding}
+            style={{ ...styles.input, fontFamily: 'monospace', fontSize: '0.875rem' }}
           />
         </label>
 
         <label style={styles.label}>
-          Amount ({symbol})
+          <div style={styles.spaceBetween}>
+            <span>Amount ({symbol})</span>
+            <button
+              type="button"
+              onClick={handleMax}
+              disabled={isUnshielding || totalAvailable === 0n}
+              style={{
+                ...styles.buttonSecondary,
+                ...styles.buttonSmall,
+                padding: '2px 8px',
+                fontSize: '0.75rem',
+              }}
+            >
+              MAX
+            </button>
+          </div>
           <input
             type="number"
             value={amount}
@@ -155,7 +154,7 @@ export function TransferForm({
             placeholder="0.00"
             step="any"
             min="0"
-            disabled={isTransferring}
+            disabled={isUnshielding}
             style={styles.input}
           />
         </label>
@@ -172,16 +171,16 @@ export function TransferForm({
             ? 'Connect Wallet'
             : !isInitialized
             ? 'Initializing...'
-            : isTransferring
-            ? 'Transferring...'
-            : 'Send Private Transfer'}
+            : isUnshielding
+            ? 'Withdrawing...'
+            : 'Withdraw Tokens'}
         </button>
 
         {error && <div style={styles.errorText}>{error}</div>}
 
         {result && (
           <div style={styles.successBox}>
-            <div style={styles.successText}>Transfer sent successfully!</div>
+            <div style={styles.successText}>Withdrawal successful!</div>
             <div style={styles.txLink}>
               <a
                 href={`https://explorer.solana.com/tx/${result.signature}?cluster=devnet`}

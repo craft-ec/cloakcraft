@@ -1,95 +1,136 @@
 /**
  * Shield form component
+ *
+ * Deposits tokens into the privacy pool
  */
 
 import React, { useState } from 'react';
 import { PublicKey, Keypair as SolanaKeypair } from '@solana/web3.js';
-import { useShield } from '@cloakcraft/hooks';
+import { useShield, useWallet, useCloakCraft } from '@cloakcraft/hooks';
+import { styles } from '../styles';
 
 interface ShieldFormProps {
   tokenMint: PublicKey;
+  userTokenAccount: PublicKey;
   decimals?: number;
-  onSuccess?: (signature: string) => void;
+  symbol?: string;
+  onSuccess?: (signature: string, commitment: Uint8Array) => void;
+  onError?: (error: string) => void;
   className?: string;
+  /** Payer keypair for transaction fees */
+  payer?: SolanaKeypair;
 }
 
 export function ShieldForm({
   tokenMint,
+  userTokenAccount,
   decimals = 9,
+  symbol = 'tokens',
   onSuccess,
+  onError,
   className,
+  payer,
 }: ShieldFormProps) {
   const [amount, setAmount] = useState('');
   const { isShielding, error, result, shield, reset } = useShield();
+  const { isConnected, isInitialized } = useWallet();
+  const { client } = useCloakCraft();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    reset();
 
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) {
+      onError?.('Please enter a valid amount');
+      return;
+    }
+
+    if (!payer) {
+      onError?.('No payer keypair provided');
+      return;
+    }
+
+    if (!client?.getProgram()) {
+      onError?.('Program not configured. Call setProgram() first.');
       return;
     }
 
     const amountLamports = BigInt(Math.floor(amountNum * 10 ** decimals));
 
-    // In production: Use connected wallet
-    const payer = SolanaKeypair.generate();
+    const txResult = await shield(
+      {
+        tokenMint,
+        amount: amountLamports,
+        userTokenAccount,
+      },
+      payer
+    );
 
-    const txResult = await shield(tokenMint, amountLamports, payer);
     if (txResult) {
-      onSuccess?.(txResult.signature);
+      onSuccess?.(txResult.signature, txResult.commitment);
       setAmount('');
+    } else if (error) {
+      onError?.(error);
     }
   };
 
+  const isDisabled = !isConnected || !isInitialized || isShielding || !amount || !payer;
+
   return (
-    <div className={className}>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <label style={{ fontWeight: 500 }}>
-          Amount to Shield
+    <div className={className} style={styles.card}>
+      <h3 style={styles.cardTitle}>Shield Tokens</h3>
+      <p style={styles.cardDescription}>
+        Deposit tokens into the privacy pool to enable private transfers.
+      </p>
+
+      <form onSubmit={handleSubmit} style={styles.form}>
+        <label style={styles.label}>
+          Amount ({symbol})
           <input
             type="number"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0.00"
-            step="0.000001"
+            step="any"
             min="0"
             disabled={isShielding}
-            style={{
-              width: '100%',
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: '1px solid #e5e7eb',
-              marginTop: '4px',
-            }}
+            style={styles.input}
           />
         </label>
 
         <button
           type="submit"
-          disabled={isShielding || !amount}
+          disabled={isDisabled}
           style={{
-            padding: '12px',
-            borderRadius: '8px',
-            border: 'none',
-            backgroundColor: isShielding ? '#9ca3af' : '#6366f1',
-            color: 'white',
-            cursor: isShielding ? 'wait' : 'pointer',
-            fontWeight: 500,
+            ...styles.buttonPrimary,
+            ...(isDisabled ? styles.buttonDisabled : {}),
           }}
         >
-          {isShielding ? 'Shielding...' : 'Shield Tokens'}
+          {!isConnected
+            ? 'Connect Wallet'
+            : !isInitialized
+            ? 'Initializing...'
+            : isShielding
+            ? 'Shielding...'
+            : 'Shield Tokens'}
         </button>
 
-        {error && (
-          <div style={{ color: '#ef4444', fontSize: '0.875rem' }}>
-            {error}
-          </div>
-        )}
+        {error && <div style={styles.errorText}>{error}</div>}
 
         {result && (
-          <div style={{ color: '#10b981', fontSize: '0.875rem' }}>
-            Success! Tx: {result.signature.slice(0, 8)}...
+          <div style={styles.successBox}>
+            <div style={styles.successText}>Tokens shielded successfully!</div>
+            <div style={styles.txLink}>
+              <a
+                href={`https://explorer.solana.com/tx/${result.signature}?cluster=devnet`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={styles.link}
+              >
+                View transaction
+              </a>
+            </div>
           </div>
         )}
       </form>
