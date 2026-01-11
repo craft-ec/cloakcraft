@@ -24,4 +24,9 @@ solana-sha256-hasher = { workspace = true }
 solana-keccak-hasher = { workspace = true }
 thiserror = { workspace = true }
 
+# Light Protocol (ZK Compression)
+light-sdk = { workspace = true }
+light-hasher = { workspace = true }
+light-compressed-account = { workspace = true }
+
 [dev-dependencies]

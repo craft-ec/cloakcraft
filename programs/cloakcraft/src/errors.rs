@@ -159,11 +159,23 @@ pub enum CloakCraftError {
     #[msg("Light Protocol CPI failed")]
     LightProtocolError,
 
+    #[msg("Light Protocol CPI operation failed")]
+    LightCpiError,
+
     #[msg("Nullifier tree error")]
     NullifierTreeError,
 
     #[msg("Failed to insert nullifier")]
     NullifierInsertionFailed,
+
+    #[msg("Nullifier has already been spent (compressed account exists)")]
+    NullifierAlreadySpent,
+
+    #[msg("Failed to create commitment compressed account")]
+    CommitmentCreationFailed,
+
+    #[msg("Commitment merkle proof verification failed")]
+    CommitmentProofFailed,
 
     // ============ Cryptographic Errors ============
     #[msg("Poseidon hash computation failed")]

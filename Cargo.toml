@@ -18,6 +18,11 @@ repository = "https://github.com/guildcraft/cloakcraft"
 anchor-lang = "0.32.1"
 anchor-spl = "0.32.1"
 
+# Light Protocol (ZK Compression)
+light-sdk = { version = "0.17.1", features = ["anchor"] }
+light-hasher = { version = "5.0.0", features = ["poseidon"] }
+light-compressed-account = "0.7.0"
+
 # Solana 2.x
 solana-sdk = "2.1"
 solana-client = "2.1"

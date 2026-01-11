@@ -7,6 +7,9 @@ pub mod aggregation;
 pub mod verification_key;
 pub mod adapt_module;
 pub mod committee;
+pub mod nullifier;
+pub mod commitment;
+pub mod light_types;
 
 pub use pool::*;
 pub use order::*;
@@ -15,3 +18,6 @@ pub use aggregation::*;
 pub use verification_key::*;
 pub use adapt_module::*;
 pub use committee::*;
+pub use nullifier::*;
+pub use commitment::*;
+pub use light_types::*;

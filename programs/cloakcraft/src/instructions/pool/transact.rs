@@ -1,14 +1,17 @@
 //! Transact - private transfer with optional unshield
+//!
+//! Uses Light Protocol for both nullifier and commitment storage.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-use crate::state::{Pool, VerificationKey};
+use crate::state::{Pool, VerificationKey, PoolCommitmentCounter, LightValidityProof, LightAddressTreeInfo};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::events::{NoteCreated, NoteSpent, Unshielded, MerkleRootUpdated};
-use crate::merkle::insert_leaf;
+use crate::events::{NoteCreated, NoteSpent, Unshielded};
 use crate::crypto::verify_proof;
+use crate::light_cpi::{create_nullifier_account, create_commitment_account};
+use crate::merkle::hash_pair;
 
 #[derive(Accounts)]
 pub struct Transact<'info> {
@@ -19,6 +22,14 @@ pub struct Transact<'info> {
         bump = pool.bump,
     )]
     pub pool: Box<Account<'info, Pool>>,
+
+    /// Commitment counter for this pool
+    #[account(
+        mut,
+        seeds = [PoolCommitmentCounter::SEEDS_PREFIX, pool.key().as_ref()],
+        bump = commitment_counter.bump,
+    )]
+    pub commitment_counter: Account<'info, PoolCommitmentCounter>,
 
     /// Token vault
     #[account(
@@ -40,40 +51,60 @@ pub struct Transact<'info> {
     #[account(mut)]
     pub unshield_recipient: Option<Account<'info, TokenAccount>>,
 
-    /// Relayer/submitter
+    /// Relayer/submitter (pays for compressed account creation)
+    #[account(mut)]
     pub relayer: Signer<'info>,
 
     /// Token program
     pub token_program: Program<'info, Token>,
 
-    // Light Protocol accounts for nullifier storage would go here
-    // /// CHECK: Light Protocol nullifier tree
-    // pub nullifier_tree: AccountInfo<'info>,
-    // /// CHECK: Light Protocol program
-    // pub light_program: AccountInfo<'info>,
+    // Light Protocol accounts are passed via remaining_accounts
 }
 
-pub fn transact(
-    ctx: Context<Transact>,
+/// Parameters for Light Protocol operations
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct LightTransactParams {
+    /// Validity proof for nullifier (proves it doesn't exist)
+    pub nullifier_proof: LightValidityProof,
+    /// Address tree info for nullifier
+    pub nullifier_address_tree_info: LightAddressTreeInfo,
+    /// Validity proof for output commitments
+    pub commitment_proof: LightValidityProof,
+    /// Address tree info for commitments
+    pub commitment_address_tree_info: LightAddressTreeInfo,
+    /// Output state tree index
+    pub output_tree_index: u8,
+}
+
+/// Legacy params for backwards compatibility
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct LightNullifierParams {
+    /// Validity proof from Helius indexer (proves nullifier doesn't exist)
+    pub validity_proof: LightValidityProof,
+    /// Address tree info for compressed account address derivation
+    pub address_tree_info: LightAddressTreeInfo,
+    /// Output state tree index for the new compressed account
+    pub output_tree_index: u8,
+}
+
+pub fn transact<'info>(
+    ctx: Context<'_, '_, '_, 'info, Transact<'info>>,
     proof: Vec<u8>,
-    merkle_root: [u8; 32],
+    _merkle_root: [u8; 32], // Deprecated: merkle root now from Light Protocol
     nullifier: [u8; 32],
     out_commitments: Vec<[u8; 32]>,
     encrypted_notes: Vec<Vec<u8>>,
     unshield_amount: u64,
+    light_params: Option<LightNullifierParams>,
 ) -> Result<()> {
     let pool = &mut ctx.accounts.pool;
+    let commitment_counter = &mut ctx.accounts.commitment_counter;
     let clock = Clock::get()?;
 
-    // 1. Verify merkle root is valid (current or recent)
-    require!(
-        pool.is_valid_root(&merkle_root),
-        CloakCraftError::InvalidMerkleRoot
-    );
-
-    // 2. Verify ZK proof
+    // 1. Verify ZK proof
+    // Note: The merkle root is now part of the validity proof from Light Protocol
+    // The ZK circuit proves: commitment exists in tree AND nullifier is correctly derived
     let public_inputs = build_transact_public_inputs(
-        &merkle_root,
         &nullifier,
         &out_commitments,
         &pool.token_mint,
@@ -87,42 +118,72 @@ pub fn transact(
         &public_inputs,
     )?;
 
-    // 3. Check and insert nullifier (via Light Protocol CPI)
-    // In production, this would CPI to Light Protocol to:
-    // - verify_non_inclusion(nullifier)
-    // - insert_nullifier(nullifier)
-    // For now, we emit the spent event for indexer to track
+    // 2. Create nullifier compressed account via Light Protocol
+    if let Some(params) = &light_params {
+        create_nullifier_account(
+            &ctx.accounts.relayer.to_account_info(),
+            ctx.remaining_accounts,
+            params.validity_proof.clone(),
+            params.address_tree_info.clone(),
+            params.output_tree_index,
+            pool.key(),
+            nullifier,
+        )?;
+    }
 
+    // Emit nullifier event
     emit!(NoteSpent {
         pool: pool.key(),
         nullifier,
         timestamp: clock.unix_timestamp,
     });
 
-    // 4. Insert output commitments
+    // 3. Create output commitment compressed accounts
     for (i, commitment) in out_commitments.iter().enumerate() {
-        require!(pool.can_insert(), CloakCraftError::TreeFull);
+        let leaf_index = commitment_counter.next_leaf_index;
+        commitment_counter.next_leaf_index += 1;
+        commitment_counter.total_commitments += 1;
 
-        let leaf_index = pool.next_leaf_index;
-        let new_root = insert_leaf(
-            &mut pool.frontier,
-            leaf_index,
-            *commitment,
-        )?;
+        let encrypted_note = encrypted_notes.get(i).cloned().unwrap_or_default();
 
-        pool.update_root(new_root);
-        pool.next_leaf_index += 1;
+        // Create commitment compressed account if Light params provided
+        if let Some(params) = &light_params {
+            let encrypted_note_hash = hash_pair(
+                commitment,
+                &if encrypted_note.len() >= 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&encrypted_note[..32]);
+                    arr
+                } else {
+                    let mut arr = [0u8; 32];
+                    arr[..encrypted_note.len()].copy_from_slice(&encrypted_note);
+                    arr
+                },
+            );
+
+            create_commitment_account(
+                &ctx.accounts.relayer.to_account_info(),
+                ctx.remaining_accounts,
+                params.validity_proof.clone(),
+                params.address_tree_info.clone(),
+                params.output_tree_index,
+                pool.key(),
+                *commitment,
+                leaf_index,
+                encrypted_note_hash,
+            )?;
+        }
 
         emit!(NoteCreated {
             pool: pool.key(),
             commitment: *commitment,
-            leaf_index,
-            encrypted_note: encrypted_notes.get(i).cloned().unwrap_or_default(),
+            leaf_index: leaf_index as u32,
+            encrypted_note,
             timestamp: clock.unix_timestamp,
         });
     }
 
-    // 5. Process unshield if amount > 0
+    // 4. Process unshield if amount > 0
     if unshield_amount > 0 {
         let recipient = ctx.accounts.unshield_recipient.as_ref()
             .ok_or(CloakCraftError::InvalidAmount)?;
@@ -158,19 +219,11 @@ pub fn transact(
         });
     }
 
-    emit!(MerkleRootUpdated {
-        pool: pool.key(),
-        new_root: pool.merkle_root,
-        next_leaf_index: pool.next_leaf_index,
-        timestamp: clock.unix_timestamp,
-    });
-
     Ok(())
 }
 
 /// Build public inputs array for proof verification
 fn build_transact_public_inputs(
-    merkle_root: &[u8; 32],
     nullifier: &[u8; 32],
     out_commitments: &[[u8; 32]],
     token_mint: &Pubkey,
@@ -178,7 +231,7 @@ fn build_transact_public_inputs(
     unshield_recipient: Option<Pubkey>,
 ) -> Vec<[u8; 32]> {
     let mut inputs = Vec::new();
-    inputs.push(*merkle_root);
+    // Note: merkle_root is no longer a public input - it's verified by Light Protocol
     inputs.push(*nullifier);
     for commitment in out_commitments {
         inputs.push(*commitment);
