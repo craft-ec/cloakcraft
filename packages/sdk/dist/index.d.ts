@@ -1,6 +1,7 @@
-import { Keypair, SpendingKey, ViewingKey, Point, PoolState, DecryptedNote, ShieldParams, TransactionResult, TransferParams, AdapterSwapParams, OrderParams, SyncStatus, FieldElement, PoseidonHash, StealthAddress, Note, Commitment, Nullifier, EncryptedNote, Groth16Proof } from '@cloakcraft/types';
+import { Keypair, SpendingKey, ViewingKey, Point, PoolState, DecryptedNote, ShieldParams, TransactionResult, TransferParams, StealthAddress, AdapterSwapParams, OrderParams, SyncStatus, FieldElement, PoseidonHash, Note, Commitment, Nullifier, EncryptedNote, VoteParams, Groth16Proof } from '@cloakcraft/types';
 export * from '@cloakcraft/types';
-import { Connection, PublicKey, Keypair as Keypair$1 } from '@solana/web3.js';
+import * as _solana_web3_js from '@solana/web3.js';
+import { PublicKey, AccountMeta, Connection, Keypair as Keypair$1 } from '@solana/web3.js';
 
 /**
  * Wallet management for CloakCraft
@@ -56,10 +57,212 @@ declare function createWatchOnlyWallet(viewingKey: ViewingKey, publicKey: Point)
 declare function deriveWalletFromSeed(seedPhrase: string, path?: string): Promise<Wallet>;
 
 /**
- * CloakCraft Client
+ * Light Protocol Integration
  *
- * Main entry point for interacting with the protocol
+ * Handles interaction with Helius Photon indexer for compressed account operations.
+ * Used for nullifier storage via ZK Compression.
  */
+
+/**
+ * Helius RPC endpoint configuration
+ */
+interface HeliusConfig {
+    /** Helius API key */
+    apiKey: string;
+    /** Network: 'mainnet-beta' | 'devnet' */
+    network: 'mainnet-beta' | 'devnet';
+}
+/**
+ * Validity proof from Helius indexer
+ */
+interface ValidityProof {
+    /** Compressed proof bytes */
+    compressedProof: {
+        a: number[];
+        b: number[];
+        c: number[];
+    };
+    /** Root indices for state trees */
+    rootIndices: number[];
+    /** Merkle context */
+    merkleTrees: PublicKey[];
+}
+/**
+ * Packed address tree info for Light Protocol CPI
+ */
+interface PackedAddressTreeInfo {
+    /** Address merkle tree account */
+    addressMerkleTreeAccountIndex: number;
+    /** Address queue account */
+    addressQueueAccountIndex: number;
+}
+/**
+ * Light nullifier params for transaction
+ */
+interface LightNullifierParams {
+    /** Validity proof from indexer */
+    validityProof: ValidityProof;
+    /** Address tree info */
+    addressTreeInfo: PackedAddressTreeInfo;
+    /** Output tree index */
+    outputTreeIndex: number;
+}
+/**
+ * Compressed account info from indexer
+ */
+interface CompressedAccountInfo {
+    /** Account hash */
+    hash: string;
+    /** Address (32 bytes hex) */
+    address: string | null;
+    /** Owner program */
+    owner: string;
+    /** Lamports */
+    lamports: number;
+    /** Data (base64) */
+    data: string | null;
+}
+/**
+ * Light Protocol client for Helius Photon indexer
+ */
+declare class LightClient {
+    private readonly rpcUrl;
+    constructor(config: HeliusConfig);
+    /**
+     * Get compressed account by address
+     *
+     * Returns null if account doesn't exist (nullifier not spent)
+     */
+    getCompressedAccount(address: Uint8Array): Promise<CompressedAccountInfo | null>;
+    /**
+     * Check if a nullifier has been spent
+     *
+     * Returns true if the nullifier compressed account exists
+     */
+    isNullifierSpent(nullifier: Uint8Array, programId: PublicKey, addressTree: PublicKey): Promise<boolean>;
+    /**
+     * Get validity proof for creating a new compressed account
+     *
+     * This proves that the address doesn't exist yet (non-inclusion proof)
+     */
+    getValidityProof(params: {
+        /** New address to create (nullifier address) */
+        newAddresses: Uint8Array[];
+        /** Address merkle tree */
+        addressMerkleTree: PublicKey;
+        /** State merkle tree for output */
+        stateMerkleTree: PublicKey;
+    }): Promise<ValidityProof>;
+    /**
+     * Prepare Light Protocol params for transact instruction
+     */
+    prepareLightParams(params: {
+        /** Nullifier hash */
+        nullifier: Uint8Array;
+        /** CloakCraft program ID */
+        programId: PublicKey;
+        /** Address merkle tree account */
+        addressMerkleTree: PublicKey;
+        /** State merkle tree account */
+        stateMerkleTree: PublicKey;
+        /** Address merkle tree account index in remaining accounts */
+        addressMerkleTreeAccountIndex: number;
+        /** Address queue account index in remaining accounts */
+        addressQueueAccountIndex: number;
+        /** Output state tree index */
+        outputTreeIndex: number;
+    }): Promise<LightNullifierParams>;
+    /**
+     * Get remaining accounts needed for Light Protocol CPI
+     *
+     * These accounts must be passed to the transact instruction
+     */
+    getRemainingAccounts(params: {
+        /** State merkle tree */
+        stateMerkleTree: PublicKey;
+        /** Address merkle tree */
+        addressMerkleTree: PublicKey;
+        /** Nullifier queue */
+        nullifierQueue: PublicKey;
+    }): Promise<AccountMeta[]>;
+    /**
+     * Derive nullifier compressed account address
+     *
+     * Matches the on-chain derive_nullifier_address function
+     */
+    deriveNullifierAddress(nullifier: Uint8Array, programId: PublicKey, addressTree: PublicKey): Uint8Array;
+}
+/**
+ * Light Protocol tree accounts for devnet
+ *
+ * These are the default merkle trees on devnet for ZK Compression
+ */
+declare const DEVNET_LIGHT_TREES: {
+    stateMerkleTree: PublicKey;
+    addressMerkleTree: PublicKey;
+    nullifierQueue: PublicKey;
+};
+/**
+ * Light Protocol tree accounts for mainnet
+ */
+declare const MAINNET_LIGHT_TREES: {
+    stateMerkleTree: PublicKey;
+    addressMerkleTree: PublicKey;
+    nullifierQueue: PublicKey;
+};
+/**
+ * Commitment merkle proof from Helius
+ */
+interface CommitmentMerkleProof {
+    /** Merkle root */
+    root: Uint8Array;
+    /** Path elements (siblings) */
+    pathElements: Uint8Array[];
+    /** Path indices (0 = left, 1 = right) */
+    pathIndices: number[];
+    /** Leaf index in tree */
+    leafIndex: number;
+}
+/**
+ * Extended Light client with commitment operations
+ */
+declare class LightCommitmentClient extends LightClient {
+    /**
+     * Get commitment by its address
+     */
+    getCommitment(pool: PublicKey, commitment: Uint8Array, programId: PublicKey, addressTree: PublicKey): Promise<CompressedAccountInfo | null>;
+    /**
+     * Check if a commitment exists in the tree
+     */
+    commitmentExists(pool: PublicKey, commitment: Uint8Array, programId: PublicKey, addressTree: PublicKey): Promise<boolean>;
+    /**
+     * Get merkle proof for a commitment
+     *
+     * This fetches the inclusion proof from Helius Photon indexer
+     */
+    getCommitmentMerkleProof(pool: PublicKey, commitment: Uint8Array, programId: PublicKey, addressTree: PublicKey, stateMerkleTree: PublicKey): Promise<CommitmentMerkleProof>;
+    /**
+     * Prepare Light params for shield instruction
+     */
+    prepareShieldParams(params: {
+        commitment: Uint8Array;
+        pool: PublicKey;
+        programId: PublicKey;
+        addressMerkleTree: PublicKey;
+        stateMerkleTree: PublicKey;
+        addressMerkleTreeAccountIndex: number;
+        addressQueueAccountIndex: number;
+        outputTreeIndex: number;
+    }): Promise<LightNullifierParams>;
+    /**
+     * Derive commitment compressed account address
+     */
+    deriveCommitmentAddress(pool: PublicKey, commitment: Uint8Array, programId: PublicKey, addressTree: PublicKey): Uint8Array;
+    /**
+     * Convert leaf index to path indices (bit representation)
+     */
+    private leafIndexToPathIndices;
+}
 
 interface CloakCraftClientConfig {
     /** Solana RPC URL */
@@ -70,15 +273,45 @@ interface CloakCraftClientConfig {
     programId: PublicKey;
     /** Optional commitment level */
     commitment?: 'processed' | 'confirmed' | 'finalized';
+    /** Helius API key for Light Protocol (nullifier storage) */
+    heliusApiKey?: string;
+    /** Network for Light Protocol */
+    network?: 'mainnet-beta' | 'devnet';
 }
 declare class CloakCraftClient {
     readonly connection: Connection;
     readonly programId: PublicKey;
     readonly indexerUrl: string;
+    readonly network: 'mainnet-beta' | 'devnet';
     private wallet;
     private noteManager;
     private proofGenerator;
+    private lightClient;
     constructor(config: CloakCraftClientConfig);
+    /**
+     * Get Light Protocol tree accounts for current network
+     */
+    getLightTrees(): {
+        stateMerkleTree: PublicKey;
+        addressMerkleTree: PublicKey;
+        nullifierQueue: PublicKey;
+    };
+    /**
+     * Check if a nullifier has been spent
+     *
+     * Returns true if the nullifier compressed account exists
+     */
+    isNullifierSpent(nullifier: Uint8Array): Promise<boolean>;
+    /**
+     * Prepare Light Protocol params for a transact instruction
+     *
+     * This fetches the validity proof from Helius for nullifier creation
+     */
+    prepareLightParams(nullifier: Uint8Array): Promise<LightNullifierParams>;
+    /**
+     * Get remaining accounts needed for Light Protocol CPI
+     */
+    getLightRemainingAccounts(): Promise<_solana_web3_js.AccountMeta[]>;
     /**
      * Create a new wallet
      */
@@ -112,6 +345,25 @@ declare class CloakCraftClient {
      */
     transfer(params: TransferParams, relayer?: Keypair$1): Promise<TransactionResult>;
     /**
+     * Prepare simple transfer inputs and execute transfer
+     *
+     * This is a convenience method that handles all cryptographic preparation:
+     * - Derives Y-coordinates from spending key
+     * - Fetches merkle proofs from indexer
+     * - Computes output commitments
+     */
+    prepareAndTransfer(request: {
+        inputs: DecryptedNote[];
+        outputs: Array<{
+            recipient: StealthAddress;
+            amount: bigint;
+        }>;
+        unshield?: {
+            amount: bigint;
+            recipient: PublicKey;
+        };
+    }, relayer?: Keypair$1): Promise<TransactionResult>;
+    /**
      * Swap through external adapter (partial privacy)
      */
     swapViaAdapter(params: AdapterSwapParams, relayer?: Keypair$1): Promise<TransactionResult>;
@@ -119,6 +371,19 @@ declare class CloakCraftClient {
      * Create a market order
      */
     createOrder(params: OrderParams, relayer?: Keypair$1): Promise<TransactionResult>;
+    /**
+     * Prepare and create a market order (convenience method)
+     */
+    prepareAndCreateOrder(request: {
+        input: DecryptedNote;
+        terms: {
+            offerMint: PublicKey;
+            offerAmount: bigint;
+            requestMint: PublicKey;
+            requestAmount: bigint;
+        };
+        expiry: number;
+    }, relayer?: Keypair$1): Promise<TransactionResult>;
     /**
      * Get sync status
      */
@@ -129,6 +394,18 @@ declare class CloakCraftClient {
     private buildCreateOrderTransaction;
     private getRelayer;
     private decodePoolState;
+    /**
+     * Prepare inputs by deriving Y-coordinates from the wallet's spending key
+     */
+    private prepareInputs;
+    /**
+     * Prepare outputs by computing commitments
+     */
+    private prepareOutputs;
+    /**
+     * Fetch merkle proof from indexer
+     */
+    private fetchMerkleProof;
 }
 
 /**
@@ -265,9 +542,12 @@ declare function deriveNullifierKey(spendingKey: FieldElement): FieldElement;
 /**
  * Derive spending nullifier (consumes the note)
  *
- * spending_nullifier = poseidon(DOMAIN_SPENDING_NULLIFIER, nk, commitment)
+ * spending_nullifier = poseidon(DOMAIN_SPENDING_NULLIFIER, nk, commitment, leaf_index)
+ *
+ * The leaf_index is included to prevent nullifier collision attacks when the
+ * same note could theoretically appear at multiple positions.
  */
-declare function deriveSpendingNullifier(nullifierKey: FieldElement, commitment: Commitment): Nullifier;
+declare function deriveSpendingNullifier(nullifierKey: FieldElement, commitment: Commitment, leafIndex: number): Nullifier;
 /**
  * Derive action nullifier (uses note without consuming)
  *
@@ -353,20 +633,62 @@ declare class NoteManager {
 
 /**
  * Proof generation for ZK circuits
+ *
+ * Uses Noir circuits compiled via Sunspot for Groth16 proofs
  */
 
+/**
+ * Configuration for Node.js proof generation
+ */
+interface NodeProverConfig {
+    /** Path to circuits directory */
+    circuitsDir: string;
+    /** Path to sunspot binary */
+    sunspotPath: string;
+    /** Path to nargo binary */
+    nargoPath: string;
+}
 /**
  * Proof generator using Noir circuits compiled via Sunspot
  */
 declare class ProofGenerator {
-    private wasmPath?;
-    private zkeyPath?;
+    private circuits;
+    private baseUrl;
+    private isInitialized;
+    private nodeConfig?;
     constructor(config?: {
-        wasmPath?: string;
-        zkeyPath?: string;
+        baseUrl?: string;
+        nodeConfig?: NodeProverConfig;
     });
     /**
-     * Generate a transfer proof
+     * Configure for Node.js proving (auto-detects paths if not provided)
+     */
+    configureForNode(config?: Partial<NodeProverConfig>): void;
+    /**
+     * Initialize the prover with circuit artifacts
+     */
+    initialize(circuitNames?: string[]): Promise<void>;
+    /**
+     * Load a circuit's artifacts
+     *
+     * In Node.js with nodeConfig set, loads from file system.
+     * In browser, loads via fetch from baseUrl.
+     */
+    loadCircuit(name: string): Promise<void>;
+    /**
+     * Load circuit from file system (Node.js)
+     */
+    private loadCircuitFromFs;
+    /**
+     * Load circuit from URL (browser)
+     */
+    private loadCircuitFromUrl;
+    /**
+     * Check if a circuit is loaded
+     */
+    hasCircuit(name: string): boolean;
+    /**
+     * Generate a transfer proof (1 input, 2 outputs)
      */
     generateTransferProof(params: TransferParams, keypair: Keypair): Promise<Uint8Array>;
     /**
@@ -380,12 +702,59 @@ declare class ProofGenerator {
     /**
      * Generate a vote proof
      */
-    generateVoteProof(note: DecryptedNote, keypair: Keypair, proposalId: Uint8Array, voteChoices: bigint[], thresholdPubkey: {
-        x: Uint8Array;
-        y: Uint8Array;
-    }): Promise<Uint8Array>;
+    generateVoteProof(params: VoteParams, keypair: Keypair): Promise<Uint8Array>;
+    /**
+     * Generate a Groth16 proof for a circuit
+     */
     private prove;
-    private buildMerkleProof;
+    /**
+     * Native Groth16 prover (WASM-based)
+     */
+    private proveNative;
+    /**
+     * Prove via subprocess (Node.js)
+     *
+     * Workflow:
+     * 1. Write Prover.toml with inputs
+     * 2. Run nargo execute to generate witness
+     * 3. Run sunspot prove with witness, ACIR, CCS, PK
+     * 4. Parse proof output
+     */
+    private proveViaSubprocess;
+    /**
+     * Convert witness inputs to Prover.toml format
+     */
+    private inputsToProverToml;
+    /** URL for remote Groth16 proving service (browser only) */
+    private remoteProverUrl?;
+    /**
+     * Configure remote prover for browser environments
+     *
+     * Since Groth16 proving requires heavy computation,
+     * browser environments should use a remote proving service.
+     */
+    configureRemoteProver(url: string): void;
+    /**
+     * Prove via WASM/remote service (browser)
+     *
+     * Workflow:
+     * 1. Use @noir-lang/noir_js to generate witness from inputs
+     * 2. Send witness + circuit artifacts to remote prover
+     * 3. Receive Groth16 proof
+     */
+    private proveViaWasm;
+    /**
+     * Send witness to remote Groth16 prover
+     */
+    private proveViaRemote;
+    /**
+     * Format proof for Solana's alt_bn128 pairing check
+     *
+     * Solana uses the equation: e(-A, B) * e(alpha, beta) * e(PIC, gamma) * e(C, delta) = 1
+     * This requires negating the A-component (negating Y coordinate)
+     */
+    private formatProofForSolana;
+    private buildTransferWitness;
 }
 /**
  * Parse a Groth16 proof from bytes
@@ -396,4 +765,4 @@ declare function parseGroth16Proof(bytes: Uint8Array): Groth16Proof;
  */
 declare function serializeGroth16Proof(proof: Groth16Proof): Uint8Array;
 
-export { CloakCraftClient, type CloakCraftClientConfig, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, GENERATOR, IDENTITY, NoteManager, ProofGenerator, Wallet, bytesToField, checkNullifierSpent, checkStealthOwnership, computeCommitment, createNote, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveNullifierKey, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveWalletFromSeed, encryptNote, fieldToBytes, generateRandomness, generateStealthAddress, isInSubgroup, isOnCurve, loadWallet, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashDomain, scalarMul, serializeGroth16Proof, tryDecryptNote, verifyCommitment };
+export { CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, DEVNET_LIGHT_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, GENERATOR, type HeliusConfig, IDENTITY, LightClient, LightCommitmentClient, type LightNullifierParams, MAINNET_LIGHT_TREES, NoteManager, type PackedAddressTreeInfo, ProofGenerator, type ValidityProof, Wallet, bytesToField, checkNullifierSpent, checkStealthOwnership, computeCommitment, createNote, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveNullifierKey, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveWalletFromSeed, encryptNote, fieldToBytes, generateRandomness, generateStealthAddress, isInSubgroup, isOnCurve, loadWallet, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashDomain, scalarMul, serializeGroth16Proof, tryDecryptNote, verifyCommitment };

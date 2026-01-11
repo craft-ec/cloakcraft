@@ -23,6 +23,7 @@ solana-bn254 = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-keccak-hasher = { workspace = true }
 thiserror = { workspace = true }
+gnark-verifier-solana = { workspace = true }
 
 # Light Protocol (ZK Compression)
 light-sdk = { workspace = true }

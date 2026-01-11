@@ -30,6 +30,9 @@ solana-bn254 = "2.2"
 solana-sha256-hasher = "2.1"
 solana-keccak-hasher = "2.1"
 
+# Gnark verifier
+gnark-verifier-solana = "1.0.2"
+
 # Async
 tokio = { version = "1.35", features = ["full"] }
 

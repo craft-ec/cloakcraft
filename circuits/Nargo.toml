@@ -11,5 +11,6 @@ members = [
     "swap/add_liquidity",
     "swap/remove_liquidity",
     "swap/swap",
-    "governance/encrypted_submit"
+    "governance/encrypted_submit",
+    "helpers/compute_test_values"
 ]

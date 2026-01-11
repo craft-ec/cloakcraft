@@ -78,14 +78,19 @@ declare function useShield(): {
 
 /**
  * Transfer operation hook
+ *
+ * Provides a simplified interface for transfers. The client handles
+ * the complex cryptographic preparation (deriving Y-coordinates,
+ * computing commitments, fetching merkle proofs, etc.)
  */
 
-interface TransferOutput {
+/** Simple transfer output (client prepares the full cryptographic details) */
+interface SimpleTransferOutput {
     recipient: StealthAddress;
     amount: bigint;
 }
 declare function useTransfer(): {
-    transfer: (inputs: DecryptedNote[], outputs: TransferOutput[], unshield?: {
+    transfer: (inputs: DecryptedNote[], outputs: SimpleTransferOutput[], unshield?: {
         amount: bigint;
         recipient: PublicKey;
     }, relayer?: Keypair) => Promise<TransactionResult | null>;

@@ -1,14 +1,17 @@
 //! Transact via adapter - swap through external DEX (partial privacy)
+//!
+//! Uses Light Protocol for both nullifier and commitment storage.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Token, TokenAccount};
 
-use crate::state::{Pool, AdaptModule, VerificationKey};
+use crate::state::{Pool, AdaptModule, VerificationKey, PoolCommitmentCounter, LightValidityProof, LightAddressTreeInfo};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::events::{NoteCreated, NoteSpent, MerkleRootUpdated};
-use crate::merkle::insert_leaf;
+use crate::events::{NoteCreated, NoteSpent};
 use crate::crypto::verify_proof;
+use crate::light_cpi::{create_nullifier_account, create_commitment_account};
+use crate::merkle::hash_pair;
 
 #[derive(Accounts)]
 pub struct TransactAdapt<'info> {
@@ -27,6 +30,14 @@ pub struct TransactAdapt<'info> {
         bump = output_pool.bump,
     )]
     pub output_pool: Box<Account<'info, Pool>>,
+
+    /// Commitment counter for output pool
+    #[account(
+        mut,
+        seeds = [PoolCommitmentCounter::SEEDS_PREFIX, output_pool.key().as_ref()],
+        bump = output_commitment_counter.bump,
+    )]
+    pub output_commitment_counter: Account<'info, PoolCommitmentCounter>,
 
     /// Input token vault
     #[account(
@@ -59,17 +70,33 @@ pub struct TransactAdapt<'info> {
     )]
     pub verification_key: Box<Account<'info, VerificationKey>>,
 
-    /// Relayer
+    /// Relayer (pays for compressed account creation)
+    #[account(mut)]
     pub relayer: Signer<'info>,
 
     /// Token program
     pub token_program: Program<'info, Token>,
 
-    // Additional accounts for adapter CPI would be passed as remaining_accounts
+    // Light Protocol accounts are passed via remaining_accounts
 }
 
-pub fn transact_adapt(
-    ctx: Context<TransactAdapt>,
+/// Parameters for Light Protocol operations
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct LightAdaptParams {
+    /// Validity proof for nullifier (proves it doesn't exist)
+    pub nullifier_proof: LightValidityProof,
+    /// Address tree info for nullifier
+    pub nullifier_address_tree_info: LightAddressTreeInfo,
+    /// Validity proof for output commitment
+    pub commitment_proof: LightValidityProof,
+    /// Address tree info for commitment
+    pub commitment_address_tree_info: LightAddressTreeInfo,
+    /// Output state tree index
+    pub output_tree_index: u8,
+}
+
+pub fn transact_adapt<'info>(
+    ctx: Context<'_, '_, '_, 'info, TransactAdapt<'info>>,
     proof: Vec<u8>,
     nullifier: [u8; 32],
     input_amount: u64,
@@ -77,15 +104,17 @@ pub fn transact_adapt(
     adapt_params: Vec<u8>,
     out_commitment: [u8; 32],
     encrypted_note: Vec<u8>,
+    light_params: Option<LightAdaptParams>,
 ) -> Result<()> {
     let input_pool = &mut ctx.accounts.input_pool;
     let output_pool = &mut ctx.accounts.output_pool;
+    let output_commitment_counter = &mut ctx.accounts.output_commitment_counter;
     let clock = Clock::get()?;
 
     // 1. Verify ZK proof (proves ownership of input, specifies amounts)
     // Note: amounts are public in adapter circuit for DEX compatibility
+    // Merkle root is now verified by Light Protocol validity proof
     let public_inputs = build_adapt_public_inputs(
-        &input_pool.merkle_root,
         &nullifier,
         &input_pool.token_mint,
         input_amount,
@@ -102,7 +131,19 @@ pub fn transact_adapt(
         &public_inputs,
     )?;
 
-    // 2. Mark input as spent
+    // 2. Create nullifier compressed account via Light Protocol
+    if let Some(ref params) = light_params {
+        create_nullifier_account(
+            &ctx.accounts.relayer.to_account_info(),
+            ctx.remaining_accounts,
+            params.nullifier_proof.clone(),
+            params.nullifier_address_tree_info.clone(),
+            params.output_tree_index,
+            input_pool.key(),
+            nullifier,
+        )?;
+    }
+
     emit!(NoteSpent {
         pool: input_pool.key(),
         nullifier,
@@ -111,12 +152,7 @@ pub fn transact_adapt(
 
     // 3. CPI to adapter to execute swap
     // In production: CPI to Jupiter/etc via adapter interface
-    // The adapter would:
-    // - Receive input tokens from input_vault
-    // - Execute swap
-    // - Return output tokens to output_vault
     // For now, we simulate by requiring the output amount
-
     let _actual_output = execute_adapter_swap(
         &ctx.accounts.adapt_module,
         input_amount,
@@ -126,34 +162,45 @@ pub fn transact_adapt(
     )?;
 
     // 4. Verify output meets minimum
-    // (In production, use actual_output from adapter)
     let output_amount = min_output; // Simplified
 
-    // 5. Create output commitment in output pool
-    require!(output_pool.can_insert(), CloakCraftError::TreeFull);
+    // 5. Create output commitment via Light Protocol
+    let leaf_index = output_commitment_counter.next_leaf_index;
+    output_commitment_counter.next_leaf_index += 1;
+    output_commitment_counter.total_commitments += 1;
 
-    let leaf_index = output_pool.next_leaf_index;
-    let new_root = insert_leaf(
-        &mut output_pool.frontier,
-        leaf_index,
-        out_commitment,
-    )?;
+    if let Some(ref params) = light_params {
+        let encrypted_note_hash = hash_pair(
+            &out_commitment,
+            &if encrypted_note.len() >= 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&encrypted_note[..32]);
+                arr
+            } else {
+                let mut arr = [0u8; 32];
+                arr[..encrypted_note.len()].copy_from_slice(&encrypted_note);
+                arr
+            },
+        );
 
-    output_pool.update_root(new_root);
-    output_pool.next_leaf_index += 1;
+        create_commitment_account(
+            &ctx.accounts.relayer.to_account_info(),
+            ctx.remaining_accounts,
+            params.commitment_proof.clone(),
+            params.commitment_address_tree_info.clone(),
+            params.output_tree_index,
+            output_pool.key(),
+            out_commitment,
+            leaf_index,
+            encrypted_note_hash,
+        )?;
+    }
 
     emit!(NoteCreated {
         pool: output_pool.key(),
         commitment: out_commitment,
-        leaf_index,
+        leaf_index: leaf_index as u32,
         encrypted_note,
-        timestamp: clock.unix_timestamp,
-    });
-
-    emit!(MerkleRootUpdated {
-        pool: output_pool.key(),
-        new_root,
-        next_leaf_index: output_pool.next_leaf_index,
         timestamp: clock.unix_timestamp,
     });
 
@@ -167,7 +214,6 @@ pub fn transact_adapt(
 }
 
 fn build_adapt_public_inputs(
-    merkle_root: &[u8; 32],
     nullifier: &[u8; 32],
     input_token: &Pubkey,
     input_amount: u64,
@@ -177,8 +223,8 @@ fn build_adapt_public_inputs(
     adapt_params: &[u8],
     out_commitment: &[u8; 32],
 ) -> Vec<[u8; 32]> {
+    // Note: merkle_root is no longer a public input - verified by Light Protocol
     let mut inputs = Vec::new();
-    inputs.push(*merkle_root);
     inputs.push(*nullifier);
     inputs.push(input_token.to_bytes());
     inputs.push(u64_to_field(input_amount));

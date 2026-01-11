@@ -22,3 +22,6 @@ export * from './proofs';
 
 // Export wallet
 export * from './wallet';
+
+// Export Light Protocol / Helius integration
+export * from './light';

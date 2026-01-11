@@ -90,7 +90,7 @@ pub struct LightNullifierParams {
 pub fn transact<'info>(
     ctx: Context<'_, '_, '_, 'info, Transact<'info>>,
     proof: Vec<u8>,
-    _merkle_root: [u8; 32], // Deprecated: merkle root now from Light Protocol
+    merkle_root: [u8; 32],
     nullifier: [u8; 32],
     out_commitments: Vec<[u8; 32]>,
     encrypted_notes: Vec<Vec<u8>>,
@@ -104,19 +104,49 @@ pub fn transact<'info>(
     // 1. Verify ZK proof
     // Note: The merkle root is now part of the validity proof from Light Protocol
     // The ZK circuit proves: commitment exists in tree AND nullifier is correctly derived
-    let public_inputs = build_transact_public_inputs(
-        &nullifier,
-        &out_commitments,
-        &pool.token_mint,
-        unshield_amount,
-        ctx.accounts.unshield_recipient.as_ref().map(|r| r.key()),
-    );
+    //
+    // TODO: Enable verification once sunspot/gnark supports Noir public inputs.
+    // Currently sunspot extracts nbPublic=0 from Noir circuits because Noir uses
+    // return values for public inputs while gnark expects them in the constraint system.
+    // See: https://github.com/reilabs/sunspot/issues/XX
+    #[cfg(not(feature = "skip-zk-verify"))]
+    {
+        let token_mint_field = pubkey_to_field(&pool.token_mint);
+        let unshield_field = u64_to_field(unshield_amount);
 
-    verify_proof(
-        &proof,
-        &ctx.accounts.verification_key.vk_data,
-        &public_inputs,
-    )?;
+        msg!("=== ZK Public Inputs Debug ===");
+        msg!("merkle_root: {:?}", &merkle_root[..8]);
+        msg!("nullifier: {:?}", &nullifier[..8]);
+        msg!("out_commitment_1: {:?}", &out_commitments[0][..8]);
+        msg!("out_commitment_2: {:?}", &out_commitments[1][..8]);
+        msg!("token_mint raw: {}", pool.token_mint);
+        msg!("token_mint field: {:?}", &token_mint_field[..8]);
+        msg!("unshield_amount: {}", unshield_amount);
+        msg!("unshield field: {:?}", &unshield_field[24..32]);
+
+        let public_inputs = build_transact_public_inputs(
+            &merkle_root,
+            &nullifier,
+            &out_commitments,
+            &pool.token_mint,
+            unshield_amount,
+        );
+
+        msg!("Total public inputs: {}", public_inputs.len());
+
+        verify_proof(
+            &proof,
+            &ctx.accounts.verification_key.vk_data,
+            &public_inputs,
+        )?;
+    }
+
+    // Log that verification was skipped (for testing only)
+    #[cfg(feature = "skip-zk-verify")]
+    {
+        msg!("WARNING: ZK proof verification skipped (testing mode)");
+        let _ = &proof; // Suppress unused warning
+    }
 
     // 2. Create nullifier compressed account via Light Protocol
     if let Some(params) = &light_params {
@@ -223,33 +253,83 @@ pub fn transact<'info>(
 }
 
 /// Build public inputs array for proof verification
+/// Order matches circuit: merkle_root, nullifier, out_commitments, token_mint, unshield_amount
 fn build_transact_public_inputs(
+    merkle_root: &[u8; 32],
     nullifier: &[u8; 32],
     out_commitments: &[[u8; 32]],
     token_mint: &Pubkey,
     unshield_amount: u64,
-    unshield_recipient: Option<Pubkey>,
 ) -> Vec<[u8; 32]> {
     let mut inputs = Vec::new();
-    // Note: merkle_root is no longer a public input - it's verified by Light Protocol
+    inputs.push(*merkle_root);
     inputs.push(*nullifier);
     for commitment in out_commitments {
         inputs.push(*commitment);
     }
     inputs.push(pubkey_to_field(token_mint));
     inputs.push(u64_to_field(unshield_amount));
-    if let Some(recipient) = unshield_recipient {
-        inputs.push(pubkey_to_field(&recipient));
-    }
     inputs
 }
 
+/// BN254 field modulus as bytes (big-endian)
+const BN254_FIELD_MODULUS: [u8; 32] = [
+    0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29,
+    0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d,
+    0x97, 0x81, 0x6a, 0x91, 0x68, 0x71, 0xca, 0x8d,
+    0x3c, 0x20, 0x8c, 0x16, 0xd8, 0x7c, 0xfd, 0x47,
+];
+
+/// Subtract modulus from value: result = value - modulus
+fn subtract_modulus(value: &[u8; 32]) -> [u8; 32] {
+    let mut result = [0u8; 32];
+    let mut borrow: i16 = 0;
+
+    for i in (0..32).rev() {
+        let diff = value[i] as i16 - BN254_FIELD_MODULUS[i] as i16 - borrow;
+        if diff < 0 {
+            result[i] = (diff + 256) as u8;
+            borrow = 1;
+        } else {
+            result[i] = diff as u8;
+            borrow = 0;
+        }
+    }
+    result
+}
+
+/// Compare two 32-byte big-endian numbers: returns true if a >= b
+fn ge_modulus(a: &[u8; 32]) -> bool {
+    for i in 0..32 {
+        if a[i] > BN254_FIELD_MODULUS[i] {
+            return true;
+        } else if a[i] < BN254_FIELD_MODULUS[i] {
+            return false;
+        }
+    }
+    true // equal
+}
+
+/// Convert a pubkey to a field element by taking modulo the BN254 field prime
 fn pubkey_to_field(pubkey: &Pubkey) -> [u8; 32] {
-    pubkey.to_bytes()
+    let mut value = pubkey.to_bytes();
+
+    // Subtract modulus while value >= modulus
+    // Max 4 subtractions needed since pubkey is 256 bits and modulus is ~254 bits
+    for _ in 0..4 {
+        if ge_modulus(&value) {
+            value = subtract_modulus(&value);
+        } else {
+            break;
+        }
+    }
+
+    value
 }
 
 fn u64_to_field(value: u64) -> [u8; 32] {
+    // Convert u64 to 32-byte big-endian field element
     let mut result = [0u8; 32];
-    result[..8].copy_from_slice(&value.to_le_bytes());
+    result[24..32].copy_from_slice(&value.to_be_bytes());
     result
 }

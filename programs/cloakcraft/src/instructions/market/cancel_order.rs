@@ -1,13 +1,31 @@
 //! Cancel an order and return escrowed funds
+//!
+//! Uses Light Protocol for nullifier and commitment storage.
 
 use anchor_lang::prelude::*;
 
-use crate::state::{Pool, Order, OrderStatus, VerificationKey};
+use crate::state::{Pool, Order, OrderStatus, VerificationKey, PoolCommitmentCounter, LightValidityProof, LightAddressTreeInfo};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::events::{NoteSpent, NoteCreated, OrderCancelled, MerkleRootUpdated};
-use crate::merkle::insert_leaf;
+use crate::events::{NoteSpent, NoteCreated, OrderCancelled};
 use crate::crypto::verify_proof;
+use crate::light_cpi::{create_nullifier_account, create_commitment_account};
+use crate::merkle::hash_pair;
+
+/// Parameters for Light Protocol operations
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct LightCancelOrderParams {
+    /// Validity proof for nullifier
+    pub nullifier_proof: LightValidityProof,
+    /// Address tree info for nullifier
+    pub nullifier_address_tree_info: LightAddressTreeInfo,
+    /// Validity proof for refund commitment
+    pub commitment_proof: LightValidityProof,
+    /// Address tree info for refund commitment
+    pub commitment_address_tree_info: LightAddressTreeInfo,
+    /// Output state tree index
+    pub output_tree_index: u8,
+}
 
 #[derive(Accounts)]
 #[instruction(
@@ -23,6 +41,14 @@ pub struct CancelOrder<'info> {
         bump = pool.bump,
     )]
     pub pool: Box<Account<'info, Pool>>,
+
+    /// Commitment counter for this pool
+    #[account(
+        mut,
+        seeds = [PoolCommitmentCounter::SEEDS_PREFIX, pool.key().as_ref()],
+        bump = commitment_counter.bump,
+    )]
+    pub commitment_counter: Account<'info, PoolCommitmentCounter>,
 
     /// Order being cancelled
     #[account(
@@ -40,25 +66,30 @@ pub struct CancelOrder<'info> {
     )]
     pub verification_key: Box<Account<'info, VerificationKey>>,
 
-    /// Relayer/maker
+    /// Relayer/maker (pays for compressed account creation)
+    #[account(mut)]
     pub relayer: Signer<'info>,
+
+    // Light Protocol accounts are passed via remaining_accounts
 }
 
-pub fn cancel_order(
-    ctx: Context<CancelOrder>,
+pub fn cancel_order<'info>(
+    ctx: Context<'_, '_, '_, 'info, CancelOrder<'info>>,
     proof: Vec<u8>,
     escrow_nullifier: [u8; 32],
     order_id: [u8; 32],
     refund_commitment: [u8; 32],
     encrypted_note: Vec<u8>,
+    light_params: Option<LightCancelOrderParams>,
 ) -> Result<()> {
     let pool = &mut ctx.accounts.pool;
+    let commitment_counter = &mut ctx.accounts.commitment_counter;
     let order = &mut ctx.accounts.order;
     let clock = Clock::get()?;
 
     // 1. Verify ZK proof (proves ownership of escrow)
+    // Merkle root is now verified by Light Protocol validity proof
     let public_inputs = build_cancel_order_inputs(
-        &pool.merkle_root,
         &escrow_nullifier,
         &order_id,
         &refund_commitment,
@@ -71,30 +102,61 @@ pub fn cancel_order(
         &public_inputs,
     )?;
 
-    // 2. Spend escrow
+    // 2. Create nullifier compressed account via Light Protocol
+    if let Some(ref params) = light_params {
+        create_nullifier_account(
+            &ctx.accounts.relayer.to_account_info(),
+            ctx.remaining_accounts,
+            params.nullifier_proof.clone(),
+            params.nullifier_address_tree_info.clone(),
+            params.output_tree_index,
+            pool.key(),
+            escrow_nullifier,
+        )?;
+    }
+
     emit!(NoteSpent {
         pool: pool.key(),
         nullifier: escrow_nullifier,
         timestamp: clock.unix_timestamp,
     });
 
-    // 3. Create refund commitment
-    require!(pool.can_insert(), CloakCraftError::TreeFull);
+    // 3. Create refund commitment via Light Protocol
+    let leaf_index = commitment_counter.next_leaf_index;
+    commitment_counter.next_leaf_index += 1;
+    commitment_counter.total_commitments += 1;
 
-    let leaf_index = pool.next_leaf_index;
-    let new_root = insert_leaf(
-        &mut pool.frontier,
-        leaf_index,
-        refund_commitment,
-    )?;
+    if let Some(ref params) = light_params {
+        let encrypted_note_hash = hash_pair(
+            &refund_commitment,
+            &if encrypted_note.len() >= 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&encrypted_note[..32]);
+                arr
+            } else {
+                let mut arr = [0u8; 32];
+                arr[..encrypted_note.len()].copy_from_slice(&encrypted_note);
+                arr
+            },
+        );
 
-    pool.update_root(new_root);
-    pool.next_leaf_index += 1;
+        create_commitment_account(
+            &ctx.accounts.relayer.to_account_info(),
+            ctx.remaining_accounts,
+            params.commitment_proof.clone(),
+            params.commitment_address_tree_info.clone(),
+            params.output_tree_index,
+            pool.key(),
+            refund_commitment,
+            leaf_index,
+            encrypted_note_hash,
+        )?;
+    }
 
     emit!(NoteCreated {
         pool: pool.key(),
         commitment: refund_commitment,
-        leaf_index,
+        leaf_index: leaf_index as u32,
         encrypted_note,
         timestamp: clock.unix_timestamp,
     });
@@ -107,25 +169,17 @@ pub fn cancel_order(
         timestamp: clock.unix_timestamp,
     });
 
-    emit!(MerkleRootUpdated {
-        pool: pool.key(),
-        new_root,
-        next_leaf_index: pool.next_leaf_index,
-        timestamp: clock.unix_timestamp,
-    });
-
     Ok(())
 }
 
 fn build_cancel_order_inputs(
-    merkle_root: &[u8; 32],
     escrow_nullifier: &[u8; 32],
     order_id: &[u8; 32],
     refund_commitment: &[u8; 32],
     current_timestamp: i64,
 ) -> Vec<[u8; 32]> {
+    // Note: merkle_root is no longer a public input - verified by Light Protocol
     let mut inputs = Vec::new();
-    inputs.push(*merkle_root);
     inputs.push(*escrow_nullifier);
     inputs.push(*order_id);
     inputs.push(*refund_commitment);

@@ -21,16 +21,16 @@ pub struct PublicInputs {
 }
 
 fn main(
-    // Public inputs
-    merkle_root: Field,
-    nullifier: Field,
-    input_token: Field,
-    input_amount: Field,
-    output_token: Field,
-    min_output: Field,
-    adapt_module: Field,
-    adapt_params_hash: Field,
-    out_commitment: Field,
+    // Public inputs - marked with pub for Sunspot/gnark compatibility
+    merkle_root: pub Field,
+    nullifier: pub Field,
+    input_token: pub Field,
+    input_amount: pub Field,
+    output_token: pub Field,
+    min_output: pub Field,
+    adapt_module: pub Field,
+    adapt_params_hash: pub Field,
+    out_commitment: pub Field,
 
     // Private inputs - Input note details
     in_stealth_pub_x: Field,

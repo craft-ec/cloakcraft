@@ -33,6 +33,13 @@ import { NoteManager } from './notes';
 import { ProofGenerator } from './proofs';
 import { computeCommitment, generateRandomness } from './crypto/commitment';
 import { derivePublicKey } from './crypto/babyjubjub';
+import {
+  LightClient,
+  LightNullifierParams,
+  HeliusConfig,
+  DEVNET_LIGHT_TREES,
+  MAINNET_LIGHT_TREES,
+} from './light';
 
 export interface CloakCraftClientConfig {
   /** Solana RPC URL */
@@ -43,23 +50,98 @@ export interface CloakCraftClientConfig {
   programId: PublicKey;
   /** Optional commitment level */
   commitment?: 'processed' | 'confirmed' | 'finalized';
+  /** Helius API key for Light Protocol (nullifier storage) */
+  heliusApiKey?: string;
+  /** Network for Light Protocol */
+  network?: 'mainnet-beta' | 'devnet';
 }
 
 export class CloakCraftClient {
   readonly connection: Connection;
   readonly programId: PublicKey;
   readonly indexerUrl: string;
+  readonly network: 'mainnet-beta' | 'devnet';
 
   private wallet: Wallet | null = null;
   private noteManager: NoteManager;
   private proofGenerator: ProofGenerator;
+  private lightClient: LightClient | null = null;
 
   constructor(config: CloakCraftClientConfig) {
     this.connection = new Connection(config.rpcUrl, config.commitment ?? 'confirmed');
     this.programId = config.programId;
     this.indexerUrl = config.indexerUrl;
+    this.network = config.network ?? 'devnet';
     this.noteManager = new NoteManager(config.indexerUrl);
     this.proofGenerator = new ProofGenerator();
+
+    // Initialize Light Protocol client if Helius API key provided
+    if (config.heliusApiKey) {
+      this.lightClient = new LightClient({
+        apiKey: config.heliusApiKey,
+        network: this.network,
+      });
+    }
+  }
+
+  /**
+   * Get Light Protocol tree accounts for current network
+   */
+  getLightTrees() {
+    return this.network === 'mainnet-beta' ? MAINNET_LIGHT_TREES : DEVNET_LIGHT_TREES;
+  }
+
+  /**
+   * Check if a nullifier has been spent
+   *
+   * Returns true if the nullifier compressed account exists
+   */
+  async isNullifierSpent(nullifier: Uint8Array): Promise<boolean> {
+    if (!this.lightClient) {
+      throw new Error('Light Protocol not configured. Provide heliusApiKey in config.');
+    }
+
+    const trees = this.getLightTrees();
+    return this.lightClient.isNullifierSpent(
+      nullifier,
+      this.programId,
+      trees.addressMerkleTree
+    );
+  }
+
+  /**
+   * Prepare Light Protocol params for a transact instruction
+   *
+   * This fetches the validity proof from Helius for nullifier creation
+   */
+  async prepareLightParams(nullifier: Uint8Array): Promise<LightNullifierParams> {
+    if (!this.lightClient) {
+      throw new Error('Light Protocol not configured. Provide heliusApiKey in config.');
+    }
+
+    const trees = this.getLightTrees();
+    return this.lightClient.prepareLightParams({
+      nullifier,
+      programId: this.programId,
+      addressMerkleTree: trees.addressMerkleTree,
+      stateMerkleTree: trees.stateMerkleTree,
+      // These indices depend on how remaining_accounts is ordered
+      addressMerkleTreeAccountIndex: 5,
+      addressQueueAccountIndex: 6,
+      outputTreeIndex: 0,
+    });
+  }
+
+  /**
+   * Get remaining accounts needed for Light Protocol CPI
+   */
+  async getLightRemainingAccounts() {
+    if (!this.lightClient) {
+      throw new Error('Light Protocol not configured. Provide heliusApiKey in config.');
+    }
+
+    const trees = this.getLightTrees();
+    return this.lightClient.getRemainingAccounts(trees);
   }
 
   /**

@@ -20,15 +20,15 @@ pub struct PublicInputs {
 }
 
 fn main(
-    // Public inputs
-    merkle_root: Field,
-    nullifier: Field,
-    out_commitment_1: Field,
-    out_commitment_2: Field,
-    out_commitment_3: Field,
-    token_mint: Field,
-    relayer_fee: Field,
-    unshield_amount: Field,
+    // Public inputs - marked with pub for Sunspot/gnark compatibility
+    merkle_root: pub Field,
+    nullifier: pub Field,
+    out_commitment_1: pub Field,
+    out_commitment_2: pub Field,
+    out_commitment_3: pub Field,
+    token_mint: pub Field,
+    relayer_fee: pub Field,
+    unshield_amount: pub Field,
 
     // Private inputs - Input note details
     in_stealth_pub_x: Field,

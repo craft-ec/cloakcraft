@@ -1,0 +1,8 @@
+[package]
+name = "compute_test_values"
+type = "bin"
+authors = [""]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+cloakcraft_lib = { path = "../../lib" }

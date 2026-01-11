@@ -1,4 +1,7 @@
 //! Initialize a new shielded pool for a token
+//!
+//! Note: After initializing the pool, call initialize_commitment_counter
+//! to enable Light Protocol commitment tracking.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount};
@@ -59,11 +62,10 @@ pub fn initialize_pool(ctx: Context<InitializePool>) -> Result<()> {
     pool.authority = ctx.accounts.authority.key();
     pool.bump = ctx.bumps.pool;
     pool.vault_bump = ctx.bumps.token_vault;
-    pool.next_leaf_index = 0;
     pool.total_shielded = 0;
 
-    // Initialize merkle root to empty tree root
-    pool.merkle_root = compute_empty_root();
+    // Note: Merkle tree state is now managed by Light Protocol
+    // Call initialize_commitment_counter after this to enable commitment tracking
 
     emit!(PoolInitialized {
         pool: pool.key(),
@@ -72,18 +74,4 @@ pub fn initialize_pool(ctx: Context<InitializePool>) -> Result<()> {
     });
 
     Ok(())
-}
-
-/// Compute empty merkle tree root
-fn compute_empty_root() -> [u8; 32] {
-    // For a tree of depth 16, start with empty leaf and hash up
-    // This is a simplified version; real implementation uses Poseidon
-    let mut current = [0u8; 32];
-    for _ in 0..16 {
-        let mut hasher = solana_keccak_hasher::Hasher::default();
-        hasher.hash(&current);
-        hasher.hash(&current);
-        current = hasher.result().to_bytes();
-    }
-    current
 }

@@ -20,15 +20,15 @@ pub struct PublicInputs {
 }
 
 fn main(
-    // Public inputs
-    merkle_root_maker: Field,
-    merkle_root_taker: Field,
-    escrow_nullifier: Field,
-    taker_nullifier: Field,
-    maker_output_commitment: Field,
-    taker_output_commitment: Field,
-    taker_change_commitment: Field,
-    current_timestamp: Field,
+    // Public inputs - marked with pub for Sunspot/gnark compatibility
+    merkle_root_maker: pub Field,
+    merkle_root_taker: pub Field,
+    escrow_nullifier: pub Field,
+    taker_nullifier: pub Field,
+    maker_output_commitment: pub Field,
+    taker_output_commitment: pub Field,
+    taker_change_commitment: pub Field,
+    current_timestamp: pub Field,
 
     // Private inputs - Escrow (Maker Side)
     escrow_stealth_pub_x: Field,

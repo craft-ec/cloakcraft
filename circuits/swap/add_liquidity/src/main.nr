@@ -21,16 +21,16 @@ pub struct PublicInputs {
 }
 
 fn main(
-    // Public inputs
-    merkle_root: Field,
-    nullifier_token_a: Field,
-    nullifier_token_b: Field,
-    pool_id: Field,
-    lp_token_commitment: Field,
-    change_a_commitment: Field,
-    change_b_commitment: Field,
-    old_pool_state_hash: Field,
-    new_pool_state_hash: Field,
+    // Public inputs - marked with pub for Sunspot/gnark compatibility
+    merkle_root: pub Field,
+    nullifier_token_a: pub Field,
+    nullifier_token_b: pub Field,
+    pool_id: pub Field,
+    lp_token_commitment: pub Field,
+    change_a_commitment: pub Field,
+    change_b_commitment: pub Field,
+    old_pool_state_hash: pub Field,
+    new_pool_state_hash: pub Field,
 
     // Private inputs - Token A
     in_a_stealth_pub_x: Field,

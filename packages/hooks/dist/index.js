@@ -258,12 +258,8 @@ function useTransfer() {
       }
       setState({ isTransferring: true, error: null, result: null });
       try {
-        const result = await client.transfer(
-          {
-            inputs,
-            outputs,
-            unshield
-          },
+        const result = await client.prepareAndTransfer(
+          { inputs, outputs, unshield },
           relayer
         );
         await sync();

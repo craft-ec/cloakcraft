@@ -1,29 +1,26 @@
 //! Merkle tree operations using frontier-based O(1) insertion
 //!
-//! Note: Currently uses SHA-256 for on-chain hashing. The ZK circuits use Poseidon,
-//! and commitments are computed off-chain. The merkle tree hash function should be
-//! updated to Poseidon once dependency compatibility is resolved.
+//! Uses Poseidon2 hash function via Light Protocol for ZK-compatible merkle trees.
 
 use anchor_lang::prelude::*;
-use solana_sha256_hasher::Hasher;
+use light_hasher::{Hasher, Poseidon};
 
 use crate::constants::MERKLE_TREE_DEPTH;
 
-/// Empty leaf hash (SHA-256 of empty data)
+/// Empty leaf hash (Poseidon hash of 32 zero bytes)
+/// Pre-computed for efficiency - this is Poseidon([0u8; 32])
+/// Computed from Light Protocol's light-hasher Poseidon implementation
 pub const EMPTY_LEAF: [u8; 32] = [
-    0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
-    0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
-    0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
-    0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55,
+    0x2a, 0x09, 0xa9, 0xfd, 0x93, 0xc5, 0x90, 0xc2,
+    0x6b, 0x91, 0xef, 0xfb, 0xb2, 0x49, 0x9f, 0x07,
+    0xe8, 0xf7, 0xaa, 0x12, 0xe2, 0xb4, 0x94, 0x0a,
+    0x3a, 0xed, 0x24, 0x11, 0xcb, 0x65, 0xe1, 0x1c,
 ];
 
-/// Compute hash of two inputs for merkle tree
+/// Compute Poseidon hash of two 32-byte inputs
 #[inline(always)]
 pub fn hash_pair(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = Hasher::default();
-    hasher.hash(left);
-    hasher.hash(right);
-    hasher.result().to_bytes()
+    Poseidon::hashv(&[left.as_ref(), right.as_ref()]).unwrap_or([0u8; 32])
 }
 
 /// Compute empty subtree hash at given level (for off-chain use)
@@ -38,7 +35,7 @@ pub fn compute_empty_hash_at_level(level: usize) -> [u8; 32] {
 /// Insert a leaf into the merkle tree using frontier-based approach
 /// Returns the new root hash
 ///
-/// Uses iterative computation to avoid large stack allocations
+/// Uses Poseidon hash for ZK circuit compatibility
 #[inline(never)]
 pub fn insert_leaf(
     frontier: &mut [[u8; 32]; MERKLE_TREE_DEPTH],
@@ -68,7 +65,7 @@ pub fn insert_leaf(
     Ok(current_hash)
 }
 
-/// Verify a merkle proof
+/// Verify a merkle proof using Poseidon hash
 pub fn verify_merkle_proof(
     root: &[u8; 32],
     leaf: &[u8; 32],
@@ -132,5 +129,33 @@ mod tests {
         let root2 = insert_leaf(&mut frontier, 1, [2u8; 32]).unwrap();
 
         assert_ne!(root1, root2);
+    }
+
+    #[test]
+    fn test_hash_pair_consistency() {
+        let left = [1u8; 32];
+        let right = [2u8; 32];
+
+        let hash1 = hash_pair(&left, &right);
+        let hash2 = hash_pair(&left, &right);
+
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_empty_leaf_constant() {
+        // Verify EMPTY_LEAF matches Poseidon hash of 32 zero bytes
+        let zero_bytes = [0u8; 32];
+        let computed = Poseidon::hash(&zero_bytes).unwrap();
+        assert_eq!(computed, EMPTY_LEAF, "EMPTY_LEAF constant doesn't match Poseidon([0u8; 32])");
+    }
+
+    #[test]
+    fn test_poseidon_deterministic() {
+        // Ensure Poseidon produces consistent results
+        let input = [42u8; 32];
+        let hash1 = Poseidon::hash(&input).unwrap();
+        let hash2 = Poseidon::hash(&input).unwrap();
+        assert_eq!(hash1, hash2);
     }
 }

@@ -18,13 +18,13 @@ pub struct PublicInputs {
 }
 
 fn main(
-    // Public inputs
-    merkle_root: Field,
-    nullifier: Field,
-    order_id: Field,
-    escrow_commitment: Field,
-    terms_hash: Field,
-    expiry: Field,
+    // Public inputs - marked with pub for Sunspot/gnark compatibility
+    merkle_root: pub Field,
+    nullifier: pub Field,
+    order_id: pub Field,
+    escrow_commitment: pub Field,
+    terms_hash: pub Field,
+    expiry: pub Field,
 
     // Private inputs - Input note
     in_stealth_pub_x: Field,

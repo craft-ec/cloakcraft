@@ -1,7 +1,9 @@
 "use strict";
+var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
@@ -19,9 +21,32 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __reExport = (target, mod, secondTarget) => (__copyProps(target, mod, "default"), secondTarget && __copyProps(secondTarget, mod, "default"));
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/crypto/poseidon.ts
+var poseidon_exports = {};
+__export(poseidon_exports, {
+  DOMAIN_ACTION_NULLIFIER: () => DOMAIN_ACTION_NULLIFIER,
+  DOMAIN_COMMITMENT: () => DOMAIN_COMMITMENT,
+  DOMAIN_EMPTY_LEAF: () => DOMAIN_EMPTY_LEAF,
+  DOMAIN_MERKLE: () => DOMAIN_MERKLE,
+  DOMAIN_NULLIFIER_KEY: () => DOMAIN_NULLIFIER_KEY,
+  DOMAIN_SPENDING_NULLIFIER: () => DOMAIN_SPENDING_NULLIFIER,
+  DOMAIN_STEALTH: () => DOMAIN_STEALTH,
+  bytesToField: () => bytesToField,
+  fieldToBytes: () => fieldToBytes,
+  poseidonHash: () => poseidonHash,
+  poseidonHash2: () => poseidonHash2,
+  poseidonHashDomain: () => poseidonHashDomain
+});
 function bytesToField(bytes) {
   let result = 0n;
   for (const byte of bytes) {
@@ -163,10 +188,91 @@ var init_babyjubjub = __esm({
   }
 });
 
+// src/crypto/nullifier.ts
+var nullifier_exports = {};
+__export(nullifier_exports, {
+  checkNullifierSpent: () => checkNullifierSpent,
+  deriveActionNullifier: () => deriveActionNullifier,
+  deriveNullifierKey: () => deriveNullifierKey,
+  deriveSpendingNullifier: () => deriveSpendingNullifier
+});
+function deriveNullifierKey(spendingKey) {
+  return poseidonHashDomain(DOMAIN_NULLIFIER_KEY, spendingKey);
+}
+function deriveSpendingNullifier(nullifierKey, commitment, leafIndex) {
+  const leafIndexBytes = fieldToBytes(BigInt(leafIndex));
+  return poseidonHashDomain(DOMAIN_SPENDING_NULLIFIER, nullifierKey, commitment, leafIndexBytes);
+}
+function deriveActionNullifier(nullifierKey, commitment, actionDomain) {
+  return poseidonHashDomain(DOMAIN_ACTION_NULLIFIER, nullifierKey, commitment, actionDomain);
+}
+async function checkNullifierSpent(indexerUrl, nullifier) {
+  const nullifierHex = Buffer.from(nullifier).toString("hex");
+  const response = await fetch(`${indexerUrl}/nullifier/${nullifierHex}`);
+  if (!response.ok) {
+    throw new Error("Failed to check nullifier");
+  }
+  const data = await response.json();
+  return data.spent;
+}
+var init_nullifier = __esm({
+  "src/crypto/nullifier.ts"() {
+    "use strict";
+    init_poseidon();
+  }
+});
+
+// src/crypto/commitment.ts
+var commitment_exports = {};
+__export(commitment_exports, {
+  computeCommitment: () => computeCommitment,
+  createNote: () => createNote,
+  generateRandomness: () => generateRandomness,
+  verifyCommitment: () => verifyCommitment
+});
+function computeCommitment(note) {
+  const stealthPubX = note.stealthPubX;
+  const tokenMintBytes = note.tokenMint.toBytes();
+  const amountBytes = fieldToBytes(note.amount);
+  const randomness = note.randomness;
+  return poseidonHashDomain(
+    DOMAIN_COMMITMENT,
+    stealthPubX,
+    tokenMintBytes,
+    amountBytes,
+    randomness
+  );
+}
+function verifyCommitment(commitment, note) {
+  const computed = computeCommitment(note);
+  return bytesToField(computed) === bytesToField(commitment);
+}
+function generateRandomness() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const value = bytesToField(bytes);
+  return fieldToBytes(value);
+}
+function createNote(stealthPubX, tokenMint, amount, randomness) {
+  return {
+    stealthPubX,
+    tokenMint,
+    amount,
+    randomness: randomness ?? generateRandomness()
+  };
+}
+var init_commitment = __esm({
+  "src/crypto/commitment.ts"() {
+    "use strict";
+    init_poseidon();
+  }
+});
+
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
   CloakCraftClient: () => CloakCraftClient,
+  DEVNET_LIGHT_TREES: () => DEVNET_LIGHT_TREES,
   DOMAIN_ACTION_NULLIFIER: () => DOMAIN_ACTION_NULLIFIER,
   DOMAIN_COMMITMENT: () => DOMAIN_COMMITMENT,
   DOMAIN_EMPTY_LEAF: () => DOMAIN_EMPTY_LEAF,
@@ -176,6 +282,9 @@ __export(index_exports, {
   DOMAIN_STEALTH: () => DOMAIN_STEALTH,
   GENERATOR: () => GENERATOR,
   IDENTITY: () => IDENTITY,
+  LightClient: () => LightClient,
+  LightCommitmentClient: () => LightCommitmentClient,
+  MAINNET_LIGHT_TREES: () => MAINNET_LIGHT_TREES,
   NoteManager: () => NoteManager,
   ProofGenerator: () => ProofGenerator,
   Wallet: () => Wallet,
@@ -214,33 +323,11 @@ module.exports = __toCommonJS(index_exports);
 __reExport(index_exports, require("@cloakcraft/types"), module.exports);
 
 // src/client.ts
-var import_web32 = require("@solana/web3.js");
+var import_web33 = require("@solana/web3.js");
 
 // src/wallet.ts
 init_babyjubjub();
-
-// src/crypto/nullifier.ts
-init_poseidon();
-function deriveNullifierKey(spendingKey) {
-  return poseidonHashDomain(DOMAIN_NULLIFIER_KEY, spendingKey);
-}
-function deriveSpendingNullifier(nullifierKey, commitment) {
-  return poseidonHashDomain(DOMAIN_SPENDING_NULLIFIER, nullifierKey, commitment);
-}
-function deriveActionNullifier(nullifierKey, commitment, actionDomain) {
-  return poseidonHashDomain(DOMAIN_ACTION_NULLIFIER, nullifierKey, commitment, actionDomain);
-}
-async function checkNullifierSpent(indexerUrl, nullifier) {
-  const nullifierHex = Buffer.from(nullifier).toString("hex");
-  const response = await fetch(`${indexerUrl}/nullifier/${nullifierHex}`);
-  if (!response.ok) {
-    throw new Error("Failed to check nullifier");
-  }
-  const data = await response.json();
-  return data.spent;
-}
-
-// src/wallet.ts
+init_nullifier();
 init_poseidon();
 var SUBGROUP_ORDER2 = 2736030358979909402780800718157159386076813972158567259200215660948447373041n;
 var DOMAIN_IVK = 0x10n;
@@ -306,7 +393,7 @@ function createWatchOnlyWallet(viewingKey, publicKey) {
     publicKey
   });
 }
-async function deriveWalletFromSeed(seedPhrase, path = "m/44'/501'/0'/0'") {
+async function deriveWalletFromSeed(seedPhrase, path2 = "m/44'/501'/0'/0'") {
   const encoder = new TextEncoder();
   const seedBytes = encoder.encode(seedPhrase);
   const keyMaterial = await crypto.subtle.importKey(
@@ -319,7 +406,7 @@ async function deriveWalletFromSeed(seedPhrase, path = "m/44'/501'/0'/0'") {
   const derivedBits = await crypto.subtle.deriveBits(
     {
       name: "PBKDF2",
-      salt: encoder.encode("cloakcraft" + path),
+      salt: encoder.encode("cloakcraft" + path2),
       iterations: 1e5,
       hash: "SHA-256"
     },
@@ -397,7 +484,7 @@ function serializeNote(note) {
   return buffer;
 }
 function deserializeNote(data) {
-  const { PublicKey: PublicKey3 } = require("@solana/web3.js");
+  const { PublicKey: PublicKey4 } = require("@solana/web3.js");
   const stealthPubX = data.slice(0, 32);
   const tokenMintBytes = data.slice(32, 64);
   const amountBytes = data.slice(64, 72);
@@ -408,7 +495,7 @@ function deserializeNote(data) {
   }
   return {
     stealthPubX: new Uint8Array(stealthPubX),
-    tokenMint: new PublicKey3(tokenMintBytes),
+    tokenMint: new PublicKey4(tokenMintBytes),
     amount,
     randomness: new Uint8Array(randomness)
   };
@@ -448,41 +535,9 @@ function generateRandomScalar() {
   return bytesToField(bytes) % SUBGROUP_ORDER3;
 }
 
-// src/crypto/commitment.ts
-init_poseidon();
-function computeCommitment(note) {
-  const stealthPubX = note.stealthPubX;
-  const tokenMintBytes = note.tokenMint.toBytes();
-  const amountBytes = fieldToBytes(note.amount);
-  const randomness = note.randomness;
-  return poseidonHashDomain(
-    DOMAIN_COMMITMENT,
-    stealthPubX,
-    tokenMintBytes,
-    amountBytes,
-    randomness
-  );
-}
-function verifyCommitment(commitment, note) {
-  const computed = computeCommitment(note);
-  return bytesToField(computed) === bytesToField(commitment);
-}
-function generateRandomness() {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  const value = bytesToField(bytes);
-  return fieldToBytes(value);
-}
-function createNote(stealthPubX, tokenMint, amount, randomness) {
-  return {
-    stealthPubX,
-    tokenMint,
-    amount,
-    randomness: randomness ?? generateRandomness()
-  };
-}
-
 // src/notes.ts
+init_commitment();
+init_nullifier();
 init_poseidon();
 var NoteManager = class {
   constructor(indexerUrl) {
@@ -531,7 +586,7 @@ var NoteManager = class {
     const nullifierKey = deriveNullifierKey(keypair.spending.sk);
     for (const note of this.cachedNotes.values()) {
       if (note.tokenMint.equals(tokenMint)) {
-        const nullifier = deriveSpendingNullifier(nullifierKey, note.commitment);
+        const nullifier = deriveSpendingNullifier(nullifierKey, note.commitment, note.leafIndex);
         const nullifierHex = Buffer.from(nullifier).toString("hex");
         if (!this.spentNullifiers.has(nullifierHex)) {
           const isSpent = await checkNullifierSpent(this.indexerUrl, nullifier);
@@ -612,7 +667,7 @@ var NoteManager = class {
   async checkSpentNotes(keypair) {
     const nullifierKey = deriveNullifierKey(keypair.spending.sk);
     for (const note of this.cachedNotes.values()) {
-      const nullifier = deriveSpendingNullifier(nullifierKey, note.commitment);
+      const nullifier = deriveSpendingNullifier(nullifierKey, note.commitment, note.leafIndex);
       const nullifierHex = Buffer.from(nullifier).toString("hex");
       if (!this.spentNullifiers.has(nullifierHex)) {
         const isSpent = await checkNullifierSpent(this.indexerUrl, nullifier);
@@ -639,123 +694,525 @@ var NoteManager = class {
 };
 
 // src/proofs.ts
+var fs = __toESM(require("fs"));
+var path = __toESM(require("path"));
+var os = __toESM(require("os"));
+init_nullifier();
+init_commitment();
+var BN254_FIELD_MODULUS = BigInt("21888242871839275222246405745257275088696311157297823662689037894645226208583");
+var CIRCUIT_FILE_MAP = {
+  "transfer/1x2": "transfer_1x2",
+  "transfer/1x3": "transfer_1x3",
+  "adapter/1x1": "adapter_1x1",
+  "adapter/1x2": "adapter_1x2",
+  "market/order_create": "market_order_create",
+  "market/order_fill": "market_order_fill",
+  "market/order_cancel": "market_order_cancel",
+  "swap/add_liquidity": "swap_add_liquidity",
+  "swap/remove_liquidity": "swap_remove_liquidity",
+  "swap/swap": "swap_swap",
+  "governance/encrypted_submit": "governance_encrypted_submit"
+};
+var CIRCUIT_DIR_MAP = {
+  "transfer/1x2": "transfer/1x2",
+  "transfer/1x3": "transfer/1x3",
+  "adapter/1x1": "adapter/1x1",
+  "adapter/1x2": "adapter/1x2",
+  "market/order_create": "market/order_create",
+  "market/order_fill": "market/order_fill",
+  "market/order_cancel": "market/order_cancel",
+  "swap/add_liquidity": "swap/add_liquidity",
+  "swap/remove_liquidity": "swap/remove_liquidity",
+  "swap/swap": "swap/swap",
+  "governance/encrypted_submit": "governance/encrypted_submit"
+};
 var ProofGenerator = class {
   constructor(config) {
-    this.wasmPath = config?.wasmPath;
-    this.zkeyPath = config?.zkeyPath;
+    this.circuits = /* @__PURE__ */ new Map();
+    this.isInitialized = false;
+    this.baseUrl = config?.baseUrl ?? "/circuits";
+    this.nodeConfig = config?.nodeConfig;
   }
   /**
-   * Generate a transfer proof
+   * Configure for Node.js proving (auto-detects paths if not provided)
+   */
+  configureForNode(config) {
+    const homeDir = os.homedir();
+    this.nodeConfig = {
+      circuitsDir: config?.circuitsDir ?? path.resolve(__dirname, "../../../circuits"),
+      sunspotPath: config?.sunspotPath ?? path.resolve(__dirname, "../../../scripts/sunspot"),
+      nargoPath: config?.nargoPath ?? path.join(homeDir, ".nargo/bin/nargo")
+    };
+  }
+  /**
+   * Initialize the prover with circuit artifacts
+   */
+  async initialize(circuitNames) {
+    const circuits = circuitNames ?? [
+      "transfer/1x2",
+      "transfer/1x3",
+      "adapter/1x1",
+      "adapter/1x2",
+      "market/order_create",
+      "market/order_fill",
+      "market/order_cancel",
+      "swap/add_liquidity",
+      "swap/remove_liquidity",
+      "swap/swap",
+      "governance/encrypted_submit"
+    ];
+    await Promise.all(circuits.map((name) => this.loadCircuit(name)));
+    this.isInitialized = true;
+  }
+  /**
+   * Load a circuit's artifacts
+   *
+   * In Node.js with nodeConfig set, loads from file system.
+   * In browser, loads via fetch from baseUrl.
+   */
+  async loadCircuit(name) {
+    const isNode = typeof globalThis.process !== "undefined" && globalThis.process.versions != null && globalThis.process.versions.node != null;
+    if (isNode && this.nodeConfig) {
+      return this.loadCircuitFromFs(name);
+    } else {
+      return this.loadCircuitFromUrl(name);
+    }
+  }
+  /**
+   * Load circuit from file system (Node.js)
+   */
+  async loadCircuitFromFs(name) {
+    if (!this.nodeConfig) {
+      throw new Error("Node.js prover not configured");
+    }
+    const circuitFileName = CIRCUIT_FILE_MAP[name];
+    if (!circuitFileName) {
+      throw new Error(`Unknown circuit: ${name}`);
+    }
+    const targetDir = path.join(this.nodeConfig.circuitsDir, "target");
+    const manifestPath = path.join(targetDir, `${circuitFileName}.json`);
+    const pkPath = path.join(targetDir, `${circuitFileName}.pk`);
+    try {
+      const manifestData = fs.readFileSync(manifestPath, "utf-8");
+      const manifest = JSON.parse(manifestData);
+      const provingKey = new Uint8Array(fs.readFileSync(pkPath));
+      this.circuits.set(name, { manifest, provingKey });
+      console.log(`[${name}] Loaded circuit from ${targetDir}`);
+    } catch (err) {
+      console.warn(`Failed to load circuit ${name}:`, err);
+    }
+  }
+  /**
+   * Load circuit from URL (browser)
+   */
+  async loadCircuitFromUrl(name) {
+    const basePath = `${this.baseUrl}/${name}/target`;
+    try {
+      const manifestRes = await fetch(`${basePath}/${name.split("/").pop()}.json`);
+      if (!manifestRes.ok) throw new Error(`Failed to load manifest: ${manifestRes.status}`);
+      const manifest = await manifestRes.json();
+      const pkRes = await fetch(`${basePath}/${name.split("/").pop()}.pk`);
+      if (!pkRes.ok) throw new Error(`Failed to load proving key: ${pkRes.status}`);
+      const provingKey = new Uint8Array(await pkRes.arrayBuffer());
+      let wasmBytes;
+      try {
+        const wasmRes = await fetch(`${basePath}/${name.split("/").pop()}.wasm`);
+        if (wasmRes.ok) {
+          wasmBytes = new Uint8Array(await wasmRes.arrayBuffer());
+        }
+      } catch {
+      }
+      this.circuits.set(name, { manifest, provingKey, wasmBytes });
+    } catch (err) {
+      console.warn(`Failed to load circuit ${name}:`, err);
+    }
+  }
+  /**
+   * Check if a circuit is loaded
+   */
+  hasCircuit(name) {
+    return this.circuits.has(name);
+  }
+  /**
+   * Generate a transfer proof (1 input, 2 outputs)
    */
   async generateTransferProof(params, keypair) {
+    const circuitName = params.inputs.length === 1 ? "transfer/1x2" : "transfer/1x3";
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`Circuit not loaded: ${circuitName}`);
+    }
     const nullifierKey = deriveNullifierKey(keypair.spending.sk);
-    const inputs = params.inputs.map((note) => ({
-      inputNote: {
-        stealthPubX: note.stealthPubX,
-        tokenMint: note.tokenMint,
-        amount: note.amount,
-        randomness: note.randomness
-      },
-      nk: nullifierKey,
-      merkleProof: this.buildMerkleProof(note),
-      outputNotes: params.outputs.map((out) => ({
-        stealthPubX: out.recipient.stealthPubkey.x,
-        tokenMint: note.tokenMint,
-        amount: out.amount,
-        randomness: new Uint8Array(32)
-        // Will be generated
-      })),
-      unshieldAmount: params.unshield?.amount ?? 0n,
-      unshieldRecipient: params.unshield?.recipient
-    }));
-    return this.prove("transfer", inputs);
+    const witnessInputs = this.buildTransferWitness(params, keypair.spending.sk, nullifierKey);
+    return this.prove(circuitName, witnessInputs);
   }
   /**
    * Generate an adapter swap proof
    */
   async generateAdapterProof(params, keypair) {
+    const circuitName = "adapter/1x1";
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`Circuit not loaded: ${circuitName}`);
+    }
     const nullifierKey = deriveNullifierKey(keypair.spending.sk);
-    const inputs = {
-      inputNote: {
-        stealthPubX: params.input.stealthPubX,
-        tokenMint: params.input.tokenMint,
-        amount: params.input.amount,
-        randomness: params.input.randomness
-      },
-      nk: nullifierKey,
-      merkleProof: this.buildMerkleProof(params.input),
-      inputAmount: params.input.amount,
-      // Public
-      outputTokenMint: params.outputMint,
-      minOutput: params.minOutput,
-      adapterProgram: params.adapter,
-      outputNote: {
-        stealthPubX: params.recipient.stealthPubkey.x,
-        tokenMint: params.outputMint,
-        amount: params.minOutput,
-        // Will be updated by adapter
-        randomness: new Uint8Array(32)
-      }
+    const adapterBytes = params.adapter.toBytes();
+    const tokenMint = params.input.tokenMint instanceof Uint8Array ? params.input.tokenMint : params.input.tokenMint.toBytes();
+    const inputCommitment = computeCommitment(params.input);
+    const inputNullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, params.input.leafIndex);
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      nullifier: fieldToHex(inputNullifier),
+      input_amount: params.input.amount.toString(),
+      output_commitment: fieldToHex(params.outputCommitment),
+      change_commitment: fieldToHex(params.changeCommitment),
+      adapter_program: fieldToHex(adapterBytes),
+      min_output: params.minOutput.toString(),
+      // Private inputs
+      in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
+      in_stealth_pub_y: fieldToHex(params.input.stealthPubY),
+      in_amount: params.input.amount.toString(),
+      in_randomness: fieldToHex(params.input.randomness),
+      in_stealth_spending_key: fieldToHex(keypair.spending.sk),
+      merkle_path: params.merklePath.map(fieldToHex),
+      merkle_path_indices: params.merkleIndices.map((i) => i.toString()),
+      leaf_index: params.input.leafIndex.toString(),
+      token_mint: fieldToHex(tokenMint),
+      out_stealth_pub_x: fieldToHex(params.outputStealthPubX),
+      out_randomness: fieldToHex(params.outputRandomness)
     };
-    return this.prove("adapter", inputs);
+    return this.prove(circuitName, witnessInputs);
   }
   /**
    * Generate an order creation proof
    */
   async generateOrderProof(params, keypair) {
-    const nullifierKey = deriveNullifierKey(keypair.spending.sk);
-    const inputs = {
-      inputNote: {
-        stealthPubX: params.input.stealthPubX,
-        tokenMint: params.input.tokenMint,
-        amount: params.input.amount,
-        randomness: params.input.randomness
-      },
-      nk: nullifierKey,
-      merkleProof: this.buildMerkleProof(params.input),
-      terms: params.terms,
-      expiry: params.expiry
+    const circuitName = "market/order_create";
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`Circuit not loaded: ${circuitName}`);
+    }
+    const offerMintBytes = params.terms.offerMint.toBytes();
+    const requestMintBytes = params.terms.requestMint.toBytes();
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      nullifier: fieldToHex(params.nullifier),
+      order_id: fieldToHex(params.orderId),
+      escrow_commitment: fieldToHex(params.escrowCommitment),
+      terms_hash: fieldToHex(params.termsHash),
+      expiry: params.expiry.toString(),
+      // Private inputs
+      in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
+      in_stealth_pub_y: fieldToHex(params.input.stealthPubY),
+      in_amount: params.input.amount.toString(),
+      in_randomness: fieldToHex(params.input.randomness),
+      in_stealth_spending_key: fieldToHex(keypair.spending.sk),
+      merkle_path: params.merklePath.map(fieldToHex),
+      merkle_path_indices: params.merkleIndices.map((i) => i.toString()),
+      leaf_index: params.input.leafIndex.toString(),
+      offer_token: fieldToHex(offerMintBytes),
+      offer_amount: params.terms.offerAmount.toString(),
+      ask_token: fieldToHex(requestMintBytes),
+      ask_amount: params.terms.requestAmount.toString(),
+      escrow_stealth_pub_x: fieldToHex(params.escrowStealthPubX),
+      escrow_randomness: fieldToHex(params.escrowRandomness),
+      maker_receive_stealth_pub_x: fieldToHex(params.makerReceiveStealthPubX)
     };
-    return this.prove("order_create", inputs);
+    return this.prove(circuitName, witnessInputs);
   }
   /**
    * Generate a vote proof
    */
-  async generateVoteProof(note, keypair, proposalId, voteChoices, thresholdPubkey) {
-    const nullifierKey = deriveNullifierKey(keypair.spending.sk);
-    const inputs = {
-      tokenNote: {
-        stealthPubX: note.stealthPubX,
-        tokenMint: note.tokenMint,
-        amount: note.amount,
-        randomness: note.randomness
-      },
-      nk: nullifierKey,
-      merkleProof: this.buildMerkleProof(note),
-      actionDomain: proposalId,
-      voteChoices,
-      thresholdPubkey
+  async generateVoteProof(params, keypair) {
+    const circuitName = "governance/encrypted_submit";
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`Circuit not loaded: ${circuitName}`);
+    }
+    const tokenMint = params.input.tokenMint instanceof Uint8Array ? params.input.tokenMint : params.input.tokenMint.toBytes();
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      proposal_id: fieldToHex(params.proposalId),
+      token_mint: fieldToHex(tokenMint),
+      election_pubkey_x: fieldToHex(params.electionPubkey.x),
+      election_pubkey_y: fieldToHex(params.electionPubkey.y),
+      // Private inputs
+      in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
+      in_stealth_pub_y: fieldToHex(params.input.stealthPubY),
+      in_amount: params.input.amount.toString(),
+      in_randomness: fieldToHex(params.input.randomness),
+      in_stealth_spending_key: fieldToHex(keypair.spending.sk),
+      merkle_path: params.merklePath.map(fieldToHex),
+      merkle_path_indices: params.merkleIndices.map((i) => i.toString()),
+      leaf_index: params.input.leafIndex.toString(),
+      vote_choice: params.voteChoice.toString(),
+      encryption_randomness_yes: fieldToHex(params.encryptionRandomness.yes),
+      encryption_randomness_no: fieldToHex(params.encryptionRandomness.no),
+      encryption_randomness_abstain: fieldToHex(params.encryptionRandomness.abstain)
     };
-    return this.prove("encrypted_submit", inputs);
+    return this.prove(circuitName, witnessInputs);
   }
   // =============================================================================
-  // Private Methods
+  // Core Proving
   // =============================================================================
-  async prove(circuit, inputs) {
-    console.log(`Generating ${circuit} proof with inputs:`, inputs);
-    const proof = new Uint8Array(256);
-    crypto.getRandomValues(proof);
-    return proof;
+  /**
+   * Generate a Groth16 proof for a circuit
+   */
+  async prove(circuitName, inputs) {
+    const artifacts = this.circuits.get(circuitName);
+    if (!artifacts) {
+      throw new Error(`Circuit not loaded: ${circuitName}`);
+    }
+    const proof = await this.proveNative(circuitName, inputs, artifacts);
+    return this.formatProofForSolana(proof);
   }
-  buildMerkleProof(note) {
+  /**
+   * Native Groth16 prover (WASM-based)
+   */
+  async proveNative(circuitName, inputs, artifacts) {
+    const isNode = typeof globalThis.process !== "undefined" && globalThis.process.versions != null && globalThis.process.versions.node != null;
+    if (isNode) {
+      return this.proveViaSubprocess(circuitName, inputs, artifacts);
+    } else {
+      return this.proveViaWasm(circuitName, inputs, artifacts);
+    }
+  }
+  /**
+   * Prove via subprocess (Node.js)
+   *
+   * Workflow:
+   * 1. Write Prover.toml with inputs
+   * 2. Run nargo execute to generate witness
+   * 3. Run sunspot prove with witness, ACIR, CCS, PK
+   * 4. Parse proof output
+   */
+  async proveViaSubprocess(circuitName, inputs, artifacts) {
+    const { execFileSync } = await import("child_process");
+    if (!this.nodeConfig) {
+      throw new Error("Node.js prover not configured. Call configureForNode() first.");
+    }
+    const { circuitsDir, sunspotPath, nargoPath } = this.nodeConfig;
+    const circuitFileName = CIRCUIT_FILE_MAP[circuitName];
+    const circuitDirName = CIRCUIT_DIR_MAP[circuitName];
+    if (!circuitFileName || !circuitDirName) {
+      throw new Error(`Unknown circuit: ${circuitName}`);
+    }
+    const circuitDir = path.join(circuitsDir, circuitDirName);
+    const targetDir = path.join(circuitsDir, "target");
+    const acirPath = path.join(targetDir, `${circuitFileName}.json`);
+    const ccsPath = path.join(targetDir, `${circuitFileName}.ccs`);
+    const pkPath = path.join(targetDir, `${circuitFileName}.pk`);
+    if (!fs.existsSync(acirPath)) throw new Error(`ACIR not found: ${acirPath}`);
+    if (!fs.existsSync(ccsPath)) throw new Error(`CCS not found: ${ccsPath}`);
+    if (!fs.existsSync(pkPath)) throw new Error(`PK not found: ${pkPath}`);
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cloakcraft-proof-"));
+    try {
+      const proverToml = this.inputsToProverToml(inputs);
+      const proverPath = path.join(circuitDir, "Prover.toml");
+      fs.writeFileSync(proverPath, proverToml);
+      console.log(`[${circuitName}] Generating witness...`);
+      const witnessName = circuitFileName;
+      try {
+        execFileSync(nargoPath, ["execute", witnessName], {
+          cwd: circuitDir,
+          stdio: ["pipe", "pipe", "pipe"]
+        });
+      } catch (err) {
+        const stderr = err.stderr?.toString() || "";
+        const stdout = err.stdout?.toString() || "";
+        throw new Error(`nargo execute failed: ${stderr || stdout || err.message}`);
+      }
+      const witnessPath = path.join(targetDir, `${circuitFileName}.gz`);
+      if (!fs.existsSync(witnessPath)) {
+        throw new Error(`Witness not generated at ${witnessPath}`);
+      }
+      console.log(`[${circuitName}] Generating Groth16 proof...`);
+      const proofPath = path.join(tempDir, "proof.bin");
+      try {
+        execFileSync(sunspotPath, ["prove", acirPath, witnessPath, ccsPath, pkPath], {
+          cwd: tempDir,
+          stdio: ["pipe", "pipe", "pipe"]
+        });
+      } catch (err) {
+        const stderr = err.stderr?.toString() || "";
+        const stdout = err.stdout?.toString() || "";
+        throw new Error(`sunspot prove failed: ${stderr || stdout || err.message}`);
+      }
+      if (!fs.existsSync(proofPath)) {
+        throw new Error(`Proof not generated at ${proofPath}`);
+      }
+      const proofBytes = fs.readFileSync(proofPath);
+      console.log(`[${circuitName}] Proof generated (${proofBytes.length} bytes)`);
+      if (proofBytes.length !== 256) {
+        throw new Error(`Unexpected proof size: ${proofBytes.length} (expected 256)`);
+      }
+      return {
+        a: new Uint8Array(proofBytes.slice(0, 64)),
+        b: new Uint8Array(proofBytes.slice(64, 192)),
+        c: new Uint8Array(proofBytes.slice(192, 256))
+      };
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+  /**
+   * Convert witness inputs to Prover.toml format
+   */
+  inputsToProverToml(inputs) {
+    const lines = [];
+    for (const [key, value] of Object.entries(inputs)) {
+      if (Array.isArray(value)) {
+        const values = value.map((v) => `"${v}"`).join(", ");
+        lines.push(`${key} = [${values}]`);
+      } else {
+        lines.push(`${key} = "${value}"`);
+      }
+    }
+    return lines.join("\n") + "\n";
+  }
+  /**
+   * Configure remote prover for browser environments
+   *
+   * Since Groth16 proving requires heavy computation,
+   * browser environments should use a remote proving service.
+   */
+  configureRemoteProver(url) {
+    this.remoteProverUrl = url;
+  }
+  /**
+   * Prove via WASM/remote service (browser)
+   *
+   * Workflow:
+   * 1. Use @noir-lang/noir_js to generate witness from inputs
+   * 2. Send witness + circuit artifacts to remote prover
+   * 3. Receive Groth16 proof
+   */
+  async proveViaWasm(circuitName, inputs, artifacts) {
+    console.log(`[${circuitName}] Generating witness via noir_js...`);
+    const { Noir } = await import("@noir-lang/noir_js");
+    const noir = new Noir(artifacts.manifest);
+    const { witness } = await noir.execute(inputs);
+    console.log(`[${circuitName}] Witness generated (${witness.length} bytes)`);
+    if (this.remoteProverUrl) {
+      return this.proveViaRemote(circuitName, witness, artifacts);
+    }
+    throw new Error(
+      `Browser Groth16 proving requires a remote prover. Call configureRemoteProver(url) before generating proofs.`
+    );
+  }
+  /**
+   * Send witness to remote Groth16 prover
+   */
+  async proveViaRemote(circuitName, witness, artifacts) {
+    if (!this.remoteProverUrl) {
+      throw new Error("Remote prover URL not configured");
+    }
+    console.log(`[${circuitName}] Sending to remote prover...`);
+    const response = await fetch(`${this.remoteProverUrl}/prove`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Circuit-Name": circuitName
+      },
+      body: new Blob([
+        // Pack witness length (4 bytes) + witness + proving key
+        new Uint32Array([witness.length]),
+        witness,
+        artifacts.provingKey
+      ])
+    });
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Remote prover error: ${error}`);
+    }
+    const proofBytes = new Uint8Array(await response.arrayBuffer());
+    console.log(`[${circuitName}] Received proof (${proofBytes.length} bytes)`);
+    if (proofBytes.length !== 256) {
+      throw new Error(`Invalid proof size from remote prover: ${proofBytes.length}`);
+    }
     return {
-      root: new Uint8Array(32),
-      pathElements: Array(16).fill(new Uint8Array(32)),
-      pathIndices: Array(16).fill(0),
-      leafIndex: note.leafIndex
+      a: proofBytes.slice(0, 64),
+      b: proofBytes.slice(64, 192),
+      c: proofBytes.slice(192, 256)
+    };
+  }
+  /**
+   * Format proof for Solana's alt_bn128 pairing check
+   *
+   * Solana uses the equation: e(-A, B) * e(alpha, beta) * e(PIC, gamma) * e(C, delta) = 1
+   * This requires negating the A-component (negating Y coordinate)
+   */
+  formatProofForSolana(proof) {
+    const formatted = new Uint8Array(256);
+    formatted.set(proof.a.slice(0, 32), 0);
+    const yBytes = proof.a.slice(32, 64);
+    const y = bytesToBigInt(yBytes);
+    const negY = y === 0n ? 0n : BN254_FIELD_MODULUS - y;
+    const negYBytes = bigIntToBytes(negY, 32);
+    formatted.set(negYBytes, 32);
+    formatted.set(proof.b, 64);
+    formatted.set(proof.c, 192);
+    return formatted;
+  }
+  // =============================================================================
+  // Witness Building Helpers
+  // =============================================================================
+  buildTransferWitness(params, spendingKey, nullifierKey) {
+    const input = params.inputs[0];
+    const commitment = computeCommitment(input);
+    const nullifier = deriveSpendingNullifier(nullifierKey, commitment, input.leafIndex);
+    const tokenMint = input.tokenMint instanceof Uint8Array ? input.tokenMint : input.tokenMint.toBytes();
+    return {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      nullifier: fieldToHex(nullifier),
+      out_commitment_1: fieldToHex(params.outputs[0].commitment),
+      out_commitment_2: fieldToHex(params.outputs[1]?.commitment ?? new Uint8Array(32)),
+      token_mint: fieldToHex(tokenMint),
+      unshield_amount: (params.unshield?.amount ?? 0n).toString(),
+      // Private inputs
+      in_stealth_pub_x: fieldToHex(input.stealthPubX),
+      in_stealth_pub_y: fieldToHex(input.stealthPubY),
+      in_amount: input.amount.toString(),
+      in_randomness: fieldToHex(input.randomness),
+      in_stealth_spending_key: fieldToHex(spendingKey),
+      merkle_path: params.merklePath.map(fieldToHex),
+      merkle_path_indices: params.merkleIndices.map((i) => i.toString()),
+      leaf_index: input.leafIndex.toString(),
+      // Output 1 (recipient)
+      out_stealth_pub_x_1: fieldToHex(params.outputs[0].stealthPubX),
+      out_amount_1: params.outputs[0].amount.toString(),
+      out_randomness_1: fieldToHex(params.outputs[0].randomness),
+      // Output 2 (change)
+      out_stealth_pub_x_2: fieldToHex(params.outputs[1]?.stealthPubX ?? new Uint8Array(32)),
+      out_amount_2: (params.outputs[1]?.amount ?? 0n).toString(),
+      out_randomness_2: fieldToHex(params.outputs[1]?.randomness ?? new Uint8Array(32))
     };
   }
 };
+function fieldToHex(bytes) {
+  if (typeof bytes === "bigint") {
+    return "0x" + bytes.toString(16).padStart(64, "0");
+  }
+  if (typeof bytes === "number") {
+    return "0x" + bytes.toString(16).padStart(64, "0");
+  }
+  return "0x" + Buffer.from(bytes).toString("hex");
+}
+function bytesToBigInt(bytes) {
+  let result = 0n;
+  for (const byte of bytes) {
+    result = result << 8n | BigInt(byte);
+  }
+  return result;
+}
+function bigIntToBytes(value, length) {
+  const bytes = new Uint8Array(length);
+  for (let i = length - 1; i >= 0; i--) {
+    bytes[i] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  return bytes;
+}
 function parseGroth16Proof(bytes) {
   if (bytes.length !== 256) {
     throw new Error(`Invalid proof length: ${bytes.length}`);
@@ -775,14 +1232,311 @@ function serializeGroth16Proof(proof) {
 }
 
 // src/client.ts
+init_commitment();
+init_babyjubjub();
+
+// src/light.ts
+var import_web32 = require("@solana/web3.js");
+var LightClient = class {
+  constructor(config) {
+    const baseUrl = config.network === "mainnet-beta" ? "https://mainnet.helius-rpc.com" : "https://devnet.helius-rpc.com";
+    this.rpcUrl = `${baseUrl}/?api-key=${config.apiKey}`;
+  }
+  /**
+   * Get compressed account by address
+   *
+   * Returns null if account doesn't exist (nullifier not spent)
+   */
+  async getCompressedAccount(address) {
+    const addressHex = Buffer.from(address).toString("hex");
+    const response = await fetch(this.rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getCompressedAccount",
+        params: {
+          address: addressHex
+        }
+      })
+    });
+    const result = await response.json();
+    if (result.error) {
+      throw new Error(`Helius RPC error: ${result.error.message}`);
+    }
+    return result.result;
+  }
+  /**
+   * Check if a nullifier has been spent
+   *
+   * Returns true if the nullifier compressed account exists
+   */
+  async isNullifierSpent(nullifier, programId, addressTree) {
+    const address = this.deriveNullifierAddress(nullifier, programId, addressTree);
+    const account = await this.getCompressedAccount(address);
+    return account !== null;
+  }
+  /**
+   * Get validity proof for creating a new compressed account
+   *
+   * This proves that the address doesn't exist yet (non-inclusion proof)
+   */
+  async getValidityProof(params) {
+    const response = await fetch(this.rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getValidityProof",
+        params: {
+          newAddresses: params.newAddresses.map((a) => Buffer.from(a).toString("hex")),
+          addressMerkleTree: params.addressMerkleTree.toBase58(),
+          stateMerkleTree: params.stateMerkleTree.toBase58()
+        }
+      })
+    });
+    const result = await response.json();
+    if (result.error) {
+      throw new Error(`Helius RPC error: ${result.error.message}`);
+    }
+    return {
+      compressedProof: result.result.compressedProof,
+      rootIndices: result.result.rootIndices,
+      merkleTrees: result.result.merkleTrees.map((t) => new import_web32.PublicKey(t))
+    };
+  }
+  /**
+   * Prepare Light Protocol params for transact instruction
+   */
+  async prepareLightParams(params) {
+    const nullifierAddress = this.deriveNullifierAddress(
+      params.nullifier,
+      params.programId,
+      params.addressMerkleTree
+    );
+    const validityProof = await this.getValidityProof({
+      newAddresses: [nullifierAddress],
+      addressMerkleTree: params.addressMerkleTree,
+      stateMerkleTree: params.stateMerkleTree
+    });
+    return {
+      validityProof,
+      addressTreeInfo: {
+        addressMerkleTreeAccountIndex: params.addressMerkleTreeAccountIndex,
+        addressQueueAccountIndex: params.addressQueueAccountIndex
+      },
+      outputTreeIndex: params.outputTreeIndex
+    };
+  }
+  /**
+   * Get remaining accounts needed for Light Protocol CPI
+   *
+   * These accounts must be passed to the transact instruction
+   */
+  async getRemainingAccounts(params) {
+    const LIGHT_SYSTEM_PROGRAM = new import_web32.PublicKey("LightSystem111111111111111111111111111111111");
+    const ACCOUNT_COMPRESSION_PROGRAM = new import_web32.PublicKey("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq");
+    const NOOP_PROGRAM = new import_web32.PublicKey("noopb9bkMVfRPU8AsBHBNRs27gxNvyqrDGj3zPqsR");
+    const REGISTERED_PROGRAM_PDA = new import_web32.PublicKey("4LfVCK1CgVbS6Xeu1RSMvKWv9NLLdwVBJ64dJpqpKbLi");
+    return [
+      // Light system accounts
+      { pubkey: LIGHT_SYSTEM_PROGRAM, isSigner: false, isWritable: false },
+      { pubkey: ACCOUNT_COMPRESSION_PROGRAM, isSigner: false, isWritable: false },
+      { pubkey: NOOP_PROGRAM, isSigner: false, isWritable: false },
+      { pubkey: REGISTERED_PROGRAM_PDA, isSigner: false, isWritable: false },
+      // Merkle trees
+      { pubkey: params.stateMerkleTree, isSigner: false, isWritable: true },
+      { pubkey: params.addressMerkleTree, isSigner: false, isWritable: true },
+      { pubkey: params.nullifierQueue, isSigner: false, isWritable: true }
+    ];
+  }
+  /**
+   * Derive nullifier compressed account address
+   *
+   * Matches the on-chain derive_nullifier_address function
+   */
+  deriveNullifierAddress(nullifier, programId, addressTree) {
+    const { createHash } = require("crypto");
+    const hash = createHash("sha256").update(Buffer.from("nullifier")).update(nullifier).update(addressTree.toBytes()).update(programId.toBytes()).digest();
+    return new Uint8Array(hash);
+  }
+};
+var DEVNET_LIGHT_TREES = {
+  stateMerkleTree: new import_web32.PublicKey("smt1NamzXdq4AMqS2fS2F1i5KTYPZRhoHgWx38d8WsT"),
+  addressMerkleTree: new import_web32.PublicKey("amt1Ayt45jfbh91kth2zmwZHc7N5rSYFPCmk5cEVQBv"),
+  nullifierQueue: new import_web32.PublicKey("nfq1NvQDJ2GEgnS8zt9prAe8rjjpAW1zFkrvZoBR148")
+};
+var MAINNET_LIGHT_TREES = {
+  stateMerkleTree: new import_web32.PublicKey("smt1NamzXdq4AMqS2fS2F1i5KTYPZRhoHgWx38d8WsT"),
+  addressMerkleTree: new import_web32.PublicKey("amt1Ayt45jfbh91kth2zmwZHc7N5rSYFPCmk5cEVQBv"),
+  nullifierQueue: new import_web32.PublicKey("nfq1NvQDJ2GEgnS8zt9prAe8rjjpAW1zFkrvZoBR148")
+};
+var LightCommitmentClient = class extends LightClient {
+  /**
+   * Get commitment by its address
+   */
+  async getCommitment(pool, commitment, programId, addressTree) {
+    const address = this.deriveCommitmentAddress(pool, commitment, programId, addressTree);
+    return this.getCompressedAccount(address);
+  }
+  /**
+   * Check if a commitment exists in the tree
+   */
+  async commitmentExists(pool, commitment, programId, addressTree) {
+    const account = await this.getCommitment(pool, commitment, programId, addressTree);
+    return account !== null;
+  }
+  /**
+   * Get merkle proof for a commitment
+   *
+   * This fetches the inclusion proof from Helius Photon indexer
+   */
+  async getCommitmentMerkleProof(pool, commitment, programId, addressTree, stateMerkleTree) {
+    const address = this.deriveCommitmentAddress(pool, commitment, programId, addressTree);
+    const response = await fetch(this["rpcUrl"], {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getValidityProof",
+        params: {
+          hashes: [Buffer.from(address).toString("hex")],
+          stateMerkleTree: stateMerkleTree.toBase58()
+        }
+      })
+    });
+    const result = await response.json();
+    if (result.error) {
+      throw new Error(`Helius RPC error: ${result.error.message}`);
+    }
+    const pathElements = result.result.proof.map((p) => Buffer.from(p, "hex"));
+    const pathIndices = this.leafIndexToPathIndices(result.result.leafIndex, pathElements.length);
+    return {
+      root: Buffer.from(result.result.root, "hex"),
+      pathElements,
+      pathIndices,
+      leafIndex: result.result.leafIndex
+    };
+  }
+  /**
+   * Prepare Light params for shield instruction
+   */
+  async prepareShieldParams(params) {
+    const address = this.deriveCommitmentAddress(
+      params.pool,
+      params.commitment,
+      params.programId,
+      params.addressMerkleTree
+    );
+    const validityProof = await this.getValidityProof({
+      newAddresses: [address],
+      addressMerkleTree: params.addressMerkleTree,
+      stateMerkleTree: params.stateMerkleTree
+    });
+    return {
+      validityProof,
+      addressTreeInfo: {
+        addressMerkleTreeAccountIndex: params.addressMerkleTreeAccountIndex,
+        addressQueueAccountIndex: params.addressQueueAccountIndex
+      },
+      outputTreeIndex: params.outputTreeIndex
+    };
+  }
+  /**
+   * Derive commitment compressed account address
+   */
+  deriveCommitmentAddress(pool, commitment, programId, addressTree) {
+    const { createHash } = require("crypto");
+    const hash = createHash("sha256").update(Buffer.from("commitment")).update(pool.toBytes()).update(commitment).update(addressTree.toBytes()).update(programId.toBytes()).digest();
+    return new Uint8Array(hash);
+  }
+  /**
+   * Convert leaf index to path indices (bit representation)
+   */
+  leafIndexToPathIndices(leafIndex, depth) {
+    const indices = [];
+    let idx = leafIndex;
+    for (let i = 0; i < depth; i++) {
+      indices.push(idx & 1);
+      idx >>= 1;
+    }
+    return indices;
+  }
+};
+
+// src/client.ts
 var CloakCraftClient = class {
   constructor(config) {
     this.wallet = null;
-    this.connection = new import_web32.Connection(config.rpcUrl, config.commitment ?? "confirmed");
+    this.lightClient = null;
+    this.connection = new import_web33.Connection(config.rpcUrl, config.commitment ?? "confirmed");
     this.programId = config.programId;
     this.indexerUrl = config.indexerUrl;
+    this.network = config.network ?? "devnet";
     this.noteManager = new NoteManager(config.indexerUrl);
     this.proofGenerator = new ProofGenerator();
+    if (config.heliusApiKey) {
+      this.lightClient = new LightClient({
+        apiKey: config.heliusApiKey,
+        network: this.network
+      });
+    }
+  }
+  /**
+   * Get Light Protocol tree accounts for current network
+   */
+  getLightTrees() {
+    return this.network === "mainnet-beta" ? MAINNET_LIGHT_TREES : DEVNET_LIGHT_TREES;
+  }
+  /**
+   * Check if a nullifier has been spent
+   *
+   * Returns true if the nullifier compressed account exists
+   */
+  async isNullifierSpent(nullifier) {
+    if (!this.lightClient) {
+      throw new Error("Light Protocol not configured. Provide heliusApiKey in config.");
+    }
+    const trees = this.getLightTrees();
+    return this.lightClient.isNullifierSpent(
+      nullifier,
+      this.programId,
+      trees.addressMerkleTree
+    );
+  }
+  /**
+   * Prepare Light Protocol params for a transact instruction
+   *
+   * This fetches the validity proof from Helius for nullifier creation
+   */
+  async prepareLightParams(nullifier) {
+    if (!this.lightClient) {
+      throw new Error("Light Protocol not configured. Provide heliusApiKey in config.");
+    }
+    const trees = this.getLightTrees();
+    return this.lightClient.prepareLightParams({
+      nullifier,
+      programId: this.programId,
+      addressMerkleTree: trees.addressMerkleTree,
+      stateMerkleTree: trees.stateMerkleTree,
+      // These indices depend on how remaining_accounts is ordered
+      addressMerkleTreeAccountIndex: 5,
+      addressQueueAccountIndex: 6,
+      outputTreeIndex: 0
+    });
+  }
+  /**
+   * Get remaining accounts needed for Light Protocol CPI
+   */
+  async getLightRemainingAccounts() {
+    if (!this.lightClient) {
+      throw new Error("Light Protocol not configured. Provide heliusApiKey in config.");
+    }
+    const trees = this.getLightTrees();
+    return this.lightClient.getRemainingAccounts(trees);
   }
   /**
    * Create a new wallet
@@ -808,7 +1562,7 @@ var CloakCraftClient = class {
    * Get pool state
    */
   async getPool(tokenMint) {
-    const [poolPda] = import_web32.PublicKey.findProgramAddressSync(
+    const [poolPda] = import_web33.PublicKey.findProgramAddressSync(
       [Buffer.from("pool"), tokenMint.toBuffer()],
       this.programId
     );
@@ -876,6 +1630,31 @@ var CloakCraftClient = class {
     };
   }
   /**
+   * Prepare simple transfer inputs and execute transfer
+   *
+   * This is a convenience method that handles all cryptographic preparation:
+   * - Derives Y-coordinates from spending key
+   * - Fetches merkle proofs from indexer
+   * - Computes output commitments
+   */
+  async prepareAndTransfer(request, relayer) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    const preparedInputs = await this.prepareInputs(request.inputs);
+    const preparedOutputs = await this.prepareOutputs(request.outputs);
+    const merkleProof = await this.fetchMerkleProof(request.inputs[0]);
+    const params = {
+      inputs: preparedInputs,
+      merkleRoot: merkleProof.root,
+      merklePath: merkleProof.pathElements,
+      merkleIndices: merkleProof.pathIndices,
+      outputs: preparedOutputs,
+      unshield: request.unshield
+    };
+    return this.transfer(params, relayer);
+  }
+  /**
    * Swap through external adapter (partial privacy)
    */
   async swapViaAdapter(params, relayer) {
@@ -922,6 +1701,54 @@ var CloakCraftClient = class {
     };
   }
   /**
+   * Prepare and create a market order (convenience method)
+   */
+  async prepareAndCreateOrder(request, relayer) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    const [preparedInput] = await this.prepareInputs([request.input]);
+    const merkleProof = await this.fetchMerkleProof(request.input);
+    const { poseidonHash: poseidonHash3, fieldToBytes: fieldToBytes4 } = await Promise.resolve().then(() => (init_poseidon(), poseidon_exports));
+    const orderIdBytes = generateRandomness();
+    const escrowRandomness = generateRandomness();
+    const escrowNote = (await Promise.resolve().then(() => (init_commitment(), commitment_exports))).createNote(
+      preparedInput.stealthPubX,
+      request.terms.offerMint,
+      request.terms.offerAmount,
+      escrowRandomness
+    );
+    const escrowCommitment = computeCommitment(escrowNote);
+    const termsHash = poseidonHash3([
+      request.terms.offerMint.toBytes(),
+      fieldToBytes4(request.terms.offerAmount),
+      request.terms.requestMint.toBytes(),
+      fieldToBytes4(request.terms.requestAmount)
+    ]);
+    const { deriveNullifierKey: deriveNullifierKey2, deriveSpendingNullifier: deriveSpendingNullifier2 } = await Promise.resolve().then(() => (init_nullifier(), nullifier_exports));
+    const nullifierKey = deriveNullifierKey2(this.wallet.keypair.spending.sk);
+    const inputCommitment = computeCommitment(request.input);
+    const nullifier = deriveSpendingNullifier2(nullifierKey, inputCommitment, request.input.leafIndex);
+    const params = {
+      input: preparedInput,
+      merkleRoot: merkleProof.root,
+      merklePath: merkleProof.pathElements,
+      merkleIndices: merkleProof.pathIndices,
+      nullifier,
+      orderId: orderIdBytes,
+      escrowCommitment,
+      termsHash,
+      // poseidonHash already returns FieldElement
+      escrowStealthPubX: preparedInput.stealthPubX,
+      escrowRandomness,
+      makerReceiveStealthPubX: preparedInput.stealthPubX,
+      // Self
+      terms: request.terms,
+      expiry: request.expiry
+    };
+    return this.createOrder(params, relayer);
+  }
+  /**
    * Get sync status
    */
   async getSyncStatus() {
@@ -931,19 +1758,19 @@ var CloakCraftClient = class {
   // Private Methods
   // =============================================================================
   async buildShieldTransaction(params) {
-    const tx = new import_web32.Transaction();
+    const tx = new import_web33.Transaction();
     return tx;
   }
   async buildTransferTransaction(params, proof) {
-    const tx = new import_web32.Transaction();
+    const tx = new import_web33.Transaction();
     return tx;
   }
   async buildAdapterSwapTransaction(params, proof) {
-    const tx = new import_web32.Transaction();
+    const tx = new import_web33.Transaction();
     return tx;
   }
   async buildCreateOrderTransaction(params, proof) {
-    const tx = new import_web32.Transaction();
+    const tx = new import_web33.Transaction();
     return tx;
   }
   async getRelayer() {
@@ -951,6 +1778,63 @@ var CloakCraftClient = class {
   }
   decodePoolState(data) {
     throw new Error("Not implemented");
+  }
+  /**
+   * Prepare inputs by deriving Y-coordinates from the wallet's spending key
+   */
+  async prepareInputs(inputs) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    const { bytesToField: bytesToField3 } = await Promise.resolve().then(() => (init_poseidon(), poseidon_exports));
+    return inputs.map((input) => {
+      const spendingKey = bytesToField3(this.wallet.keypair.spending.sk);
+      const publicKey = derivePublicKey(spendingKey);
+      return {
+        ...input,
+        stealthPubY: publicKey.y
+      };
+    });
+  }
+  /**
+   * Prepare outputs by computing commitments
+   */
+  async prepareOutputs(outputs) {
+    const { createNote: createNote2 } = await Promise.resolve().then(() => (init_commitment(), commitment_exports));
+    return outputs.map((output) => {
+      const randomness = generateRandomness();
+      const tokenMint = new import_web33.PublicKey(new Uint8Array(32));
+      const note = createNote2(
+        output.recipient.stealthPubkey.x,
+        tokenMint,
+        output.amount,
+        randomness
+      );
+      const commitment = computeCommitment(note);
+      return {
+        recipient: output.recipient,
+        amount: output.amount,
+        commitment,
+        stealthPubX: output.recipient.stealthPubkey.x,
+        randomness
+      };
+    });
+  }
+  /**
+   * Fetch merkle proof from indexer
+   */
+  async fetchMerkleProof(note) {
+    const commitmentHex = Buffer.from(note.commitment).toString("hex");
+    const response = await fetch(`${this.indexerUrl}/merkle-proof/${commitmentHex}`);
+    if (!response.ok) {
+      throw new Error("Failed to fetch merkle proof");
+    }
+    const data = await response.json();
+    return {
+      root: Buffer.from(data.root, "hex"),
+      pathElements: data.pathElements.map((e) => Buffer.from(e, "hex")),
+      pathIndices: data.pathIndices
+    };
   }
 };
 
@@ -1001,9 +1885,14 @@ function generateRandomScalar2() {
   crypto.getRandomValues(bytes);
   return bytesToField(bytes) % SUBGROUP_ORDER4;
 }
+
+// src/crypto/index.ts
+init_commitment();
+init_nullifier();
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   CloakCraftClient,
+  DEVNET_LIGHT_TREES,
   DOMAIN_ACTION_NULLIFIER,
   DOMAIN_COMMITMENT,
   DOMAIN_EMPTY_LEAF,
@@ -1013,6 +1902,9 @@ function generateRandomScalar2() {
   DOMAIN_STEALTH,
   GENERATOR,
   IDENTITY,
+  LightClient,
+  LightCommitmentClient,
+  MAINNET_LIGHT_TREES,
   NoteManager,
   ProofGenerator,
   Wallet,

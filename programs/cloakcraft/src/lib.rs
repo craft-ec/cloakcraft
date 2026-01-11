@@ -297,4 +297,14 @@ pub mod cloakcraft {
     ) -> Result<()> {
         admin::register_threshold_committee(ctx, committee_id, members, threshold_pubkey, threshold)
     }
+
+    /// Test proof verification (development only)
+    /// Verifies a proof without pool state checks
+    pub fn test_verify_proof(
+        ctx: Context<TestVerifyProof>,
+        proof: Vec<u8>,
+        public_inputs: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        admin::test_verify_proof(ctx, proof, public_inputs)
+    }
 }
