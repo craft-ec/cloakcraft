@@ -272,9 +272,10 @@ export class LightClient {
     // For now, return a placeholder - actual implementation requires
     // the @lightprotocol/stateless.js SDK
 
-    // TODO: Import from @lightprotocol/stateless.js
-    // import { deriveAddress } from '@lightprotocol/stateless.js';
-    // return deriveAddress([Buffer.from('nullifier'), nullifier], addressTree, programId);
+    // TODO: Import from @lightprotocol/stateless.js (v2)
+    // import { deriveAddressSeedV2, deriveAddressV2 } from '@lightprotocol/stateless.js';
+    // const addressSeed = deriveAddressSeedV2([Buffer.from('nullifier'), nullifier], programId);
+    // return deriveAddressV2(addressSeed, addressTree, programId);
 
     // Placeholder implementation using simple hash
     const { createHash } = require('crypto');
@@ -290,23 +291,28 @@ export class LightClient {
 }
 
 /**
- * Light Protocol tree accounts for devnet
+ * Light Protocol V2 batch tree accounts for devnet
  *
- * These are the default merkle trees on devnet for ZK Compression
+ * V2 uses batch merkle trees for better throughput.
+ * For address trees, the tree and queue are the same account.
  */
 export const DEVNET_LIGHT_TREES = {
-  stateMerkleTree: new PublicKey('smt1NamzXdq4AMqS2fS2F1i5KTYPZRhoHgWx38d8WsT'),
-  addressMerkleTree: new PublicKey('amt1Ayt45jfbh91kth2zmwZHc7N5rSYFPCmk5cEVQBv'),
-  nullifierQueue: new PublicKey('nfq1NvQDJ2GEgnS8zt9prAe8rjjpAW1zFkrvZoBR148'),
+  /** V2 batch state tree output queue */
+  outputQueue: new PublicKey('oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto'),
+  /** V2 batch address tree (tree and queue are the same) */
+  addressTree: new PublicKey('amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx'),
+  /** CPI context account */
+  cpiContext: new PublicKey('cpi15BoVPKgEPw5o8wc2T816GE7b378nMXnhH3Xbq4y'),
 };
 
 /**
- * Light Protocol tree accounts for mainnet
+ * Light Protocol V2 batch tree accounts for mainnet
+ * Note: Update these with mainnet addresses when available
  */
 export const MAINNET_LIGHT_TREES = {
-  stateMerkleTree: new PublicKey('smt1NamzXdq4AMqS2fS2F1i5KTYPZRhoHgWx38d8WsT'),
-  addressMerkleTree: new PublicKey('amt1Ayt45jfbh91kth2zmwZHc7N5rSYFPCmk5cEVQBv'),
-  nullifierQueue: new PublicKey('nfq1NvQDJ2GEgnS8zt9prAe8rjjpAW1zFkrvZoBR148'),
+  outputQueue: new PublicKey('oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto'),
+  addressTree: new PublicKey('amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx'),
+  cpiContext: new PublicKey('cpi15BoVPKgEPw5o8wc2T816GE7b378nMXnhH3Xbq4y'),
 };
 
 /**
