@@ -291,28 +291,80 @@ export class LightClient {
 }
 
 /**
+ * V2 State Tree Set - contains state tree, output queue, and CPI context
+ */
+export interface StateTreeSet {
+  stateTree: PublicKey;
+  outputQueue: PublicKey;
+  cpiContext: PublicKey;
+}
+
+/**
  * Light Protocol V2 batch tree accounts for devnet
  *
  * V2 uses batch merkle trees for better throughput.
+ * There are 5 parallel state tree sets to avoid contention.
  * For address trees, the tree and queue are the same account.
  */
 export const DEVNET_LIGHT_TREES = {
-  /** V2 batch state tree output queue */
-  outputQueue: new PublicKey('oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto'),
   /** V2 batch address tree (tree and queue are the same) */
   addressTree: new PublicKey('amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx'),
-  /** CPI context account */
-  cpiContext: new PublicKey('cpi15BoVPKgEPw5o8wc2T816GE7b378nMXnhH3Xbq4y'),
+
+  /** 5 parallel state tree sets for throughput */
+  stateTrees: [
+    {
+      stateTree: new PublicKey('bmt1LryLZUMmF7ZtqESaw7wifBXLfXHQYoE4GAmrahU'),
+      outputQueue: new PublicKey('oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto'),
+      cpiContext: new PublicKey('cpi15BoVPKgEPw5o8wc2T816GE7b378nMXnhH3Xbq4y'),
+    },
+    {
+      stateTree: new PublicKey('bmt2UxoBxB9xWev4BkLvkGdapsz6sZGkzViPNph7VFi'),
+      outputQueue: new PublicKey('oq2UkeMsJLfXt2QHzim242SUi3nvjJs8Pn7Eac9H9vg'),
+      cpiContext: new PublicKey('cpi2yGapXUR3As5SjnHBAVvmApNiLsbeZpF3euWnW6B'),
+    },
+    {
+      stateTree: new PublicKey('bmt3ccLd4bqSVZVeCJnH1F6C8jNygAhaDfxDwePyyGb'),
+      outputQueue: new PublicKey('oq3AxjekBWgo64gpauB6QtuZNesuv19xrhaC1ZM1THQ'),
+      cpiContext: new PublicKey('cpi3mbwMpSX8FAGMZVP85AwxqCaQMfEk9Em1v8QK9Rf'),
+    },
+    {
+      stateTree: new PublicKey('bmt4d3p1a4YQgk9PeZv5s4DBUmbF5NxqYpk9HGjQsd8'),
+      outputQueue: new PublicKey('oq4ypwvVGzCUMoiKKHWh4S1SgZJ9vCvKpcz6RT6A8dq'),
+      cpiContext: new PublicKey('cpi4yyPDc4bCgHAnsenunGA8Y77j3XEDyjgfyCKgcoc'),
+    },
+    {
+      stateTree: new PublicKey('bmt5yU97jC88YXTuSukYHa8Z5Bi2ZDUtmzfkDTA2mG2'),
+      outputQueue: new PublicKey('oq5oh5ZR3yGomuQgFduNDzjtGvVWfDRGLuDVjv9a96P'),
+      cpiContext: new PublicKey('cpi5ZTjdgYpZ1Xr7B1cMLLUE81oTtJbNNAyKary2nV6'),
+    },
+  ] as StateTreeSet[],
 };
+
+/**
+ * Get a random state tree set for load balancing
+ */
+export function getRandomStateTreeSet(): StateTreeSet {
+  const index = Math.floor(Math.random() * DEVNET_LIGHT_TREES.stateTrees.length);
+  return DEVNET_LIGHT_TREES.stateTrees[index];
+}
+
+/**
+ * Get state tree set by index (0-4)
+ */
+export function getStateTreeSet(index: number): StateTreeSet {
+  if (index < 0 || index >= DEVNET_LIGHT_TREES.stateTrees.length) {
+    throw new Error(`Invalid state tree index: ${index}. Must be 0-4.`);
+  }
+  return DEVNET_LIGHT_TREES.stateTrees[index];
+}
 
 /**
  * Light Protocol V2 batch tree accounts for mainnet
  * Note: Update these with mainnet addresses when available
  */
 export const MAINNET_LIGHT_TREES = {
-  outputQueue: new PublicKey('oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto'),
   addressTree: new PublicKey('amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx'),
-  cpiContext: new PublicKey('cpi15BoVPKgEPw5o8wc2T816GE7b378nMXnhH3Xbq4y'),
+  stateTrees: DEVNET_LIGHT_TREES.stateTrees, // TODO: Update with mainnet addresses
 };
 
 /**
