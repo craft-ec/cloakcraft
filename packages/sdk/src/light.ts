@@ -11,7 +11,7 @@ import { deriveAddressSeedV2, deriveAddressV2, createRpc, bn, Rpc } from '@light
 import { sha256 } from '@noble/hashes/sha256';
 import type { DecryptedNote, EncryptedNote, Point } from '@cloakcraft/types';
 import { tryDecryptNote } from './crypto/encryption';
-import { deriveSpendingNullifier } from './crypto/nullifier';
+import { deriveSpendingNullifier, deriveNullifierKey } from './crypto/nullifier';
 import { initPoseidon, bytesToField, fieldToBytes } from './crypto/poseidon';
 import { deriveStealthPrivateKey } from './crypto/stealth';
 import { derivePublicKey } from './crypto/babyjubjub';
@@ -146,7 +146,12 @@ export class LightClient {
     pool: PublicKey
   ): Promise<boolean> {
     const address = this.deriveNullifierAddress(nullifier, programId, addressTree, pool);
+    const addressBase58 = new PublicKey(address).toBase58();
+    console.log(`[isNullifierSpent] Checking nullifier address: ${addressBase58}`);
+    console.log(`[isNullifierSpent] Pool: ${pool.toBase58()}`);
+    console.log(`[isNullifierSpent] Nullifier (hex): ${Buffer.from(nullifier).toString('hex').slice(0, 32)}...`);
     const account = await this.getCompressedAccount(address);
+    console.log(`[isNullifierSpent] Account found: ${account !== null}`);
     return account !== null;
   }
 
@@ -631,11 +636,25 @@ export class LightCommitmentClient extends LightClient {
 
     for (const note of notes) {
       // Derive nullifier from note
+      // IMPORTANT: Must use stealth spending key (not original spending key) to match transact
+      console.log(`[scanNotesWithStatus] Deriving nullifier for leafIndex: ${note.leafIndex}`);
+      console.log(`[scanNotesWithStatus] Commitment: ${Buffer.from(note.commitment).toString('hex').slice(0, 32)}...`);
+
+      // Derive stealth spending key if ephemeral pubkey exists
+      let effectiveNullifierKey = nullifierKey;
+      if (note.stealthEphemeralPubkey) {
+        // Derive: stealthSpendingKey = spendingKey + H(spendingKey * ephemeralPubkey)
+        const stealthSpendingKey = deriveStealthPrivateKey(viewingKey, note.stealthEphemeralPubkey);
+        effectiveNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
+        console.log(`[scanNotesWithStatus] Using stealth nullifier key`);
+      }
+
       const nullifier = deriveSpendingNullifier(
-        nullifierKey,
+        effectiveNullifierKey,
         note.commitment,
         note.leafIndex
       );
+      console.log(`[scanNotesWithStatus] Nullifier: ${Buffer.from(nullifier).toString('hex').slice(0, 32)}...`);
 
       // Check if nullifier has been spent (uses note.pool for address derivation)
       const spent = await this.isNullifierSpent(nullifier, programId, addressTree, note.pool);
