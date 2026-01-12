@@ -7,10 +7,14 @@
  */
 
 import { PublicKey, AccountMeta } from '@solana/web3.js';
+import { deriveAddressSeedV2, deriveAddressV2, createRpc, bn, Rpc } from '@lightprotocol/stateless.js';
+import { sha256 } from '@noble/hashes/sha256';
 import type { DecryptedNote, EncryptedNote, Point } from '@cloakcraft/types';
 import { tryDecryptNote } from './crypto/encryption';
 import { deriveSpendingNullifier } from './crypto/nullifier';
-import { initPoseidon } from './crypto/poseidon';
+import { initPoseidon, bytesToField, fieldToBytes } from './crypto/poseidon';
+import { deriveStealthPrivateKey } from './crypto/stealth';
+import { derivePublicKey } from './crypto/babyjubjub';
 
 /**
  * Helius RPC endpoint configuration
@@ -83,13 +87,16 @@ export interface CompressedAccountInfo {
  * Light Protocol client for Helius Photon indexer
  */
 export class LightClient {
-  private readonly rpcUrl: string;
+  protected readonly rpcUrl: string;
+  protected readonly lightRpc: Rpc;
 
   constructor(config: HeliusConfig) {
     const baseUrl = config.network === 'mainnet-beta'
       ? 'https://mainnet.helius-rpc.com'
       : 'https://devnet.helius-rpc.com';
     this.rpcUrl = `${baseUrl}/?api-key=${config.apiKey}`;
+    // Create Light SDK Rpc client
+    this.lightRpc = createRpc(this.rpcUrl, this.rpcUrl, this.rpcUrl);
   }
 
   /**
@@ -147,15 +154,27 @@ export class LightClient {
    * Get validity proof for creating a new compressed account
    *
    * This proves that the address doesn't exist yet (non-inclusion proof)
+   *
+   * Helius API expects:
+   * - hashes: Array of existing account hashes to verify (optional)
+   * - newAddressesWithTrees: Array of {address, tree} for non-inclusion proofs
    */
   async getValidityProof(params: {
-    /** New address to create (nullifier address) */
+    /** New addresses to create (non-inclusion proof) */
     newAddresses: Uint8Array[];
-    /** Address merkle tree */
+    /** Address merkle tree for each new address */
     addressMerkleTree: PublicKey;
-    /** State merkle tree for output */
+    /** State merkle tree for output (not used in Helius API but needed for context) */
     stateMerkleTree: PublicKey;
+    /** Optional: existing account hashes to include in proof */
+    hashes?: string[];
   }): Promise<ValidityProof> {
+    // Build newAddressesWithTrees array - each address paired with its tree
+    const newAddressesWithTrees = params.newAddresses.map(addr => ({
+      address: new PublicKey(addr).toBase58(),
+      tree: params.addressMerkleTree.toBase58(),
+    }));
+
     const response = await fetch(this.rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -164,10 +183,9 @@ export class LightClient {
         id: 1,
         method: 'getValidityProof',
         params: {
-          // Helius expects base58 encoded addresses
-          newAddresses: params.newAddresses.map(a => new PublicKey(a).toBase58()),
-          addressMerkleTree: params.addressMerkleTree.toBase58(),
-          stateMerkleTree: params.stateMerkleTree.toBase58(),
+          // Helius expects hashes (for inclusion) and newAddressesWithTrees (for non-inclusion)
+          hashes: params.hashes ?? [],
+          newAddressesWithTrees,
         },
       }),
     });
@@ -182,7 +200,7 @@ export class LightClient {
     };
 
     if (result.error) {
-      throw new Error(`Helius RPC error: ${result.error.message}`);
+      throw new Error(`failed to get validity proof for hashes ${params.hashes?.join(', ') ?? '[]'}: ${result.error.message}`);
     }
 
     return {
@@ -283,8 +301,6 @@ export class LightClient {
     addressTree: PublicKey,
     pool?: PublicKey
   ): Uint8Array {
-    const { deriveAddressSeedV2, deriveAddressV2 } = require('@lightprotocol/stateless.js');
-
     // Seeds must match on-chain: ["spend_nullifier", pool, nullifier]
     const seeds = pool
       ? [
@@ -438,57 +454,71 @@ export class LightCommitmentClient extends LightClient {
   }
 
   /**
-   * Get merkle proof for a commitment
+   * Get merkle proof for a commitment using account hash
    *
-   * This fetches the inclusion proof from Helius Photon indexer
+   * This is the preferred method - uses the hash stored during scanning.
+   * Uses Light SDK for proper API handling.
+   */
+  async getMerkleProofByHash(accountHash: string): Promise<CommitmentMerkleProof> {
+    console.log('[getMerkleProofByHash] Fetching proof for hash:', accountHash);
+
+    // Convert base58 hash to BN254 for SDK
+    const hashBytes = new PublicKey(accountHash).toBytes();
+    const hashBn = bn(hashBytes);
+
+    // Use Light SDK's proper method
+    const proofResult = await this.lightRpc.getCompressedAccountProof(hashBn);
+    console.log('[getMerkleProofByHash] Got proof, leafIndex:', proofResult.leafIndex);
+
+    // Convert proof to our format
+    const pathElements = proofResult.merkleProof.map((p: any) => {
+      // Handle both BN and Uint8Array formats
+      if (p.toArray) {
+        return new Uint8Array(p.toArray('be', 32));
+      }
+      return new Uint8Array(p);
+    });
+
+    const pathIndices = this.leafIndexToPathIndices(proofResult.leafIndex, pathElements.length);
+
+    // Convert root
+    const rootBytes = proofResult.root.toArray
+      ? new Uint8Array(proofResult.root.toArray('be', 32))
+      : new Uint8Array(proofResult.root);
+
+    return {
+      root: rootBytes,
+      pathElements,
+      pathIndices,
+      leafIndex: proofResult.leafIndex,
+    };
+  }
+
+  /**
+   * Get merkle proof for a commitment (legacy - derives address)
+   *
+   * Prefer getMerkleProofByHash if you have the account hash from scanning.
    */
   async getCommitmentMerkleProof(
     pool: PublicKey,
     commitment: Uint8Array,
     programId: PublicKey,
     addressTree: PublicKey,
-    stateMerkleTree: PublicKey
+    _stateMerkleTree: PublicKey
   ): Promise<CommitmentMerkleProof> {
+    // Derive commitment address and fetch account to get hash
     const address = this.deriveCommitmentAddress(pool, commitment, programId, addressTree);
+    const addressBase58 = new PublicKey(address).toBase58();
+    console.log('[getCommitmentMerkleProof] Derived address:', addressBase58);
 
-    // Get validity proof (inclusion proof)
-    const response = await fetch(this['rpcUrl'], {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getValidityProof',
-        params: {
-          hashes: [Buffer.from(address).toString('hex')],
-          stateMerkleTree: stateMerkleTree.toBase58(),
-        },
-      }),
-    });
-
-    const result = await response.json() as {
-      result: {
-        root: string;
-        proof: string[];
-        leafIndex: number;
-      };
-      error?: { message: string };
-    };
-
-    if (result.error) {
-      throw new Error(`Helius RPC error: ${result.error.message}`);
+    const account = await this.getCompressedAccount(address);
+    if (!account) {
+      throw new Error(`Commitment account not found at address: ${addressBase58}`);
     }
+    console.log('[getCommitmentMerkleProof] Found account with hash:', account.hash);
 
-    // Convert proof to path elements and indices
-    const pathElements = result.result.proof.map(p => Buffer.from(p, 'hex'));
-    const pathIndices = this.leafIndexToPathIndices(result.result.leafIndex, pathElements.length);
-
-    return {
-      root: Buffer.from(result.result.root, 'hex'),
-      pathElements,
-      pathIndices,
-      leafIndex: result.result.leafIndex,
-    };
+    // Use the hash-based method
+    return this.getMerkleProofByHash(account.hash);
   }
 
   /**
@@ -530,6 +560,9 @@ export class LightCommitmentClient extends LightClient {
 
   /**
    * Derive commitment compressed account address
+   *
+   * Uses Light Protocol's address derivation (same as nullifier).
+   * Seeds: ["commitment", pool, commitment_hash]
    */
   deriveCommitmentAddress(
     pool: PublicKey,
@@ -537,18 +570,18 @@ export class LightCommitmentClient extends LightClient {
     programId: PublicKey,
     addressTree: PublicKey
   ): Uint8Array {
-    // Address derivation uses Poseidon hash:
-    // address = poseidon(SEED_PREFIX || pool || commitment || address_tree || program_id)
-    const { createHash } = require('crypto');
-    const hash = createHash('sha256')
-      .update(Buffer.from('commitment'))
-      .update(pool.toBytes())
-      .update(commitment)
-      .update(addressTree.toBytes())
-      .update(programId.toBytes())
-      .digest();
+    // Use Light Protocol's address derivation (same as nullifier)
+    // Seeds must match on-chain: ["commitment", pool, commitment_hash]
+    const seeds = [
+      Buffer.from('commitment'),
+      pool.toBuffer(),
+      Buffer.from(commitment),
+    ];
 
-    return new Uint8Array(hash);
+    const seed = deriveAddressSeedV2(seeds);
+    const address = deriveAddressV2(seed, addressTree, programId);
+
+    return address.toBytes();
   }
 
   /**
@@ -672,28 +705,77 @@ export class LightCommitmentClient extends LightClient {
     const decryptedNotes: DecryptedNote[] = [];
 
     for (const account of accounts) {
-      if (!account.data?.data) continue;
+      if (!account.data?.data) {
+        console.log('[scanNotes] Skipping account - no data');
+        continue;
+      }
 
       // Filter by commitment discriminator (approximate match due to JS number precision)
       const disc = account.data.discriminator;
-      if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1000) continue;
+      console.log(`[scanNotes] Account discriminator: ${disc}`);
+      if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1000) {
+        console.log('[scanNotes] Skipping - discriminator mismatch');
+        continue;
+      }
 
       // Skip accounts with truncated encrypted notes (older format)
-      const dataLen = Buffer.from(account.data.data, 'base64').length;
-      if (dataLen < 200) continue;
+      // Use atob for browser compatibility (Buffer.from doesn't work in browsers)
+      // New layout: pool(32) + commitment(32) + leaf_index(8) + stealth_ephemeral(64) + len(4) + encrypted(~180) = ~320
+      const dataLen = atob(account.data.data).length;
+      console.log(`[scanNotes] Account data length: ${dataLen}`);
+      if (dataLen < 260) {
+        console.log('[scanNotes] Skipping - data too short');
+        continue;
+      }
 
       try {
         // Parse commitment account data (discriminator already filtered above)
         const parsed = this.parseCommitmentAccountData(account.data.data);
-        if (!parsed) continue;
+        if (!parsed) {
+          console.log('[scanNotes] Failed to parse commitment account');
+          continue;
+        }
+        console.log(`[scanNotes] Parsed commitment, leafIndex: ${parsed.leafIndex}`);
 
         // Deserialize encrypted note
         const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
-        if (!encryptedNote) continue;
+        if (!encryptedNote) {
+          console.log('[scanNotes] Failed to deserialize encrypted note');
+          continue;
+        }
+        console.log('[scanNotes] Deserialized encrypted note');
 
-        // Try to decrypt with viewing key
-        const note = tryDecryptNote(encryptedNote, viewingKey);
-        if (!note) continue;
+        // Derive decryption key:
+        // - If stealthEphemeralPubkey is present, derive stealthPrivateKey from it
+        // - Otherwise (internal ops), use the original viewing key
+        let decryptionKey: bigint;
+        const toHex = (arr: Uint8Array) => Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+        if (parsed.stealthEphemeralPubkey) {
+          // Derive: stealthPrivateKey = spendingKey + H(spendingKey * ephemeralPubkey)
+          console.log('[scanNotes] Stealth ephemeral X:', toHex(parsed.stealthEphemeralPubkey.x).slice(0, 32) + '...');
+          console.log('[scanNotes] viewingKey:', viewingKey.toString(16).slice(0, 16) + '...');
+          decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
+          console.log('[scanNotes] Derived stealthPrivateKey:', decryptionKey.toString(16).slice(0, 16) + '...');
+        } else {
+          // Internal operation (swap/remove_liquidity) - use original key
+          decryptionKey = viewingKey;
+          console.log('[scanNotes] Using original viewingKey for decryption (internal op)');
+        }
+
+        // Try to decrypt with derived key
+        const note = tryDecryptNote(encryptedNote, decryptionKey);
+        if (!note) {
+          console.log('[scanNotes] Failed to decrypt note (not ours or wrong format)');
+          continue;
+        }
+        console.log(`[scanNotes] Decrypted note! Amount: ${note.amount}`);
+        console.log('[scanNotes] leafIndex:', parsed.leafIndex);
+
+        // Skip 0-amount notes (change outputs with no value)
+        if (note.amount === 0n) {
+          console.log('[scanNotes] Skipping 0-amount note');
+          continue;
+        }
 
         // Successfully decrypted - this note belongs to user
         decryptedNotes.push({
@@ -701,9 +783,12 @@ export class LightCommitmentClient extends LightClient {
           commitment: parsed.commitment,
           leafIndex: parsed.leafIndex,
           pool: new PublicKey(parsed.pool),
+          accountHash: account.hash, // Store for merkle proof fetching
+          stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? undefined, // Store for stealth key derivation
         });
-      } catch {
+      } catch (err) {
         // Failed to parse or decrypt - skip this account
+        console.log('[scanNotes] Error processing account:', err);
         continue;
       }
     }
@@ -761,6 +846,7 @@ export class LightCommitmentClient extends LightClient {
    * - pool: 32 bytes
    * - commitment: 32 bytes
    * - leaf_index: 8 bytes (u64)
+   * - stealth_ephemeral_pubkey: 64 bytes (X + Y coordinates)
    * - encrypted_note_len: 4 bytes (u32)
    * - encrypted_note: variable bytes
    * - created_at: 8 bytes (i64)
@@ -769,13 +855,23 @@ export class LightCommitmentClient extends LightClient {
     pool: Uint8Array;
     commitment: Uint8Array;
     leafIndex: number;
+    stealthEphemeralPubkey: Point | null;
     encryptedNote: Uint8Array;
   } | null {
     try {
-      const data = Buffer.from(dataBase64, 'base64');
+      // Decode base64 to Uint8Array (works in browser and Node.js)
+      const binaryString = atob(dataBase64);
+      const data = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        data[i] = binaryString.charCodeAt(i);
+      }
 
       // Helius provides discriminator separately, so data starts directly with pool
-      if (data.length < 76) return null;
+      // Minimum size: 32 (pool) + 32 (commitment) + 8 (leaf_index) + 64 (ephemeral) + 4 (len) = 140
+      if (data.length < 140) {
+        console.log('[parseCommitment] Data too short');
+        return null;
+      }
 
       // Pool (32 bytes)
       const pool = data.slice(0, 32);
@@ -783,22 +879,42 @@ export class LightCommitmentClient extends LightClient {
       // Commitment (32 bytes)
       const commitment = data.slice(32, 64);
 
+      // Use DataView for reading multi-byte integers (works in browser)
+      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+
       // Leaf index (8 bytes u64 LE)
-      const leafIndex = Number(data.readBigUInt64LE(64));
+      const leafIndex = Number(view.getBigUint64(64, true));
+
+      // Stealth ephemeral pubkey (64 bytes: X + Y)
+      const ephemeralX = data.slice(72, 104);
+      const ephemeralY = data.slice(104, 136);
+
+      // Check if ephemeral pubkey is non-zero (internal ops have all zeros)
+      const isNonZero = ephemeralX.some(b => b !== 0) || ephemeralY.some(b => b !== 0);
+      const stealthEphemeralPubkey: Point | null = isNonZero
+        ? { x: new Uint8Array(ephemeralX), y: new Uint8Array(ephemeralY) }
+        : null;
 
       // Encrypted note length (4 bytes u32 LE)
-      const encryptedNoteLen = data.readUInt32LE(72);
+      const encryptedNoteLen = view.getUint32(136, true);
+
+      if (encryptedNoteLen > data.length - 140) {
+        console.log(`[parseCommitment] Invalid encrypted note length - would exceed buffer`);
+        return null;
+      }
 
       // Encrypted note (variable)
-      const encryptedNote = data.slice(76, 76 + encryptedNoteLen);
+      const encryptedNote = data.slice(140, 140 + encryptedNoteLen);
 
       return {
         pool: new Uint8Array(pool),
         commitment: new Uint8Array(commitment),
         leafIndex,
+        stealthEphemeralPubkey,
         encryptedNote: new Uint8Array(encryptedNote),
       };
-    } catch {
+    } catch (err) {
+      console.log('[parseCommitment] Error:', err);
       return null;
     }
   }
