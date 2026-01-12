@@ -151,6 +151,52 @@ export class LightClient {
   }
 
   /**
+   * Batch check if multiple nullifiers have been spent
+   *
+   * Uses getMultipleCompressedAccounts for efficiency (single API call)
+   * Returns a Set of addresses that exist (are spent)
+   */
+  async batchCheckNullifiers(addresses: string[]): Promise<Set<string>> {
+    if (addresses.length === 0) {
+      return new Set();
+    }
+
+    // Helius getMultipleCompressedAccounts
+    const response = await fetch(this.rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getMultipleCompressedAccounts',
+        params: {
+          addresses,
+        },
+      }),
+    });
+
+    const result = await response.json() as {
+      result: { value: { items: Array<{ address: string } | null> } };
+      error?: { message: string };
+    };
+
+    if (result.error) {
+      throw new Error(`Helius RPC error: ${result.error.message}`);
+    }
+
+    // Build set of addresses that exist (spent)
+    const spentSet = new Set<string>();
+    const items = result.result?.value?.items ?? [];
+    for (const item of items) {
+      if (item && item.address) {
+        spentSet.add(item.address);
+      }
+    }
+
+    return spentSet;
+  }
+
+  /**
    * Get validity proof for creating a new compressed account
    *
    * This proves that the address doesn't exist yet (non-inclusion proof)
@@ -621,18 +667,18 @@ export class LightCommitmentClient extends LightClient {
     // First scan for notes
     const notes = await this.scanNotes(viewingKey, programId, pool);
 
-    // Check spent status for each note
+    if (notes.length === 0) {
+      return [];
+    }
+
+    // Derive all nullifiers first (CPU-bound, fast)
     const addressTree = DEVNET_LIGHT_TREES.addressTree;
-    const results: ScannedNote[] = [];
+    const nullifierData: Array<{ note: DecryptedNote; nullifier: Uint8Array; address: Uint8Array }> = [];
 
     for (const note of notes) {
-      // Derive nullifier from note
-      // IMPORTANT: Must use stealth spending key (not original spending key) to match transact
-
       // Derive stealth spending key if ephemeral pubkey exists
       let effectiveNullifierKey = nullifierKey;
       if (note.stealthEphemeralPubkey) {
-        // Derive: stealthSpendingKey = spendingKey + H(spendingKey * ephemeralPubkey)
         const stealthSpendingKey = deriveStealthPrivateKey(viewingKey, note.stealthEphemeralPubkey);
         effectiveNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
       }
@@ -643,17 +689,20 @@ export class LightCommitmentClient extends LightClient {
         note.leafIndex
       );
 
-      // Check if nullifier has been spent (uses note.pool for address derivation)
-      const spent = await this.isNullifierSpent(nullifier, programId, addressTree, note.pool);
-
-      results.push({
-        ...note,
-        spent,
-        nullifier,
-      });
+      const address = this.deriveNullifierAddress(nullifier, programId, addressTree, note.pool);
+      nullifierData.push({ note, nullifier, address });
     }
 
-    return results;
+    // Batch check all nullifiers in one API call
+    const addresses = nullifierData.map(d => new PublicKey(d.address).toBase58());
+    const spentSet = await this.batchCheckNullifiers(addresses);
+
+    // Build results
+    return nullifierData.map(({ note, nullifier, address }) => ({
+      ...note,
+      spent: spentSet.has(new PublicKey(address).toBase58()),
+      nullifier,
+    }));
   }
 
   /**
