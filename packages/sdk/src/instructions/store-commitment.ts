@@ -24,6 +24,8 @@ export interface StoreCommitmentParams {
   commitment: Uint8Array;
   /** Leaf index in tree */
   leafIndex: bigint;
+  /** Stealth ephemeral pubkey (64 bytes) for deriving decryption key */
+  stealthEphemeralPubkey: Uint8Array;
   /** Encrypted note data */
   encryptedNote: Buffer;
   /** Relayer public key */
@@ -49,28 +51,24 @@ export async function buildStoreCommitmentWithProgram(
   const validityProof = await lightProtocol.getValidityProof([commitmentAddress]);
   const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
 
-  const storeParams: LightStoreCommitmentParams = {
-    commitment: Array.from(params.commitment),
-    leafIndex: params.leafIndex,
-    encryptedNote: params.encryptedNote,
-    validityProof: LightProtocol.convertCompressedProof(validityProof),
-    addressTreeInfo: {
-      addressMerkleTreePubkeyIndex: addressTreeIndex,
-      addressQueuePubkeyIndex: addressTreeIndex,
-      rootIndex: validityProof.rootIndices[0] ?? 0,
-    },
-    outputTreeIndex,
+  const convertedProof = LightProtocol.convertCompressedProof(validityProof);
+  const addressTreeInfo = {
+    addressMerkleTreePubkeyIndex: addressTreeIndex,
+    addressQueuePubkeyIndex: addressTreeIndex,
+    rootIndex: validityProof.rootIndices[0] ?? 0,
   };
 
   // Build transaction using Anchor
+  // Use Buffer for encryptedNote (Vec<u8>) - same as shield instruction
   const tx = await program.methods
     .storeCommitment({
-      commitment: storeParams.commitment,
-      leafIndex: new BN(storeParams.leafIndex.toString()),
-      encryptedNote: storeParams.encryptedNote,
-      validityProof: storeParams.validityProof,
-      addressTreeInfo: storeParams.addressTreeInfo,
-      outputTreeIndex: storeParams.outputTreeIndex,
+      commitment: Array.from(params.commitment),
+      leafIndex: new BN(params.leafIndex.toString()),
+      stealthEphemeralPubkey: Array.from(params.stealthEphemeralPubkey),
+      encryptedNote: Buffer.from(params.encryptedNote),  // Buffer, not number[]
+      validityProof: convertedProof,
+      addressTreeInfo,
+      outputTreeIndex,
     })
     .accountsStrict({
       pool: poolPda,
@@ -96,6 +94,7 @@ export async function storeCommitments(
   commitments: Array<{
     commitment: Uint8Array;
     leafIndex: bigint;
+    stealthEphemeralPubkey: Uint8Array;
     encryptedNote: Buffer;
   }>,
   relayer: PublicKey,
@@ -110,6 +109,7 @@ export async function storeCommitments(
         tokenMint,
         commitment: commitment.commitment,
         leafIndex: commitment.leafIndex,
+        stealthEphemeralPubkey: commitment.stealthEphemeralPubkey,
         encryptedNote: commitment.encryptedNote,
         relayer,
       },

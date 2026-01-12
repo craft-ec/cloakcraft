@@ -9,7 +9,7 @@ import {
   TransactionInstruction,
   ComputeBudgetProgram,
 } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { Program, BN } from '@coral-xyz/anchor';
 import type { Point } from '@cloakcraft/types';
 
@@ -32,8 +32,6 @@ import { deriveNullifierKey, deriveSpendingNullifier } from '../crypto/nullifier
 export interface TransactInput {
   /** Stealth public key X coordinate */
   stealthPubX: Uint8Array;
-  /** Stealth public key Y coordinate */
-  stealthPubY: Uint8Array;
   /** Amount */
   amount: bigint;
   /** Randomness */
@@ -42,6 +40,8 @@ export interface TransactInput {
   leafIndex: number;
   /** Spending key for this note */
   spendingKey: bigint;
+  /** Account hash from scanning (for commitment existence proof) */
+  accountHash: string;
 }
 
 /**
@@ -50,8 +50,14 @@ export interface TransactInput {
 export interface TransactOutput {
   /** Recipient's stealth public key */
   recipientPubkey: Point;
+  /** Ephemeral public key for stealth derivation (stored on-chain for recipient scanning) */
+  ephemeralPubkey?: Point;
   /** Amount */
   amount: bigint;
+  /** Pre-computed commitment (if already computed for ZK proof) */
+  commitment?: Uint8Array;
+  /** Pre-computed randomness (if already computed for ZK proof) */
+  randomness?: Uint8Array;
 }
 
 /**
@@ -78,6 +84,10 @@ export interface TransactInstructionParams {
   relayer: PublicKey;
   /** ZK proof bytes */
   proof: Uint8Array;
+  /** Pre-computed nullifier (must match ZK proof) */
+  nullifier?: Uint8Array;
+  /** Pre-computed input commitment (must match ZK proof) */
+  inputCommitment?: Uint8Array;
 }
 
 /**
@@ -92,6 +102,8 @@ export interface TransactResult {
   encryptedNotes: Buffer[];
   /** Randomness for each output (needed for spending) */
   outputRandomness: Uint8Array[];
+  /** Stealth ephemeral pubkeys for each output (64 bytes each: X + Y) */
+  stealthEphemeralPubkeys: Uint8Array[];
 }
 
 /**
@@ -115,25 +127,37 @@ export async function buildTransactWithProgram(
   const [counterPda] = deriveCommitmentCounterPda(poolPda, programId);
   const [vkPda] = deriveVerificationKeyPda(circuitId, programId);
 
-  // Derive nullifier
-  const nullifierKey = deriveNullifierKey(
-    new Uint8Array(new BigUint64Array([params.input.spendingKey]).buffer)
-  );
-  const inputCommitment = computeCommitment({
-    stealthPubX: params.input.stealthPubX,
-    tokenMint: params.tokenMint,
-    amount: params.input.amount,
-    randomness: params.input.randomness,
-  });
-  const nullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, params.input.leafIndex);
+  // Use pre-computed nullifier and commitment if provided (must match ZK proof)
+  // Otherwise compute them (but this may not match if stealth keys are involved)
+  let nullifier: Uint8Array;
+  let inputCommitment: Uint8Array;
+
+  if (params.nullifier && params.inputCommitment) {
+    nullifier = params.nullifier;
+    inputCommitment = params.inputCommitment;
+  } else {
+    // Fallback: compute locally (may not work with stealth addresses)
+    const nullifierKey = deriveNullifierKey(
+      new Uint8Array(new BigUint64Array([params.input.spendingKey]).buffer)
+    );
+    inputCommitment = computeCommitment({
+      stealthPubX: params.input.stealthPubX,
+      tokenMint: params.tokenMint,
+      amount: params.input.amount,
+      randomness: params.input.randomness,
+    });
+    nullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, params.input.leafIndex);
+  }
 
   // Create output notes and commitments
   const outputCommitments: Uint8Array[] = [];
   const encryptedNotes: Buffer[] = [];
   const outputRandomness: Uint8Array[] = [];
+  const stealthEphemeralPubkeys: Uint8Array[] = [];
 
   for (const output of params.outputs) {
-    const randomness = generateRandomness();
+    // Use pre-computed randomness if provided (must match ZK proof), otherwise generate new
+    const randomness = output.randomness ?? generateRandomness();
     outputRandomness.push(randomness);
 
     const note = {
@@ -143,27 +167,71 @@ export async function buildTransactWithProgram(
       randomness,
     };
 
-    const commitment = computeCommitment(note);
+    // Use pre-computed commitment if provided (must match ZK proof), otherwise compute
+    const commitment = output.commitment ?? computeCommitment(note);
     outputCommitments.push(commitment);
 
     const encrypted = encryptNote(note, output.recipientPubkey);
     encryptedNotes.push(Buffer.from(serializeEncryptedNote(encrypted)));
+
+    // Store the stealth ephemeral pubkey (64 bytes: X + Y)
+    // This allows recipients to derive the stealth private key for decryption
+    if (output.ephemeralPubkey) {
+      const ephemeralBytes = new Uint8Array(64);
+      ephemeralBytes.set(output.ephemeralPubkey.x, 0);
+      ephemeralBytes.set(output.ephemeralPubkey.y, 32);
+      stealthEphemeralPubkeys.push(ephemeralBytes);
+    } else {
+      // No ephemeral pubkey - use zeros (internal operation)
+      stealthEphemeralPubkeys.push(new Uint8Array(64));
+    }
   }
 
-  // Get Light Protocol validity proof for nullifier
+  // For transfer_1x2 circuit, pad with dummy second output if only 1 output provided
+  // The dummy commitment must match what the ZK proof computed: Poseidon(domain, 0, tokenMint, 0, 0)
+  if (circuitId === CIRCUIT_IDS.TRANSFER_1X2 && outputCommitments.length === 1) {
+    const dummyCommitment = computeCommitment({
+      stealthPubX: new Uint8Array(32), // zeros
+      tokenMint: params.tokenMint,
+      amount: 0n,
+      randomness: new Uint8Array(32), // zeros
+    });
+    outputCommitments.push(dummyCommitment);
+    outputRandomness.push(new Uint8Array(32));
+    stealthEphemeralPubkeys.push(new Uint8Array(64)); // zeros for dummy output
+    encryptedNotes.push(Buffer.alloc(0)); // empty for dummy output
+  }
+
+  // Get combined validity proof:
+  // - Commitment exists (inclusion) - prevents fake commitment attacks
+  // - Nullifier doesn't exist (non-inclusion) - prevents double-spend
   const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, nullifier);
-  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
+  const combinedProof = await lightProtocol.getCombinedValidityProof(
+    params.input.accountHash,
+    nullifierAddress
+  );
   const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
 
   const lightParams: LightTransactParams = {
-    nullifierProof: LightProtocol.convertCompressedProof(nullifierProof),
+    validityProof: LightProtocol.convertCompressedProof(combinedProof),
     nullifierAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
-      rootIndex: nullifierProof.rootIndices[0] ?? 0,
+      rootIndex: combinedProof.rootIndices[1] ?? 0, // Index 1 is for address tree (nullifier)
     },
     outputTreeIndex,
   };
+
+  // Derive unshield recipient token account (ATA) if wallet address provided
+  let unshieldRecipientAta: PublicKey | null = null;
+  if (params.unshieldRecipient && params.unshieldAmount && params.unshieldAmount > 0n) {
+    // Derive the associated token account for the recipient wallet
+    unshieldRecipientAta = getAssociatedTokenAddressSync(
+      params.tokenMint,
+      params.unshieldRecipient,
+      true // allowOwnerOffCurve - in case recipient is a PDA
+    );
+  }
 
   // Build transaction using Anchor
   const tx = await program.methods
@@ -181,7 +249,7 @@ export async function buildTransactWithProgram(
       commitmentCounter: counterPda,
       tokenVault: vaultPda,
       verificationKey: vkPda,
-      unshieldRecipient: params.unshieldRecipient ?? (null as any),
+      unshieldRecipient: unshieldRecipientAta ?? (null as any),
       relayer: params.relayer,
       tokenProgram: TOKEN_PROGRAM_ID,
     })
@@ -198,6 +266,7 @@ export async function buildTransactWithProgram(
       outputCommitments,
       encryptedNotes,
       outputRandomness,
+      stealthEphemeralPubkeys,
     },
   };
 }

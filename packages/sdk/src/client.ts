@@ -33,6 +33,7 @@ import { computeCommitment, generateRandomness, createNote } from './crypto/comm
 import { derivePublicKey } from './crypto/babyjubjub';
 import { poseidonHash, fieldToBytes, bytesToField, initPoseidon } from './crypto/poseidon';
 import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier';
+import { deriveStealthPrivateKey } from './crypto/stealth';
 import {
   LightCommitmentClient,
   LightNullifierParams,
@@ -81,6 +82,7 @@ export class CloakCraftClient {
   private proofGenerator: ProofGenerator;
   private lightClient: LightCommitmentClient | null = null;
   private program: Program | null = null;
+  private heliusRpcUrl: string | null = null;
 
   constructor(config: CloakCraftClientConfig) {
     this.connection = new Connection(config.rpcUrl, config.commitment ?? 'confirmed');
@@ -105,13 +107,28 @@ export class CloakCraftClient {
       this.proofGenerator.configureForNode();
     }
 
-    // Initialize Light Protocol client if Helius API key provided
+    // Initialize Light Protocol client and RPC URL if Helius API key provided
     if (config.heliusApiKey) {
+      const baseUrl = this.network === 'mainnet-beta'
+        ? 'https://mainnet.helius-rpc.com'
+        : 'https://devnet.helius-rpc.com';
+      this.heliusRpcUrl = `${baseUrl}/?api-key=${config.heliusApiKey}`;
+
       this.lightClient = new LightCommitmentClient({
         apiKey: config.heliusApiKey,
         network: this.network,
       });
     }
+  }
+
+  /**
+   * Get the Helius RPC URL (required for Light Protocol operations)
+   */
+  getHeliusRpcUrl(): string {
+    if (!this.heliusRpcUrl) {
+      throw new Error('Helius API key not configured. Light Protocol operations require heliusApiKey in config.');
+    }
+    return this.heliusRpcUrl;
   }
 
   /**
@@ -275,12 +292,51 @@ export class CloakCraftClient {
       this.programId
     );
 
+    // Use Anchor program if available for automatic decoding
+    if (this.program) {
+      try {
+        const pool = await (this.program.account as any).pool.fetch(poolPda);
+        return {
+          tokenMint: pool.tokenMint,
+          tokenVault: pool.tokenVault,
+          totalShielded: BigInt(pool.totalShielded.toString()),
+          authority: pool.authority,
+          bump: pool.bump,
+          vaultBump: pool.vaultBump,
+        };
+      } catch (e: any) {
+        // Account doesn't exist - check various error patterns
+        const msg = e.message?.toLowerCase() ?? '';
+        if (
+          msg.includes('account does not exist') ||
+          msg.includes('could not find') ||
+          msg.includes('not found') ||
+          msg.includes('null') ||
+          e.toString().includes('AccountNotFound')
+        ) {
+          return null;
+        }
+        throw e;
+      }
+    }
+
+    // Fallback to raw account fetch (no program available)
     const accountInfo = await this.connection.getAccountInfo(poolPda);
     if (!accountInfo) return null;
 
-    // Decode pool state from account data
-    // In production, use Anchor's automatic decoding
-    return this.decodePoolState(accountInfo.data);
+    // Manual decoding when Anchor program not available
+    // Pool account layout: 8 (discriminator) + 32 (token_mint) + 32 (token_vault) + 8 (total_shielded) + 32 (authority) + 1 (bump) + 1 (vault_bump)
+    const data = accountInfo.data;
+    if (data.length < 114) return null;
+
+    return {
+      tokenMint: new PublicKey(data.subarray(8, 40)),
+      tokenVault: new PublicKey(data.subarray(40, 72)),
+      totalShielded: data.readBigUInt64LE(72),
+      authority: new PublicKey(data.subarray(80, 112)),
+      bump: data[112],
+      vaultBump: data[113],
+    };
   }
 
   /**
@@ -322,16 +378,19 @@ export class CloakCraftClient {
     }
 
     // Build shield using instruction builder
+    // Note encrypts to stealthPubkey; ephemeralPubkey stored on-chain for decryption key derivation
+    // Use Helius RPC URL for Light Protocol operations
     const { tx, commitment, randomness } = await buildShieldWithProgram(
       this.program,
       {
         tokenMint: params.pool,
         amount: params.amount,
-        recipientPubkey: params.recipient.stealthPubkey,
+        stealthPubkey: params.recipient.stealthPubkey,
+        stealthEphemeralPubkey: params.recipient.ephemeralPubkey,
         userTokenAccount: params.userTokenAccount!,
         user: payer.publicKey,
       },
-      this.rpcUrl
+      this.getHeliusRpcUrl()
     );
 
     // Execute transaction
@@ -340,6 +399,49 @@ export class CloakCraftClient {
     return {
       signature,
       slot: 0, // Slot is not available from rpc()
+      commitment,
+      randomness,
+    };
+  }
+
+  /**
+   * Shield tokens into the pool using wallet adapter
+   *
+   * Uses the program's provider wallet for signing
+   */
+  async shieldWithWallet(
+    params: ShieldParams,
+    walletPublicKey: PublicKey
+  ): Promise<TransactionResult & { commitment: Uint8Array; randomness: Uint8Array }> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    // Build shield using instruction builder
+    // Note encrypts to stealthPubkey; ephemeralPubkey stored on-chain for decryption key derivation
+    // Use Helius RPC URL for Light Protocol operations
+    const { tx, commitment, randomness } = await buildShieldWithProgram(
+      this.program,
+      {
+        tokenMint: params.pool,
+        amount: params.amount,
+        stealthPubkey: params.recipient.stealthPubkey,
+        stealthEphemeralPubkey: params.recipient.ephemeralPubkey,
+        userTokenAccount: params.userTokenAccount!,
+        user: walletPublicKey,
+      },
+      this.getHeliusRpcUrl()
+    );
+
+    // Execute transaction using wallet adapter
+    const signature = await tx.rpc();
+
+    return {
+      signature,
+      slot: 0,
       commitment,
       randomness,
     };
@@ -401,22 +503,75 @@ export class CloakCraftClient {
     );
     console.log(`[transfer] Proof generated (${proof.length} bytes)`);
 
+    // Require accountHash for commitment existence proof
+    const accountHash = params.inputs[0].accountHash;
+    if (!accountHash) {
+      throw new Error('Input note missing accountHash. Use scanNotes() to get notes with accountHash.');
+    }
+
+    // Compute nullifier using same logic as proof generator (stealth key derivation)
+    const input = params.inputs[0];
+    let stealthSpendingKey: bigint;
+    if (input.stealthEphemeralPubkey) {
+      const baseSpendingKey = bytesToField(this.wallet.keypair.spending.sk);
+      stealthSpendingKey = deriveStealthPrivateKey(baseSpendingKey, input.stealthEphemeralPubkey);
+    } else {
+      stealthSpendingKey = bytesToField(this.wallet.keypair.spending.sk);
+    }
+    const stealthNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
+    const inputCommitment = computeCommitment(input);
+    const nullifier = deriveSpendingNullifier(stealthNullifierKey, inputCommitment, input.leafIndex);
+
+    // Debug: print public inputs for comparison with snarkjs output
+    const toHex = (arr: Uint8Array) => Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+    const toFieldBigInt = (arr: Uint8Array) => BigInt('0x' + toHex(arr));
+
+    // Compute dummy commitment if needed
+    let out2Commitment: Uint8Array;
+    if (params.outputs[1]?.commitment) {
+      out2Commitment = params.outputs[1].commitment;
+    } else {
+      out2Commitment = computeCommitment({
+        stealthPubX: new Uint8Array(32),
+        tokenMint,
+        amount: 0n,
+        randomness: new Uint8Array(32),
+      });
+    }
+
+    // Convert token mint to field element (same as circuit)
+    const tokenMintBytes = tokenMint.toBytes();
+    const tokenMintField = toFieldBigInt(tokenMintBytes);
+
+    console.log('[transfer] === SDK Public Inputs (hex) - COMPARE WITH SNARKJS ===');
+    console.log('[transfer] [0] merkle_root:      0x' + toFieldBigInt(params.merkleRoot).toString(16).padStart(64, '0'));
+    console.log('[transfer] [1] nullifier:        0x' + toFieldBigInt(nullifier).toString(16).padStart(64, '0'));
+    console.log('[transfer] [2] out_commitment_1: 0x' + toFieldBigInt(params.outputs[0].commitment!).toString(16).padStart(64, '0'));
+    console.log('[transfer] [3] out_commitment_2: 0x' + toFieldBigInt(out2Commitment).toString(16).padStart(64, '0'));
+    console.log('[transfer] [4] token_mint:       0x' + tokenMintField.toString(16).padStart(64, '0'));
+    console.log('[transfer] [5] unshield_amount:  0x' + (params.unshield?.amount ?? 0n).toString(16).padStart(64, '0'));
+
     // Build transaction using instruction builder
+    // Use Helius RPC URL for Light Protocol operations
+    const heliusRpcUrl = this.getHeliusRpcUrl();
     const { tx, result } = await buildTransactWithProgram(
       this.program,
       {
         tokenMint,
         input: {
           stealthPubX: params.inputs[0].stealthPubX,
-          stealthPubY: params.inputs[0].stealthPubY,
           amount: params.inputs[0].amount,
           randomness: params.inputs[0].randomness,
           leafIndex: params.inputs[0].leafIndex,
           spendingKey: BigInt('0x' + Buffer.from(this.wallet.keypair.spending.sk).toString('hex')),
+          accountHash,
         },
         outputs: params.outputs.map(o => ({
           recipientPubkey: o.recipient.stealthPubkey,
+          ephemeralPubkey: o.recipient.ephemeralPubkey,
           amount: o.amount,
+          commitment: o.commitment,
+          randomness: o.randomness,
         })),
         merkleRoot: params.merkleRoot,
         merklePath: params.merklePath,
@@ -425,8 +580,10 @@ export class CloakCraftClient {
         unshieldRecipient: params.unshield?.recipient,
         relayer: relayer?.publicKey ?? (await this.getRelayerPubkey()),
         proof,
+        nullifier,
+        inputCommitment,
       },
-      this.rpcUrl,
+      heliusRpcUrl,
       circuitName === 'transfer/1x2' ? 'transfer_1x2' : 'transfer_1x3'
     );
 
@@ -435,17 +592,23 @@ export class CloakCraftClient {
     console.log(`[transfer] Transaction submitted: ${signature}`);
 
     // Store output commitments with correct leaf indices
-    if (result.outputCommitments.length > 0) {
+    // Filter out dummy outputs (empty encrypted notes are for ZK padding only)
+    const realOutputs = result.outputCommitments
+      .map((c, i) => ({
+        commitment: c,
+        leafIndex: baseLeafIndex + BigInt(i),
+        stealthEphemeralPubkey: result.stealthEphemeralPubkeys[i],
+        encryptedNote: result.encryptedNotes[i],
+      }))
+      .filter(o => o.encryptedNote.length > 0);
+
+    if (realOutputs.length > 0) {
       await storeCommitments(
         this.program,
         tokenMint,
-        result.outputCommitments.map((c, i) => ({
-          commitment: c,
-          leafIndex: baseLeafIndex + BigInt(i),
-          encryptedNote: result.encryptedNotes[i],
-        })),
+        realOutputs,
         relayer?.publicKey ?? (await this.getRelayerPubkey()),
-        this.rpcUrl
+        heliusRpcUrl
       );
     }
 
@@ -457,10 +620,17 @@ export class CloakCraftClient {
 
   /**
    * Get relayer public key (without requiring keypair)
+   * Falls back to self-relay mode (provider wallet pays own fees) if no relayer configured
    */
   private async getRelayerPubkey(): Promise<PublicKey> {
-    // In production: Connect to TunnelCraft relay network
-    throw new Error('No relayer configured. Pass relayer keypair to transfer().');
+    // Self-relay mode: use the Anchor provider's wallet as relayer
+    // Less private but works for testing
+    if (this.program?.provider && 'publicKey' in this.program.provider) {
+      const providerWallet = this.program.provider as { publicKey: PublicKey };
+      console.warn('[getRelayerPubkey] No relayer configured - using self-relay mode (provider wallet pays fees)');
+      return providerWallet.publicKey;
+    }
+    throw new Error('No relayer configured and no provider wallet available.');
   }
 
   /**
@@ -483,21 +653,32 @@ export class CloakCraftClient {
       throw new Error('No wallet loaded');
     }
 
+    // Get tokenMint from first input (all inputs in a transfer must use same token)
+    const tokenMint = request.inputs[0].tokenMint;
+
     // Prepare inputs with Y-coordinates and merkle proofs
     const preparedInputs = await this.prepareInputs(request.inputs);
 
-    // Prepare outputs with commitments
-    const preparedOutputs = await this.prepareOutputs(request.outputs);
+    // Prepare outputs with commitments (using same tokenMint as inputs)
+    const preparedOutputs = await this.prepareOutputs(request.outputs, tokenMint);
 
-    // Get merkle proof for the first input (all inputs must use same root)
-    const merkleProof = await this.fetchMerkleProof(request.inputs[0]);
+    // Use commitment as merkle_root with dummy path
+    // The circuit doesn't verify merkle path (it's for ABI compatibility only).
+    // Commitment existence is verified on-chain via Light Protocol account lookup.
+    // DO NOT use Light Protocol's merkle proof leafIndex - it's for the state tree,
+    // not CloakCraft's commitment counter. The scanned note has the correct leafIndex.
+    const commitment = preparedInputs[0].commitment;
+    const dummyPath = Array(32).fill(new Uint8Array(32));
+    const dummyIndices = Array(32).fill(0);
+
+    console.log('[prepareAndTransfer] Using leafIndex from scanned note:', preparedInputs[0].leafIndex);
 
     // Build full TransferParams
     const params: TransferParams = {
       inputs: preparedInputs,
-      merkleRoot: merkleProof.root,
-      merklePath: merkleProof.pathElements,
-      merkleIndices: merkleProof.pathIndices,
+      merkleRoot: commitment,
+      merklePath: dummyPath,
+      merkleIndices: dummyIndices,
       outputs: preparedOutputs,
       unshield: request.unshield,
     };
@@ -601,8 +782,12 @@ export class CloakCraftClient {
     // Fetch merkle proof
     const merkleProof = await this.fetchMerkleProof(request.input);
 
+    // CRITICAL: Use the actual leafIndex from the merkle proof
+    console.log('[createAMMOrder] Updating leafIndex from proof:', merkleProof.leafIndex);
+    preparedInput.leafIndex = merkleProof.leafIndex;
+
     // Generate order ID and other derived values
-    
+
     const orderIdBytes = generateRandomness();
     const escrowRandomness = generateRandomness();
 
@@ -623,11 +808,10 @@ export class CloakCraftClient {
       fieldToBytes(request.terms.requestAmount),
     ]);
 
-    // Compute nullifier
-    
+    // Compute nullifier (use proof's leafIndex)
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     const inputCommitment = computeCommitment(request.input);
-    const nullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, request.input.leafIndex);
+    const nullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, merkleProof.leafIndex);
 
     // Build full OrderParams
     const params: OrderParams = {
@@ -750,43 +934,32 @@ export class CloakCraftClient {
   }
 
   /**
-   * Prepare inputs by deriving Y-coordinates from the wallet's spending key
+   * Prepare inputs for proving
    */
   private async prepareInputs(inputs: DecryptedNote[]): Promise<PreparedInput[]> {
     if (!this.wallet) {
       throw new Error('No wallet loaded');
     }
 
-    
-
-    return inputs.map(input => {
-      // Derive the full public key from the spending key
-      const spendingKey = bytesToField(this.wallet!.keypair.spending.sk);
-      const publicKey = derivePublicKey(spendingKey);
-
-      return {
-        ...input,
-        stealthPubY: publicKey.y,
-      };
-    });
+    return inputs.map(input => ({ ...input }));
   }
 
   /**
    * Prepare outputs by computing commitments
+   *
+   * @param outputs - Output recipients and amounts
+   * @param tokenMint - Token mint for all outputs (must match inputs)
    */
   private async prepareOutputs(
-    outputs: Array<{ recipient: StealthAddress; amount: bigint }>
+    outputs: Array<{ recipient: StealthAddress; amount: bigint }>,
+    tokenMint: PublicKey
   ): Promise<TransferOutput[]> {
-    
+    console.log('[prepareOutputs] Using tokenMint:', tokenMint.toBase58());
 
     return outputs.map(output => {
       const randomness = generateRandomness();
 
-      // Get the first pool's token mint (in production, this should be passed)
-      // For now, assume outputs use same token as inputs
-      const tokenMint = new PublicKey(new Uint8Array(32)); // Placeholder
-
-      // Create note to compute commitment
+      // Create note to compute commitment with actual tokenMint
       const note = createNote(
         output.recipient.stealthPubkey.x,
         tokenMint,
@@ -795,6 +968,8 @@ export class CloakCraftClient {
       );
 
       const commitment = computeCommitment(note);
+      console.log('[prepareOutputs] Output amount:', output.amount.toString());
+      console.log('[prepareOutputs] Commitment:', Buffer.from(commitment).toString('hex').slice(0, 24) + '...');
 
       return {
         recipient: output.recipient,
@@ -807,30 +982,52 @@ export class CloakCraftClient {
   }
 
   /**
-   * Fetch merkle proof from indexer
+   * Fetch merkle proof from Light Protocol
+   *
+   * Uses accountHash if available (from scanner), otherwise derives address.
    */
   private async fetchMerkleProof(note: DecryptedNote): Promise<{
     root: Uint8Array;
     pathElements: Uint8Array[];
     pathIndices: number[];
+    leafIndex: number;
   }> {
-    const commitmentHex = Buffer.from(note.commitment).toString('hex');
-    const response = await fetch(`${this.indexerUrl}/merkle-proof/${commitmentHex}`);
-
-    if (!response.ok) {
-      throw new Error('Failed to fetch merkle proof');
+    if (!this.lightClient) {
+      throw new Error('Light Protocol not configured. Provide heliusApiKey in config.');
     }
 
-    const data = await response.json() as {
-      root: string;
-      pathElements: string[];
-      pathIndices: number[];
-    };
+    // Prefer using stored hash (same data flow as scanner - guaranteed to work)
+    if (note.accountHash) {
+      console.log('[fetchMerkleProof] Using stored accountHash');
+      const proof = await this.lightClient.getMerkleProofByHash(note.accountHash);
+      console.log('[fetchMerkleProof] Proof leafIndex:', proof.leafIndex);
+      return {
+        root: proof.root,
+        pathElements: proof.pathElements,
+        pathIndices: proof.pathIndices,
+        leafIndex: proof.leafIndex,
+      };
+    }
+
+    // Fallback: derive address and fetch hash
+    console.log('[fetchMerkleProof] No accountHash, deriving address...');
+    const trees = this.getLightTrees();
+    const stateTreeSet = trees.stateTrees[0];
+
+    const proof = await this.lightClient.getCommitmentMerkleProof(
+      note.pool,
+      note.commitment,
+      this.programId,
+      trees.addressTree,
+      stateTreeSet.stateTree
+    );
+    console.log('[fetchMerkleProof] Proof leafIndex:', proof.leafIndex);
 
     return {
-      root: Buffer.from(data.root, 'hex'),
-      pathElements: data.pathElements.map((e: string) => Buffer.from(e, 'hex')),
-      pathIndices: data.pathIndices,
+      root: proof.root,
+      pathElements: proof.pathElements,
+      pathIndices: proof.pathIndices,
+      leafIndex: proof.leafIndex,
     };
   }
 }
