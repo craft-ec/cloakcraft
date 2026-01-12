@@ -592,15 +592,16 @@ export class CloakCraftClient {
     console.log(`[transfer] Transaction submitted: ${signature}`);
 
     // Store output commitments with correct leaf indices
-    // Filter out dummy outputs (empty encrypted notes are for ZK padding only)
+    // Filter out dummy outputs (empty encrypted notes) and 0-amount outputs
     const realOutputs = result.outputCommitments
       .map((c, i) => ({
         commitment: c,
         leafIndex: baseLeafIndex + BigInt(i),
         stealthEphemeralPubkey: result.stealthEphemeralPubkeys[i],
         encryptedNote: result.encryptedNotes[i],
+        amount: result.outputAmounts[i],
       }))
-      .filter(o => o.encryptedNote.length > 0);
+      .filter(o => o.encryptedNote.length > 0 && o.amount > 0n);
 
     if (realOutputs.length > 0) {
       await storeCommitments(

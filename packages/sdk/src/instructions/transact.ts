@@ -104,6 +104,8 @@ export interface TransactResult {
   outputRandomness: Uint8Array[];
   /** Stealth ephemeral pubkeys for each output (64 bytes each: X + Y) */
   stealthEphemeralPubkeys: Uint8Array[];
+  /** Output amounts (for filtering 0-amount outputs) */
+  outputAmounts: bigint[];
 }
 
 /**
@@ -154,8 +156,10 @@ export async function buildTransactWithProgram(
   const encryptedNotes: Buffer[] = [];
   const outputRandomness: Uint8Array[] = [];
   const stealthEphemeralPubkeys: Uint8Array[] = [];
+  const outputAmounts: bigint[] = [];
 
   for (const output of params.outputs) {
+    outputAmounts.push(output.amount);
     // Use pre-computed randomness if provided (must match ZK proof), otherwise generate new
     const randomness = output.randomness ?? generateRandomness();
     outputRandomness.push(randomness);
@@ -200,6 +204,7 @@ export async function buildTransactWithProgram(
     outputRandomness.push(new Uint8Array(32));
     stealthEphemeralPubkeys.push(new Uint8Array(64)); // zeros for dummy output
     encryptedNotes.push(Buffer.alloc(0)); // empty for dummy output
+    outputAmounts.push(0n); // dummy has 0 amount
   }
 
   // Get combined validity proof:
@@ -267,6 +272,7 @@ export async function buildTransactWithProgram(
       encryptedNotes,
       outputRandomness,
       stealthEphemeralPubkeys,
+      outputAmounts,
     },
   };
 }
