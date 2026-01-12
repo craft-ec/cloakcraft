@@ -17,9 +17,17 @@ export const DOMAIN_STEALTH = 0x05n;
 export const DOMAIN_MERKLE = 0x06n;
 export const DOMAIN_EMPTY_LEAF = 0x07n;
 
-// BN254 base field (Fq) modulus - must match on-chain pubkey_to_field
-// Fq is used for converting pubkeys to field elements
-const FIELD_MODULUS = 21888242871839275222246405745257275088696311157297823662689037894645226208583n;
+// BN254 scalar field (Fr) modulus - this is the native field for Noir/PLONK circuits
+// Fr = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+// NOTE: Some old notes were created with the wrong Fq modulus. We need to support both.
+export const FIELD_MODULUS_FR = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+// BN254 base field (Fq) modulus - LEGACY, only for backwards compatibility
+// Fq = 21888242871839275222246405745257275088696311157297823662689037894645226208583
+export const FIELD_MODULUS_FQ = 21888242871839275222246405745257275088696311157297823662689037894645226208583n;
+
+// Default to Fr (correct for Noir circuits)
+const FIELD_MODULUS = FIELD_MODULUS_FR;
 
 // Singleton Poseidon instance
 let poseidonInstance: Poseidon | null = null;

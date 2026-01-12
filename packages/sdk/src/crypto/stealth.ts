@@ -3,7 +3,7 @@
  */
 
 import type { Point, FieldElement, StealthAddress, Keypair } from '@cloakcraft/types';
-import { scalarMul, GENERATOR, derivePublicKey } from './babyjubjub';
+import { scalarMul, GENERATOR, derivePublicKey, pointAdd } from './babyjubjub';
 import { poseidonHashDomain, DOMAIN_STEALTH, bytesToField } from './poseidon';
 
 // BabyJubJub subgroup order
@@ -22,6 +22,8 @@ export function generateStealthAddress(recipientPubkey: Point): {
   stealthAddress: StealthAddress;
   ephemeralPrivate: bigint;
 } {
+  const toHex = (arr: Uint8Array) => Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+
   // Generate random ephemeral private key
   const ephemeralPrivate = generateRandomScalar();
   const ephemeralPubkey = derivePublicKey(ephemeralPrivate);
@@ -57,6 +59,8 @@ export function deriveStealthPrivateKey(
   recipientPrivateKey: bigint,
   ephemeralPubkey: Point
 ): bigint {
+  const toHex = (arr: Uint8Array) => Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+
   // Compute shared secret
   const sharedSecret = scalarMul(ephemeralPubkey, recipientPrivateKey);
 
@@ -64,7 +68,8 @@ export function deriveStealthPrivateKey(
   const factor = deriveStealthFactor(sharedSecret.x);
 
   // Stealth private key: sk + factor (mod subgroup_order)
-  return (recipientPrivateKey + factor) % SUBGROUP_ORDER;
+  const stealthPriv = (recipientPrivateKey + factor) % SUBGROUP_ORDER;
+  return stealthPriv;
 }
 
 /**
@@ -99,8 +104,6 @@ function deriveStealthFactor(sharedSecretX: FieldElement): bigint {
  * Point addition helper
  */
 function addPoints(p1: Point, p2: Point): Point {
-  // Import from babyjubjub to avoid circular dependency
-  const { pointAdd } = require('./babyjubjub');
   return pointAdd(p1, p2);
 }
 

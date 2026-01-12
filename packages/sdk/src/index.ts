@@ -20,6 +20,9 @@ export * from './notes';
 // Export proof generation
 export * from './proofs';
 
+// Export snarkjs prover utilities (browser Groth16)
+export * from './snarkjs-prover';
+
 // Export wallet
 export * from './wallet';
 

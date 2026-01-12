@@ -80,6 +80,37 @@ export class LightProtocol {
   }
 
   /**
+   * Get combined validity proof for transact:
+   * - Inclusion proof for commitment (proves note exists on-chain)
+   * - Non-inclusion proof for nullifier (proves not yet spent)
+   *
+   * This prevents fake commitment attacks where someone fabricates
+   * commitment data without having actually shielded tokens.
+   */
+  async getCombinedValidityProof(
+    commitmentAccountHash: string,
+    nullifierAddress: PublicKey
+  ) {
+    const addressTreeInfo = this.getAddressTreeInfo();
+    const hashBytes = new PublicKey(commitmentAccountHash).toBytes();
+
+    return this.rpc.getValidityProofV0(
+      // Inclusion: commitment exists in state tree
+      [{
+        hash: bn(hashBytes),
+        tree: DEVNET_V2_TREES.STATE_TREE,
+        queue: DEVNET_V2_TREES.OUTPUT_QUEUE,
+      }],
+      // Non-inclusion: nullifier doesn't exist yet
+      [{
+        address: bn(nullifierAddress.toBytes()),
+        tree: addressTreeInfo.tree,
+        queue: addressTreeInfo.queue,
+      }]
+    );
+  }
+
+  /**
    * Build remaining accounts for Light Protocol CPI
    */
   buildRemainingAccounts(): { accounts: AccountMeta[]; outputTreeIndex: number; addressTreeIndex: number } {
@@ -135,9 +166,15 @@ export interface LightShieldParams {
 
 /**
  * Light params for transact instruction
+ *
+ * Combined validity proof verifies:
+ * - Commitment exists (inclusion) - prevents fake commitment attacks
+ * - Nullifier doesn't exist (non-inclusion) - prevents double-spend
  */
 export interface LightTransactParams {
-  nullifierProof: { a: number[]; b: number[]; c: number[] };
+  /** Combined validity proof (commitment inclusion + nullifier non-inclusion) */
+  validityProof: { a: number[]; b: number[]; c: number[] };
+  /** Address tree info for nullifier creation */
   nullifierAddressTreeInfo: {
     addressMerkleTreePubkeyIndex: number;
     addressQueuePubkeyIndex: number;
@@ -152,7 +189,8 @@ export interface LightTransactParams {
 export interface LightStoreCommitmentParams {
   commitment: number[];
   leafIndex: bigint;
-  encryptedNote: Buffer;
+  stealthEphemeralPubkey: number[];
+  encryptedNote: number[];
   validityProof: { a: number[]; b: number[]; c: number[] };
   addressTreeInfo: {
     addressMerkleTreePubkeyIndex: number;

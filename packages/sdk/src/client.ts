@@ -493,15 +493,12 @@ export class CloakCraftClient {
     }
     // Decode: 8 (discriminator) + 32 (pool) + 8 (next_leaf_index)
     const baseLeafIndex = counterAccount.data.readBigUInt64LE(40);
-    console.log(`[transfer] Current leaf index: ${baseLeafIndex}`);
 
     // Generate proof client-side (all private data stays local)
-    console.log('[transfer] Generating ZK proof...');
     const proof = await this.proofGenerator.generateTransferProof(
       params,
       this.wallet.keypair
     );
-    console.log(`[transfer] Proof generated (${proof.length} bytes)`);
 
     // Require accountHash for commitment existence proof
     const accountHash = params.inputs[0].accountHash;
@@ -543,13 +540,6 @@ export class CloakCraftClient {
     const tokenMintBytes = tokenMint.toBytes();
     const tokenMintField = toFieldBigInt(tokenMintBytes);
 
-    console.log('[transfer] === SDK Public Inputs (hex) - COMPARE WITH SNARKJS ===');
-    console.log('[transfer] [0] merkle_root:      0x' + toFieldBigInt(params.merkleRoot).toString(16).padStart(64, '0'));
-    console.log('[transfer] [1] nullifier:        0x' + toFieldBigInt(nullifier).toString(16).padStart(64, '0'));
-    console.log('[transfer] [2] out_commitment_1: 0x' + toFieldBigInt(params.outputs[0].commitment!).toString(16).padStart(64, '0'));
-    console.log('[transfer] [3] out_commitment_2: 0x' + toFieldBigInt(out2Commitment).toString(16).padStart(64, '0'));
-    console.log('[transfer] [4] token_mint:       0x' + tokenMintField.toString(16).padStart(64, '0'));
-    console.log('[transfer] [5] unshield_amount:  0x' + (params.unshield?.amount ?? 0n).toString(16).padStart(64, '0'));
 
     // Build transaction using instruction builder
     // Use Helius RPC URL for Light Protocol operations
@@ -589,7 +579,6 @@ export class CloakCraftClient {
 
     // Execute transaction
     const signature = await tx.rpc();
-    console.log(`[transfer] Transaction submitted: ${signature}`);
 
     // Store output commitments with correct leaf indices
     // Filter out dummy outputs (empty encrypted notes) and 0-amount outputs
@@ -672,7 +661,6 @@ export class CloakCraftClient {
     const dummyPath = Array(32).fill(new Uint8Array(32));
     const dummyIndices = Array(32).fill(0);
 
-    console.log('[prepareAndTransfer] Using leafIndex from scanned note:', preparedInputs[0].leafIndex);
 
     // Build full TransferParams
     const params: TransferParams = {
@@ -784,7 +772,6 @@ export class CloakCraftClient {
     const merkleProof = await this.fetchMerkleProof(request.input);
 
     // CRITICAL: Use the actual leafIndex from the merkle proof
-    console.log('[createAMMOrder] Updating leafIndex from proof:', merkleProof.leafIndex);
     preparedInput.leafIndex = merkleProof.leafIndex;
 
     // Generate order ID and other derived values
@@ -958,7 +945,6 @@ export class CloakCraftClient {
     outputs: Array<{ recipient: StealthAddress; amount: bigint }>,
     tokenMint: PublicKey
   ): Promise<TransferOutput[]> {
-    console.log('[prepareOutputs] Using tokenMint:', tokenMint.toBase58());
 
     return outputs.map(output => {
       const randomness = generateRandomness();
@@ -972,8 +958,6 @@ export class CloakCraftClient {
       );
 
       const commitment = computeCommitment(note);
-      console.log('[prepareOutputs] Output amount:', output.amount.toString());
-      console.log('[prepareOutputs] Commitment:', Buffer.from(commitment).toString('hex').slice(0, 24) + '...');
 
       return {
         recipient: output.recipient,
@@ -1002,9 +986,7 @@ export class CloakCraftClient {
 
     // Prefer using stored hash (same data flow as scanner - guaranteed to work)
     if (note.accountHash) {
-      console.log('[fetchMerkleProof] Using stored accountHash');
       const proof = await this.lightClient.getMerkleProofByHash(note.accountHash);
-      console.log('[fetchMerkleProof] Proof leafIndex:', proof.leafIndex);
       return {
         root: proof.root,
         pathElements: proof.pathElements,
@@ -1014,7 +996,6 @@ export class CloakCraftClient {
     }
 
     // Fallback: derive address and fetch hash
-    console.log('[fetchMerkleProof] No accountHash, deriving address...');
     const trees = this.getLightTrees();
     const stateTreeSet = trees.stateTrees[0];
 
@@ -1025,7 +1006,6 @@ export class CloakCraftClient {
       trees.addressTree,
       stateTreeSet.stateTree
     );
-    console.log('[fetchMerkleProof] Proof leafIndex:', proof.leafIndex);
 
     return {
       root: proof.root,

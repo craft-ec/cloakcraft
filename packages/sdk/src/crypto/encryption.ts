@@ -3,6 +3,7 @@
  */
 
 import { sha256 } from '@noble/hashes/sha256';
+import { PublicKey } from '@solana/web3.js';
 import type { EncryptedNote, Note, Point, FieldElement } from '@cloakcraft/types';
 import { scalarMul, derivePublicKey } from './babyjubjub';
 import { bytesToField } from './poseidon';
@@ -64,6 +65,13 @@ export function decryptNote(
 }
 
 /**
+ * Convert Uint8Array to hex string (browser compatible)
+ */
+function toHex(arr: Uint8Array): string {
+  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
  * Try to decrypt a note (returns null if decryption fails)
  */
 export function tryDecryptNote(
@@ -72,7 +80,7 @@ export function tryDecryptNote(
 ): Note | null {
   try {
     return decryptNote(encrypted, recipientPrivateKey);
-  } catch {
+  } catch (err) {
     return null;
   }
 }
@@ -104,8 +112,6 @@ function serializeNote(note: Note): Uint8Array {
  * Deserialize a note from bytes
  */
 function deserializeNote(data: Uint8Array): Note {
-  const { PublicKey } = require('@solana/web3.js');
-
   const stealthPubX = data.slice(0, 32);
   const tokenMintBytes = data.slice(32, 64);
   const amountBytes = data.slice(64, 72);
@@ -131,7 +137,9 @@ function deserializeNote(data: Uint8Array): Note {
 function deriveEncryptionKey(sharedSecretX: FieldElement): Uint8Array {
   // KDF using SHA-256
   const hasher = sha256.create();
-  hasher.update(Buffer.from('cloakcraft-ecies-key'));
+  // Use TextEncoder for browser compatibility (Buffer.from doesn't work in browsers)
+  const domainSep = new TextEncoder().encode('cloakcraft-ecies-key');
+  hasher.update(domainSep);
   hasher.update(sharedSecretX);
   return hasher.digest();
 }

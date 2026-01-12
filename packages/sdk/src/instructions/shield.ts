@@ -27,8 +27,10 @@ export interface ShieldInstructionParams {
   tokenMint: PublicKey;
   /** Amount to shield (in token base units) */
   amount: bigint;
-  /** Recipient's public key for encryption */
-  recipientPubkey: Point;
+  /** Recipient's stealth public key (for commitment and encryption) */
+  stealthPubkey: Point;
+  /** Stealth address ephemeral pubkey (stored on-chain for decryption key derivation) */
+  stealthEphemeralPubkey: Point;
   /** User's token account */
   userTokenAccount: PublicKey;
   /** User's wallet public key */
@@ -67,9 +69,9 @@ export async function buildShieldInstructions(
   // Generate randomness for commitment
   const randomness = generateRandomness();
 
-  // Create note
+  // Create note with stealth pubkey X (for on-chain commitment)
   const note = {
-    stealthPubX: params.recipientPubkey.x,
+    stealthPubX: params.stealthPubkey.x,
     tokenMint: params.tokenMint,
     amount: params.amount,
     randomness,
@@ -78,9 +80,15 @@ export async function buildShieldInstructions(
   // Compute commitment
   const commitment = computeCommitment(note);
 
-  // Encrypt note for recipient
-  const encryptedNote = encryptNote(note, params.recipientPubkey);
+  // Encrypt note to stealth pubkey (recipient derives stealthPrivateKey for decryption)
+  const toHex = (arr: Uint8Array) => Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+  const encryptedNote = encryptNote(note, params.stealthPubkey);
   const serializedNote = serializeEncryptedNote(encryptedNote);
+
+  // Serialize stealth ephemeral pubkey (64 bytes: X + Y)
+  const stealthEphemeralBytes = new Uint8Array(64);
+  stealthEphemeralBytes.set(params.stealthEphemeralPubkey.x, 0);
+  stealthEphemeralBytes.set(params.stealthEphemeralPubkey.y, 32);
 
   // Derive commitment address for Light Protocol
   const commitmentAddress = lightProtocol.deriveCommitmentAddress(poolPda, commitment);
@@ -142,19 +150,26 @@ export async function buildShieldWithProgram(
   const [vaultPda] = deriveVaultPda(params.tokenMint, programId);
   const [counterPda] = deriveCommitmentCounterPda(poolPda, programId);
 
-  // Generate randomness and create note
+  // Generate randomness and create note with stealth pubkey X (for on-chain commitment)
   const randomness = generateRandomness();
   const note = {
-    stealthPubX: params.recipientPubkey.x,
+    stealthPubX: params.stealthPubkey.x,
     tokenMint: params.tokenMint,
     amount: params.amount,
     randomness,
   };
 
-  // Compute commitment and encrypt note
+  // Compute commitment and encrypt note to stealthPubkey
+  // Recipient derives stealthPrivateKey using the stored ephemeral pubkey
   const commitment = computeCommitment(note);
-  const encryptedNote = encryptNote(note, params.recipientPubkey);
+  const toHex = (arr: Uint8Array) => Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+  const encryptedNote = encryptNote(note, params.stealthPubkey);
   const serializedNote = serializeEncryptedNote(encryptedNote);
+
+  // Serialize stealth ephemeral pubkey (64 bytes: X + Y)
+  const stealthEphemeralBytes = new Uint8Array(64);
+  stealthEphemeralBytes.set(params.stealthEphemeralPubkey.x, 0);
+  stealthEphemeralBytes.set(params.stealthEphemeralPubkey.y, 32);
 
   // Get Light Protocol validity proof
   const commitmentAddress = lightProtocol.deriveCommitmentAddress(poolPda, commitment);
@@ -172,10 +187,12 @@ export async function buildShieldWithProgram(
   };
 
   // Build transaction using Anchor
+  // Pass stealth ephemeral pubkey so recipient can derive decryption key
   const tx = await program.methods
     .shield(
       Array.from(commitment),
       new BN(params.amount.toString()),
+      Array.from(stealthEphemeralBytes),
       Buffer.from(serializedNote),
       lightParams
     )

@@ -1,7 +1,8 @@
 /**
  * Proof generation for ZK circuits
  *
- * Uses Noir circuits compiled via Sunspot for Groth16 proofs
+ * Uses Circom circuits with snarkjs for Groth16 proofs.
+ * Works in both browser and Node.js environments.
  */
 
 import * as fs from 'fs';
@@ -17,6 +18,15 @@ import type {
 } from '@cloakcraft/types';
 import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier';
 import { computeCommitment } from './crypto/commitment';
+import { deriveStealthPrivateKey } from './crypto/stealth';
+import { bytesToField, fieldToBytes, poseidonHashDomain, DOMAIN_COMMITMENT } from './crypto/poseidon';
+import {
+  loadCircomArtifacts,
+  generateSnarkjsProof,
+  bytesToFieldString,
+  bigintToFieldString,
+  type CircomArtifacts,
+} from './snarkjs-prover';
 
 // BN254 field modulus for Y-coordinate negation
 const BN254_FIELD_MODULUS = BigInt('21888242871839275222246405745257275088696311157297823662689037894645226208583');
@@ -170,7 +180,6 @@ export class ProofGenerator {
       const provingKey = new Uint8Array(fs.readFileSync(pkPath));
 
       this.circuits.set(name, { manifest, provingKey });
-      console.log(`[${name}] Loaded circuit from ${targetDir}`);
     } catch (err) {
       console.warn(`Failed to load circuit ${name}:`, err);
     }
@@ -180,31 +189,29 @@ export class ProofGenerator {
    * Load circuit from URL (browser)
    */
   private async loadCircuitFromUrl(name: string): Promise<void> {
-    const basePath = `${this.baseUrl}/${name}/target`;
+    const circuitFileName = CIRCUIT_FILE_MAP[name];
+    if (!circuitFileName) {
+      console.warn(`Unknown circuit: ${name}`);
+      return;
+    }
+
+    // Circuit files are at /circuits/target/<circuit_file_name>.json
+    const basePath = `${this.baseUrl}/target`;
 
     try {
       // Load compiled circuit manifest
-      const manifestRes = await fetch(`${basePath}/${name.split('/').pop()}.json`);
+      const manifestUrl = `${basePath}/${circuitFileName}.json`;
+      const manifestRes = await fetch(manifestUrl);
       if (!manifestRes.ok) throw new Error(`Failed to load manifest: ${manifestRes.status}`);
       const manifest = await manifestRes.json();
 
       // Load proving key
-      const pkRes = await fetch(`${basePath}/${name.split('/').pop()}.pk`);
+      const pkUrl = `${basePath}/${circuitFileName}.pk`;
+      const pkRes = await fetch(pkUrl);
       if (!pkRes.ok) throw new Error(`Failed to load proving key: ${pkRes.status}`);
       const provingKey = new Uint8Array(await pkRes.arrayBuffer());
 
-      // Optionally load WASM for browser witness generation
-      let wasmBytes: Uint8Array | undefined;
-      try {
-        const wasmRes = await fetch(`${basePath}/${name.split('/').pop()}.wasm`);
-        if (wasmRes.ok) {
-          wasmBytes = new Uint8Array(await wasmRes.arrayBuffer());
-        }
-      } catch {
-        // WASM is optional
-      }
-
-      this.circuits.set(name, { manifest, provingKey, wasmBytes });
+      this.circuits.set(name, { manifest, provingKey });
     } catch (err) {
       console.warn(`Failed to load circuit ${name}:`, err);
     }
@@ -275,7 +282,6 @@ export class ProofGenerator {
 
       // Private inputs
       in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
-      in_stealth_pub_y: fieldToHex(params.input.stealthPubY),
       in_amount: params.input.amount.toString(),
       in_randomness: fieldToHex(params.input.randomness),
       in_stealth_spending_key: fieldToHex(keypair.spending.sk),
@@ -318,7 +324,6 @@ export class ProofGenerator {
 
       // Private inputs
       in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
-      in_stealth_pub_y: fieldToHex(params.input.stealthPubY),
       in_amount: params.input.amount.toString(),
       in_randomness: fieldToHex(params.input.randomness),
       in_stealth_spending_key: fieldToHex(keypair.spending.sk),
@@ -365,7 +370,6 @@ export class ProofGenerator {
 
       // Private inputs
       in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
-      in_stealth_pub_y: fieldToHex(params.input.stealthPubY),
       in_amount: params.input.amount.toString(),
       in_randomness: fieldToHex(params.input.randomness),
       in_stealth_spending_key: fieldToHex(keypair.spending.sk),
@@ -387,6 +391,8 @@ export class ProofGenerator {
 
   /**
    * Generate a Groth16 proof for a circuit
+   *
+   * Returns 256-byte proof formatted for Solana's alt_bn128 verifier
    */
   private async prove(circuitName: string, inputs: Record<string, any>): Promise<Uint8Array> {
     const artifacts = this.circuits.get(circuitName);
@@ -394,47 +400,25 @@ export class ProofGenerator {
       throw new Error(`Circuit not loaded: ${circuitName}`);
     }
 
-    // In production: Use @noir-lang/noir_js for witness generation
-    // and Sunspot's Groth16 prover for proof generation
-    //
-    // const noir = new Noir(artifacts.manifest);
-    // const { witness } = await noir.execute(inputs);
-    // const proof = await sunspot.prove(witness, artifacts.provingKey);
-    //
-    // For now, delegate to native prover via WASM or worker
-
-    const proof = await this.proveNative(circuitName, inputs, artifacts);
-
-    // Format proof for Solana (negate A-component)
-    return this.formatProofForSolana(proof);
+    // Generate proof via snarkjs (already formatted for Solana)
+    // snarkjs-prover handles A-component negation internally
+    return this.proveNative(circuitName, inputs, artifacts);
   }
 
   /**
    * Native Groth16 prover (WASM-based)
+   *
+   * Returns proof bytes already formatted for Solana (256 bytes)
    */
   private async proveNative(
     circuitName: string,
     inputs: Record<string, any>,
     artifacts: CircuitArtifacts
-  ): Promise<{ a: Uint8Array; b: Uint8Array; c: Uint8Array }> {
-    // This is where we'd call the actual prover
-    // Options:
-    // 1. @noir-lang/bb.js for browser
-    // 2. Native Sunspot CLI via subprocess (Node.js)
-    // 3. Remote proving service
-
-    // Detect environment: Node.js vs browser
-    const isNode = typeof globalThis.process !== 'undefined'
-      && globalThis.process.versions != null
-      && globalThis.process.versions.node != null;
-
-    if (isNode) {
-      // Node.js environment - use native Sunspot CLI
-      return this.proveViaSubprocess(circuitName, inputs, artifacts);
-    } else {
-      // Browser environment - use WASM
-      return this.proveViaWasm(circuitName, inputs, artifacts);
-    }
+  ): Promise<Uint8Array> {
+    // Always use snarkjs with Circom circuits
+    // Works in both Node.js and browser environments
+    // Returns proof already formatted for Solana (A negated)
+    return this.proveViaWasm(circuitName, inputs, artifacts);
   }
 
   /**
@@ -486,7 +470,6 @@ export class ProofGenerator {
     fs.writeFileSync(proverPath, proverToml);
 
     // Step 2: Run nargo execute to generate witness
-    console.log(`[${circuitName}] Generating witness...`);
     const witnessName = circuitFileName;
 
     try {
@@ -506,7 +489,6 @@ export class ProofGenerator {
     }
 
     // Step 3: Run sunspot prove
-    console.log(`[${circuitName}] Generating Groth16 proof...`);
 
     try {
       // sunspot prove [acir] [witness] [ccs] [pk]
@@ -527,7 +509,6 @@ export class ProofGenerator {
     }
 
     const rawProofBytes = fs.readFileSync(proofPath);
-    console.log(`[${circuitName}] Raw proof generated (${rawProofBytes.length} bytes)`);
 
     // Sunspot outputs 324 bytes (256 proof + 68 padding), take first 256
     if (rawProofBytes.length < 256) {
@@ -563,123 +544,110 @@ export class ProofGenerator {
     return lines.join('\n') + '\n';
   }
 
-  /** zkey bytes for browser proving (loaded from URL) */
-  private zkeyCache: Map<string, Uint8Array> = new Map();
+  /** Circom circuit base URL for browser proving */
+  private circomBaseUrl: string = '/circom';
+
+  /** Cached circom artifacts */
+  private circomArtifacts: Map<string, CircomArtifacts> = new Map();
 
   /**
-   * Prove via WASM (browser) using snarkjs
+   * Set custom circom base URL
+   */
+  setCircomBaseUrl(url: string): void {
+    this.circomBaseUrl = url;
+  }
+
+  /**
+   * Prove via snarkjs (browser) using Circom circuits
    *
    * Privacy-preserving: All proving happens client-side.
    * The witness (containing spending keys) never leaves the browser.
    *
    * Workflow:
-   * 1. Use @noir-lang/noir_js to generate witness from inputs
-   * 2. Use snarkjs.groth16.prove() with zkey for Groth16 proof
+   * 1. Load circom WASM (witness calculator) and zkey (proving key)
+   * 2. Convert inputs to circom format (field element strings)
+   * 3. Generate Groth16 proof using snarkjs
+   * 4. Return proof already formatted for Solana (snarkjs-prover handles A negation)
    */
   private async proveViaWasm(
     circuitName: string,
     inputs: Record<string, any>,
-    artifacts: CircuitArtifacts
-  ): Promise<{ a: Uint8Array; b: Uint8Array; c: Uint8Array }> {
-    console.log(`[${circuitName}] Generating witness via noir_js...`);
+    _artifacts: CircuitArtifacts
+  ): Promise<Uint8Array> {
+    // Map circuit name to circom file names
+    const circomFileName = this.getCircomFileName(circuitName);
+    const wasmUrl = `${this.circomBaseUrl}/${circomFileName}.wasm`;
+    const zkeyUrl = `${this.circomBaseUrl}/${circomFileName}_final.zkey`;
 
-    // Dynamic import to avoid bundling issues in Node.js
-    const { Noir } = await import('@noir-lang/noir_js');
 
-    // Create Noir instance from circuit manifest
-    const noir = new Noir(artifacts.manifest);
-
-    // Execute circuit to generate witness
-    const { witness } = await noir.execute(inputs);
-    console.log(`[${circuitName}] Witness generated (${witness.length} bytes)`);
-
-    // Load zkey if not cached
-    let zkey = this.zkeyCache.get(circuitName);
-    if (!zkey) {
-      const circuitFileName = CIRCUIT_FILE_MAP[circuitName];
-      const zkeyUrl = `${this.baseUrl}/${circuitName}/target/${circuitFileName}.zkey`;
-
-      console.log(`[${circuitName}] Loading zkey from ${zkeyUrl}...`);
-      const zkeyRes = await fetch(zkeyUrl);
-      if (!zkeyRes.ok) {
-        throw new Error(`Failed to load zkey: ${zkeyRes.status}`);
-      }
-      zkey = new Uint8Array(await zkeyRes.arrayBuffer());
-      this.zkeyCache.set(circuitName, zkey);
-      console.log(`[${circuitName}] zkey loaded (${zkey.length} bytes)`);
+    // Load or get cached artifacts
+    let artifacts = this.circomArtifacts.get(circuitName);
+    if (!artifacts) {
+      artifacts = await loadCircomArtifacts(circuitName, wasmUrl, zkeyUrl);
+      this.circomArtifacts.set(circuitName, artifacts);
     }
 
-    // Generate Groth16 proof using snarkjs
-    // All computation happens in the browser - private data never leaves client
-    console.log(`[${circuitName}] Generating Groth16 proof via snarkjs...`);
+    // Convert inputs to circom format (string field elements)
+    const circomInputs = this.convertToCircomInputs(inputs);
 
-    // Dynamic import snarkjs for browser
-    const snarkjs = await import('snarkjs');
+    // Generate proof using snarkjs - already formatted for Solana with A negated
+    const proofBytes = await generateSnarkjsProof(artifacts, circomInputs);
 
-    // Convert noir witness to snarkjs format
-    // snarkjs expects witness as array of field elements
-    const witnessArray = this.witnessToFieldArray(witness);
-
-    // Generate proof - this happens entirely in the browser
-    const { proof } = await snarkjs.groth16.prove(
-      { type: 'mem', data: zkey },
-      { type: 'mem', data: witnessArray }
-    );
-
-    console.log(`[${circuitName}] Proof generated successfully`);
-
-    // Convert snarkjs proof format to raw bytes
-    return this.snarkjsProofToBytes(proof);
+    // Return directly - snarkjs-prover already handles Solana formatting
+    return proofBytes;
   }
 
   /**
-   * Convert Noir witness bytes to snarkjs field array format
+   * Get circom file name from circuit name
    */
-  private witnessToFieldArray(witness: Uint8Array): Uint8Array {
-    // Noir witness is already packed as field elements (32 bytes each)
-    // snarkjs expects the same format
-    return witness;
+  private getCircomFileName(circuitName: string): string {
+    const mapping: Record<string, string> = {
+      'transfer/1x2': 'transfer_1x2',
+      'transfer/1x3': 'transfer_1x3',
+      // Add more circuits as they're ported
+    };
+    return mapping[circuitName] ?? circuitName.replace('/', '_');
   }
 
   /**
-   * Convert snarkjs proof object to raw bytes format
-   *
-   * snarkjs proof format:
-   * {
-   *   pi_a: [x, y, z],
-   *   pi_b: [[x1, y1], [x2, y2], [z1, z2]],
-   *   pi_c: [x, y, z],
-   *   protocol: "groth16"
-   * }
+   * Convert SDK inputs to circom format (string field elements)
    */
-  private snarkjsProofToBytes(proof: any): { a: Uint8Array; b: Uint8Array; c: Uint8Array } {
-    // A point: 2 field elements (x, y) - 64 bytes
-    const a = new Uint8Array(64);
-    a.set(this.fieldElementToBytes(proof.pi_a[0]), 0);
-    a.set(this.fieldElementToBytes(proof.pi_a[1]), 32);
+  private convertToCircomInputs(inputs: Record<string, any>): Record<string, string | string[]> {
+    const result: Record<string, string | string[]> = {};
 
-    // B point: G2 point with 2 pairs of field elements - 128 bytes
-    // snarkjs format: [[x1, x2], [y1, y2], [z1, z2]]
-    const b = new Uint8Array(128);
-    b.set(this.fieldElementToBytes(proof.pi_b[0][1]), 0);   // x2
-    b.set(this.fieldElementToBytes(proof.pi_b[0][0]), 32);  // x1
-    b.set(this.fieldElementToBytes(proof.pi_b[1][1]), 64);  // y2
-    b.set(this.fieldElementToBytes(proof.pi_b[1][0]), 96);  // y1
+    for (const [key, value] of Object.entries(inputs)) {
+      if (Array.isArray(value)) {
+        // Array of values
+        result[key] = value.map(v => this.valueToFieldString(v));
+      } else {
+        result[key] = this.valueToFieldString(value);
+      }
+    }
 
-    // C point: 2 field elements (x, y) - 64 bytes
-    const c = new Uint8Array(64);
-    c.set(this.fieldElementToBytes(proof.pi_c[0]), 0);
-    c.set(this.fieldElementToBytes(proof.pi_c[1]), 32);
-
-    return { a, b, c };
+    return result;
   }
 
   /**
-   * Convert snarkjs field element (bigint string) to 32-byte array
+   * Convert a value to field element string
    */
-  private fieldElementToBytes(field: string): Uint8Array {
-    const value = BigInt(field);
-    return bigIntToBytes(value, 32);
+  private valueToFieldString(value: any): string {
+    if (typeof value === 'string') {
+      // Already a string (hex or decimal)
+      if (value.startsWith('0x')) {
+        return BigInt(value).toString();
+      }
+      return value;
+    }
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    if (typeof value === 'number') {
+      return value.toString();
+    }
+    if (value instanceof Uint8Array) {
+      return bytesToFieldString(value);
+    }
+    throw new Error(`Cannot convert ${typeof value} to field string`);
   }
 
   /**
@@ -719,31 +687,82 @@ export class ProofGenerator {
     spendingKey: Uint8Array,
     nullifierKey: Uint8Array
   ): Record<string, any> {
+    // Validate params
+    if (!params.inputs || params.inputs.length === 0) {
+      throw new Error('TransferParams.inputs is empty. At least one input required.');
+    }
+    if (!params.outputs || params.outputs.length === 0) {
+      throw new Error('TransferParams.outputs is empty. At least one output required.');
+    }
+    if (!params.outputs[0].commitment) {
+      throw new Error('TransferParams.outputs[0].commitment is undefined. Use prepareAndTransfer() or ensure outputs have commitment, stealthPubX, and randomness.');
+    }
+
     const input = params.inputs[0];
+
+    // Derive the stealth spending key from base spending key + ephemeral pubkey
+    // Where stealthSpendingKey = baseSpendingKey + hash(sharedSecret)
+    let stealthSpendingKey: bigint;
+    if (input.stealthEphemeralPubkey) {
+      // Derive stealth private key: sk' = sk + f where f = hash(sk * E)
+      const baseSpendingKey = bytesToField(spendingKey);
+      stealthSpendingKey = deriveStealthPrivateKey(baseSpendingKey, input.stealthEphemeralPubkey);
+    } else {
+      // Fallback: assume spendingKey is already the stealth key (for non-stealth notes)
+      stealthSpendingKey = bytesToField(spendingKey);
+      console.warn('[buildTransferWitness] No ephemeral pubkey - using base spending key directly');
+    }
+
+    // Compute nullifier key from STEALTH spending key (must match circuit)
+    // Circuit: nk = Poseidon(NULLIFIER_KEY_DOMAIN, in_stealth_spending_key, 0)
+    const stealthNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
+
     // input is a DecryptedNote which extends Note, so we can pass it directly
     const commitment = computeCommitment(input);
-    const nullifier = deriveSpendingNullifier(nullifierKey, commitment, input.leafIndex);
+    const nullifier = deriveSpendingNullifier(stealthNullifierKey, commitment, input.leafIndex);
+
+    // Debug: print values for comparison
 
     // Convert PublicKey to field if present
     const tokenMint = input.tokenMint instanceof Uint8Array
       ? input.tokenMint
       : input.tokenMint.toBytes();
 
+    // Handle output 2 (change) - if missing, use zeros but compute correct commitment
+    const out2StealthPubX = params.outputs[1]?.stealthPubX ?? new Uint8Array(32);
+    const out2Amount = params.outputs[1]?.amount ?? 0n;
+    const out2Randomness = params.outputs[1]?.randomness ?? new Uint8Array(32);
+
+    // Compute output 2 commitment (must match circuit even when zero)
+    // Circuit: Poseidon(COMMITMENT_DOMAIN, stealthPubX, tokenMint, amount, randomness)
+    let out2Commitment: Uint8Array;
+    if (params.outputs[1]?.commitment) {
+      out2Commitment = params.outputs[1].commitment;
+    } else {
+      // Compute commitment for dummy output (zeros except token_mint)
+      out2Commitment = poseidonHashDomain(
+        DOMAIN_COMMITMENT,
+        out2StealthPubX,
+        tokenMint,
+        fieldToBytes(out2Amount),
+        out2Randomness
+      );
+    }
+
     return {
       // Public inputs
       merkle_root: fieldToHex(params.merkleRoot),
       nullifier: fieldToHex(nullifier),
       out_commitment_1: fieldToHex(params.outputs[0].commitment),
-      out_commitment_2: fieldToHex(params.outputs[1]?.commitment ?? new Uint8Array(32)),
+      out_commitment_2: fieldToHex(out2Commitment),
       token_mint: fieldToHex(tokenMint),
       unshield_amount: (params.unshield?.amount ?? 0n).toString(),
 
-      // Private inputs
+      // Private inputs (Circom circuit - no in_stealth_pub_y)
       in_stealth_pub_x: fieldToHex(input.stealthPubX),
-      in_stealth_pub_y: fieldToHex(input.stealthPubY),
       in_amount: input.amount.toString(),
       in_randomness: fieldToHex(input.randomness),
-      in_stealth_spending_key: fieldToHex(spendingKey),
+      in_stealth_spending_key: fieldToHex(fieldToBytes(stealthSpendingKey)),
       merkle_path: params.merklePath.map(fieldToHex),
       merkle_path_indices: params.merkleIndices.map(i => i.toString()),
       leaf_index: input.leafIndex.toString(),
@@ -754,9 +773,9 @@ export class ProofGenerator {
       out_randomness_1: fieldToHex(params.outputs[0].randomness),
 
       // Output 2 (change)
-      out_stealth_pub_x_2: fieldToHex(params.outputs[1]?.stealthPubX ?? new Uint8Array(32)),
-      out_amount_2: (params.outputs[1]?.amount ?? 0n).toString(),
-      out_randomness_2: fieldToHex(params.outputs[1]?.randomness ?? new Uint8Array(32)),
+      out_stealth_pub_x_2: fieldToHex(out2StealthPubX),
+      out_amount_2: out2Amount.toString(),
+      out_randomness_2: fieldToHex(out2Randomness),
     };
   }
 

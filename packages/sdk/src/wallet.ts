@@ -104,6 +104,38 @@ export function createWatchOnlyWallet(viewingKey: ViewingKey, publicKey: Point):
 }
 
 /**
+ * Derive wallet from a Solana wallet signature
+ *
+ * This allows users to derive their stealth wallet from their Solana wallet,
+ * so they only need to remember one seed phrase.
+ */
+export function deriveWalletFromSignature(signature: Uint8Array): Wallet {
+  if (signature.length < 64) {
+    throw new Error('Signature must be at least 64 bytes');
+  }
+
+  // Use Poseidon to hash the signature into a spending key
+  // Split signature into two 32-byte chunks for Poseidon input
+  const sig1 = signature.slice(0, 32);
+  const sig2 = signature.slice(32, 64);
+
+  // Domain separator for wallet derivation
+  const DOMAIN_WALLET = 0x01n;
+
+  // Hash: poseidon(domain, sig1, sig2)
+  const skBytes = poseidonHashDomain(DOMAIN_WALLET, sig1, sig2);
+  const sk = bytesToField(skBytes) % SUBGROUP_ORDER;
+
+  return createWalletFromSpendingKey(sk);
+}
+
+/**
+ * The message to sign for wallet derivation
+ * This is a constant so the same Solana wallet always derives the same stealth wallet
+ */
+export const WALLET_DERIVATION_MESSAGE = 'CloakCraft Stealth Wallet v1';
+
+/**
  * Derive a wallet from a seed phrase (BIP-39 style)
  *
  * Note: In production, use proper BIP-39 implementation

@@ -1,0 +1,6476 @@
+{
+  "address": "fBh7FvBZpex64Qp7i45yuyxh7sH8YstYyxGLmToLRTP",
+  "metadata": {
+    "name": "cloakcraft",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "add_liquidity",
+      "docs": [
+        "Add liquidity to AMM pool"
+      ],
+      "discriminator": [
+        181,
+        157,
+        89,
+        67,
+        143,
+        182,
+        52,
+        72
+      ],
+      "accounts": [
+        {
+          "name": "pool_a",
+          "docs": [
+            "Token A pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_a.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_a_commitment_counter",
+          "docs": [
+            "Commitment counter for pool A"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_a"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_b",
+          "docs": [
+            "Token B pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_b.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_b_commitment_counter",
+          "docs": [
+            "Commitment counter for pool B"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lp_pool",
+          "docs": [
+            "LP token pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lp_commitment_counter",
+          "docs": [
+            "Commitment counter for LP pool"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "amm_pool",
+          "docs": [
+            "AMM pool state"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "amm_pool.token_a_mint",
+                "account": "AmmPool"
+              },
+              {
+                "kind": "account",
+                "path": "amm_pool.token_b_mint",
+                "account": "AmmPool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "verification_key.circuit_id",
+                "account": "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer (pays for compressed account creation)"
+          ],
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "nullifier_a",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "nullifier_b",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "lp_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "change_a_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "change_b_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "old_state_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "new_state_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "encrypted_notes",
+          "type": {
+            "vec": "bytes"
+          }
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "LightAddLiquidityParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "append_verification_key_data",
+      "docs": [
+        "Append verification key data to an existing account",
+        "Used for chunked upload of large VKs"
+      ],
+      "discriminator": [
+        21,
+        242,
+        226,
+        2,
+        197,
+        148,
+        11,
+        181
+      ],
+      "accounts": [
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key account (must already be initialized)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "circuit_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Authority"
+          ],
+          "signer": true,
+          "relations": [
+            "verification_key"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "circuit_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "data_chunk",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "cancel_order",
+      "docs": [
+        "Cancel an order"
+      ],
+      "discriminator": [
+        95,
+        129,
+        237,
+        240,
+        8,
+        49,
+        223,
+        132
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "docs": [
+            "Pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "commitment_counter",
+          "docs": [
+            "Commitment counter for this pool"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "order",
+          "docs": [
+            "Order being cancelled"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "order_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key (boxed to reduce stack usage)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "verification_key.circuit_id",
+                "account": "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer/maker (pays for compressed account creation)"
+          ],
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "escrow_nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "order_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "refund_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "encrypted_note",
+          "type": "bytes"
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "LightCancelOrderParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "create_aggregation",
+      "docs": [
+        "Create a voting aggregation"
+      ],
+      "discriminator": [
+        108,
+        186,
+        50,
+        39,
+        7,
+        25,
+        242,
+        146
+      ],
+      "accounts": [
+        {
+          "name": "aggregation",
+          "docs": [
+            "Aggregation account"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  103,
+                  114,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_pool",
+          "docs": [
+            "Token pool (for verifying voting power) (boxed to reduce stack usage)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Authority"
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Payer"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "threshold_pubkey",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "threshold",
+          "type": "u8"
+        },
+        {
+          "name": "num_options",
+          "type": "u8"
+        },
+        {
+          "name": "deadline",
+          "type": "i64"
+        },
+        {
+          "name": "action_domain",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "create_order",
+      "docs": [
+        "Create a limit order"
+      ],
+      "discriminator": [
+        141,
+        54,
+        37,
+        207,
+        237,
+        210,
+        250,
+        215
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "docs": [
+            "Pool for the offer token (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "commitment_counter",
+          "docs": [
+            "Commitment counter for this pool"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "order",
+          "docs": [
+            "Order account"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "order_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key (boxed to reduce stack usage)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "verification_key.circuit_id",
+                "account": "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Payer (pays for compressed account creation)"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "order_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "escrow_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "terms_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "expiry",
+          "type": "i64"
+        },
+        {
+          "name": "encrypted_escrow",
+          "type": "bytes"
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "LightOrderParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "disable_adapt_module",
+      "docs": [
+        "Disable an adapter module"
+      ],
+      "discriminator": [
+        226,
+        114,
+        232,
+        9,
+        230,
+        15,
+        68,
+        225
+      ],
+      "accounts": [
+        {
+          "name": "adapt_module",
+          "docs": [
+            "Adapter module"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  97,
+                  112,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "adapt_module.program_id",
+                "account": "AdaptModule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Authority"
+          ],
+          "signer": true,
+          "relations": [
+            "adapt_module"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "fill_order",
+      "docs": [
+        "Fill an order atomically"
+      ],
+      "discriminator": [
+        232,
+        122,
+        115,
+        25,
+        199,
+        143,
+        136,
+        162
+      ],
+      "accounts": [
+        {
+          "name": "maker_pool",
+          "docs": [
+            "Maker's offer token pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "maker_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "maker_commitment_counter",
+          "docs": [
+            "Commitment counter for maker pool"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "maker_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "taker_pool",
+          "docs": [
+            "Taker's payment token pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "taker_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "taker_commitment_counter",
+          "docs": [
+            "Commitment counter for taker pool"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "taker_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "order",
+          "docs": [
+            "Order being filled"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "order_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key (boxed to reduce stack usage)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "verification_key.circuit_id",
+                "account": "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer (pays for compressed account creation)"
+          ],
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "maker_proof",
+          "type": "bytes"
+        },
+        {
+          "name": "taker_proof",
+          "type": "bytes"
+        },
+        {
+          "name": "escrow_nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "taker_nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "order_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "maker_out_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "taker_out_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "encrypted_notes",
+          "type": {
+            "vec": "bytes"
+          }
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "LightFillOrderParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "finalize_decryption",
+      "docs": [
+        "Finalize decryption and reveal results"
+      ],
+      "discriminator": [
+        221,
+        43,
+        73,
+        44,
+        144,
+        239,
+        130,
+        54
+      ],
+      "accounts": [
+        {
+          "name": "aggregation",
+          "docs": [
+            "Aggregation"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  103,
+                  114,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "aggregation.id",
+                "account": "Aggregation"
+              }
+            ]
+          }
+        },
+        {
+          "name": "finalizer",
+          "docs": [
+            "Anyone can finalize once threshold is met"
+          ],
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "totals",
+          "type": {
+            "vec": "u64"
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize_amm_pool",
+      "docs": [
+        "Initialize a liquidity pool"
+      ],
+      "discriminator": [
+        20,
+        58,
+        19,
+        89,
+        14,
+        193,
+        139,
+        31
+      ],
+      "accounts": [
+        {
+          "name": "amm_pool",
+          "docs": [
+            "AMM pool account"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "token_a_mint"
+              },
+              {
+                "kind": "arg",
+                "path": "token_b_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lp_mint",
+          "docs": [
+            "LP token mint (created by pool)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  112,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "amm_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_a_mint_account",
+          "docs": [
+            "Token A mint"
+          ]
+        },
+        {
+          "name": "token_b_mint_account",
+          "docs": [
+            "Token B mint"
+          ]
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Authority"
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Payer"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "rent",
+          "docs": [
+            "Rent"
+          ],
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "token_a_mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "token_b_mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "fee_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "initialize_commitment_counter",
+      "docs": [
+        "Initialize commitment counter for a pool",
+        "",
+        "Must be called after initialize_pool to enable commitment tracking."
+      ],
+      "discriminator": [
+        158,
+        181,
+        246,
+        128,
+        22,
+        64,
+        90,
+        146
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "docs": [
+            "Pool to initialize counter for"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "commitment_counter",
+          "docs": [
+            "Commitment counter PDA"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Payer for account creation"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_pool",
+      "docs": [
+        "Initialize a new shielded pool for a token"
+      ],
+      "discriminator": [
+        95,
+        180,
+        10,
+        172,
+        84,
+        174,
+        232,
+        40
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "docs": [
+            "Pool account to initialize (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_vault",
+          "docs": [
+            "Token vault PDA"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_mint",
+          "docs": [
+            "Token mint"
+          ]
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Pool authority"
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Payer"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "rent",
+          "docs": [
+            "Rent sysvar"
+          ],
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "register_adapt_module",
+      "docs": [
+        "Register an adapter module"
+      ],
+      "discriminator": [
+        106,
+        98,
+        19,
+        132,
+        158,
+        99,
+        214,
+        47
+      ],
+      "accounts": [
+        {
+          "name": "adapt_module",
+          "docs": [
+            "Adapter module account"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  97,
+                  112,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "adapter_program"
+              }
+            ]
+          }
+        },
+        {
+          "name": "adapter_program",
+          "docs": [
+            "Adapter program"
+          ]
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Authority"
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Payer"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "interface_version",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "register_threshold_committee",
+      "docs": [
+        "Register a threshold committee"
+      ],
+      "discriminator": [
+        93,
+        46,
+        75,
+        78,
+        68,
+        136,
+        109,
+        217
+      ],
+      "accounts": [
+        {
+          "name": "committee",
+          "docs": [
+            "Committee account"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  116,
+                  101,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "committee_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Authority"
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Payer"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "committee_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "members",
+          "type": {
+            "vec": "pubkey"
+          }
+        },
+        {
+          "name": "threshold_pubkey",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "threshold",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "register_verification_key",
+      "docs": [
+        "Register a verification key for a circuit"
+      ],
+      "discriminator": [
+        252,
+        136,
+        235,
+        8,
+        197,
+        79,
+        40,
+        67
+      ],
+      "accounts": [
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key account"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "circuit_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Authority"
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Payer"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "circuit_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "vk_data",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "remove_liquidity",
+      "docs": [
+        "Remove liquidity from AMM pool"
+      ],
+      "discriminator": [
+        80,
+        85,
+        209,
+        72,
+        24,
+        206,
+        177,
+        108
+      ],
+      "accounts": [
+        {
+          "name": "pool_a",
+          "docs": [
+            "Token A pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_a.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_a_commitment_counter",
+          "docs": [
+            "Commitment counter for pool A"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_a"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_b",
+          "docs": [
+            "Token B pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_b.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_b_commitment_counter",
+          "docs": [
+            "Commitment counter for pool B"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lp_pool",
+          "docs": [
+            "LP token pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "amm_pool",
+          "docs": [
+            "AMM pool state"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "amm_pool.token_a_mint",
+                "account": "AmmPool"
+              },
+              {
+                "kind": "account",
+                "path": "amm_pool.token_b_mint",
+                "account": "AmmPool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "verification_key.circuit_id",
+                "account": "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer (pays for compressed account creation)"
+          ],
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "lp_nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "out_a_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "out_b_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "old_state_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "new_state_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "encrypted_notes",
+          "type": {
+            "vec": "bytes"
+          }
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "LightRemoveLiquidityParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "set_verification_key_data",
+      "docs": [
+        "Set verification key data on an existing account",
+        "Used for large VKs that exceed transaction size limits"
+      ],
+      "discriminator": [
+        117,
+        234,
+        100,
+        99,
+        128,
+        32,
+        44,
+        101
+      ],
+      "accounts": [
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key account (must already be initialized)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "circuit_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Authority"
+          ],
+          "signer": true,
+          "relations": [
+            "verification_key"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "circuit_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "vk_data",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "shield",
+      "docs": [
+        "Shield tokens - deposit public tokens into the shielded pool",
+        "",
+        "Uses Light Protocol compressed accounts for commitment storage.",
+        "The light_params enable on-chain commitment storage via Light Protocol.",
+        "The stealth_ephemeral_pubkey is stored so recipient can derive",
+        "the stealth private key for decryption."
+      ],
+      "discriminator": [
+        220,
+        198,
+        253,
+        246,
+        231,
+        84,
+        147,
+        98
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "docs": [
+            "Pool to shield into (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "commitment_counter",
+          "docs": [
+            "Commitment counter for this pool"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_vault",
+          "docs": [
+            "Token vault"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_token_account",
+          "docs": [
+            "User's token account (source)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "user",
+          "docs": [
+            "User (pays for compressed account creation)"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "stealth_ephemeral_pubkey",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        },
+        {
+          "name": "encrypted_note",
+          "type": "bytes"
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "LightCommitmentParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "store_commitment",
+      "docs": [
+        "Store a commitment as a Light Protocol compressed account",
+        "",
+        "Called after transact to persist commitments on-chain.",
+        "Can be called in separate transactions to avoid size limits."
+      ],
+      "discriminator": [
+        188,
+        162,
+        140,
+        134,
+        138,
+        242,
+        159,
+        54
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "docs": [
+            "Pool"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer/submitter (pays for compressed account creation)"
+          ],
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "StoreCommitmentParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "submit_decryption_share",
+      "docs": [
+        "Submit a decryption share"
+      ],
+      "discriminator": [
+        212,
+        242,
+        109,
+        214,
+        14,
+        242,
+        247,
+        228
+      ],
+      "accounts": [
+        {
+          "name": "aggregation",
+          "docs": [
+            "Aggregation"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  103,
+                  114,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "aggregation.id",
+                "account": "Aggregation"
+              }
+            ]
+          }
+        },
+        {
+          "name": "committee",
+          "docs": [
+            "Threshold committee"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  116,
+                  101,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "committee.committee_id",
+                "account": "ThresholdCommittee"
+              }
+            ]
+          }
+        },
+        {
+          "name": "member",
+          "docs": [
+            "Committee member submitting share"
+          ],
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "shares",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        },
+        {
+          "name": "dleq_proofs",
+          "type": {
+            "vec": "bytes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "submit_encrypted",
+      "docs": [
+        "Submit an encrypted vote",
+        "",
+        "Uses Light Protocol for action nullifier storage to prevent double-voting."
+      ],
+      "discriminator": [
+        6,
+        248,
+        180,
+        151,
+        28,
+        199,
+        198,
+        16
+      ],
+      "accounts": [
+        {
+          "name": "aggregation",
+          "docs": [
+            "Aggregation"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  103,
+                  114,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "aggregation.id",
+                "account": "Aggregation"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool",
+          "docs": [
+            "Token pool (boxed to reduce stack usage)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key (boxed to reduce stack usage)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "verification_key.circuit_id",
+                "account": "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Voter/relayer (pays for compressed account creation)"
+          ],
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "merkle_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "action_nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "encrypted_votes",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "LightVoteParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "swap",
+      "docs": [
+        "Swap via internal AMM"
+      ],
+      "discriminator": [
+        248,
+        198,
+        158,
+        145,
+        225,
+        117,
+        135,
+        200
+      ],
+      "accounts": [
+        {
+          "name": "input_pool",
+          "docs": [
+            "Input token pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "input_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "input_commitment_counter",
+          "docs": [
+            "Commitment counter for input pool"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "input_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "output_pool",
+          "docs": [
+            "Output token pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "output_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "output_commitment_counter",
+          "docs": [
+            "Commitment counter for output pool"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "output_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "amm_pool",
+          "docs": [
+            "AMM pool state"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "amm_pool.token_a_mint",
+                "account": "AmmPool"
+              },
+              {
+                "kind": "account",
+                "path": "amm_pool.token_b_mint",
+                "account": "AmmPool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "verification_key.circuit_id",
+                "account": "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer (pays for compressed account creation)"
+          ],
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "out_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "change_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "old_state_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "new_state_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "min_output",
+          "type": "u64"
+        },
+        {
+          "name": "encrypted_notes",
+          "type": {
+            "vec": "bytes"
+          }
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "LightSwapParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "test_verify_proof",
+      "docs": [
+        "Test proof verification (development only)",
+        "Verifies a proof without pool state checks"
+      ],
+      "discriminator": [
+        252,
+        208,
+        59,
+        22,
+        178,
+        59,
+        46,
+        253
+      ],
+      "accounts": [
+        {
+          "name": "verification_key",
+          "docs": [
+            "The verification key account"
+          ]
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Payer for the transaction"
+          ],
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "public_inputs",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "transact",
+      "docs": [
+        "Transact - private transfer with optional unshield",
+        "",
+        "The light_params parameter enables Light Protocol compressed account",
+        "storage for nullifiers. If provided, a compressed account is created",
+        "to prevent double-spending. If None, legacy event-only tracking is used.",
+        "",
+        "Commitments are emitted as events and can be stored separately via store_commitment."
+      ],
+      "discriminator": [
+        217,
+        149,
+        130,
+        143,
+        221,
+        52,
+        252,
+        119
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "docs": [
+            "Pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "commitment_counter",
+          "docs": [
+            "Commitment counter for this pool"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_vault",
+          "docs": [
+            "Token vault"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key for the circuit (boxed to reduce stack usage)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "verification_key.circuit_id",
+                "account": "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "unshield_recipient",
+          "docs": [
+            "Unshield recipient (optional, can be any account)"
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer/submitter (pays for compressed account creation)"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "merkle_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "out_commitments",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        },
+        {
+          "name": "encrypted_notes",
+          "type": {
+            "vec": "bytes"
+          }
+        },
+        {
+          "name": "unshield_amount",
+          "type": "u64"
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "LightTransactParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "transact_adapt",
+      "docs": [
+        "Transact via adapter - swap through external DEX"
+      ],
+      "discriminator": [
+        240,
+        109,
+        123,
+        193,
+        132,
+        96,
+        145,
+        122
+      ],
+      "accounts": [
+        {
+          "name": "input_pool",
+          "docs": [
+            "Input token pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "input_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "output_pool",
+          "docs": [
+            "Output token pool (boxed to reduce stack usage)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "output_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "output_commitment_counter",
+          "docs": [
+            "Commitment counter for output pool"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "output_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "input_vault",
+          "docs": [
+            "Input token vault"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "input_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "output_vault",
+          "docs": [
+            "Output token vault"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "output_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "adapt_module",
+          "docs": [
+            "Adapter module"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  97,
+                  112,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "adapt_module.program_id",
+                "account": "AdaptModule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key (boxed to reduce stack usage)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "verification_key.circuit_id",
+                "account": "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer (pays for compressed account creation)"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "input_amount",
+          "type": "u64"
+        },
+        {
+          "name": "min_output",
+          "type": "u64"
+        },
+        {
+          "name": "adapt_params",
+          "type": "bytes"
+        },
+        {
+          "name": "out_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "encrypted_note",
+          "type": "bytes"
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "LightAdaptParams"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AdaptModule",
+      "discriminator": [
+        104,
+        31,
+        171,
+        41,
+        105,
+        229,
+        28,
+        169
+      ]
+    },
+    {
+      "name": "Aggregation",
+      "discriminator": [
+        10,
+        158,
+        173,
+        174,
+        129,
+        182,
+        140,
+        31
+      ]
+    },
+    {
+      "name": "AmmPool",
+      "discriminator": [
+        54,
+        82,
+        185,
+        138,
+        179,
+        191,
+        211,
+        169
+      ]
+    },
+    {
+      "name": "Order",
+      "discriminator": [
+        134,
+        173,
+        223,
+        185,
+        77,
+        86,
+        28,
+        51
+      ]
+    },
+    {
+      "name": "Pool",
+      "discriminator": [
+        241,
+        154,
+        109,
+        4,
+        17,
+        177,
+        109,
+        188
+      ]
+    },
+    {
+      "name": "PoolCommitmentCounter",
+      "discriminator": [
+        104,
+        144,
+        242,
+        34,
+        19,
+        153,
+        118,
+        196
+      ]
+    },
+    {
+      "name": "ThresholdCommittee",
+      "discriminator": [
+        28,
+        130,
+        118,
+        105,
+        148,
+        110,
+        97,
+        147
+      ]
+    },
+    {
+      "name": "VerificationKey",
+      "discriminator": [
+        57,
+        106,
+        137,
+        188,
+        100,
+        187,
+        148,
+        137
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AdapterRegistered",
+      "discriminator": [
+        213,
+        42,
+        178,
+        51,
+        204,
+        14,
+        253,
+        171
+      ]
+    },
+    {
+      "name": "AggregationCreated",
+      "discriminator": [
+        251,
+        91,
+        171,
+        215,
+        167,
+        99,
+        246,
+        25
+      ]
+    },
+    {
+      "name": "AggregationFinalized",
+      "discriminator": [
+        248,
+        134,
+        250,
+        13,
+        131,
+        148,
+        10,
+        36
+      ]
+    },
+    {
+      "name": "AmmPoolInitialized",
+      "discriminator": [
+        255,
+        235,
+        207,
+        141,
+        175,
+        193,
+        197,
+        90
+      ]
+    },
+    {
+      "name": "AmmPoolStateChanged",
+      "discriminator": [
+        111,
+        51,
+        247,
+        84,
+        99,
+        29,
+        180,
+        20
+      ]
+    },
+    {
+      "name": "MerkleRootUpdated",
+      "discriminator": [
+        115,
+        162,
+        36,
+        72,
+        29,
+        55,
+        39,
+        134
+      ]
+    },
+    {
+      "name": "NoteCreated",
+      "discriminator": [
+        173,
+        155,
+        50,
+        250,
+        162,
+        108,
+        244,
+        218
+      ]
+    },
+    {
+      "name": "NoteSpent",
+      "discriminator": [
+        151,
+        0,
+        178,
+        36,
+        79,
+        241,
+        60,
+        71
+      ]
+    },
+    {
+      "name": "OrderCancelled",
+      "discriminator": [
+        108,
+        56,
+        128,
+        68,
+        168,
+        113,
+        168,
+        239
+      ]
+    },
+    {
+      "name": "OrderCreated",
+      "discriminator": [
+        224,
+        1,
+        229,
+        63,
+        254,
+        60,
+        190,
+        159
+      ]
+    },
+    {
+      "name": "OrderFilled",
+      "discriminator": [
+        120,
+        124,
+        109,
+        66,
+        249,
+        116,
+        174,
+        30
+      ]
+    },
+    {
+      "name": "PoolInitialized",
+      "discriminator": [
+        100,
+        118,
+        173,
+        87,
+        12,
+        198,
+        254,
+        229
+      ]
+    },
+    {
+      "name": "Shielded",
+      "discriminator": [
+        241,
+        61,
+        122,
+        176,
+        176,
+        134,
+        122,
+        191
+      ]
+    },
+    {
+      "name": "Unshielded",
+      "discriminator": [
+        141,
+        41,
+        20,
+        125,
+        56,
+        78,
+        86,
+        205
+      ]
+    },
+    {
+      "name": "VerificationKeyRegistered",
+      "discriminator": [
+        173,
+        239,
+        155,
+        216,
+        242,
+        184,
+        191,
+        5
+      ]
+    },
+    {
+      "name": "VoteSubmitted",
+      "discriminator": [
+        21,
+        54,
+        43,
+        190,
+        87,
+        214,
+        250,
+        218
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidProof",
+      "msg": "Invalid zero-knowledge proof"
+    },
+    {
+      "code": 6001,
+      "name": "ProofVerificationFailed",
+      "msg": "Proof verification failed"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidPublicInputs",
+      "msg": "Invalid public inputs for proof"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidMerkleRoot",
+      "msg": "Merkle root not found in current or historical roots"
+    },
+    {
+      "code": 6004,
+      "name": "TreeFull",
+      "msg": "Merkle tree is full"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidMerkleProof",
+      "msg": "Invalid merkle proof"
+    },
+    {
+      "code": 6006,
+      "name": "NullifierAlreadyUsed",
+      "msg": "Nullifier has already been used"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidNullifier",
+      "msg": "Invalid nullifier derivation"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidCommitment",
+      "msg": "Invalid commitment"
+    },
+    {
+      "code": 6009,
+      "name": "CommitmentExists",
+      "msg": "Commitment already exists"
+    },
+    {
+      "code": 6010,
+      "name": "InsufficientBalance",
+      "msg": "Insufficient balance"
+    },
+    {
+      "code": 6011,
+      "name": "AmountOverflow",
+      "msg": "Amount overflow"
+    },
+    {
+      "code": 6012,
+      "name": "InvalidAmount",
+      "msg": "Invalid amount"
+    },
+    {
+      "code": 6013,
+      "name": "InvalidTokenMint",
+      "msg": "Invalid token mint"
+    },
+    {
+      "code": 6014,
+      "name": "TokenMintMismatch",
+      "msg": "Token mint mismatch"
+    },
+    {
+      "code": 6015,
+      "name": "PoolAlreadyInitialized",
+      "msg": "Pool already initialized"
+    },
+    {
+      "code": 6016,
+      "name": "PoolNotFound",
+      "msg": "Pool not found"
+    },
+    {
+      "code": 6017,
+      "name": "OrderNotFound",
+      "msg": "Order not found"
+    },
+    {
+      "code": 6018,
+      "name": "OrderAlreadyFilled",
+      "msg": "Order already filled"
+    },
+    {
+      "code": 6019,
+      "name": "OrderExpired",
+      "msg": "Order expired"
+    },
+    {
+      "code": 6020,
+      "name": "OrderNotExpired",
+      "msg": "Order not expired yet"
+    },
+    {
+      "code": 6021,
+      "name": "InvalidOrderTerms",
+      "msg": "Invalid order terms"
+    },
+    {
+      "code": 6022,
+      "name": "AmmPoolNotFound",
+      "msg": "AMM pool not found"
+    },
+    {
+      "code": 6023,
+      "name": "SlippageExceeded",
+      "msg": "Slippage exceeded"
+    },
+    {
+      "code": 6024,
+      "name": "InsufficientLiquidity",
+      "msg": "Insufficient liquidity"
+    },
+    {
+      "code": 6025,
+      "name": "InvalidPoolState",
+      "msg": "Invalid pool state transition"
+    },
+    {
+      "code": 6026,
+      "name": "InvariantViolated",
+      "msg": "Constant product invariant violated"
+    },
+    {
+      "code": 6027,
+      "name": "AggregationNotFound",
+      "msg": "Aggregation not found"
+    },
+    {
+      "code": 6028,
+      "name": "AggregationNotActive",
+      "msg": "Aggregation not active"
+    },
+    {
+      "code": 6029,
+      "name": "AggregationDeadlinePassed",
+      "msg": "Aggregation deadline passed"
+    },
+    {
+      "code": 6030,
+      "name": "AlreadyVoted",
+      "msg": "Already voted on this proposal"
+    },
+    {
+      "code": 6031,
+      "name": "InvalidVoteOption",
+      "msg": "Invalid vote option"
+    },
+    {
+      "code": 6032,
+      "name": "DecryptionNotComplete",
+      "msg": "Decryption not complete"
+    },
+    {
+      "code": 6033,
+      "name": "InvalidDecryptionShare",
+      "msg": "Invalid decryption share"
+    },
+    {
+      "code": 6034,
+      "name": "ThresholdNotMet",
+      "msg": "Threshold not met"
+    },
+    {
+      "code": 6035,
+      "name": "AdapterNotRegistered",
+      "msg": "Adapter module not registered"
+    },
+    {
+      "code": 6036,
+      "name": "AdapterDisabled",
+      "msg": "Adapter module disabled"
+    },
+    {
+      "code": 6037,
+      "name": "AdapterExecutionFailed",
+      "msg": "Adapter execution failed"
+    },
+    {
+      "code": 6038,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6039,
+      "name": "InvalidVerificationKey",
+      "msg": "Invalid verification key"
+    },
+    {
+      "code": 6040,
+      "name": "VerificationKeyNotFound",
+      "msg": "Verification key not found"
+    },
+    {
+      "code": 6041,
+      "name": "CommitteeNotFound",
+      "msg": "Committee not found"
+    },
+    {
+      "code": 6042,
+      "name": "NotCommitteeMember",
+      "msg": "Not a committee member"
+    },
+    {
+      "code": 6043,
+      "name": "InvalidEncryptedNote",
+      "msg": "Invalid encrypted note"
+    },
+    {
+      "code": 6044,
+      "name": "DecryptionFailed",
+      "msg": "Decryption failed"
+    },
+    {
+      "code": 6045,
+      "name": "InvalidCiphertext",
+      "msg": "Invalid ciphertext"
+    },
+    {
+      "code": 6046,
+      "name": "LightProtocolError",
+      "msg": "Light Protocol CPI failed"
+    },
+    {
+      "code": 6047,
+      "name": "LightCpiError",
+      "msg": "Light Protocol CPI operation failed"
+    },
+    {
+      "code": 6048,
+      "name": "NullifierTreeError",
+      "msg": "Nullifier tree error"
+    },
+    {
+      "code": 6049,
+      "name": "NullifierInsertionFailed",
+      "msg": "Failed to insert nullifier"
+    },
+    {
+      "code": 6050,
+      "name": "NullifierAlreadySpent",
+      "msg": "Nullifier has already been spent (compressed account exists)"
+    },
+    {
+      "code": 6051,
+      "name": "ActionNullifierAlreadyUsed",
+      "msg": "Action nullifier has already been used (already voted)"
+    },
+    {
+      "code": 6052,
+      "name": "CommitmentCreationFailed",
+      "msg": "Failed to create commitment compressed account"
+    },
+    {
+      "code": 6053,
+      "name": "CommitmentProofFailed",
+      "msg": "Commitment merkle proof verification failed"
+    },
+    {
+      "code": 6054,
+      "name": "PoseidonHashError",
+      "msg": "Poseidon hash computation failed"
+    },
+    {
+      "code": 6055,
+      "name": "InvalidProofLength",
+      "msg": "Invalid proof length"
+    },
+    {
+      "code": 6056,
+      "name": "Bn254MulError",
+      "msg": "BN254 scalar multiplication failed"
+    },
+    {
+      "code": 6057,
+      "name": "Bn254AddError",
+      "msg": "BN254 point addition failed"
+    },
+    {
+      "code": 6058,
+      "name": "Bn254PairingError",
+      "msg": "BN254 pairing check failed"
+    },
+    {
+      "code": 6059,
+      "name": "AdapterSwapFailed",
+      "msg": "Adapter swap execution failed"
+    }
+  ],
+  "types": [
+    {
+      "name": "AdaptModule",
+      "docs": [
+        "Registered adapter module"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "program_id",
+            "docs": [
+              "Adapter program address"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "interface_version",
+            "docs": [
+              "Interface version (for compatibility)"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "enabled",
+            "docs": [
+              "Is enabled"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "authority",
+            "docs": [
+              "Authority who can manage"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "registered_at",
+            "docs": [
+              "Registration timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AdapterRegistered",
+      "docs": [
+        "Emitted when an adapter module is registered"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "adapter",
+            "docs": [
+              "Adapter program ID"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "interface_version",
+            "docs": [
+              "Interface version"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Aggregation",
+      "docs": [
+        "Voting aggregation"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "docs": [
+              "Unique identifier"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "threshold_pubkey",
+            "docs": [
+              "Threshold public key (combined from committee)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "token_mint",
+            "docs": [
+              "Token mint for voting power"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "num_options",
+            "docs": [
+              "Number of voting options"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "threshold",
+            "docs": [
+              "Threshold required for decryption (t of n)"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "deadline",
+            "docs": [
+              "Voting deadline"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "action_domain",
+            "docs": [
+              "Action domain for nullifiers (prevents cross-proposal voting)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "encrypted_tallies",
+            "docs": [
+              "Encrypted vote tallies (one ElGamal ciphertext per option)",
+              "These are homomorphically summed as votes come in"
+            ],
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "ElGamalCiphertext"
+                }
+              }
+            }
+          },
+          {
+            "name": "decryption_shares",
+            "docs": [
+              "Decryption shares submitted by committee members"
+            ],
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "DecryptionShare"
+                }
+              }
+            }
+          },
+          {
+            "name": "totals",
+            "docs": [
+              "Final decrypted totals (None until finalized)"
+            ],
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "status",
+            "docs": [
+              "Status"
+            ],
+            "type": {
+              "defined": {
+                "name": "AggregationStatus"
+              }
+            }
+          },
+          {
+            "name": "created_at",
+            "docs": [
+              "Creation timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AggregationCreated",
+      "docs": [
+        "Emitted when a voting aggregation is created"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "docs": [
+              "Aggregation ID"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "token_mint",
+            "docs": [
+              "Token mint for voting power"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "num_options",
+            "docs": [
+              "Number of options"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "deadline",
+            "docs": [
+              "Voting deadline"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AggregationFinalized",
+      "docs": [
+        "Emitted when voting results are finalized"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "docs": [
+              "Aggregation ID"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "totals",
+            "docs": [
+              "Final vote totals per option"
+            ],
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AggregationStatus",
+      "docs": [
+        "Aggregation status"
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "DecryptionInProgress"
+          },
+          {
+            "name": "Finalized"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AmmPool",
+      "docs": [
+        "AMM pool for a token pair"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool_id",
+            "docs": [
+              "Pool ID (PDA seed)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_a_mint",
+            "docs": [
+              "Token A mint"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_b_mint",
+            "docs": [
+              "Token B mint"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_mint",
+            "docs": [
+              "LP token mint (created by pool)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "state_hash",
+            "docs": [
+              "Current state hash (hash of reserves + lp_supply)",
+              "Used for ZK proof verification of state transitions"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "reserve_a",
+            "docs": [
+              "Reserve A (committed, updated via ZK proofs)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "reserve_b",
+            "docs": [
+              "Reserve B (committed, updated via ZK proofs)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "lp_supply",
+            "docs": [
+              "Total LP token supply"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "fee_bps",
+            "docs": [
+              "Fee in basis points (e.g., 30 = 0.3%)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "authority",
+            "docs": [
+              "Pool authority"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "is_active",
+            "docs": [
+              "Is pool active"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "lp_mint_bump",
+            "docs": [
+              "LP mint bump"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AmmPoolInitialized",
+      "docs": [
+        "Emitted when AMM pool is initialized"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool_id",
+            "docs": [
+              "Pool ID"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_a_mint",
+            "docs": [
+              "Token A mint"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_b_mint",
+            "docs": [
+              "Token B mint"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_mint",
+            "docs": [
+              "LP token mint"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_bps",
+            "docs": [
+              "Fee in basis points"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AmmPoolStateChanged",
+      "docs": [
+        "Emitted when AMM pool state changes"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool_id",
+            "docs": [
+              "Pool ID"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "state_hash",
+            "docs": [
+              "New state hash"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DecryptionShare",
+      "docs": [
+        "Decryption share from a committee member"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "party",
+            "docs": [
+              "Committee member who submitted"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "shares",
+            "docs": [
+              "Decryption shares (one per option)"
+            ],
+            "type": {
+              "vec": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "dleq_proofs",
+            "docs": [
+              "DLEQ proofs for correctness"
+            ],
+            "type": {
+              "vec": "bytes"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ElGamalCiphertext",
+      "docs": [
+        "ElGamal ciphertext (C1, C2)"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "c1",
+            "docs": [
+              "C1 = r * G (32 bytes x, 32 bytes y compressed to 32)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "c2",
+            "docs": [
+              "C2 = m * G + r * P"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightAdaptParams",
+      "docs": [
+        "Parameters for Light Protocol operations"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nullifier_proof",
+            "docs": [
+              "Validity proof for nullifier (proves it doesn't exist)"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_address_tree_info",
+            "docs": [
+              "Address tree info for nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "commitment_proof",
+            "docs": [
+              "Validity proof for output commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "commitment_address_tree_info",
+            "docs": [
+              "Address tree info for commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightAddLiquidityParams",
+      "docs": [
+        "Parameters for Light Protocol operations in add liquidity"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nullifier_a_proof",
+            "docs": [
+              "Validity proof for nullifier A"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_a_address_tree_info",
+            "docs": [
+              "Address tree info for nullifier A"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "nullifier_b_proof",
+            "docs": [
+              "Validity proof for nullifier B"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_b_address_tree_info",
+            "docs": [
+              "Address tree info for nullifier B"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "lp_commitment_proof",
+            "docs": [
+              "Validity proof for LP commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "lp_commitment_address_tree_info",
+            "docs": [
+              "Address tree info for LP commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "change_a_commitment_proof",
+            "docs": [
+              "Validity proof for change A commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "change_a_commitment_address_tree_info",
+            "docs": [
+              "Address tree info for change A commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "change_b_commitment_proof",
+            "docs": [
+              "Validity proof for change B commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "change_b_commitment_address_tree_info",
+            "docs": [
+              "Address tree info for change B commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightAddressTreeInfo",
+      "docs": [
+        "IDL-safe wrapper for Light Protocol address tree info",
+        "",
+        "Contains tree configuration for compressed account address derivation."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "address_merkle_tree_pubkey_index",
+            "docs": [
+              "Index of the address merkle tree pubkey in remaining_accounts"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "address_queue_pubkey_index",
+            "docs": [
+              "Index of the address queue pubkey in remaining_accounts"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "root_index",
+            "docs": [
+              "Root index for the merkle tree"
+            ],
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightCancelOrderParams",
+      "docs": [
+        "Parameters for Light Protocol operations"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nullifier_proof",
+            "docs": [
+              "Validity proof for nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_address_tree_info",
+            "docs": [
+              "Address tree info for nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "commitment_proof",
+            "docs": [
+              "Validity proof for refund commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "commitment_address_tree_info",
+            "docs": [
+              "Address tree info for refund commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightCommitmentParams",
+      "docs": [
+        "Parameters for Light Protocol commitment creation"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "validity_proof",
+            "docs": [
+              "Validity proof from Helius indexer"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "address_tree_info",
+            "docs": [
+              "Address tree info for compressed account address derivation"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index for the new compressed account"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightFillOrderParams",
+      "docs": [
+        "Parameters for Light Protocol operations in fill order"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow_nullifier_proof",
+            "docs": [
+              "Validity proof for escrow nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "escrow_nullifier_address_tree_info",
+            "docs": [
+              "Address tree info for escrow nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "taker_nullifier_proof",
+            "docs": [
+              "Validity proof for taker nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "taker_nullifier_address_tree_info",
+            "docs": [
+              "Address tree info for taker nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "maker_commitment_proof",
+            "docs": [
+              "Validity proof for maker output commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "maker_commitment_address_tree_info",
+            "docs": [
+              "Address tree info for maker output commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "taker_commitment_proof",
+            "docs": [
+              "Validity proof for taker output commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "taker_commitment_address_tree_info",
+            "docs": [
+              "Address tree info for taker output commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightOrderParams",
+      "docs": [
+        "Parameters for Light Protocol operations"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nullifier_proof",
+            "docs": [
+              "Validity proof for nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_address_tree_info",
+            "docs": [
+              "Address tree info for nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "commitment_proof",
+            "docs": [
+              "Validity proof for commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "commitment_address_tree_info",
+            "docs": [
+              "Address tree info for commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightRemoveLiquidityParams",
+      "docs": [
+        "Parameters for Light Protocol operations in remove liquidity"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "lp_nullifier_proof",
+            "docs": [
+              "Validity proof for LP nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "lp_nullifier_address_tree_info",
+            "docs": [
+              "Address tree info for LP nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "out_a_commitment_proof",
+            "docs": [
+              "Validity proof for output A commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "out_a_commitment_address_tree_info",
+            "docs": [
+              "Address tree info for output A commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "out_b_commitment_proof",
+            "docs": [
+              "Validity proof for output B commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "out_b_commitment_address_tree_info",
+            "docs": [
+              "Address tree info for output B commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightSwapParams",
+      "docs": [
+        "Parameters for Light Protocol operations in swap"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nullifier_proof",
+            "docs": [
+              "Validity proof for input nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_address_tree_info",
+            "docs": [
+              "Address tree info for input nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "out_commitment_proof",
+            "docs": [
+              "Validity proof for output commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "out_commitment_address_tree_info",
+            "docs": [
+              "Address tree info for output commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "change_commitment_proof",
+            "docs": [
+              "Validity proof for change commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "change_commitment_address_tree_info",
+            "docs": [
+              "Address tree info for change commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightTransactParams",
+      "docs": [
+        "Parameters for Light Protocol combined validity proof",
+        "",
+        "The combined proof verifies:",
+        "- Commitment exists (inclusion) - prevents fake commitment attacks",
+        "- Nullifier doesn't exist (non-inclusion) - prevents double-spend"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "validity_proof",
+            "docs": [
+              "Combined validity proof (commitment inclusion + nullifier non-inclusion)"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_address_tree_info",
+            "docs": [
+              "Address tree info for nullifier creation"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightValidityProof",
+      "docs": [
+        "IDL-safe wrapper for Light Protocol validity proof",
+        "",
+        "Contains the serialized proof data that can be deserialized",
+        "into a ValidityProof for Light CPI operations."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "a",
+            "docs": [
+              "Compressed proof point A (32 bytes)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "b",
+            "docs": [
+              "Compressed proof point B (64 bytes)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "c",
+            "docs": [
+              "Compressed proof point C (32 bytes)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightVoteParams",
+      "docs": [
+        "Parameters for Light Protocol nullifier storage"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "nullifier_proof",
+            "docs": [
+              "Validity proof for action nullifier (proves it doesn't exist)"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_address_tree_info",
+            "docs": [
+              "Address tree info for nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MerkleRootUpdated",
+      "docs": [
+        "Emitted when merkle root is updated"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "docs": [
+              "Pool"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "new_root",
+            "docs": [
+              "New root"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "next_leaf_index",
+            "docs": [
+              "Next leaf index"
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "NoteCreated",
+      "docs": [
+        "Emitted when a new note is created (shield or transact output)"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "docs": [
+              "Pool the note belongs to"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "commitment",
+            "docs": [
+              "Commitment hash"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_index",
+            "docs": [
+              "Leaf index in merkle tree"
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "encrypted_note",
+            "docs": [
+              "Encrypted note data"
+            ],
+            "type": "bytes"
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "NoteSpent",
+      "docs": [
+        "Emitted when a note is spent (nullifier revealed)"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "docs": [
+              "Pool the note belonged to"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "nullifier",
+            "docs": [
+              "Nullifier"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Order",
+      "docs": [
+        "Market order (escrow)"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "order_id",
+            "docs": [
+              "Unique order ID (derived from nullifier + terms)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "escrow_commitment",
+            "docs": [
+              "Escrow commitment (locked maker funds)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "terms_hash",
+            "docs": [
+              "Hash of order terms (offer_token, offer_amount, ask_token, ask_amount, maker_receive)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "encrypted_escrow",
+            "docs": [
+              "Encrypted escrow note (for maker to decrypt)"
+            ],
+            "type": "bytes"
+          },
+          {
+            "name": "expiry",
+            "docs": [
+              "Expiry timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "status",
+            "docs": [
+              "Order status"
+            ],
+            "type": {
+              "defined": {
+                "name": "OrderStatus"
+              }
+            }
+          },
+          {
+            "name": "created_at",
+            "docs": [
+              "Creation timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderCancelled",
+      "docs": [
+        "Emitted when an order is cancelled"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "order_id",
+            "docs": [
+              "Order ID"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderCreated",
+      "docs": [
+        "Emitted when an order is created"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "order_id",
+            "docs": [
+              "Order ID"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "escrow_commitment",
+            "docs": [
+              "Escrow commitment"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "terms_hash",
+            "docs": [
+              "Terms hash (tokens and amounts hidden)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "expiry",
+            "docs": [
+              "Expiry timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Creation timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderFilled",
+      "docs": [
+        "Emitted when an order is filled"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "order_id",
+            "docs": [
+              "Order ID"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderStatus",
+      "docs": [
+        "Order status"
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Open"
+          },
+          {
+            "name": "Filled"
+          },
+          {
+            "name": "Cancelled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Pool",
+      "docs": [
+        "Shielded pool for a single token",
+        "",
+        "Note: Merkle tree state (commitments, roots) is now stored in Light Protocol",
+        "compressed accounts. The PoolCommitmentCounter tracks leaf indices."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "token_mint",
+            "docs": [
+              "SPL token mint address"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_vault",
+            "docs": [
+              "PDA holding shielded tokens"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "total_shielded",
+            "docs": [
+              "Total value locked (for analytics)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "authority",
+            "docs": [
+              "Pool authority (for upgrades)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump seed"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "docs": [
+              "Vault bump seed"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolCommitmentCounter",
+      "docs": [
+        "Pool commitment counter - tracks next leaf index",
+        "",
+        "This is a regular PDA (not compressed) that tracks the",
+        "next available leaf index for each pool. Needed for",
+        "sequential leaf index assignment."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "docs": [
+              "Pool this counter belongs to"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "next_leaf_index",
+            "docs": [
+              "Next available leaf index"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_commitments",
+            "docs": [
+              "Total commitments created"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump seed"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolInitialized",
+      "docs": [
+        "Emitted when a new pool is initialized"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "docs": [
+              "Pool address"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "docs": [
+              "Token mint"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Shielded",
+      "docs": [
+        "Emitted when tokens are shielded"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "docs": [
+              "Pool"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "Amount shielded"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "user",
+            "docs": [
+              "User who shielded (public)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StoreCommitmentParams",
+      "docs": [
+        "Parameters for storing a single commitment"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "commitment",
+            "docs": [
+              "The commitment hash"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_index",
+            "docs": [
+              "Leaf index (read from commitment counter before transact)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "stealth_ephemeral_pubkey",
+            "docs": [
+              "Stealth ephemeral pubkey for deriving decryption key (64 bytes: X + Y)",
+              "If all zeros, decrypt with original spending key (internal operations)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "encrypted_note",
+            "docs": [
+              "Encrypted note data (Vec to avoid heap issues during deserialization)"
+            ],
+            "type": "bytes"
+          },
+          {
+            "name": "validity_proof",
+            "docs": [
+              "Validity proof for the commitment address (non-inclusion)"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "address_tree_info",
+            "docs": [
+              "Address tree info"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ThresholdCommittee",
+      "docs": [
+        "Threshold committee"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "committee_id",
+            "docs": [
+              "Committee identifier"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "threshold_pubkey",
+            "docs": [
+              "Combined threshold public key"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "members",
+            "docs": [
+              "Committee members"
+            ],
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "threshold",
+            "docs": [
+              "Threshold (t of n)"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "authority",
+            "docs": [
+              "Authority who can manage"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "is_active",
+            "docs": [
+              "Is active"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Unshielded",
+      "docs": [
+        "Emitted when tokens are unshielded"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "docs": [
+              "Pool"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "Amount unshielded"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "recipient",
+            "docs": [
+              "Recipient (public)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VerificationKey",
+      "docs": [
+        "Verification key for a circuit"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "circuit_id",
+            "docs": [
+              "Circuit identifier"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "vk_data",
+            "docs": [
+              "Groth16 verification key components (serialized)",
+              "Format: alpha_g1 (64) + beta_g2 (128) + gamma_g2 (128) + delta_g2 (128) + ic_len (4) + ic (64 * ic_len)"
+            ],
+            "type": "bytes"
+          },
+          {
+            "name": "authority",
+            "docs": [
+              "Authority who can update"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "is_active",
+            "docs": [
+              "Is active"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VerificationKeyRegistered",
+      "docs": [
+        "Emitted when a verification key is registered"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "circuit_id",
+            "docs": [
+              "Circuit ID"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VoteSubmitted",
+      "docs": [
+        "Emitted when an encrypted vote is submitted"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "aggregation_id",
+            "docs": [
+              "Aggregation ID"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "action_nullifier",
+            "docs": [
+              "Action nullifier (prevents double voting)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timestamp",
+            "docs": [
+              "Timestamp"
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}

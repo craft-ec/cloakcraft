@@ -5,7 +5,7 @@
 import { PublicKey } from '@solana/web3.js';
 
 // Default program ID (devnet deployment)
-export const PROGRAM_ID = new PublicKey('HsQk1VmzbDwXZnQfevgJvHAfYioFmKJKCBgfuTFKVJAu');
+export const PROGRAM_ID = new PublicKey('fBh7FvBZpex64Qp7i45yuyxh7sH8YstYyxGLmToLRTP');
 
 // PDA seeds
 export const SEEDS = {
@@ -17,6 +17,7 @@ export const SEEDS = {
 
 // V2 Batch Trees (Devnet)
 export const DEVNET_V2_TREES = {
+  STATE_TREE: new PublicKey('bmt1LryLZUMmF7ZtqESaw7wifBXLfXHQYoE4GAmrahU'),
   OUTPUT_QUEUE: new PublicKey('oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto'),
   ADDRESS_TREE: new PublicKey('amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx'),
 } as const;

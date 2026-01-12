@@ -146,12 +146,7 @@ export class LightClient {
     pool: PublicKey
   ): Promise<boolean> {
     const address = this.deriveNullifierAddress(nullifier, programId, addressTree, pool);
-    const addressBase58 = new PublicKey(address).toBase58();
-    console.log(`[isNullifierSpent] Checking nullifier address: ${addressBase58}`);
-    console.log(`[isNullifierSpent] Pool: ${pool.toBase58()}`);
-    console.log(`[isNullifierSpent] Nullifier (hex): ${Buffer.from(nullifier).toString('hex').slice(0, 32)}...`);
     const account = await this.getCompressedAccount(address);
-    console.log(`[isNullifierSpent] Account found: ${account !== null}`);
     return account !== null;
   }
 
@@ -465,7 +460,6 @@ export class LightCommitmentClient extends LightClient {
    * Uses Light SDK for proper API handling.
    */
   async getMerkleProofByHash(accountHash: string): Promise<CommitmentMerkleProof> {
-    console.log('[getMerkleProofByHash] Fetching proof for hash:', accountHash);
 
     // Convert base58 hash to BN254 for SDK
     const hashBytes = new PublicKey(accountHash).toBytes();
@@ -473,7 +467,6 @@ export class LightCommitmentClient extends LightClient {
 
     // Use Light SDK's proper method
     const proofResult = await this.lightRpc.getCompressedAccountProof(hashBn);
-    console.log('[getMerkleProofByHash] Got proof, leafIndex:', proofResult.leafIndex);
 
     // Convert proof to our format
     const pathElements = proofResult.merkleProof.map((p: any) => {
@@ -514,13 +507,11 @@ export class LightCommitmentClient extends LightClient {
     // Derive commitment address and fetch account to get hash
     const address = this.deriveCommitmentAddress(pool, commitment, programId, addressTree);
     const addressBase58 = new PublicKey(address).toBase58();
-    console.log('[getCommitmentMerkleProof] Derived address:', addressBase58);
 
     const account = await this.getCompressedAccount(address);
     if (!account) {
       throw new Error(`Commitment account not found at address: ${addressBase58}`);
     }
-    console.log('[getCommitmentMerkleProof] Found account with hash:', account.hash);
 
     // Use the hash-based method
     return this.getMerkleProofByHash(account.hash);
@@ -637,8 +628,6 @@ export class LightCommitmentClient extends LightClient {
     for (const note of notes) {
       // Derive nullifier from note
       // IMPORTANT: Must use stealth spending key (not original spending key) to match transact
-      console.log(`[scanNotesWithStatus] Deriving nullifier for leafIndex: ${note.leafIndex}`);
-      console.log(`[scanNotesWithStatus] Commitment: ${Buffer.from(note.commitment).toString('hex').slice(0, 32)}...`);
 
       // Derive stealth spending key if ephemeral pubkey exists
       let effectiveNullifierKey = nullifierKey;
@@ -646,7 +635,6 @@ export class LightCommitmentClient extends LightClient {
         // Derive: stealthSpendingKey = spendingKey + H(spendingKey * ephemeralPubkey)
         const stealthSpendingKey = deriveStealthPrivateKey(viewingKey, note.stealthEphemeralPubkey);
         effectiveNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
-        console.log(`[scanNotesWithStatus] Using stealth nullifier key`);
       }
 
       const nullifier = deriveSpendingNullifier(
@@ -654,7 +642,6 @@ export class LightCommitmentClient extends LightClient {
         note.commitment,
         note.leafIndex
       );
-      console.log(`[scanNotesWithStatus] Nullifier: ${Buffer.from(nullifier).toString('hex').slice(0, 32)}...`);
 
       // Check if nullifier has been spent (uses note.pool for address derivation)
       const spent = await this.isNullifierSpent(nullifier, programId, addressTree, note.pool);
@@ -712,9 +699,7 @@ export class LightCommitmentClient extends LightClient {
     pool?: PublicKey
   ): Promise<DecryptedNote[]> {
     // Query commitment accounts from Helius
-    console.log(`[scanNotes] Scanning for notes. Pool: ${pool?.toBase58() ?? 'all'}`);
     const accounts = await this.getCommitmentAccounts(programId, pool);
-    console.log(`[scanNotes] Found ${accounts.length} accounts from Helius`);
 
     // Commitment account discriminator
     // Note: JavaScript loses precision for large integers, so we use approximate match
@@ -725,15 +710,12 @@ export class LightCommitmentClient extends LightClient {
 
     for (const account of accounts) {
       if (!account.data?.data) {
-        console.log('[scanNotes] Skipping account - no data');
         continue;
       }
 
       // Filter by commitment discriminator (approximate match due to JS number precision)
       const disc = account.data.discriminator;
-      console.log(`[scanNotes] Account discriminator: ${disc}`);
       if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1000) {
-        console.log('[scanNotes] Skipping - discriminator mismatch');
         continue;
       }
 
@@ -741,9 +723,7 @@ export class LightCommitmentClient extends LightClient {
       // Use atob for browser compatibility (Buffer.from doesn't work in browsers)
       // New layout: pool(32) + commitment(32) + leaf_index(8) + stealth_ephemeral(64) + len(4) + encrypted(~180) = ~320
       const dataLen = atob(account.data.data).length;
-      console.log(`[scanNotes] Account data length: ${dataLen}`);
       if (dataLen < 260) {
-        console.log('[scanNotes] Skipping - data too short');
         continue;
       }
 
@@ -751,48 +731,35 @@ export class LightCommitmentClient extends LightClient {
         // Parse commitment account data (discriminator already filtered above)
         const parsed = this.parseCommitmentAccountData(account.data.data);
         if (!parsed) {
-          console.log('[scanNotes] Failed to parse commitment account');
           continue;
         }
-        console.log(`[scanNotes] Parsed commitment, leafIndex: ${parsed.leafIndex}`);
 
         // Deserialize encrypted note
         const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
         if (!encryptedNote) {
-          console.log('[scanNotes] Failed to deserialize encrypted note');
           continue;
         }
-        console.log('[scanNotes] Deserialized encrypted note');
 
         // Derive decryption key:
         // - If stealthEphemeralPubkey is present, derive stealthPrivateKey from it
         // - Otherwise (internal ops), use the original viewing key
         let decryptionKey: bigint;
-        const toHex = (arr: Uint8Array) => Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
         if (parsed.stealthEphemeralPubkey) {
           // Derive: stealthPrivateKey = spendingKey + H(spendingKey * ephemeralPubkey)
-          console.log('[scanNotes] Stealth ephemeral X:', toHex(parsed.stealthEphemeralPubkey.x).slice(0, 32) + '...');
-          console.log('[scanNotes] viewingKey:', viewingKey.toString(16).slice(0, 16) + '...');
           decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
-          console.log('[scanNotes] Derived stealthPrivateKey:', decryptionKey.toString(16).slice(0, 16) + '...');
         } else {
           // Internal operation (swap/remove_liquidity) - use original key
           decryptionKey = viewingKey;
-          console.log('[scanNotes] Using original viewingKey for decryption (internal op)');
         }
 
         // Try to decrypt with derived key
         const note = tryDecryptNote(encryptedNote, decryptionKey);
         if (!note) {
-          console.log('[scanNotes] Failed to decrypt note (not ours or wrong format)');
           continue;
         }
-        console.log(`[scanNotes] Decrypted note! Amount: ${note.amount}`);
-        console.log('[scanNotes] leafIndex:', parsed.leafIndex);
 
         // Skip 0-amount notes (change outputs with no value)
         if (note.amount === 0n) {
-          console.log('[scanNotes] Skipping 0-amount note');
           continue;
         }
 
@@ -807,7 +774,6 @@ export class LightCommitmentClient extends LightClient {
         });
       } catch (err) {
         // Failed to parse or decrypt - skip this account
-        console.log('[scanNotes] Error processing account:', err);
         continue;
       }
     }
@@ -888,7 +854,6 @@ export class LightCommitmentClient extends LightClient {
       // Helius provides discriminator separately, so data starts directly with pool
       // Minimum size: 32 (pool) + 32 (commitment) + 8 (leaf_index) + 64 (ephemeral) + 4 (len) = 140
       if (data.length < 140) {
-        console.log('[parseCommitment] Data too short');
         return null;
       }
 
@@ -918,7 +883,6 @@ export class LightCommitmentClient extends LightClient {
       const encryptedNoteLen = view.getUint32(136, true);
 
       if (encryptedNoteLen > data.length - 140) {
-        console.log(`[parseCommitment] Invalid encrypted note length - would exceed buffer`);
         return null;
       }
 
@@ -933,7 +897,6 @@ export class LightCommitmentClient extends LightClient {
         encryptedNote: new Uint8Array(encryptedNote),
       };
     } catch (err) {
-      console.log('[parseCommitment] Error:', err);
       return null;
     }
   }
