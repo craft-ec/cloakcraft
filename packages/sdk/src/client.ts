@@ -841,9 +841,10 @@ export class CloakCraftClient {
   }
 
   /**
-   * Scan for notes belonging to the current wallet
+   * Scan for unspent notes belonging to the current wallet
    *
-   * Uses the Light Protocol scanner to find and decrypt notes
+   * Uses the Light Protocol scanner to find and decrypt notes,
+   * then filters out spent notes using nullifier detection.
    *
    * @param tokenMint - Optional token mint to filter by (derives pool PDA internally)
    */
@@ -856,6 +857,7 @@ export class CloakCraftClient {
     }
 
     const viewingKey = bytesToField(this.wallet.keypair.spending.sk);
+    const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
 
     // Derive pool PDA from token mint if provided
     // Commitment accounts store pool PDA, not token mint
@@ -867,7 +869,8 @@ export class CloakCraftClient {
       );
     }
 
-    return this.lightClient.scanNotes(viewingKey, this.programId, poolPda);
+    // Use getUnspentNotes to filter out spent notes
+    return this.lightClient.getUnspentNotes(viewingKey, nullifierKey, this.programId, poolPda);
   }
 
   /**
