@@ -892,6 +892,17 @@ export class CloakCraftClient {
     return this.lightClient.getBalance(viewingKey, nullifierKey, this.programId, poolPda);
   }
 
+  /**
+   * Clear the note scanning cache
+   *
+   * Call this after transactions to ensure fresh data on next scan.
+   * The cache improves performance by skipping already-processed accounts,
+   * but should be cleared after state changes.
+   */
+  clearScanCache(): void {
+    this.lightClient?.clearCache();
+  }
+
   // =============================================================================
   // Private Methods
   // =============================================================================

@@ -23,6 +23,8 @@ interface UnshieldOptions {
   amount: bigint;
   /** Recipient token account for withdrawn tokens */
   recipient: PublicKey;
+  /** Wallet public key (for wallet adapter) */
+  walletPublicKey?: PublicKey;
 }
 
 export function useUnshield() {
@@ -35,8 +37,7 @@ export function useUnshield() {
 
   const unshield = useCallback(
     async (
-      options: UnshieldOptions,
-      relayer?: SolanaKeypair
+      options: UnshieldOptions
     ): Promise<TransactionResult | null> => {
       if (!client || !wallet) {
         setState({ isUnshielding: false, error: 'Wallet not connected', result: null });
@@ -50,8 +51,48 @@ export function useUnshield() {
 
       const { inputs, amount, recipient } = options;
 
+      setState({ isUnshielding: true, error: null, result: null });
+
+      // Force re-scan to get fresh notes with stealthEphemeralPubkey
+      // Clear cache to ensure we get truly fresh data
+      let freshNotes: DecryptedNote[];
+      try {
+        const tokenMint = inputs[0]?.tokenMint;
+        client.clearScanCache();
+        freshNotes = await client.scanNotes(tokenMint);
+      } catch (err) {
+        setState({
+          isUnshielding: false,
+          error: `Failed to scan notes: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          result: null,
+        });
+        return null;
+      }
+
+      // Find matching fresh notes for the input commitments
+      // The UI-selected notes may be stale (missing stealthEphemeralPubkey)
+      // We need to match by commitment to find the fresh versions
+      const matchedInputs: DecryptedNote[] = [];
+      for (const input of inputs) {
+        // Match by commitment (unique identifier for a note)
+        const fresh = freshNotes.find(n =>
+          n.commitment && input.commitment &&
+          Buffer.from(n.commitment).toString('hex') === Buffer.from(input.commitment).toString('hex')
+        );
+        if (fresh) {
+          matchedInputs.push(fresh);
+        } else {
+          setState({
+            isUnshielding: false,
+            error: 'Selected note not found in pool. It may have been spent or not yet synced.',
+            result: null,
+          });
+          return null;
+        }
+      }
+
       // Validate inputs
-      const totalInput = inputs.reduce((sum, n) => sum + n.amount, 0n);
+      const totalInput = matchedInputs.reduce((sum, n) => sum + n.amount, 0n);
       if (totalInput < amount) {
         setState({
           isUnshielding: false,
@@ -61,37 +102,34 @@ export function useUnshield() {
         return null;
       }
 
-      setState({ isUnshielding: true, error: null, result: null });
-
       try {
         // Calculate change (if any)
         const change = totalInput - amount;
 
-        // Prepare outputs: only change back to self (if any)
-        const outputs = [];
-        if (change > 0n) {
-          // Import generateStealthAddress here to avoid circular deps
-          const { generateStealthAddress } = await import('@cloakcraft/sdk');
-          const { stealthAddress } = generateStealthAddress(wallet.publicKey);
-          outputs.push({
-            recipient: stealthAddress,
-            amount: change,
-          });
-        }
+        // Import generateStealthAddress here to avoid circular deps
+        const { generateStealthAddress } = await import('@cloakcraft/sdk');
+        const { stealthAddress } = generateStealthAddress(wallet.publicKey);
 
-        // Execute transfer with unshield
+        // Circuit always requires at least one output commitment
+        // If no change, create a dummy zero-amount output
+        const outputs = [{
+          recipient: stealthAddress,
+          amount: change > 0n ? change : 0n,
+        }];
+
+        // Execute transfer with unshield using FRESH notes
         const result = await client.prepareAndTransfer(
           {
-            inputs,
+            inputs: matchedInputs,  // Use fresh notes with stealthEphemeralPubkey
             outputs,
             unshield: { amount, recipient },
           },
-          relayer
+          undefined // relayer - wallet adapter will be used via provider
         );
 
-        // Sync notes after successful unshield
-        if (inputs.length > 0 && inputs[0].tokenMint) {
-          await sync(inputs[0].tokenMint);
+        // Sync notes after successful unshield (clear cache for fresh data)
+        if (matchedInputs.length > 0 && matchedInputs[0].tokenMint) {
+          await sync(matchedInputs[0].tokenMint, true);
         }
 
         setState({ isUnshielding: false, error: null, result });

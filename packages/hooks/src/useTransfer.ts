@@ -41,7 +41,7 @@ export function useTransfer() {
       inputs: DecryptedNote[],
       outputs: TransferOutput[],
       unshield?: UnshieldOption,
-      relayer?: SolanaKeypair
+      walletPublicKey?: PublicKey
     ): Promise<TransactionResult | null> => {
       if (!client || !wallet) {
         setState({ isTransferring: false, error: 'Wallet not connected', result: null });
@@ -55,16 +55,51 @@ export function useTransfer() {
 
       setState({ isTransferring: true, error: null, result: null });
 
+      // Force re-scan to get fresh notes with stealthEphemeralPubkey
+      // Clear cache to ensure we get truly fresh data
+      let freshNotes: DecryptedNote[];
+      try {
+        const tokenMint = inputs[0]?.tokenMint;
+        client.clearScanCache();
+        freshNotes = await client.scanNotes(tokenMint);
+      } catch (err) {
+        setState({
+          isTransferring: false,
+          error: `Failed to scan notes: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          result: null,
+        });
+        return null;
+      }
+
+      // Find matching fresh notes for the input commitments
+      const matchedInputs: DecryptedNote[] = [];
+      for (const input of inputs) {
+        const fresh = freshNotes.find(n =>
+          n.commitment && input.commitment &&
+          Buffer.from(n.commitment).toString('hex') === Buffer.from(input.commitment).toString('hex')
+        );
+        if (fresh) {
+          matchedInputs.push(fresh);
+        } else {
+          setState({
+            isTransferring: false,
+            error: 'Selected note not found in pool. It may have been spent or not yet synced.',
+            result: null,
+          });
+          return null;
+        }
+      }
+
       try {
         // Client's prepareAndTransfer handles all the cryptographic prep
         const result = await client.prepareAndTransfer(
-          { inputs, outputs, unshield },
-          relayer
+          { inputs: matchedInputs, outputs, unshield },  // Use fresh notes
+          undefined // relayer - wallet adapter will be used via provider
         );
 
-        // Sync notes after successful transfer
-        if (inputs.length > 0 && inputs[0].tokenMint) {
-          await sync(inputs[0].tokenMint);
+        // Sync notes after successful transfer (clear cache for fresh data)
+        if (matchedInputs.length > 0 && matchedInputs[0].tokenMint) {
+          await sync(matchedInputs[0].tokenMint, true);
         }
 
         setState({ isTransferring: false, error: null, result });

@@ -13,6 +13,7 @@ interface CloakCraftContextValue {
   isConnected: boolean;
   isInitialized: boolean;
   isInitializing: boolean;
+  isProverReady: boolean;
   isSyncing: boolean;
   syncStatus: SyncStatus | null;
   notes: DecryptedNote[];
@@ -20,7 +21,7 @@ interface CloakCraftContextValue {
   // Actions
   connect: (spendingKey: Uint8Array) => Promise<void>;
   disconnect: () => void;
-  sync: (tokenMint?: PublicKey) => Promise<void>;
+  sync: (tokenMint?: PublicKey, clearCache?: boolean) => Promise<void>;
   createWallet: () => Wallet;
   /** Set the Anchor program instance (version-agnostic) */
   setProgram: (program: unknown) => void;
@@ -42,6 +43,8 @@ interface CloakCraftProviderProps {
   network?: 'devnet' | 'mainnet-beta';
   /** Auto-initialize Poseidon on mount */
   autoInitialize?: boolean;
+  /** Connected Solana wallet public key (for per-wallet stealth key storage) */
+  solanaWalletPubkey?: string;
 }
 
 export function CloakCraftProvider({
@@ -52,14 +55,31 @@ export function CloakCraftProvider({
   heliusApiKey,
   network = 'devnet',
   autoInitialize = true,
+  solanaWalletPubkey,
 }: CloakCraftProviderProps) {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
+  const [isProverReady, setIsProverReady] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [notes, setNotes] = useState<DecryptedNote[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // Storage key is per-Solana-wallet to prevent cross-wallet stealth key sharing
+  const STORAGE_KEY = solanaWalletPubkey
+    ? `cloakcraft_spending_key_${solanaWalletPubkey}`
+    : 'cloakcraft_spending_key';
+
+  // Clear stealth wallet when Solana wallet changes
+  useEffect(() => {
+    if (solanaWalletPubkey) {
+      // Reset state when Solana wallet changes
+      setWallet(null);
+      setNotes([]);
+      setIsProverReady(false);
+    }
+  }, [solanaWalletPubkey]);
 
   const client = useMemo(
     () =>
@@ -91,12 +111,63 @@ export function CloakCraftProvider({
     }
   }, [autoInitialize, isInitialized, isInitializing]);
 
+  // Restore wallet from localStorage on init
+  useEffect(() => {
+    if (isInitialized && !wallet) {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          const spendingKey = new Uint8Array(JSON.parse(stored));
+          client.loadWallet(spendingKey).then(setWallet).catch(() => {
+            // Invalid stored key, clear it
+            localStorage.removeItem(STORAGE_KEY);
+          });
+        }
+      } catch {
+        // Ignore localStorage errors
+      }
+    }
+  }, [isInitialized, wallet, client]);
+
+  // Auto-sync notes when wallet becomes available
+  useEffect(() => {
+    if (wallet && isInitialized && notes.length === 0 && !isSyncing) {
+      // Scan for notes automatically when wallet is loaded
+      client.scanNotes().then(setNotes).catch((err) => {
+        console.warn('[CloakCraft] Auto-sync failed:', err);
+      });
+    }
+  }, [wallet, isInitialized, notes.length, isSyncing, client]);
+
+  // Auto-initialize prover for transfer circuits when wallet connects
+  useEffect(() => {
+    if (wallet && isInitialized && !isInitializing && !isProverReady) {
+      // Load transfer circuits for unshield/transfer operations
+      console.log('[CloakCraft] Initializing prover...');
+      client.initializeProver(['transfer/1x2', 'transfer/1x3'])
+        .then(() => {
+          console.log('[CloakCraft] Prover initialized successfully');
+          setIsProverReady(true);
+        })
+        .catch((err) => {
+          console.error('[CloakCraft] Prover init failed:', err);
+          setError(`Prover initialization failed: ${err.message}`);
+        });
+    }
+  }, [wallet, isInitialized, isInitializing, isProverReady, client]);
+
   const connect = useCallback(
     async (spendingKey: Uint8Array) => {
       try {
         setError(null);
         const newWallet = await client.loadWallet(spendingKey);
         setWallet(newWallet);
+        // Persist to localStorage
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(spendingKey)));
+        } catch {
+          // Ignore localStorage errors
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to connect wallet';
         setError(message);
@@ -111,14 +182,24 @@ export function CloakCraftProvider({
     setNotes([]);
     setSyncStatus(null);
     setError(null);
+    // Clear from localStorage
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // Ignore localStorage errors
+    }
   }, []);
 
-  const sync = useCallback(async (tokenMint?: PublicKey) => {
+  const sync = useCallback(async (tokenMint?: PublicKey, clearCache = false) => {
     if (!wallet) return;
 
     setIsSyncing(true);
     setError(null);
     try {
+      // Clear cache if requested (e.g., after transactions)
+      if (clearCache) {
+        client.clearScanCache();
+      }
       // Use Light Protocol scanning if configured
       const scannedNotes = await client.scanNotes(tokenMint);
       setNotes(scannedNotes);
@@ -162,6 +243,7 @@ export function CloakCraftProvider({
     isConnected: wallet !== null,
     isInitialized,
     isInitializing,
+    isProverReady,
     isSyncing,
     syncStatus,
     notes,

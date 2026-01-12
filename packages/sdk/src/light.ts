@@ -473,6 +473,23 @@ export interface CommitmentMerkleProof {
  * Extended Light client with commitment operations
  */
 export class LightCommitmentClient extends LightClient {
+  // Cache for decrypted notes - keyed by viewing key hash
+  private noteCache: Map<string, Map<string, DecryptedNote | null>> = new Map();
+
+  /**
+   * Clear note cache (call when wallet changes)
+   */
+  clearCache(): void {
+    this.noteCache.clear();
+  }
+
+  /**
+   * Get cache key from viewing key
+   */
+  private getCacheKey(viewingKey: bigint): string {
+    return viewingKey.toString(16).slice(0, 16);
+  }
+
   /**
    * Get commitment by its address
    */
@@ -750,6 +767,13 @@ export class LightCommitmentClient extends LightClient {
     // Query commitment accounts from Helius
     const accounts = await this.getCommitmentAccounts(programId, pool);
 
+    // Get or create cache for this viewing key
+    const cacheKey = this.getCacheKey(viewingKey);
+    if (!this.noteCache.has(cacheKey)) {
+      this.noteCache.set(cacheKey, new Map());
+    }
+    const cache = this.noteCache.get(cacheKey)!;
+
     // Commitment account discriminator
     // Note: JavaScript loses precision for large integers, so we use approximate match
     // Actual value: 15491678376909512437, JS sees: ~15491678376909513000
@@ -762,9 +786,19 @@ export class LightCommitmentClient extends LightClient {
         continue;
       }
 
+      // Check cache first - skip expensive decryption if already processed
+      if (cache.has(account.hash)) {
+        const cachedNote = cache.get(account.hash);
+        if (cachedNote) {
+          decryptedNotes.push(cachedNote);
+        }
+        continue;
+      }
+
       // Filter by commitment discriminator (approximate match due to JS number precision)
       const disc = account.data.discriminator;
       if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1000) {
+        cache.set(account.hash, null); // Cache as not-ours
         continue;
       }
 
@@ -773,6 +807,7 @@ export class LightCommitmentClient extends LightClient {
       // New layout: pool(32) + commitment(32) + leaf_index(8) + stealth_ephemeral(64) + len(4) + encrypted(~180) = ~320
       const dataLen = atob(account.data.data).length;
       if (dataLen < 260) {
+        cache.set(account.hash, null); // Cache as not-ours
         continue;
       }
 
@@ -780,12 +815,14 @@ export class LightCommitmentClient extends LightClient {
         // Parse commitment account data (discriminator already filtered above)
         const parsed = this.parseCommitmentAccountData(account.data.data);
         if (!parsed) {
+          cache.set(account.hash, null);
           continue;
         }
 
         // Deserialize encrypted note
         const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
         if (!encryptedNote) {
+          cache.set(account.hash, null);
           continue;
         }
 
@@ -804,25 +841,31 @@ export class LightCommitmentClient extends LightClient {
         // Try to decrypt with derived key
         const note = tryDecryptNote(encryptedNote, decryptionKey);
         if (!note) {
+          cache.set(account.hash, null); // Not our note
           continue;
         }
 
         // Skip 0-amount notes (change outputs with no value)
         if (note.amount === 0n) {
+          cache.set(account.hash, null);
           continue;
         }
 
         // Successfully decrypted - this note belongs to user
-        decryptedNotes.push({
+        const decryptedNote: DecryptedNote = {
           ...note,
           commitment: parsed.commitment,
           leafIndex: parsed.leafIndex,
           pool: new PublicKey(parsed.pool),
           accountHash: account.hash, // Store for merkle proof fetching
           stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? undefined, // Store for stealth key derivation
-        });
+        };
+
+        cache.set(account.hash, decryptedNote); // Cache our note
+        decryptedNotes.push(decryptedNote);
       } catch (err) {
-        // Failed to parse or decrypt - skip this account
+        // Failed to parse or decrypt - cache as not-ours
+        cache.set(account.hash, null);
         continue;
       }
     }

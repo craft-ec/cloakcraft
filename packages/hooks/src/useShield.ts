@@ -23,6 +23,8 @@ interface ShieldOptions {
   amount: bigint;
   /** User's token account (source of tokens) */
   userTokenAccount: PublicKey;
+  /** Wallet public key (for wallet adapter) */
+  walletPublicKey?: PublicKey;
   /** Optional: Shield to a different recipient */
   recipient?: { x: Uint8Array; y: Uint8Array };
 }
@@ -38,7 +40,7 @@ export function useShield() {
   const shield = useCallback(
     async (
       options: ShieldOptions,
-      payer: SolanaKeypair
+      payer?: SolanaKeypair
     ): Promise<(TransactionResult & { commitment: Uint8Array; randomness: Uint8Array }) | null> => {
       if (!client || !wallet) {
         setState({ isShielding: false, error: 'Wallet not connected', result: null });
@@ -57,24 +59,20 @@ export function useShield() {
         const recipientPubkey = options.recipient ?? wallet.publicKey;
         const { stealthAddress } = generateStealthAddress(recipientPubkey);
 
-        // Get pool PDA
-        const [poolPda] = PublicKey.findProgramAddressSync(
-          [Buffer.from('pool'), options.tokenMint.toBuffer()],
-          client.programId
-        );
-
-        const result = await client.shield(
+        // The stealthAddress includes ephemeralPubkey which is stored on-chain
+        // for the recipient to derive their stealthPrivateKey for decryption
+        const result = await client.shieldWithWallet(
           {
-            pool: poolPda,
+            pool: options.tokenMint, // This is the token mint, not the pool PDA
             amount: options.amount,
-            recipient: stealthAddress,
+            recipient: stealthAddress, // Contains both stealthPubkey and ephemeralPubkey
             userTokenAccount: options.userTokenAccount,
           },
-          payer
+          options.walletPublicKey!
         );
 
-        // Sync notes after successful shield
-        await sync(options.tokenMint);
+        // Sync notes after successful shield (clear cache to pick up new commitment)
+        await sync(options.tokenMint, true);
 
         setState({ isShielding: false, error: null, result });
         return result;
