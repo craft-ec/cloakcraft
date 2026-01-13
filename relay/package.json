@@ -1,0 +1,36 @@
+{
+  "name": "@cloakcraft/relay",
+  "version": "0.1.0",
+  "description": "TunnelCraft relay integration for CloakCraft IP-layer privacy",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloakcraft/types": "workspace:*",
+    "@solana/web3.js": "^1.91.0",
+    "hyperswarm": "^4.7.0",
+    "protomux": "^3.5.0",
+    "b4a": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0"
+  }
+}

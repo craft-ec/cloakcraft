@@ -1,0 +1,18 @@
+
+> @cloakcraft/ui@0.1.0 build /Users/onlyabrak/dev/craftec/cloakcraft/packages/ui
+> tsup src/index.ts --format cjs,esm --dts --external react --external @cloakcraft/sdk --external @cloakcraft/hooks --external @solana/wallet-adapter-react
+
+CLI Building entry: src/index.ts
+CLI Using tsconfig: tsconfig.json
+CLI tsup v8.5.1
+CLI Target: es2020
+CJS Build start
+ESM Build start
+ESM dist/index.mjs 89.99 KB
+ESM ⚡️ Build success in 17ms
+CJS dist/index.js 101.28 KB
+CJS ⚡️ Build success in 17ms
+DTS Build start
+DTS ⚡️ Build success in 1112ms
+DTS dist/index.d.ts  8.29 KB
+DTS dist/index.d.mts 8.29 KB

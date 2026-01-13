@@ -1,0 +1,18 @@
+
+> @cloakcraft/types@0.1.0 build /Users/onlyabrak/dev/craftec/cloakcraft/packages/types
+> tsup src/index.ts --format cjs,esm --dts
+
+CLI Building entry: src/index.ts
+CLI Using tsconfig: tsconfig.json
+CLI tsup v8.5.1
+CLI Target: es2020
+CJS Build start
+ESM Build start
+CJS dist/index.js 1.69 KB
+CJS ⚡️ Build success in 9ms
+ESM dist/index.mjs 671.00 B
+ESM ⚡️ Build success in 10ms
+DTS Build start
+DTS ⚡️ Build success in 375ms
+DTS dist/index.d.ts  17.40 KB
+DTS dist/index.d.mts 17.40 KB

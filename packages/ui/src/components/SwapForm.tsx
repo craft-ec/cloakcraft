@@ -1,0 +1,343 @@
+/**
+ * Swap form component
+ *
+ * Privacy-preserving token swap using AMM
+ */
+
+import React, { useState, useMemo } from 'react';
+import { PublicKey, Keypair as SolanaKeypair } from '@solana/web3.js';
+import { useNoteSelector, useWallet, useCloakCraft } from '@cloakcraft/hooks';
+import { generateStealthAddress, calculateSwapOutput, calculateMinOutput } from '@cloakcraft/sdk';
+import { styles, colors } from '../styles';
+
+interface TokenInfo {
+  mint: PublicKey;
+  symbol: string;
+  name: string;
+  decimals: number;
+  logoUri?: string;
+}
+
+interface SwapFormProps {
+  tokens: TokenInfo[];
+  onSuccess?: (signature: string) => void;
+  onError?: (error: string) => void;
+  className?: string;
+  walletPublicKey?: PublicKey | null;
+}
+
+export function SwapForm({
+  tokens,
+  onSuccess,
+  onError,
+  className,
+  walletPublicKey,
+}: SwapFormProps) {
+  const [inputToken, setInputToken] = useState(tokens[0]);
+  const [outputToken, setOutputToken] = useState(tokens[1] || tokens[0]);
+  const [inputAmount, setInputAmount] = useState('');
+  const [slippageBps, setSlippageBps] = useState(50); // 0.5% default
+  const [isSwapping, setIsSwapping] = useState(false);
+
+  const { isConnected, isInitialized, wallet } = useWallet();
+  const { client } = useCloakCraft();
+  const { availableNotes, totalAvailable, selectNotesForAmount } = useNoteSelector(inputToken.mint);
+
+  // Mock pool reserves (TODO: fetch from on-chain pool state)
+  const mockReserveIn = 1000000n * BigInt(10 ** inputToken.decimals);
+  const mockReserveOut = 1000000n * BigInt(10 ** outputToken.decimals);
+
+  const formatAmount = (value: bigint, decimals: number) => {
+    const divisor = BigInt(10 ** decimals);
+    const whole = value / divisor;
+    const fractional = value % divisor;
+    return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 4)}`;
+  };
+
+  const swapQuote = useMemo(() => {
+    const amountNum = parseFloat(inputAmount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      return null;
+    }
+
+    const amountLamports = BigInt(Math.floor(amountNum * 10 ** inputToken.decimals));
+
+    try {
+      const { outputAmount, priceImpact } = calculateSwapOutput(
+        amountLamports,
+        mockReserveIn,
+        mockReserveOut,
+        30 // 0.3% fee
+      );
+
+      const minOutput = calculateMinOutput(outputAmount, slippageBps);
+
+      return {
+        outputAmount,
+        minOutput,
+        priceImpact,
+        priceRatio: Number(mockReserveOut) / Number(mockReserveIn),
+      };
+    } catch (err) {
+      return null;
+    }
+  }, [inputAmount, inputToken.decimals, mockReserveIn, mockReserveOut, slippageBps]);
+
+  const handleSwapTokens = () => {
+    const temp = inputToken;
+    setInputToken(outputToken);
+    setOutputToken(temp);
+    setInputAmount('');
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const amountNum = parseFloat(inputAmount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      onError?.('Please enter a valid amount');
+      return;
+    }
+
+    if (inputToken.mint.equals(outputToken.mint)) {
+      onError?.('Input and output tokens must be different');
+      return;
+    }
+
+    const amountLamports = BigInt(Math.floor(amountNum * 10 ** inputToken.decimals));
+
+    if (!client?.getProgram()) {
+      onError?.('Program not configured. Call setProgram() first.');
+      return;
+    }
+
+    if (!swapQuote) {
+      onError?.('Unable to calculate swap quote');
+      return;
+    }
+
+    // Select notes for swap
+    let selectedNotes;
+    try {
+      selectedNotes = selectNotesForAmount(amountLamports);
+    } catch (err) {
+      onError?.(err instanceof Error ? err.message : 'Insufficient balance');
+      return;
+    }
+
+    if (selectedNotes.length !== 1) {
+      onError?.('Swap requires exactly 1 input note. Please consolidate notes first.');
+      return;
+    }
+
+    // Generate stealth addresses for output and change
+    if (!wallet) {
+      onError?.('Wallet not connected');
+      return;
+    }
+
+    const { stealthAddress: outputAddress } = generateStealthAddress(wallet.publicKey);
+    const { stealthAddress: changeAddress } = generateStealthAddress(wallet.publicKey);
+
+    setIsSwapping(true);
+
+    try {
+      // TODO: Implement swap method in client
+      // const result = await client.swap({
+      //   input: selectedNotes[0],
+      //   poolId: ...,
+      //   swapDirection: 'aToB',
+      //   inputAmount: amountLamports,
+      //   minOutput: swapQuote.minOutput,
+      //   outputRecipient: outputAddress,
+      //   changeRecipient: changeAddress,
+      // }, relayer);
+
+      onError?.('Swap functionality not yet implemented');
+      // onSuccess?.(result.signature);
+      // setInputAmount('');
+    } catch (err) {
+      onError?.(err instanceof Error ? err.message : 'Swap failed');
+    } finally {
+      setIsSwapping(false);
+    }
+  };
+
+  const isDisabled = !isConnected || !isInitialized || isSwapping || !inputAmount || !swapQuote;
+
+  return (
+    <div className={className} style={styles.card}>
+      <h3 style={styles.cardTitle}>Swap Tokens</h3>
+      <p style={styles.cardDescription}>
+        Exchange tokens privately using the AMM pool
+      </p>
+
+      <form onSubmit={handleSubmit} style={styles.form}>
+        {/* Input Token */}
+        <div>
+          <label style={styles.label}>From</label>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+            <select
+              value={inputToken.mint.toBase58()}
+              onChange={(e) => {
+                const token = tokens.find(t => t.mint.toBase58() === e.target.value);
+                if (token) setInputToken(token);
+              }}
+              disabled={isSwapping}
+              style={{ ...styles.input, flex: 1 }}
+            >
+              {tokens.map(token => (
+                <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
+                  {token.symbol}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <input
+            type="number"
+            value={inputAmount}
+            onChange={(e) => setInputAmount(e.target.value)}
+            placeholder="0.00"
+            step="any"
+            min="0"
+            disabled={isSwapping}
+            style={styles.input}
+          />
+
+          <div style={{ ...styles.spaceBetween, marginTop: '8px' }}>
+            <span style={{ fontSize: '0.75rem', color: colors.textMuted }}>Available</span>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>
+              {formatAmount(totalAvailable, inputToken.decimals)} {inputToken.symbol}
+            </span>
+          </div>
+        </div>
+
+        {/* Swap Direction Button */}
+        <div style={{ display: 'flex', justifyContent: 'center', margin: '8px 0' }}>
+          <button
+            type="button"
+            onClick={handleSwapTokens}
+            disabled={isSwapping}
+            style={{
+              background: colors.backgroundMuted,
+              border: `1px solid ${colors.border}`,
+              borderRadius: '8px',
+              padding: '8px',
+              cursor: 'pointer',
+              color: colors.text,
+            }}
+          >
+            ↓
+          </button>
+        </div>
+
+        {/* Output Token */}
+        <div>
+          <label style={styles.label}>To (estimated)</label>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+            <select
+              value={outputToken.mint.toBase58()}
+              onChange={(e) => {
+                const token = tokens.find(t => t.mint.toBase58() === e.target.value);
+                if (token) setOutputToken(token);
+              }}
+              disabled={isSwapping}
+              style={{ ...styles.input, flex: 1 }}
+            >
+              {tokens.map(token => (
+                <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
+                  {token.symbol}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div
+            style={{
+              ...styles.input,
+              background: colors.backgroundMuted,
+              color: colors.textMuted,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <span>
+              {swapQuote
+                ? formatAmount(swapQuote.outputAmount, outputToken.decimals)
+                : '0.00'}
+            </span>
+            <span style={{ fontSize: '0.875rem' }}>{outputToken.symbol}</span>
+          </div>
+        </div>
+
+        {/* Quote Details */}
+        {swapQuote && (
+          <div style={{
+            background: colors.backgroundMuted,
+            padding: '12px',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+          }}>
+            <div style={{ ...styles.spaceBetween, marginBottom: '8px' }}>
+              <span style={{ color: colors.textMuted }}>Price Impact</span>
+              <span style={{ color: swapQuote.priceImpact > 5 ? colors.error : colors.text }}>
+                {swapQuote.priceImpact.toFixed(2)}%
+              </span>
+            </div>
+            <div style={{ ...styles.spaceBetween, marginBottom: '8px' }}>
+              <span style={{ color: colors.textMuted }}>Minimum Received</span>
+              <span>{formatAmount(swapQuote.minOutput, outputToken.decimals)} {outputToken.symbol}</span>
+            </div>
+            <div style={styles.spaceBetween}>
+              <span style={{ color: colors.textMuted }}>Slippage Tolerance</span>
+              <span>{(slippageBps / 100).toFixed(2)}%</span>
+            </div>
+          </div>
+        )}
+
+        {/* Slippage Settings */}
+        <div>
+          <label style={styles.label}>
+            Slippage Tolerance (%)
+            <input
+              type="number"
+              value={slippageBps / 100}
+              onChange={(e) => setSlippageBps(Math.floor(parseFloat(e.target.value || '0') * 100))}
+              placeholder="0.5"
+              step="0.1"
+              min="0.1"
+              max="50"
+              disabled={isSwapping}
+              style={styles.input}
+            />
+          </label>
+        </div>
+
+        <button
+          type="submit"
+          disabled={isDisabled}
+          style={{
+            ...styles.buttonPrimary,
+            ...(isDisabled ? styles.buttonDisabled : {}),
+          }}
+        >
+          {!isConnected
+            ? 'Connect Wallet'
+            : !isInitialized
+            ? 'Initializing...'
+            : isSwapping
+            ? 'Swapping...'
+            : 'Swap Tokens'}
+        </button>
+
+        {swapQuote && swapQuote.priceImpact > 10 && (
+          <div style={{ ...styles.errorText, background: colors.backgroundMuted, padding: '12px', borderRadius: '8px' }}>
+            Warning: High price impact! Consider reducing swap amount.
+          </div>
+        )}
+      </form>
+    </div>
+  );
+}

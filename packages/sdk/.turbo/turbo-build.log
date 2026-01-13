@@ -1,0 +1,25 @@
+
+> @cloakcraft/sdk@0.1.0 build /Users/onlyabrak/dev/craftec/cloakcraft/packages/sdk
+> tsup src/index.ts src/idl/index.ts --format cjs,esm --dts
+
+CLI Building entry: src/index.ts, src/idl/index.ts
+CLI Using tsconfig: tsconfig.json
+CLI tsup v8.5.1
+CLI Target: es2020
+CJS Build start
+ESM Build start
+CJS dist/idl/index.js 123.91 KB
+CJS dist/index.js     206.54 KB
+CJS ⚡️ Build success in 24ms
+ESM dist/index.mjs          162.93 KB
+ESM dist/swap-3C5JBXY5.mjs  631.00 B
+ESM dist/chunk-Y6FXYEAI.mjs 390.00 B
+ESM dist/chunk-35GBSRGD.mjs 33.02 KB
+ESM dist/idl/index.mjs      122.97 KB
+ESM ⚡️ Build success in 24ms
+DTS Build start
+DTS ⚡️ Build success in 1257ms
+DTS dist/index.d.ts      82.00 KB
+DTS dist/idl/index.d.ts  85.27 KB
+DTS dist/index.d.mts     82.00 KB
+DTS dist/idl/index.d.mts 85.27 KB

@@ -1,0 +1,8 @@
+{
+  "tokenA": "7JPSVri3sBDBRtncWcn1g6iNmwEKpaGcSLTbbehwdKqY",
+  "tokenB": "NA32krGso7oo4Md4Tzr1mrM5Mu8Hp7KrwyCgDorsrtF",
+  "privacyWallet": "./scripts/.fresh-amm-wallet.json",
+  "commitmentA": "05f9335b6794659bd8bdd26742adf45824b43cea05dc2efa843ced23aed79145",
+  "commitmentB": "25d632cca239257830899aa3f2d5f5735c31074e27dc1fac2382af665ff276be",
+  "timestamp": "2026-01-13T14:40:34.636Z"
+}

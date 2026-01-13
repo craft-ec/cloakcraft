@@ -1,0 +1,105 @@
+//! Initialize an internal AMM pool
+
+use anchor_lang::prelude::*;
+use anchor_lang::system_program::{create_account, CreateAccount};
+use anchor_spl::token::{Mint, Token, InitializeMint};
+
+use crate::state::AmmPool;
+use crate::constants::seeds;
+
+#[derive(Accounts)]
+#[instruction(token_a_mint: Pubkey, token_b_mint: Pubkey)]
+pub struct InitializeAmmPool<'info> {
+    /// AMM pool account
+    #[account(
+        init,
+        payer = payer,
+        space = AmmPool::LEN,
+        seeds = [seeds::AMM_POOL, token_a_mint.as_ref(), token_b_mint.as_ref()],
+        bump
+    )]
+    pub amm_pool: Account<'info, AmmPool>,
+
+    /// LP token mint (created as regular mint with amm_pool as authority)
+    /// CHECK: This account is initialized as a mint via CPI and must be a signer
+    #[account(mut, signer)]
+    pub lp_mint: AccountInfo<'info>,
+
+    /// Token A mint
+    pub token_a_mint_account: Account<'info, Mint>,
+
+    /// Token B mint
+    pub token_b_mint_account: Account<'info, Mint>,
+
+    /// Authority
+    pub authority: Signer<'info>,
+
+    /// Payer
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    /// System program
+    pub system_program: Program<'info, System>,
+
+    /// Token program
+    pub token_program: Program<'info, Token>,
+
+    /// Rent
+    pub rent: Sysvar<'info, Rent>,
+}
+
+pub fn initialize_amm_pool(
+    ctx: Context<InitializeAmmPool>,
+    token_a_mint: Pubkey,
+    token_b_mint: Pubkey,
+    fee_bps: u16,
+) -> Result<()> {
+    let amm_pool = &mut ctx.accounts.amm_pool;
+    let clock = Clock::get()?;
+
+    // Create LP mint account
+    let rent = Rent::get()?;
+    let space = 82; // Mint account size
+    let lamports = rent.minimum_balance(space);
+
+    create_account(
+        CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            CreateAccount {
+                from: ctx.accounts.payer.to_account_info(),
+                to: ctx.accounts.lp_mint.to_account_info(),
+            },
+        ),
+        lamports,
+        space as u64,
+        &ctx.accounts.token_program.key(),
+    )?;
+
+    // Initialize the LP mint via CPI
+    let cpi_accounts = anchor_spl::token::InitializeMint {
+        mint: ctx.accounts.lp_mint.to_account_info(),
+        rent: ctx.accounts.rent.to_account_info(),
+    };
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+
+    // Set amm_pool as mint authority, no freeze authority
+    anchor_spl::token::initialize_mint(cpi_ctx, 9, &amm_pool.key(), None)?;
+
+    amm_pool.pool_id = amm_pool.key();
+    amm_pool.token_a_mint = token_a_mint;
+    amm_pool.token_b_mint = token_b_mint;
+    amm_pool.lp_mint = ctx.accounts.lp_mint.key();
+    amm_pool.reserve_a = 0;
+    amm_pool.reserve_b = 0;
+    amm_pool.lp_supply = 0;
+    amm_pool.fee_bps = fee_bps;
+    amm_pool.authority = ctx.accounts.authority.key();
+    amm_pool.is_active = true;
+    amm_pool.bump = ctx.bumps.amm_pool;
+    amm_pool.lp_mint_bump = 0; // No longer a PDA, set to 0
+
+    // Initialize state hash
+    amm_pool.state_hash = amm_pool.compute_state_hash();
+    Ok(())
+}
