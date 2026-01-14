@@ -121,6 +121,7 @@ pub fn add_liquidity<'info>(
     deposit_a: u64,
     deposit_b: u64,
     lp_amount: u64,
+    min_lp_amount: u64,
     num_commitments: u8,
     _light_params: LightAddLiquidityParams,
 ) -> Result<()> {
@@ -147,7 +148,46 @@ pub fn add_liquidity<'info>(
         &public_inputs,
     )?;
 
-    // 2. Update AMM pool state
+    // 2. CRITICAL SECURITY CHECK: Validate LP amount calculation
+    // This prevents attackers from minting arbitrary LP tokens
+    let calculated_lp = if amm_pool.lp_supply == 0 {
+        // Initial liquidity: LP = sqrt(depositA * depositB)
+        integer_sqrt((deposit_a as u128).checked_mul(deposit_b as u128)
+            .ok_or(CloakCraftError::AmountOverflow)?) as u64
+    } else {
+        // Subsequent deposits: LP = min(depositA * lpSupply / reserveA, depositB * lpSupply / reserveB)
+        let lp_from_a = ((deposit_a as u128)
+            .checked_mul(amm_pool.lp_supply as u128)
+            .ok_or(CloakCraftError::AmountOverflow)?
+            .checked_div(amm_pool.reserve_a as u128)
+            .ok_or(CloakCraftError::InsufficientLiquidity)?) as u64;
+
+        let lp_from_b = ((deposit_b as u128)
+            .checked_mul(amm_pool.lp_supply as u128)
+            .ok_or(CloakCraftError::AmountOverflow)?
+            .checked_div(amm_pool.reserve_b as u128)
+            .ok_or(CloakCraftError::InsufficientLiquidity)?) as u64;
+
+        lp_from_a.min(lp_from_b)
+    };
+
+    // CRITICAL: Require exact match to prevent LP token inflation attacks
+    require!(
+        lp_amount == calculated_lp,
+        CloakCraftError::InvalidLpAmount
+    );
+
+    msg!("LP amount validated: provided={}, calculated={}", lp_amount, calculated_lp);
+
+    // SLIPPAGE PROTECTION: Ensure user gets at least min_lp_amount (front-running protection)
+    require!(
+        lp_amount >= min_lp_amount,
+        CloakCraftError::SlippageExceeded
+    );
+
+    msg!("Slippage check passed: lp_amount={}, min_lp_amount={}", lp_amount, min_lp_amount);
+
+    // 3. Update AMM pool state
     amm_pool.reserve_a = amm_pool.reserve_a.checked_add(deposit_a).ok_or(CloakCraftError::AmountOverflow)?;
     amm_pool.reserve_b = amm_pool.reserve_b.checked_add(deposit_b).ok_or(CloakCraftError::AmountOverflow)?;
     amm_pool.lp_supply = amm_pool.lp_supply.checked_add(lp_amount).ok_or(CloakCraftError::AmountOverflow)?;
@@ -156,7 +196,7 @@ pub fn add_liquidity<'info>(
     msg!("Updated AMM state: reserve_a={}, reserve_b={}, lp_supply={}",
          amm_pool.reserve_a, amm_pool.reserve_b, amm_pool.lp_supply);
 
-    // 3. Initialize pending operation PDA
+    // 4. Initialize pending operation PDA
     pending_op.bump = ctx.bumps.pending_operation;
     pending_op.operation_id = operation_id;
     pending_op.relayer = ctx.accounts.relayer.key();
@@ -164,7 +204,7 @@ pub fn add_liquidity<'info>(
     pending_op.created_at = clock.unix_timestamp;
     pending_op.expires_at = clock.unix_timestamp + PENDING_OPERATION_EXPIRY_SECONDS;
 
-    // 4. Store nullifier data for Phase 2 (create_nullifier calls)
+    // 5. Store nullifier data for Phase 2 (create_nullifier calls)
     pending_op.num_nullifiers = 2;
     pending_op.nullifier_pools[0] = pool_a.key().to_bytes();
     pending_op.nullifier_pools[1] = pool_b.key().to_bytes();
@@ -172,7 +212,7 @@ pub fn add_liquidity<'info>(
     pending_op.nullifiers[1] = nullifier_b;
     pending_op.nullifier_completed_mask = 0;
 
-    // 5. Store commitment data for Phase 3 (create_commitment calls)
+    // 6. Store commitment data for Phase 3 (create_commitment calls)
     pending_op.num_commitments = num_commitments;
     // Index 0: LP commitment (goes to LP pool)
     pending_op.pools[0] = lp_pool.key().to_bytes();
@@ -186,6 +226,29 @@ pub fn add_liquidity<'info>(
     pending_op.completed_mask = 0;
 
     Ok(())
+}
+
+/// Integer square root using Newton's method (Babylonian method)
+/// Returns floor(sqrt(n))
+fn integer_sqrt(n: u128) -> u128 {
+    if n == 0 {
+        return 0;
+    }
+    if n <= 3 {
+        return 1;
+    }
+
+    // Initial guess: use bit length / 2
+    let mut x = n;
+    let mut y = (x + 1) / 2;
+
+    // Newton iteration: y = (x + n/x) / 2
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+
+    x
 }
 
 /// Reduce a PublicKey to a field element by zeroing the top byte

@@ -94,6 +94,9 @@ pub enum CloakCraftError {
     #[msg("Constant product invariant violated")]
     InvariantViolated,
 
+    #[msg("Invalid LP token amount - must match calculated amount")]
+    InvalidLpAmount,
+
     // ============ Governance Errors ============
     #[msg("Aggregation not found")]
     AggregationNotFound,

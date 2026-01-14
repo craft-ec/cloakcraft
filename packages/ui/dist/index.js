@@ -3354,6 +3354,7 @@ function AddLiquidityForm({
   const [amountA, setAmountA] = (0, import_react13.useState)("");
   const [amountB, setAmountB] = (0, import_react13.useState)("");
   const [lastEditedField, setLastEditedField] = (0, import_react13.useState)(null);
+  const [slippageBps, setSlippageBps] = (0, import_react13.useState)(100);
   const [isAdding, setIsAdding] = (0, import_react13.useState)(false);
   const { isConnected, isInitialized, wallet } = (0, import_hooks16.useWallet)();
   const { client } = (0, import_hooks16.useCloakCraft)();
@@ -3420,16 +3421,18 @@ function AddLiquidityForm({
         selectedPool.reserveB,
         selectedPool.lpSupply
       );
+      const minLpAmount = lpAmount * (10000n - BigInt(slippageBps)) / 10000n;
       return {
         depositA,
         depositB,
         lpAmount,
+        minLpAmount,
         shareOfPool: Number(lpAmount * 10000n / (selectedPool.lpSupply + lpAmount)) / 100
       };
     } catch (err) {
       return null;
     }
-  }, [amountA, amountB, tokenA.decimals, tokenB.decimals, selectedPool]);
+  }, [amountA, amountB, tokenA.decimals, tokenB.decimals, selectedPool, slippageBps]);
   const handleSubmit = async (e) => {
     e.preventDefault();
     const amountANum = parseFloat(amountA);
@@ -3479,6 +3482,7 @@ function AddLiquidityForm({
         depositA: liquidityQuote.depositA,
         depositB: liquidityQuote.depositB,
         lpAmount: liquidityQuote.lpAmount,
+        minLpAmount: liquidityQuote.minLpAmount,
         lpRecipient: lpAddress,
         changeARecipient: changeAAddress,
         changeBRecipient: changeBAddress
@@ -3629,14 +3633,42 @@ function AddLiquidityForm({
             /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { style: { color: colors.textMuted }, children: "LP Tokens" }),
             /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { children: formatAmount(liquidityQuote.lpAmount, 9) })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { style: styles.spaceBetween, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { style: { color: colors.textMuted }, children: "Minimum LP Tokens" }),
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { children: formatAmount(liquidityQuote.minLpAmount, 9) })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
             /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { style: { color: colors.textMuted }, children: "Share of Pool" }),
             /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { children: [
               liquidityQuote.shareOfPool.toFixed(2),
               "%"
             ] })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { style: styles.spaceBetween, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { style: { color: colors.textMuted }, children: "Slippage Tolerance" }),
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { children: [
+              (slippageBps / 100).toFixed(2),
+              "%"
+            ] })
           ] })
         ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("label", { style: styles.label, children: [
+          "Slippage Tolerance (%)",
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+            "input",
+            {
+              type: "number",
+              value: slippageBps / 100,
+              onChange: (e) => setSlippageBps(Math.floor(parseFloat(e.target.value || "0") * 100)),
+              placeholder: "1.0",
+              step: "0.1",
+              min: "0.1",
+              max: "50",
+              disabled: isAdding,
+              style: { ...styles.input, marginTop: "8px" }
+            }
+          )
+        ] }) }),
         /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
           "button",
           {

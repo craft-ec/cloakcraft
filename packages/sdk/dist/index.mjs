@@ -51,7 +51,7 @@ import {
   serializeEncryptedNote,
   tryDecryptNote,
   verifyCommitment
-} from "./chunk-336FGBM5.mjs";
+} from "./chunk-QAXCG3EM.mjs";
 import {
   __require
 } from "./chunk-Y6FXYEAI.mjs";
@@ -3540,7 +3540,7 @@ var CloakCraftClient = class {
       heliusRpcUrl
     );
     const phase1Signature = await phase1Tx.rpc();
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-NFBQIICS.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-II7GUIGJ.mjs");
     for (let i = 0; i < pendingNullifiers.length; i++) {
       const pn = pendingNullifiers[i];
       const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(
@@ -3655,12 +3655,13 @@ var CloakCraftClient = class {
         inputBAmount: params.inputB.amount,
         depositA: params.depositA,
         depositB: params.depositB,
-        lpAmount
+        lpAmount,
+        minLpAmount: params.minLpAmount
       },
       heliusRpcUrl
     );
     const phase1Signature = await phase1Tx.rpc();
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-NFBQIICS.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-II7GUIGJ.mjs");
     for (let i = 0; i < pendingNullifiers.length; i++) {
       const pn = pendingNullifiers[i];
       const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(
@@ -3755,7 +3756,7 @@ var CloakCraftClient = class {
       heliusRpcUrl
     );
     const phase1Signature = await phase1Tx.rpc();
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-NFBQIICS.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-II7GUIGJ.mjs");
     for (let i = 0; i < pendingNullifiers.length; i++) {
       const pn = pendingNullifiers[i];
       const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(

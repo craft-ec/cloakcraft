@@ -304,6 +304,8 @@ export interface AddLiquidityParams {
   depositB: bigint;
   /** Actual LP tokens to receive (calculated from pool state) */
   lpAmount: bigint;
+  /** Minimum LP tokens acceptable (slippage protection) */
+  minLpAmount: bigint;
   /** Recipient for LP tokens */
   lpRecipient: StealthAddress;
   /** Recipient for token A change */

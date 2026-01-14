@@ -186,10 +186,11 @@ pub mod cloakcraft {
         deposit_a: u64,
         deposit_b: u64,
         lp_amount: u64,
+        min_lp_amount: u64,
         num_commitments: u8,
         light_params: swap::LightAddLiquidityParams,
     ) -> Result<()> {
-        swap::add_liquidity(ctx, operation_id, proof, nullifier_a, nullifier_b, lp_commitment, change_a_commitment, change_b_commitment, deposit_a, deposit_b, lp_amount, num_commitments, light_params)
+        swap::add_liquidity(ctx, operation_id, proof, nullifier_a, nullifier_b, lp_commitment, change_a_commitment, change_b_commitment, deposit_a, deposit_b, lp_amount, min_lp_amount, num_commitments, light_params)
     }
 
 

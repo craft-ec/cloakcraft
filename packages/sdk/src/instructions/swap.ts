@@ -352,6 +352,7 @@ export interface AddLiquidityInstructionParams {
   depositA: bigint;
   depositB: bigint;
   lpAmount: bigint;
+  minLpAmount: bigint;
 }
 
 /**
@@ -486,6 +487,7 @@ export async function buildAddLiquidityWithProgram(
       new BN(params.depositA.toString()),
       new BN(params.depositB.toString()),
       new BN(params.lpAmount.toString()),
+      new BN(params.minLpAmount.toString()),
       numCommitments,
       lightParams
     )

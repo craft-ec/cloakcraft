@@ -1171,6 +1171,7 @@ export class CloakCraftClient {
         depositA: params.depositA,
         depositB: params.depositB,
         lpAmount,
+        minLpAmount: params.minLpAmount,
       },
       heliusRpcUrl
     );

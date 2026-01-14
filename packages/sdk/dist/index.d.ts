@@ -1970,6 +1970,7 @@ interface AddLiquidityInstructionParams {
     depositA: bigint;
     depositB: bigint;
     lpAmount: bigint;
+    minLpAmount: bigint;
 }
 /**
  * Add Liquidity Phase 2 parameters

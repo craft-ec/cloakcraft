@@ -40,6 +40,7 @@ export function AddLiquidityForm({
   const [amountA, setAmountA] = useState('');
   const [amountB, setAmountB] = useState('');
   const [lastEditedField, setLastEditedField] = useState<'A' | 'B' | null>(null);
+  const [slippageBps, setSlippageBps] = useState(100); // 1% default for liquidity (higher than swap due to MEV)
   const [isAdding, setIsAdding] = useState(false);
 
   const { isConnected, isInitialized, wallet } = useWallet();
@@ -123,16 +124,20 @@ export function AddLiquidityForm({
         selectedPool.lpSupply
       );
 
+      // Calculate minimum LP amount with slippage protection
+      const minLpAmount = (lpAmount * (10000n - BigInt(slippageBps))) / 10000n;
+
       return {
         depositA,
         depositB,
         lpAmount,
+        minLpAmount,
         shareOfPool: Number(lpAmount * 10000n / (selectedPool.lpSupply + lpAmount)) / 100,
       };
     } catch (err) {
       return null;
     }
-  }, [amountA, amountB, tokenA.decimals, tokenB.decimals, selectedPool]);
+  }, [amountA, amountB, tokenA.decimals, tokenB.decimals, selectedPool, slippageBps]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -197,6 +202,7 @@ export function AddLiquidityForm({
         depositA: liquidityQuote.depositA,
         depositB: liquidityQuote.depositB,
         lpAmount: liquidityQuote.lpAmount,
+        minLpAmount: liquidityQuote.minLpAmount,
         lpRecipient: lpAddress,
         changeARecipient: changeAAddress,
         changeBRecipient: changeBAddress,
@@ -353,12 +359,38 @@ export function AddLiquidityForm({
               <span style={{ color: colors.textMuted }}>LP Tokens</span>
               <span>{formatAmount(liquidityQuote.lpAmount, 9)}</span>
             </div>
-            <div style={styles.spaceBetween}>
+            <div style={{ ...styles.spaceBetween, marginBottom: '8px' }}>
+              <span style={{ color: colors.textMuted }}>Minimum LP Tokens</span>
+              <span>{formatAmount(liquidityQuote.minLpAmount, 9)}</span>
+            </div>
+            <div style={{ ...styles.spaceBetween, marginBottom: '8px' }}>
               <span style={{ color: colors.textMuted }}>Share of Pool</span>
               <span>{liquidityQuote.shareOfPool.toFixed(2)}%</span>
             </div>
+            <div style={styles.spaceBetween}>
+              <span style={{ color: colors.textMuted }}>Slippage Tolerance</span>
+              <span>{(slippageBps / 100).toFixed(2)}%</span>
+            </div>
           </div>
         )}
+
+        {/* Slippage Settings */}
+        <div>
+          <label style={styles.label}>
+            Slippage Tolerance (%)
+            <input
+              type="number"
+              value={slippageBps / 100}
+              onChange={(e) => setSlippageBps(Math.floor(parseFloat(e.target.value || '0') * 100))}
+              placeholder="1.0"
+              step="0.1"
+              min="0.1"
+              max="50"
+              disabled={isAdding}
+              style={{ ...styles.input, marginTop: '8px' }}
+            />
+          </label>
+        </div>
 
         <button
           type="submit"

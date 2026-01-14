@@ -809,6 +809,7 @@ async function buildAddLiquidityWithProgram(program, params, _rpcUrl) {
     new import_anchor4.BN(params.depositA.toString()),
     new import_anchor4.BN(params.depositB.toString()),
     new import_anchor4.BN(params.lpAmount.toString()),
+    new import_anchor4.BN(params.minLpAmount.toString()),
     numCommitments,
     lightParams
   ).accountsStrict({
@@ -4783,7 +4784,8 @@ var CloakCraftClient = class {
         inputBAmount: params.inputB.amount,
         depositA: params.depositA,
         depositB: params.depositB,
-        lpAmount
+        lpAmount,
+        minLpAmount: params.minLpAmount
       },
       heliusRpcUrl
     );

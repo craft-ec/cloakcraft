@@ -3291,6 +3291,7 @@ function AddLiquidityForm({
   const [amountA, setAmountA] = useState10("");
   const [amountB, setAmountB] = useState10("");
   const [lastEditedField, setLastEditedField] = useState10(null);
+  const [slippageBps, setSlippageBps] = useState10(100);
   const [isAdding, setIsAdding] = useState10(false);
   const { isConnected, isInitialized, wallet } = useWallet9();
   const { client } = useCloakCraft7();
@@ -3357,16 +3358,18 @@ function AddLiquidityForm({
         selectedPool.reserveB,
         selectedPool.lpSupply
       );
+      const minLpAmount = lpAmount * (10000n - BigInt(slippageBps)) / 10000n;
       return {
         depositA,
         depositB,
         lpAmount,
+        minLpAmount,
         shareOfPool: Number(lpAmount * 10000n / (selectedPool.lpSupply + lpAmount)) / 100
       };
     } catch (err) {
       return null;
     }
-  }, [amountA, amountB, tokenA.decimals, tokenB.decimals, selectedPool]);
+  }, [amountA, amountB, tokenA.decimals, tokenB.decimals, selectedPool, slippageBps]);
   const handleSubmit = async (e) => {
     e.preventDefault();
     const amountANum = parseFloat(amountA);
@@ -3416,6 +3419,7 @@ function AddLiquidityForm({
         depositA: liquidityQuote.depositA,
         depositB: liquidityQuote.depositB,
         lpAmount: liquidityQuote.lpAmount,
+        minLpAmount: liquidityQuote.minLpAmount,
         lpRecipient: lpAddress,
         changeARecipient: changeAAddress,
         changeBRecipient: changeBAddress
@@ -3566,14 +3570,42 @@ function AddLiquidityForm({
             /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "LP Tokens" }),
             /* @__PURE__ */ jsx17("span", { children: formatAmount(liquidityQuote.lpAmount, 9) })
           ] }),
-          /* @__PURE__ */ jsxs17("div", { style: styles.spaceBetween, children: [
+          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Minimum LP Tokens" }),
+            /* @__PURE__ */ jsx17("span", { children: formatAmount(liquidityQuote.minLpAmount, 9) })
+          ] }),
+          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
             /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Share of Pool" }),
             /* @__PURE__ */ jsxs17("span", { children: [
               liquidityQuote.shareOfPool.toFixed(2),
               "%"
             ] })
+          ] }),
+          /* @__PURE__ */ jsxs17("div", { style: styles.spaceBetween, children: [
+            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Slippage Tolerance" }),
+            /* @__PURE__ */ jsxs17("span", { children: [
+              (slippageBps / 100).toFixed(2),
+              "%"
+            ] })
           ] })
         ] }),
+        /* @__PURE__ */ jsx17("div", { children: /* @__PURE__ */ jsxs17("label", { style: styles.label, children: [
+          "Slippage Tolerance (%)",
+          /* @__PURE__ */ jsx17(
+            "input",
+            {
+              type: "number",
+              value: slippageBps / 100,
+              onChange: (e) => setSlippageBps(Math.floor(parseFloat(e.target.value || "0") * 100)),
+              placeholder: "1.0",
+              step: "0.1",
+              min: "0.1",
+              max: "50",
+              disabled: isAdding,
+              style: { ...styles.input, marginTop: "8px" }
+            }
+          )
+        ] }) }),
         /* @__PURE__ */ jsx17(
           "button",
           {
