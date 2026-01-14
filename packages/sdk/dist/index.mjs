@@ -51,7 +51,7 @@ import {
   scalarMul,
   serializeEncryptedNote,
   tryDecryptNote
-} from "./chunk-TKC5TGE6.mjs";
+} from "./chunk-QOGJM2A6.mjs";
 import {
   MAX_TRANSACTION_SIZE,
   buildAtomicMultiPhaseTransaction,
@@ -3759,17 +3759,23 @@ var CloakCraftClient = class {
     if (!this.program) {
       throw new Error("No program set. Call setProgram() first.");
     }
-    const tx = await buildInitializeAmmPoolWithProgram(this.program, {
-      tokenAMint,
-      tokenBMint,
-      lpMint: lpMintKeypair.publicKey,
-      feeBps,
-      authority: payer.publicKey,
-      payer: payer.publicKey
-    });
-    const signature = await tx.signers([payer, lpMintKeypair]).rpc();
-    console.log(`[AMM] Pool initialized: ${signature}`);
-    return signature;
+    try {
+      const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+        tokenAMint,
+        tokenBMint,
+        lpMint: lpMintKeypair.publicKey,
+        feeBps,
+        authority: payer.publicKey,
+        payer: payer.publicKey
+      });
+      const hasSecretKey = payer.secretKey && payer.secretKey.length > 0;
+      const signature = await tx.signers(hasSecretKey ? [payer, lpMintKeypair] : [lpMintKeypair]).rpc();
+      console.log(`[AMM] Pool initialized: ${signature}`);
+      return signature;
+    } catch (err) {
+      console.error("[AMM] Failed to initialize pool:", err);
+      throw err;
+    }
   }
   /**
    * Execute an AMM swap
@@ -3878,7 +3884,7 @@ var CloakCraftClient = class {
       instructionParams,
       heliusRpcUrl
     );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CR2ENZOE.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-3V2JKETZ.mjs");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
     for (let i = 0; i < pendingNullifiers.length; i++) {
@@ -4066,7 +4072,7 @@ var CloakCraftClient = class {
       instructionParams,
       heliusRpcUrl
     );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CR2ENZOE.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-3V2JKETZ.mjs");
     console.log("[Add Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
@@ -4207,7 +4213,7 @@ var CloakCraftClient = class {
     };
     console.log("[Remove Liquidity] Attempting atomic execution with versioned transaction...");
     try {
-      const { buildRemoveLiquidityInstructionsForVersionedTx: buildRemoveLiquidityInstructionsForVersionedTx3 } = await import("./swap-CR2ENZOE.mjs");
+      const { buildRemoveLiquidityInstructionsForVersionedTx: buildRemoveLiquidityInstructionsForVersionedTx3 } = await import("./swap-3V2JKETZ.mjs");
       const { instructions, operationId: operationId2 } = await buildRemoveLiquidityInstructionsForVersionedTx3(
         this.program,
         instructionParams,
@@ -4258,7 +4264,7 @@ var CloakCraftClient = class {
       instructionParams,
       heliusRpcUrl
     );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CR2ENZOE.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-3V2JKETZ.mjs");
     console.log("[Remove Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });

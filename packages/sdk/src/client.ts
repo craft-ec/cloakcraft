@@ -1063,23 +1063,33 @@ export class CloakCraftClient {
       throw new Error('No program set. Call setProgram() first.');
     }
 
-    // Build transaction
-    const tx = await buildInitializeAmmPoolWithProgram(this.program, {
-      tokenAMint,
-      tokenBMint,
-      lpMint: lpMintKeypair.publicKey,
-      feeBps,
-      authority: payer.publicKey,
-      payer: payer.publicKey,
-    });
+    try {
+      // Build transaction
+      const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+        tokenAMint,
+        tokenBMint,
+        lpMint: lpMintKeypair.publicKey,
+        feeBps,
+        authority: payer.publicKey,
+        payer: payer.publicKey,
+      });
 
-    // Send transaction
-    const signature = await tx
-      .signers([payer, lpMintKeypair])
-      .rpc();
+      // Check if payer has secretKey (CLI mode) or is a wallet adapter (browser mode)
+      const hasSecretKey = payer.secretKey && payer.secretKey.length > 0;
 
-    console.log(`[AMM] Pool initialized: ${signature}`);
-    return signature;
+      // Send transaction
+      // In wallet adapter mode, the provider handles payer signing automatically
+      // We only need to explicitly sign with lpMintKeypair
+      const signature = await tx
+        .signers(hasSecretKey ? [payer, lpMintKeypair] : [lpMintKeypair])
+        .rpc();
+
+      console.log(`[AMM] Pool initialized: ${signature}`);
+      return signature;
+    } catch (err) {
+      console.error('[AMM] Failed to initialize pool:', err);
+      throw err;
+    }
   }
 
   /**

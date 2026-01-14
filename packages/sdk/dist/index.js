@@ -598,9 +598,9 @@ async function buildInitializeAmmPoolWithProgram(program, params) {
     tokenBMintAccount: params.tokenBMint,
     authority: params.authority,
     payer: params.payer,
-    systemProgram: import_web39.PublicKey.default,
+    systemProgram: import_web39.SystemProgram.programId,
     tokenProgram: new import_web39.PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
-    rent: new import_web39.PublicKey("SysvarRent111111111111111111111111111111111")
+    rent: import_web39.SYSVAR_RENT_PUBKEY
   }).preInstructions([
     import_web39.ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 })
   ]);
@@ -5152,17 +5152,23 @@ var CloakCraftClient = class {
     if (!this.program) {
       throw new Error("No program set. Call setProgram() first.");
     }
-    const tx = await buildInitializeAmmPoolWithProgram(this.program, {
-      tokenAMint,
-      tokenBMint,
-      lpMint: lpMintKeypair.publicKey,
-      feeBps,
-      authority: payer.publicKey,
-      payer: payer.publicKey
-    });
-    const signature = await tx.signers([payer, lpMintKeypair]).rpc();
-    console.log(`[AMM] Pool initialized: ${signature}`);
-    return signature;
+    try {
+      const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+        tokenAMint,
+        tokenBMint,
+        lpMint: lpMintKeypair.publicKey,
+        feeBps,
+        authority: payer.publicKey,
+        payer: payer.publicKey
+      });
+      const hasSecretKey = payer.secretKey && payer.secretKey.length > 0;
+      const signature = await tx.signers(hasSecretKey ? [payer, lpMintKeypair] : [lpMintKeypair]).rpc();
+      console.log(`[AMM] Pool initialized: ${signature}`);
+      return signature;
+    } catch (err) {
+      console.error("[AMM] Failed to initialize pool:", err);
+      throw err;
+    }
   }
   /**
    * Execute an AMM swap

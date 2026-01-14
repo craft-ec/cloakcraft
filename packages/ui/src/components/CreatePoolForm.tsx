@@ -155,9 +155,11 @@ export function CreatePoolForm({
       setDepositAAmount('');
       setDepositBAmount('');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create pool';
-      setError(message);
-      onError?.(message);
+      console.error('[CreatePoolForm] Error creating pool:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      const fullError = `Failed to create pool: ${message}`;
+      setError(fullError);
+      onError?.(fullError);
     } finally {
       setIsCreating(false);
     }

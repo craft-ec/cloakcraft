@@ -11,6 +11,8 @@
 import {
   PublicKey,
   ComputeBudgetProgram,
+  SystemProgram,
+  SYSVAR_RENT_PUBKEY,
 } from '@solana/web3.js';
 import { Program, BN } from '@coral-xyz/anchor';
 import type { StealthAddress } from '@cloakcraft/types';
@@ -147,9 +149,9 @@ export async function buildInitializeAmmPoolWithProgram(
       tokenBMintAccount: params.tokenBMint,
       authority: params.authority,
       payer: params.payer,
-      systemProgram: PublicKey.default,
+      systemProgram: SystemProgram.programId,
       tokenProgram: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
-      rent: new PublicKey('SysvarRent111111111111111111111111111111111'),
+      rent: SYSVAR_RENT_PUBKEY,
     })
     .preInstructions([
       ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
