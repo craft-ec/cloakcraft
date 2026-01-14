@@ -22,6 +22,10 @@ const DEMO_CONFIG = {
   programId: process.env.NEXT_PUBLIC_PROGRAM_ID || 'fBh7FvBZpex64Qp7i45yuyxh7sH8YstYyxGLmToLRTP',
   network: (process.env.NEXT_PUBLIC_NETWORK || 'devnet') as 'devnet' | 'mainnet-beta',
   heliusApiKey: process.env.NEXT_PUBLIC_HELIUS_API_KEY,
+  // Address Lookup Table for atomic transaction compression
+  addressLookupTables: [
+    new PublicKey('3B7MRpzeNnX9uaf1SuJqgNwjtJLLCKQp2Go2hexcxGHa'), // Devnet ALT
+  ],
 };
 
 // IDL for the program (minimal version for initialization)
@@ -91,6 +95,7 @@ function CloakCraftWrapper({ children }: { children: React.ReactNode }) {
       network={DEMO_CONFIG.network}
       heliusApiKey={DEMO_CONFIG.heliusApiKey}
       solanaWalletPubkey={publicKey?.toBase58()}
+      addressLookupTables={DEMO_CONFIG.addressLookupTables.map(key => key.toBase58())}
     >
       {children}
     </CloakCraftProvider>

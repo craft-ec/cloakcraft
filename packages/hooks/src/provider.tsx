@@ -45,6 +45,8 @@ interface CloakCraftProviderProps {
   autoInitialize?: boolean;
   /** Connected Solana wallet public key (for per-wallet stealth key storage) */
   solanaWalletPubkey?: string;
+  /** Address Lookup Table addresses for atomic transaction compression (optional) */
+  addressLookupTables?: string[];
 }
 
 export function CloakCraftProvider({
@@ -56,6 +58,7 @@ export function CloakCraftProvider({
   network = 'devnet',
   autoInitialize = true,
   solanaWalletPubkey,
+  addressLookupTables,
 }: CloakCraftProviderProps) {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -89,8 +92,10 @@ export function CloakCraftProvider({
         programId: new PublicKey(programId),
         heliusApiKey,
         network,
+        circuitsBaseUrl: '/circom',  // Circom circuits in /public/circom/
+        addressLookupTables: addressLookupTables?.map(addr => new PublicKey(addr)),
       }),
-    [rpcUrl, indexerUrl, programId, heliusApiKey, network]
+    [rpcUrl, indexerUrl, programId, heliusApiKey, network, addressLookupTables]
   );
 
   // Initialize Poseidon on mount

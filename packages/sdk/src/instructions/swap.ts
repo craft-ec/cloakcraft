@@ -536,6 +536,8 @@ export interface CreateNullifierParams {
   pool: PublicKey;
   /** Relayer */
   relayer: PublicKey;
+  /** Nullifier value (optional, if not provided will fetch from PendingOperation) */
+  nullifier?: Uint8Array;
 }
 
 /**
@@ -553,13 +555,21 @@ export async function buildCreateNullifierWithProgram(
 
   // Derive PDAs
   const [pendingOpPda] = derivePendingOperationPda(params.operationId, programId);
-  console.log(`[Phase 2] Fetching PendingOperation: ${pendingOpPda.toBase58()}`);
-  console.log(`[Phase 2] Operation ID: ${Buffer.from(params.operationId).toString('hex').slice(0, 16)}...`);
 
-  // Fetch pending operation to get nullifier
-  const pendingOp = await (program.account as any).pendingOperation.fetch(pendingOpPda);
-  const nullifier = new Uint8Array(pendingOp.nullifiers[params.nullifierIndex]);
-  console.log(`[Phase 2] Fetched nullifier from PendingOp: ${Buffer.from(nullifier).toString('hex').slice(0, 16)}...`);
+  // Get nullifier (either from params or fetch from PendingOperation)
+  let nullifier: Uint8Array;
+  if (params.nullifier) {
+    // Versioned transaction: nullifier provided directly
+    nullifier = params.nullifier;
+    console.log(`[Phase 2] Using provided nullifier: ${Buffer.from(nullifier).toString('hex').slice(0, 16)}...`);
+  } else {
+    // Sequential execution: fetch from PendingOperation
+    console.log(`[Phase 2] Fetching PendingOperation: ${pendingOpPda.toBase58()}`);
+    console.log(`[Phase 2] Operation ID: ${Buffer.from(params.operationId).toString('hex').slice(0, 16)}...`);
+    const pendingOp = await (program.account as any).pendingOperation.fetch(pendingOpPda);
+    nullifier = new Uint8Array(pendingOp.nullifiers[params.nullifierIndex]);
+    console.log(`[Phase 2] Fetched nullifier from PendingOp: ${Buffer.from(nullifier).toString('hex').slice(0, 16)}...`);
+  }
 
   // Get Light Protocol validity proof for this nullifier
   const nullifierAddress = lightProtocol.deriveNullifierAddress(params.pool, nullifier);
@@ -620,6 +630,8 @@ export interface CreateCommitmentParams {
   stealthEphemeralPubkey: Uint8Array;
   /** Encrypted note */
   encryptedNote: Uint8Array;
+  /** Commitment value (optional, if not provided will fetch from PendingOperation) */
+  commitment?: Uint8Array;
 }
 
 /**
@@ -639,9 +651,18 @@ export async function buildCreateCommitmentWithProgram(
   const [pendingOpPda] = derivePendingOperationPda(params.operationId, programId);
   const [counterPda] = deriveCommitmentCounterPda(params.pool, programId);
 
-  // Fetch pending operation to get commitment
-  const pendingOp = await (program.account as any).pendingOperation.fetch(pendingOpPda);
-  const commitment = new Uint8Array(pendingOp.commitments[params.commitmentIndex]);
+  // Get commitment (either from params or fetch from PendingOperation)
+  let commitment: Uint8Array;
+  if (params.commitment) {
+    // Versioned transaction: commitment provided directly
+    commitment = params.commitment;
+    console.log(`[Phase 3] Using provided commitment: ${Buffer.from(commitment).toString('hex').slice(0, 16)}...`);
+  } else {
+    // Sequential execution: fetch from PendingOperation
+    const pendingOp = await (program.account as any).pendingOperation.fetch(pendingOpPda);
+    commitment = new Uint8Array(pendingOp.commitments[params.commitmentIndex]);
+    console.log(`[Phase 3] Fetched commitment from PendingOp: ${Buffer.from(commitment).toString('hex').slice(0, 16)}...`);
+  }
 
   // Get Light Protocol validity proof for this commitment
   const commitmentAddress = lightProtocol.deriveCommitmentAddress(params.pool, commitment);
@@ -747,6 +768,12 @@ export interface RemoveLiquidityInstructionParams {
   outputBRecipient: StealthAddress;
   /** LP amount being removed */
   lpAmount: bigint;
+  /** Output amounts */
+  outputAAmount: bigint;
+  outputBAmount: bigint;
+  /** Randomness used in proof generation */
+  outputARandomness: Uint8Array;
+  outputBRandomness: Uint8Array;
 }
 
 /**
@@ -793,21 +820,21 @@ export async function buildRemoveLiquidityWithProgram(
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(CIRCUIT_IDS.REMOVE_LIQUIDITY, programId);
 
-  // Generate randomness for outputs
-  const outputARandomness = generateRandomness();
-  const outputBRandomness = generateRandomness();
+  // Use randomness from proof generation (to match commitments)
+  const outputARandomness = params.outputARandomness;
+  const outputBRandomness = params.outputBRandomness;
 
-  // Create and encrypt notes (use token mints, not pool addresses)
+  // Create and encrypt notes with actual amounts (use token mints, not pool addresses)
   const outputANote = {
     stealthPubX: params.outputARecipient.stealthPubkey.x,
     tokenMint: params.tokenAMint,
-    amount: 0n, // Computed by circuit
+    amount: params.outputAAmount, // Use actual amount from withdrawal
     randomness: outputARandomness,
   };
   const outputBNote = {
     stealthPubX: params.outputBRecipient.stealthPubkey.x,
     tokenMint: params.tokenBMint,
-    amount: 0n, // Computed by circuit
+    amount: params.outputBAmount, // Use actual amount from withdrawal
     randomness: outputBRandomness,
   };
 
@@ -893,4 +920,247 @@ export async function buildRemoveLiquidityWithProgram(
 // =============================================================================
 // Close Pending Operation
 // =============================================================================
+
+// NOTE: buildClosePendingOperationWithProgram is defined earlier in this file
+
+// =============================================================================
+// Versioned Transaction Support
+// =============================================================================
+
+/**
+ * Build all swap instructions for atomic execution (Versioned Transaction)
+ *
+ * This builds all phases (1-4) as individual instructions that can be combined
+ * into a single versioned transaction for atomic execution.
+ *
+ * @returns Array of instructions in execution order
+ */
+export async function buildSwapInstructionsForVersionedTx(
+  program: Program,
+  params: SwapInstructionParams,
+  rpcUrl: string
+): Promise<{
+  instructions: import('@solana/web3.js').TransactionInstruction[];
+  operationId: Uint8Array;
+}> {
+  // Build Phase 1 transaction
+  const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } =
+    await buildSwapWithProgram(program, params, rpcUrl);
+
+  const instructions: import('@solana/web3.js').TransactionInstruction[] = [];
+
+  // Add Phase 1 instruction
+  const phase1Ix = await phase1Tx.instruction();
+  instructions.push(phase1Ix);
+
+  // Add Phase 2 instructions (nullifiers)
+  for (let i = 0; i < pendingNullifiers.length; i++) {
+    const pn = pendingNullifiers[i];
+    const { tx: nullifierTx } = await buildCreateNullifierWithProgram(
+      program,
+      {
+        operationId,
+        nullifierIndex: i,
+        pool: pn.pool,
+        relayer: params.relayer,
+        nullifier: pn.nullifier, // Pass nullifier directly for versioned tx
+      },
+      rpcUrl
+    );
+    const nullifierIx = await nullifierTx.instruction();
+    instructions.push(nullifierIx);
+  }
+
+  // Add Phase 3 instructions (commitments)
+  for (let i = 0; i < pendingCommitments.length; i++) {
+    const pc = pendingCommitments[i];
+    // Skip zero commitments
+    if (pc.commitment.every((b: number) => b === 0)) continue;
+
+    const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
+      program,
+      {
+        operationId,
+        commitmentIndex: i,
+        pool: pc.pool,
+        relayer: params.relayer,
+        stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+        encryptedNote: pc.encryptedNote,
+        commitment: pc.commitment, // Pass commitment directly for versioned tx
+      },
+      rpcUrl
+    );
+    const commitmentIx = await commitmentTx.instruction();
+    instructions.push(commitmentIx);
+  }
+
+  // Add Phase 4 instruction (close pending operation)
+  const { tx: closeTx } = await buildClosePendingOperationWithProgram(
+    program,
+    operationId,
+    params.relayer
+  );
+  const closeIx = await closeTx.instruction();
+  instructions.push(closeIx);
+
+  return { instructions, operationId };
+}
+
+/**
+ * Build all add liquidity instructions for atomic execution (Versioned Transaction)
+ *
+ * This builds all phases (1-4) as individual instructions that can be combined
+ * into a single versioned transaction for atomic execution.
+ *
+ * @returns Array of instructions in execution order
+ */
+export async function buildAddLiquidityInstructionsForVersionedTx(
+  program: Program,
+  params: AddLiquidityInstructionParams,
+  rpcUrl: string
+): Promise<{
+  instructions: import('@solana/web3.js').TransactionInstruction[];
+  operationId: Uint8Array;
+}> {
+  // Build Phase 1 transaction
+  const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } =
+    await buildAddLiquidityWithProgram(program, params, rpcUrl);
+
+  const instructions: import('@solana/web3.js').TransactionInstruction[] = [];
+
+  // Add Phase 1 instruction
+  const phase1Ix = await phase1Tx.instruction();
+  instructions.push(phase1Ix);
+
+  // Add Phase 2 instructions (nullifiers)
+  for (let i = 0; i < pendingNullifiers.length; i++) {
+    const pn = pendingNullifiers[i];
+    const { tx: nullifierTx } = await buildCreateNullifierWithProgram(
+      program,
+      {
+        operationId,
+        nullifierIndex: i,
+        pool: pn.pool,
+        relayer: params.relayer,
+        nullifier: pn.nullifier, // Pass nullifier directly for versioned tx
+      },
+      rpcUrl
+    );
+    const nullifierIx = await nullifierTx.instruction();
+    instructions.push(nullifierIx);
+  }
+
+  // Add Phase 3 instructions (commitments)
+  for (let i = 0; i < pendingCommitments.length; i++) {
+    const pc = pendingCommitments[i];
+    // Skip zero commitments
+    if (pc.commitment.every((b: number) => b === 0)) continue;
+
+    const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
+      program,
+      {
+        operationId,
+        commitmentIndex: i,
+        pool: pc.pool,
+        relayer: params.relayer,
+        stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+        encryptedNote: pc.encryptedNote,
+        commitment: pc.commitment, // Pass commitment directly for versioned tx
+      },
+      rpcUrl
+    );
+    const commitmentIx = await commitmentTx.instruction();
+    instructions.push(commitmentIx);
+  }
+
+  // Add Phase 4 instruction (close pending operation)
+  const { tx: closeTx } = await buildClosePendingOperationWithProgram(
+    program,
+    operationId,
+    params.relayer
+  );
+  const closeIx = await closeTx.instruction();
+  instructions.push(closeIx);
+
+  return { instructions, operationId };
+}
+
+/**
+ * Build all remove liquidity instructions for atomic execution (Versioned Transaction)
+ *
+ * This builds all phases (1-4) as individual instructions that can be combined
+ * into a single versioned transaction for atomic execution.
+ *
+ * @returns Array of instructions in execution order
+ */
+export async function buildRemoveLiquidityInstructionsForVersionedTx(
+  program: Program,
+  params: RemoveLiquidityInstructionParams,
+  rpcUrl: string
+): Promise<{
+  instructions: import('@solana/web3.js').TransactionInstruction[];
+  operationId: Uint8Array;
+}> {
+  // Build Phase 1 transaction
+  const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } =
+    await buildRemoveLiquidityWithProgram(program, params, rpcUrl);
+
+  const instructions: import('@solana/web3.js').TransactionInstruction[] = [];
+
+  // Add Phase 1 instruction
+  const phase1Ix = await phase1Tx.instruction();
+  instructions.push(phase1Ix);
+
+  // Add Phase 2 instructions (nullifiers)
+  for (let i = 0; i < pendingNullifiers.length; i++) {
+    const pn = pendingNullifiers[i];
+    const { tx: nullifierTx } = await buildCreateNullifierWithProgram(
+      program,
+      {
+        operationId,
+        nullifierIndex: i,
+        pool: pn.pool,
+        relayer: params.relayer,
+        nullifier: pn.nullifier, // Pass nullifier directly for versioned tx
+      },
+      rpcUrl
+    );
+    const nullifierIx = await nullifierTx.instruction();
+    instructions.push(nullifierIx);
+  }
+
+  // Add Phase 3 instructions (commitments)
+  for (let i = 0; i < pendingCommitments.length; i++) {
+    const pc = pendingCommitments[i];
+    // Skip zero commitments
+    if (pc.commitment.every((b: number) => b === 0)) continue;
+
+    const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
+      program,
+      {
+        operationId,
+        commitmentIndex: i,
+        pool: pc.pool,
+        relayer: params.relayer,
+        stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+        encryptedNote: pc.encryptedNote,
+        commitment: pc.commitment, // Pass commitment directly for versioned tx
+      },
+      rpcUrl
+    );
+    const commitmentIx = await commitmentTx.instruction();
+    instructions.push(commitmentIx);
+  }
+
+  // Add Phase 4 instruction (close pending operation)
+  const { tx: closeTx } = await buildClosePendingOperationWithProgram(
+    program,
+    operationId,
+    params.relayer
+  );
+  const closeIx = await closeTx.instruction();
+  instructions.push(closeIx);
+
+  return { instructions, operationId };
+}
 

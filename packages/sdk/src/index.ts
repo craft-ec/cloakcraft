@@ -34,3 +34,9 @@ export * from './instructions';
 
 // Export AMM utilities
 export * from './amm';
+
+// Export versioned transaction utilities
+export * from './versioned-transaction';
+
+// Export Address Lookup Table utilities
+export * from './address-lookup-table';

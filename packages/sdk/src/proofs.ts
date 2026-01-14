@@ -196,26 +196,16 @@ export class ProofGenerator {
       return;
     }
 
-    // Circuit files are at /circuits/target/<circuit_file_name>.json
-    const basePath = `${this.baseUrl}/target`;
+    // Circom circuits are auto-loaded on-demand via snarkjs, skip pre-loading
+    // They're loaded directly from .wasm and .zkey files at prove time
+    console.log(`[Circuit] ${name} will be auto-loaded on-demand from ${this.baseUrl}/`);
+    return;
 
-    try {
-      // Load compiled circuit manifest
-      const manifestUrl = `${basePath}/${circuitFileName}.json`;
-      const manifestRes = await fetch(manifestUrl);
-      if (!manifestRes.ok) throw new Error(`Failed to load manifest: ${manifestRes.status}`);
-      const manifest = await manifestRes.json();
-
-      // Load proving key
-      const pkUrl = `${basePath}/${circuitFileName}.pk`;
-      const pkRes = await fetch(pkUrl);
-      if (!pkRes.ok) throw new Error(`Failed to load proving key: ${pkRes.status}`);
-      const provingKey = new Uint8Array(await pkRes.arrayBuffer());
-
-      this.circuits.set(name, { manifest, provingKey });
-    } catch (err) {
-      console.warn(`Failed to load circuit ${name}:`, err);
-    }
+    // Legacy Noir circuit loading (not used for Circom)
+    // const basePath = `${this.baseUrl}/target`;
+    // const manifestUrl = `${basePath}/${circuitFileName}.json`;
+    // const pkUrl = `${basePath}/${circuitFileName}.pk`;
+    // ...
   }
 
   /**
@@ -709,6 +699,8 @@ export class ProofGenerator {
     lpNullifier: Uint8Array;
     outputACommitment: Uint8Array;
     outputBCommitment: Uint8Array;
+    outputARandomness: Uint8Array;
+    outputBRandomness: Uint8Array;
   }> {
     const circuitName = 'swap/remove_liquidity';
 
@@ -810,6 +802,8 @@ export class ProofGenerator {
       lpNullifier,
       outputACommitment,
       outputBCommitment,
+      outputARandomness,
+      outputBRandomness,
     };
   }
 

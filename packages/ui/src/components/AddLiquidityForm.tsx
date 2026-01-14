@@ -74,7 +74,7 @@ export function AddLiquidityForm({
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
     const fractional = value % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 8)}`;
   };
 
   // Auto-calculate the other amount when one field is edited
@@ -197,7 +197,7 @@ export function AddLiquidityForm({
       const result = await client.addLiquidity({
         inputA: selectedNotesA[0],
         inputB: selectedNotesB[0],
-        poolId: selectedPool.poolId,
+        poolId: selectedPool.address, // Use account address, not stored poolId field
         lpMint: selectedPool.lpMint,
         depositA: liquidityQuote.depositA,
         depositB: liquidityQuote.depositB,

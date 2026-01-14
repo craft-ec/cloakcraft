@@ -56,35 +56,43 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
     initCircuits();
   }, [client, initializeProver]);
 
-  // Fetch initialized pools and AMM pools on mount
+  // Fetch pools function (can be called to refresh after transactions)
+  const fetchPools = async () => {
+    if (!client) return;
+
+    // Wait for program to be configured
+    if (!client.getProgram()) {
+      console.log('[SwapPanel] Waiting for program to be configured...');
+      return;
+    }
+
+    setIsLoadingPools(true);
+
+    try {
+      // Fetch shield/unshield pools
+      const pools = await client.getAllPools();
+      // Only include pools with liquidity (totalShielded > 0)
+      const poolsWithLiquidity = pools.filter((pool) => pool.totalShielded > BigInt(0));
+      const mints = new Set(poolsWithLiquidity.map((pool) => pool.tokenMint.toBase58()));
+      setInitializedPoolMints(mints);
+
+      // Fetch AMM pools
+      const ammPoolList = await client.getAllAmmPools();
+      // Only include active pools with liquidity in both reserves
+      const activeAmmPools = ammPoolList.filter(
+        (pool) => pool.isActive && pool.reserveA > BigInt(0) && pool.reserveB > BigInt(0)
+      );
+      setAmmPools(activeAmmPools);
+    } catch (err) {
+      console.error('Error fetching pools:', err);
+      setInitializedPoolMints(new Set());
+      setAmmPools([]);
+    }
+    setIsLoadingPools(false);
+  };
+
+  // Fetch pools on mount
   useEffect(() => {
-    const fetchPools = async () => {
-      if (!client) return;
-      setIsLoadingPools(true);
-
-      try {
-        // Fetch shield/unshield pools
-        const pools = await client.getAllPools();
-        // Only include pools with liquidity (totalShielded > 0)
-        const poolsWithLiquidity = pools.filter((pool) => pool.totalShielded > BigInt(0));
-        const mints = new Set(poolsWithLiquidity.map((pool) => pool.tokenMint.toBase58()));
-        setInitializedPoolMints(mints);
-
-        // Fetch AMM pools
-        const ammPoolList = await client.getAllAmmPools();
-        // Only include active pools with liquidity in both reserves
-        const activeAmmPools = ammPoolList.filter(
-          (pool) => pool.isActive && pool.reserveA > BigInt(0) && pool.reserveB > BigInt(0)
-        );
-        setAmmPools(activeAmmPools);
-      } catch (err) {
-        console.error('Error fetching pools:', err);
-        setInitializedPoolMints(new Set());
-        setAmmPools([]);
-      }
-      setIsLoadingPools(false);
-    };
-
     fetchPools();
   }, [client]);
 
@@ -195,6 +203,8 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
             alert(`Swap successful!\nTX: ${signature}`);
             // Rescan all pools to find both input and output token notes
             await sync(undefined, true);
+            // Refetch pool data to get updated reserves
+            await fetchPools();
           }}
           onError={(error) => {
             console.error('Swap error:', error);
@@ -213,6 +223,8 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
             alert(`Liquidity added successfully!\nTX: ${signature}`);
             // Rescan all pools to find LP and change notes
             await sync(undefined, true);
+            // Refetch pool data to get updated reserves
+            await fetchPools();
           }}
           onError={(error) => {
             console.error('Add liquidity error:', error);
@@ -228,12 +240,15 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
       ) : activeTab === 'remove' ? (
         <RemoveLiquidityForm
           tokens={tokensWithNotes}
+          ammPools={ammPools}
           walletPublicKey={walletPublicKey}
           onSuccess={async (signature) => {
             console.log('Remove liquidity success:', signature);
             alert(`Liquidity removed successfully!\nTX: ${signature}`);
             // Rescan all pools to find redeemed token notes
             await sync(undefined, true);
+            // Refetch pool data to get updated reserves
+            await fetchPools();
           }}
           onError={(error) => {
             console.error('Remove liquidity error:', error);
