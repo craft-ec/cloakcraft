@@ -42,7 +42,9 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
 
       try {
         const pools = await client.getAllPools();
-        const mints = new Set(pools.map((pool) => pool.tokenMint.toBase58()));
+        // Only include pools with liquidity (totalShielded > 0)
+        const poolsWithLiquidity = pools.filter((pool) => pool.totalShielded > BigInt(0));
+        const mints = new Set(poolsWithLiquidity.map((pool) => pool.tokenMint.toBase58()));
         setInitializedPoolMints(mints);
       } catch (err) {
         console.error('Error fetching pools:', err);

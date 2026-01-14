@@ -3521,7 +3521,8 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
       setIsLoadingPools(true);
       try {
         const pools = await client.getAllPools();
-        const mints = new Set(pools.map((pool) => pool.tokenMint.toBase58()));
+        const poolsWithLiquidity = pools.filter((pool) => pool.totalShielded > BigInt(0));
+        const mints = new Set(poolsWithLiquidity.map((pool) => pool.tokenMint.toBase58()));
         setInitializedPoolMints(mints);
       } catch (err) {
         console.error("Error fetching pools:", err);
