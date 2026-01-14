@@ -409,38 +409,38 @@ function SwapTabContent({
   }, [client, initializeProver]);
 
   // Fetch pools
-  useEffect(() => {
-    const fetchPools = async () => {
-      if (!client) return;
+  const fetchPools = useCallback(async () => {
+    if (!client) return;
 
-      if (!client.getProgram()) {
-        console.log('[SwapTab] Waiting for program to be configured...');
-        return;
-      }
+    if (!client.getProgram()) {
+      console.log('[SwapTab] Waiting for program to be configured...');
+      return;
+    }
 
-      setIsLoadingPools(true);
+    setIsLoadingPools(true);
 
-      try {
-        const pools = await client.getAllPools();
-        const poolsWithLiquidity = pools.filter((pool) => pool.totalShielded > BigInt(0));
-        const mints = new Set(poolsWithLiquidity.map((pool) => pool.tokenMint.toBase58()));
-        setInitializedPoolMints(mints);
+    try {
+      const pools = await client.getAllPools();
+      const poolsWithLiquidity = pools.filter((pool) => pool.totalShielded > BigInt(0));
+      const mints = new Set(poolsWithLiquidity.map((pool) => pool.tokenMint.toBase58()));
+      setInitializedPoolMints(mints);
 
-        const ammPoolList = await client.getAllAmmPools();
-        const activeAmmPools = ammPoolList.filter(
-          (pool) => pool.isActive && pool.reserveA > BigInt(0) && pool.reserveB > BigInt(0)
-        );
-        setAmmPools(activeAmmPools);
-      } catch (err) {
-        console.error('Error fetching pools:', err);
-        setInitializedPoolMints(new Set());
-        setAmmPools([]);
-      }
-      setIsLoadingPools(false);
-    };
-
-    fetchPools();
+      const ammPoolList = await client.getAllAmmPools();
+      // For add liquidity, show ALL active pools (including empty ones for initial deposit)
+      // For swap, we'll filter pools with liquidity when rendering
+      const activeAmmPools = ammPoolList.filter((pool) => pool.isActive);
+      setAmmPools(activeAmmPools);
+    } catch (err) {
+      console.error('Error fetching pools:', err);
+      setInitializedPoolMints(new Set());
+      setAmmPools([]);
+    }
+    setIsLoadingPools(false);
   }, [client]);
+
+  useEffect(() => {
+    fetchPools();
+  }, [fetchPools]);
 
   // Get pool tokens
   const poolTokens = useMemo(() => {
@@ -493,7 +493,7 @@ function SwapTabContent({
 
   // Create pool doesn't need pools to be loaded
   if (swapSubTab === 'create-pool') {
-    return <CreatePoolTab walletPublicKey={walletPublicKey} />;
+    return <CreatePoolTab walletPublicKey={walletPublicKey} onPoolCreated={fetchPools} />;
   }
 
   if (poolTokens.length === 0) {
@@ -506,13 +506,19 @@ function SwapTabContent({
     );
   }
 
+  // Filter pools with liquidity for swap only
+  const poolsWithLiquidity = useMemo(
+    () => ammPools.filter((pool) => pool.reserveA > BigInt(0) && pool.reserveB > BigInt(0)),
+    [ammPools]
+  );
+
   return (
     <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
       <div style={{ width: '100%', maxWidth: '600px' }}>
         {swapSubTab === 'swap' && (
           <SwapForm
             tokens={poolTokens}
-            ammPools={ammPools}
+            ammPools={poolsWithLiquidity}
             walletPublicKey={walletPublicKey}
             onSuccess={async (tx) => {
               console.log('Swap success:', tx);
@@ -533,6 +539,8 @@ function SwapTabContent({
             onSuccess={async (tx) => {
               console.log('Add liquidity success:', tx);
               alert(`Liquidity added!\nTX: ${tx}`);
+              // Refresh pools after adding liquidity
+              fetchPools();
             }}
             onError={(err) => {
               console.error('Add liquidity error:', err);
@@ -665,7 +673,13 @@ function PoolTab({ walletPublicKey }: { walletPublicKey: PublicKey | null }) {
   );
 }
 
-function CreatePoolTab({ walletPublicKey }: { walletPublicKey: PublicKey | null }) {
+function CreatePoolTab({
+  walletPublicKey,
+  onPoolCreated,
+}: {
+  walletPublicKey: PublicKey | null;
+  onPoolCreated?: () => void;
+}) {
   return (
     <div style={{ display: 'grid', gap: '24px', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))' }}>
       <CreatePoolForm
@@ -674,6 +688,8 @@ function CreatePoolTab({ walletPublicKey }: { walletPublicKey: PublicKey | null 
         onSuccess={(signature, tokenA, tokenB) => {
           console.log('AMM Pool created:', { signature, tokenA, tokenB });
           alert(`AMM Pool created!\nPair: ${tokenA.symbol}/${tokenB.symbol}\nTX: ${signature}`);
+          // Refresh pools list
+          onPoolCreated?.();
         }}
         onError={(error) => {
           console.error('AMM Pool creation error:', error);
