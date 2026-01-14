@@ -736,6 +736,15 @@ declare class CloakCraftClient {
      */
     getUnspentNotes(tokenMint: PublicKey): Promise<DecryptedNote[]>;
     /**
+     * Get merkle proof for a note
+     */
+    getMerkleProof(accountHash: string): Promise<{
+        root: Uint8Array;
+        pathElements: Uint8Array[];
+        pathIndices: number[];
+        leafIndex: number;
+    }>;
+    /**
      * Shield tokens into the pool
      *
      * Uses the new instruction builder for full Light Protocol integration

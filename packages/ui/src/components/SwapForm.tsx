@@ -219,23 +219,44 @@ export function SwapForm({
     const { stealthAddress: outputAddress } = generateStealthAddress(wallet.publicKey);
     const { stealthAddress: changeAddress } = generateStealthAddress(wallet.publicKey);
 
+    if (!selectedAmmPool) {
+      onError?.('No AMM pool found for this token pair');
+      return;
+    }
+
+    // Determine swap direction (aToB or bToA)
+    const inputMintStr = inputToken.mint.toBase58();
+    const tokenAMintStr = selectedAmmPool.tokenAMint.toBase58();
+    const swapDirection = inputMintStr === tokenAMintStr ? 'aToB' : 'bToA';
+
     setIsSwapping(true);
 
     try {
-      // TODO: Implement swap method in client
-      // const result = await client.swap({
-      //   input: selectedNotes[0],
-      //   poolId: ...,
-      //   swapDirection: 'aToB',
-      //   inputAmount: amountLamports,
-      //   minOutput: swapQuote.minOutput,
-      //   outputRecipient: outputAddress,
-      //   changeRecipient: changeAddress,
-      // }, relayer);
+      // Get merkle proof for the input note
+      if (!selectedNotes[0].accountHash) {
+        throw new Error('Note missing accountHash. Try rescanning notes.');
+      }
 
-      onError?.('Swap functionality not yet implemented');
-      // onSuccess?.(result.signature);
-      // setInputAmount('');
+      const merkleProof = await client.getMerkleProof(selectedNotes[0].accountHash);
+
+      const result = await client.swap({
+        input: selectedNotes[0],
+        poolId: selectedAmmPool.poolId,
+        swapDirection,
+        swapAmount: amountLamports,
+        outputAmount: swapQuote.outputAmount,
+        minOutput: swapQuote.minOutput,
+        outputTokenMint: outputToken.mint,
+        outputRecipient: outputAddress,
+        changeRecipient: changeAddress,
+        feeBps: selectedAmmPool.feeBps || 30,
+        merkleRoot: merkleProof.root,
+        merklePath: merkleProof.pathElements,
+        merkleIndices: merkleProof.pathIndices,
+      });
+
+      onSuccess?.(result.signature);
+      setInputAmount('');
     } catch (err) {
       onError?.(err instanceof Error ? err.message : 'Swap failed');
     } finally {

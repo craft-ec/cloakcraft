@@ -450,6 +450,28 @@ export class CloakCraftClient {
   }
 
   /**
+   * Get merkle proof for a note
+   */
+  async getMerkleProof(accountHash: string): Promise<{
+    root: Uint8Array;
+    pathElements: Uint8Array[];
+    pathIndices: number[];
+    leafIndex: number;
+  }> {
+    if (!this.lightClient) {
+      throw new Error('Light client not initialized');
+    }
+
+    const proof = await this.lightClient.getMerkleProofByHash(accountHash);
+    return {
+      root: proof.root,
+      pathElements: proof.pathElements,
+      pathIndices: proof.pathIndices,
+      leafIndex: proof.leafIndex,
+    };
+  }
+
+  /**
    * Shield tokens into the pool
    *
    * Uses the new instruction builder for full Light Protocol integration

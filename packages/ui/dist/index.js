@@ -3118,9 +3118,36 @@ function SwapForm({
     }
     const { stealthAddress: outputAddress } = (0, import_sdk2.generateStealthAddress)(wallet.publicKey);
     const { stealthAddress: changeAddress } = (0, import_sdk2.generateStealthAddress)(wallet.publicKey);
+    if (!selectedAmmPool) {
+      onError?.("No AMM pool found for this token pair");
+      return;
+    }
+    const inputMintStr = inputToken.mint.toBase58();
+    const tokenAMintStr = selectedAmmPool.tokenAMint.toBase58();
+    const swapDirection = inputMintStr === tokenAMintStr ? "aToB" : "bToA";
     setIsSwapping(true);
     try {
-      onError?.("Swap functionality not yet implemented");
+      if (!selectedNotes[0].accountHash) {
+        throw new Error("Note missing accountHash. Try rescanning notes.");
+      }
+      const merkleProof = await client.getMerkleProof(selectedNotes[0].accountHash);
+      const result = await client.swap({
+        input: selectedNotes[0],
+        poolId: selectedAmmPool.poolId,
+        swapDirection,
+        swapAmount: amountLamports,
+        outputAmount: swapQuote.outputAmount,
+        minOutput: swapQuote.minOutput,
+        outputTokenMint: outputToken.mint,
+        outputRecipient: outputAddress,
+        changeRecipient: changeAddress,
+        feeBps: selectedAmmPool.feeBps || 30,
+        merkleRoot: merkleProof.root,
+        merklePath: merkleProof.pathElements,
+        merkleIndices: merkleProof.pathIndices
+      });
+      onSuccess?.(result.signature);
+      setInputAmount("");
     } catch (err) {
       onError?.(err instanceof Error ? err.message : "Swap failed");
     } finally {
