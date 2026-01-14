@@ -2731,14 +2731,26 @@ function SwapForm({
   className,
   walletPublicKey
 }) {
-  const [inputToken, setInputToken] = useState9(tokens[0]);
+  const { isConnected, isInitialized, wallet } = useWallet8();
+  const { client, notes } = useCloakCraft6();
+  const tokensWithBalance = useMemo2(() => {
+    const notesByMint = /* @__PURE__ */ new Map();
+    notes.forEach((note) => {
+      const mintStr = note.tokenMint.toBase58();
+      const current = notesByMint.get(mintStr) || BigInt(0);
+      notesByMint.set(mintStr, current + note.amount);
+    });
+    return tokens.filter((token) => {
+      const balance = notesByMint.get(token.mint.toBase58()) || BigInt(0);
+      return balance > BigInt(0);
+    });
+  }, [tokens, notes]);
+  const [inputToken, setInputToken] = useState9(tokensWithBalance[0] || tokens[0]);
   const [outputToken, setOutputToken] = useState9(tokens[1] || tokens[0]);
   const [inputAmount, setInputAmount] = useState9("");
   const [slippageBps, setSlippageBps] = useState9(50);
   const [isSwapping, setIsSwapping] = useState9(false);
-  const { isConnected, isInitialized, wallet } = useWallet8();
-  const { client } = useCloakCraft6();
-  const { availableNotes, totalAvailable, selectNotesForAmount } = useNoteSelector4(inputToken.mint);
+  const { availableNotes, totalAvailable, selectNotesForAmount } = useNoteSelector4(inputToken?.mint);
   const mockReserveIn = 1000000n * BigInt(10 ** inputToken.decimals);
   const mockReserveOut = 1000000n * BigInt(10 ** outputToken.decimals);
   const formatAmount = (value, decimals) => {
@@ -2748,6 +2760,7 @@ function SwapForm({
     return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 4)}`;
   };
   const swapQuote = useMemo2(() => {
+    if (!inputToken) return null;
     const amountNum = parseFloat(inputAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
       return null;
@@ -2771,7 +2784,7 @@ function SwapForm({
     } catch (err) {
       return null;
     }
-  }, [inputAmount, inputToken.decimals, mockReserveIn, mockReserveOut, slippageBps]);
+  }, [inputAmount, inputToken, mockReserveIn, mockReserveOut, slippageBps]);
   const handleSwapTokens = () => {
     const temp = inputToken;
     setInputToken(outputToken);
@@ -2824,7 +2837,14 @@ function SwapForm({
       setIsSwapping(false);
     }
   };
-  const isDisabled = !isConnected || !isInitialized || isSwapping || !inputAmount || !swapQuote;
+  const isDisabled = !isConnected || !isInitialized || isSwapping || !inputAmount || !swapQuote || tokensWithBalance.length === 0;
+  if (tokensWithBalance.length === 0) {
+    return /* @__PURE__ */ jsxs15("div", { className, style: styles.card, children: [
+      /* @__PURE__ */ jsx15("h3", { style: styles.cardTitle, children: "Swap Tokens" }),
+      /* @__PURE__ */ jsx15("p", { style: styles.cardDescription, children: "Exchange tokens privately using the AMM pool" }),
+      /* @__PURE__ */ jsx15("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No tokens available to swap. Shield some tokens first." })
+    ] });
+  }
   return /* @__PURE__ */ jsxs15("div", { className, style: styles.card, children: [
     /* @__PURE__ */ jsx15("h3", { style: styles.cardTitle, children: "Swap Tokens" }),
     /* @__PURE__ */ jsx15("p", { style: styles.cardDescription, children: "Exchange tokens privately using the AMM pool" }),
@@ -2834,14 +2854,14 @@ function SwapForm({
         /* @__PURE__ */ jsx15("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" }, children: /* @__PURE__ */ jsx15(
           "select",
           {
-            value: inputToken.mint.toBase58(),
+            value: inputToken?.mint.toBase58() || "",
             onChange: (e) => {
-              const token = tokens.find((t) => t.mint.toBase58() === e.target.value);
+              const token = tokensWithBalance.find((t) => t.mint.toBase58() === e.target.value);
               if (token) setInputToken(token);
             },
-            disabled: isSwapping,
+            disabled: isSwapping || tokensWithBalance.length === 0,
             style: { ...styles.input, flex: 1 },
-            children: tokens.map((token) => /* @__PURE__ */ jsx15("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
+            children: tokensWithBalance.length === 0 ? /* @__PURE__ */ jsx15("option", { value: "", children: "No tokens with balance" }) : tokensWithBalance.map((token) => /* @__PURE__ */ jsx15("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
           }
         ) }),
         /* @__PURE__ */ jsx15(
@@ -2860,9 +2880,9 @@ function SwapForm({
         /* @__PURE__ */ jsxs15("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
           /* @__PURE__ */ jsx15("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
           /* @__PURE__ */ jsxs15("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
-            formatAmount(totalAvailable, inputToken.decimals),
+            inputToken ? formatAmount(totalAvailable, inputToken.decimals) : "0",
             " ",
-            inputToken.symbol
+            inputToken?.symbol || ""
           ] })
         ] })
       ] }),

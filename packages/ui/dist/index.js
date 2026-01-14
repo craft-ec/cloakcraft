@@ -2793,14 +2793,26 @@ function SwapForm({
   className,
   walletPublicKey
 }) {
-  const [inputToken, setInputToken] = (0, import_react12.useState)(tokens[0]);
+  const { isConnected, isInitialized, wallet } = (0, import_hooks15.useWallet)();
+  const { client, notes } = (0, import_hooks15.useCloakCraft)();
+  const tokensWithBalance = (0, import_react12.useMemo)(() => {
+    const notesByMint = /* @__PURE__ */ new Map();
+    notes.forEach((note) => {
+      const mintStr = note.tokenMint.toBase58();
+      const current = notesByMint.get(mintStr) || BigInt(0);
+      notesByMint.set(mintStr, current + note.amount);
+    });
+    return tokens.filter((token) => {
+      const balance = notesByMint.get(token.mint.toBase58()) || BigInt(0);
+      return balance > BigInt(0);
+    });
+  }, [tokens, notes]);
+  const [inputToken, setInputToken] = (0, import_react12.useState)(tokensWithBalance[0] || tokens[0]);
   const [outputToken, setOutputToken] = (0, import_react12.useState)(tokens[1] || tokens[0]);
   const [inputAmount, setInputAmount] = (0, import_react12.useState)("");
   const [slippageBps, setSlippageBps] = (0, import_react12.useState)(50);
   const [isSwapping, setIsSwapping] = (0, import_react12.useState)(false);
-  const { isConnected, isInitialized, wallet } = (0, import_hooks15.useWallet)();
-  const { client } = (0, import_hooks15.useCloakCraft)();
-  const { availableNotes, totalAvailable, selectNotesForAmount } = (0, import_hooks15.useNoteSelector)(inputToken.mint);
+  const { availableNotes, totalAvailable, selectNotesForAmount } = (0, import_hooks15.useNoteSelector)(inputToken?.mint);
   const mockReserveIn = 1000000n * BigInt(10 ** inputToken.decimals);
   const mockReserveOut = 1000000n * BigInt(10 ** outputToken.decimals);
   const formatAmount = (value, decimals) => {
@@ -2810,6 +2822,7 @@ function SwapForm({
     return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 4)}`;
   };
   const swapQuote = (0, import_react12.useMemo)(() => {
+    if (!inputToken) return null;
     const amountNum = parseFloat(inputAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
       return null;
@@ -2833,7 +2846,7 @@ function SwapForm({
     } catch (err) {
       return null;
     }
-  }, [inputAmount, inputToken.decimals, mockReserveIn, mockReserveOut, slippageBps]);
+  }, [inputAmount, inputToken, mockReserveIn, mockReserveOut, slippageBps]);
   const handleSwapTokens = () => {
     const temp = inputToken;
     setInputToken(outputToken);
@@ -2886,7 +2899,14 @@ function SwapForm({
       setIsSwapping(false);
     }
   };
-  const isDisabled = !isConnected || !isInitialized || isSwapping || !inputAmount || !swapQuote;
+  const isDisabled = !isConnected || !isInitialized || isSwapping || !inputAmount || !swapQuote || tokensWithBalance.length === 0;
+  if (tokensWithBalance.length === 0) {
+    return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className, style: styles.card, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("h3", { style: styles.cardTitle, children: "Swap Tokens" }),
+      /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { style: styles.cardDescription, children: "Exchange tokens privately using the AMM pool" }),
+      /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No tokens available to swap. Shield some tokens first." })
+    ] });
+  }
   return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className, style: styles.card, children: [
     /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("h3", { style: styles.cardTitle, children: "Swap Tokens" }),
     /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { style: styles.cardDescription, children: "Exchange tokens privately using the AMM pool" }),
@@ -2896,14 +2916,14 @@ function SwapForm({
         /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" }, children: /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
           "select",
           {
-            value: inputToken.mint.toBase58(),
+            value: inputToken?.mint.toBase58() || "",
             onChange: (e) => {
-              const token = tokens.find((t) => t.mint.toBase58() === e.target.value);
+              const token = tokensWithBalance.find((t) => t.mint.toBase58() === e.target.value);
               if (token) setInputToken(token);
             },
-            disabled: isSwapping,
+            disabled: isSwapping || tokensWithBalance.length === 0,
             style: { ...styles.input, flex: 1 },
-            children: tokens.map((token) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
+            children: tokensWithBalance.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("option", { value: "", children: "No tokens with balance" }) : tokensWithBalance.map((token) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
           }
         ) }),
         /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
@@ -2922,9 +2942,9 @@ function SwapForm({
         /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
           /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
           /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
-            formatAmount(totalAvailable, inputToken.decimals),
+            inputToken ? formatAmount(totalAvailable, inputToken.decimals) : "0",
             " ",
-            inputToken.symbol
+            inputToken?.symbol || ""
           ] })
         ] })
       ] }),

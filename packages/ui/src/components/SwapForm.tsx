@@ -33,15 +33,31 @@ export function SwapForm({
   className,
   walletPublicKey,
 }: SwapFormProps) {
-  const [inputToken, setInputToken] = useState(tokens[0]);
+  const { isConnected, isInitialized, wallet } = useWallet();
+  const { client, notes } = useCloakCraft();
+
+  // Filter tokens to only show those with available notes for "From" selector
+  const tokensWithBalance = useMemo(() => {
+    const notesByMint = new Map<string, bigint>();
+    notes.forEach((note) => {
+      const mintStr = note.tokenMint.toBase58();
+      const current = notesByMint.get(mintStr) || BigInt(0);
+      notesByMint.set(mintStr, current + note.amount);
+    });
+
+    return tokens.filter((token) => {
+      const balance = notesByMint.get(token.mint.toBase58()) || BigInt(0);
+      return balance > BigInt(0);
+    });
+  }, [tokens, notes]);
+
+  const [inputToken, setInputToken] = useState(tokensWithBalance[0] || tokens[0]);
   const [outputToken, setOutputToken] = useState(tokens[1] || tokens[0]);
   const [inputAmount, setInputAmount] = useState('');
   const [slippageBps, setSlippageBps] = useState(50); // 0.5% default
   const [isSwapping, setIsSwapping] = useState(false);
 
-  const { isConnected, isInitialized, wallet } = useWallet();
-  const { client } = useCloakCraft();
-  const { availableNotes, totalAvailable, selectNotesForAmount } = useNoteSelector(inputToken.mint);
+  const { availableNotes, totalAvailable, selectNotesForAmount } = useNoteSelector(inputToken?.mint);
 
   // Mock pool reserves (TODO: fetch from on-chain pool state)
   const mockReserveIn = 1000000n * BigInt(10 ** inputToken.decimals);
@@ -55,6 +71,8 @@ export function SwapForm({
   };
 
   const swapQuote = useMemo(() => {
+    if (!inputToken) return null;
+
     const amountNum = parseFloat(inputAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
       return null;
@@ -81,7 +99,7 @@ export function SwapForm({
     } catch (err) {
       return null;
     }
-  }, [inputAmount, inputToken.decimals, mockReserveIn, mockReserveOut, slippageBps]);
+  }, [inputAmount, inputToken, mockReserveIn, mockReserveOut, slippageBps]);
 
   const handleSwapTokens = () => {
     const temp = inputToken;
@@ -163,7 +181,21 @@ export function SwapForm({
     }
   };
 
-  const isDisabled = !isConnected || !isInitialized || isSwapping || !inputAmount || !swapQuote;
+  const isDisabled = !isConnected || !isInitialized || isSwapping || !inputAmount || !swapQuote || tokensWithBalance.length === 0;
+
+  if (tokensWithBalance.length === 0) {
+    return (
+      <div className={className} style={styles.card}>
+        <h3 style={styles.cardTitle}>Swap Tokens</h3>
+        <p style={styles.cardDescription}>
+          Exchange tokens privately using the AMM pool
+        </p>
+        <div style={{ padding: '24px', textAlign: 'center', color: colors.textMuted }}>
+          No tokens available to swap. Shield some tokens first.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={className} style={styles.card}>
@@ -178,19 +210,23 @@ export function SwapForm({
           <label style={styles.label}>From</label>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
             <select
-              value={inputToken.mint.toBase58()}
+              value={inputToken?.mint.toBase58() || ''}
               onChange={(e) => {
-                const token = tokens.find(t => t.mint.toBase58() === e.target.value);
+                const token = tokensWithBalance.find(t => t.mint.toBase58() === e.target.value);
                 if (token) setInputToken(token);
               }}
-              disabled={isSwapping}
+              disabled={isSwapping || tokensWithBalance.length === 0}
               style={{ ...styles.input, flex: 1 }}
             >
-              {tokens.map(token => (
-                <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
-                  {token.symbol}
-                </option>
-              ))}
+              {tokensWithBalance.length === 0 ? (
+                <option value="">No tokens with balance</option>
+              ) : (
+                tokensWithBalance.map(token => (
+                  <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
+                    {token.symbol}
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
@@ -208,7 +244,7 @@ export function SwapForm({
           <div style={{ ...styles.spaceBetween, marginTop: '8px' }}>
             <span style={{ fontSize: '0.75rem', color: colors.textMuted }}>Available</span>
             <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>
-              {formatAmount(totalAvailable, inputToken.decimals)} {inputToken.symbol}
+              {inputToken ? formatAmount(totalAvailable, inputToken.decimals) : '0'} {inputToken?.symbol || ''}
             </span>
           </div>
         </div>
