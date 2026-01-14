@@ -782,6 +782,7 @@ export class LightCommitmentClient extends LightClient {
   ): Promise<DecryptedNote[]> {
     // Query commitment accounts from Helius
     const accounts = await this.getCommitmentAccounts(programId, pool);
+    console.log(`[Scanner] Found ${accounts.length} commitment accounts${pool ? ` for pool ${pool.toBase58()}` : ' (all pools)'}`);
 
     // Get or create cache for this viewing key
     const cacheKey = this.getCacheKey(viewingKey);
@@ -887,6 +888,8 @@ export class LightCommitmentClient extends LightClient {
           stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? undefined, // Store for stealth key derivation
         };
 
+        console.log(`[Scanner] Decrypted note: tokenMint=${new PublicKey(note.tokenMint).toBase58().slice(0, 8)}..., amount=${note.amount}, pool=${new PublicKey(parsed.pool).toBase58().slice(0, 8)}...`);
+
         cache.set(account.hash, decryptedNote); // Cache our note
         decryptedNotes.push(decryptedNote);
       } catch (err) {
@@ -896,6 +899,7 @@ export class LightCommitmentClient extends LightClient {
       }
     }
 
+    console.log(`[Scanner] Total decrypted notes: ${decryptedNotes.length}`);
     return decryptedNotes;
   }
 

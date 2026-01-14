@@ -993,8 +993,8 @@ export class CloakCraftClient {
       throw new Error('Input note missing accountHash. Use scanNotes() to get notes with accountHash.');
     }
 
-    // Use SAME commitments and nullifier that the proof used
-    const { proof, nullifier, outCommitment, changeCommitment } = proofResult;
+    // Use SAME commitments, nullifier, AND randomness that the proof used
+    const { proof, nullifier, outCommitment, changeCommitment, outRandomness, changeRandomness } = proofResult;
 
     // Build Phase 1 transaction (two-phase API)
     const heliusRpcUrl = this.getHeliusRpcUrl();
@@ -1005,6 +1005,8 @@ export class CloakCraftClient {
       {
         inputPool: inputPoolPda,
         outputPool: outputPoolPda,
+        inputTokenMint,
+        outputTokenMint,
         ammPool: params.poolId,
         relayer: relayerPubkey,
         proof,
@@ -1019,6 +1021,8 @@ export class CloakCraftClient {
         swapAmount: params.swapAmount,
         outputAmount: params.outputAmount,
         swapDirection: params.swapDirection,
+        outRandomness,
+        changeRandomness,
       },
       heliusRpcUrl
     );
@@ -1046,11 +1050,16 @@ export class CloakCraftClient {
     }
 
     // Execute Phase 3: Create commitments
+    console.log(`[Phase 3] Creating ${pendingCommitments.length} commitments...`);
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
       // Skip zero commitments
-      if (pc.commitment.every((b: number) => b === 0)) continue;
+      if (pc.commitment.every((b: number) => b === 0)) {
+        console.log(`[Phase 3] Skipping zero commitment at index ${i}`);
+        continue;
+      }
 
+      console.log(`[Phase 3] Creating commitment ${i}: pool=${pc.pool.toBase58()}`);
       const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
         this.program,
         {
@@ -1063,7 +1072,8 @@ export class CloakCraftClient {
         },
         heliusRpcUrl
       );
-      await commitmentTx.rpc();
+      const sig = await commitmentTx.rpc();
+      console.log(`[Phase 3] Commitment ${i} created: ${sig}`);
     }
 
     // Close pending operation
@@ -1303,6 +1313,8 @@ export class CloakCraftClient {
         lpPool,
         poolA,
         poolB,
+        tokenAMint,
+        tokenBMint,
         ammPool: params.poolId,
         relayer: relayerPubkey,
         proof,

@@ -33,7 +33,7 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
   const [initializedPoolMints, setInitializedPoolMints] = useState<Set<string>>(new Set());
   const [ammPools, setAmmPools] = useState<any[]>([]);
   const [isLoadingPools, setIsLoadingPools] = useState(true);
-  const { client, notes } = useCloakCraft();
+  const { client, notes, sync } = useCloakCraft();
 
   // Fetch initialized pools and AMM pools on mount
   useEffect(() => {
@@ -169,9 +169,11 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
           tokens={poolTokens}
           ammPools={ammPools}
           walletPublicKey={walletPublicKey}
-          onSuccess={(signature) => {
+          onSuccess={async (signature) => {
             console.log('Swap success:', signature);
             alert(`Swap successful!\nTX: ${signature}`);
+            // Rescan all pools to find both input and output token notes
+            await sync(undefined, true);
           }}
           onError={(error) => {
             console.error('Swap error:', error);
@@ -184,9 +186,11 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
         <AddLiquidityForm
           tokens={poolTokens}
           walletPublicKey={walletPublicKey}
-          onSuccess={(signature) => {
+          onSuccess={async (signature) => {
             console.log('Add liquidity success:', signature);
             alert(`Liquidity added successfully!\nTX: ${signature}`);
+            // Rescan all pools to find LP and change notes
+            await sync(undefined, true);
           }}
           onError={(error) => {
             console.error('Add liquidity error:', error);
@@ -203,9 +207,11 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
         <RemoveLiquidityForm
           tokens={tokensWithNotes}
           walletPublicKey={walletPublicKey}
-          onSuccess={(signature) => {
+          onSuccess={async (signature) => {
             console.log('Remove liquidity success:', signature);
             alert(`Liquidity removed successfully!\nTX: ${signature}`);
+            // Rescan all pools to find redeemed token notes
+            await sync(undefined, true);
           }}
           onError={(error) => {
             console.error('Remove liquidity error:', error);

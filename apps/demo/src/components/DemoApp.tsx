@@ -502,6 +502,8 @@ function ShieldTab({ solanaPublicKey }: { solanaPublicKey: PublicKey | null }) {
 }
 
 function ShieldFormWithFilter({ solanaPublicKey }: { solanaPublicKey: PublicKey }) {
+  const { sync } = useCloakCraft();
+
   // Use the same hook pattern as Account tab
   const tokenMints = useMemo(() => DEVNET_TOKENS.map((t) => t.mint), []);
   const { getBalance, isLoading } = useTokenBalances(tokenMints, solanaPublicKey);
@@ -567,9 +569,11 @@ function ShieldFormWithFilter({ solanaPublicKey }: { solanaPublicKey: PublicKey 
       walletPublicKey={solanaPublicKey}
       tokens={availableTokens}
       onTokenChange={setSelectedToken}
-      onSuccess={(tx) => {
+      onSuccess={async (tx) => {
         console.log('Shield success:', tx);
         alert(`Shielded successfully!\nTX: ${tx}`);
+        // Rescan all pools to find new shielded notes
+        await sync(undefined, true);
       }}
       onError={(err) => {
         console.error('Shield error:', err);
@@ -584,6 +588,8 @@ function TransferTab({ walletPublicKey }: { walletPublicKey: PublicKey | null })
 }
 
 function TransferFormWithFilter({ walletPublicKey }: { walletPublicKey: PublicKey | null }) {
+  const { sync } = useCloakCraft();
+
   // Get available tokens with private balance using hooks
   const tokenBalances = DEVNET_TOKENS.map((token) => {
     const { totalAvailable } = useNoteSelector(token.mint);
@@ -630,9 +636,11 @@ function TransferFormWithFilter({ walletPublicKey }: { walletPublicKey: PublicKe
       walletPublicKey={walletPublicKey}
       tokens={availableTokens}
       onTokenChange={setSelectedToken}
-      onSuccess={(tx) => {
+      onSuccess={async (tx) => {
         console.log('Transfer success:', tx);
         alert(`Transferred successfully!\nTX: ${tx}`);
+        // Rescan all pools to find output and change notes
+        await sync(undefined, true);
       }}
       onError={(err) => {
         console.error('Transfer error:', err);
@@ -647,6 +655,8 @@ function UnshieldTab({ walletPublicKey }: { walletPublicKey: PublicKey | null })
 }
 
 function UnshieldFormWithFilter({ walletPublicKey }: { walletPublicKey: PublicKey | null }) {
+  const { sync } = useCloakCraft();
+
   // Get available tokens with private balance using hooks
   const tokenBalances = DEVNET_TOKENS.map((token) => {
     const { totalAvailable } = useNoteSelector(token.mint);
@@ -693,9 +703,11 @@ function UnshieldFormWithFilter({ walletPublicKey }: { walletPublicKey: PublicKe
       walletPublicKey={walletPublicKey}
       tokens={availableTokens}
       onTokenChange={setSelectedToken}
-      onSuccess={(tx) => {
+      onSuccess={async (tx) => {
         console.log('Unshield success:', tx);
         alert(`Unshielded successfully!\nTX: ${tx}`);
+        // Rescan all pools to find change notes
+        await sync(undefined, true);
       }}
       onError={(err) => {
         console.error('Unshield error:', err);

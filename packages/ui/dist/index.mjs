@@ -3748,7 +3748,7 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
   const [initializedPoolMints, setInitializedPoolMints] = useState12(/* @__PURE__ */ new Set());
   const [ammPools, setAmmPools] = useState12([]);
   const [isLoadingPools, setIsLoadingPools] = useState12(true);
-  const { client, notes } = useCloakCraft9();
+  const { client, notes, sync } = useCloakCraft9();
   useEffect2(() => {
     const fetchPools = async () => {
       if (!client) return;
@@ -3851,10 +3851,11 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
         tokens: poolTokens,
         ammPools,
         walletPublicKey,
-        onSuccess: (signature) => {
+        onSuccess: async (signature) => {
           console.log("Swap success:", signature);
           alert(`Swap successful!
 TX: ${signature}`);
+          await sync(void 0, true);
         },
         onError: (error) => {
           console.error("Swap error:", error);
@@ -3867,10 +3868,11 @@ TX: ${signature}`);
       {
         tokens: poolTokens,
         walletPublicKey,
-        onSuccess: (signature) => {
+        onSuccess: async (signature) => {
           console.log("Add liquidity success:", signature);
           alert(`Liquidity added successfully!
 TX: ${signature}`);
+          await sync(void 0, true);
         },
         onError: (error) => {
           console.error("Add liquidity error:", error);
@@ -3883,10 +3885,11 @@ TX: ${signature}`);
       {
         tokens: tokensWithNotes,
         walletPublicKey,
-        onSuccess: (signature) => {
+        onSuccess: async (signature) => {
           console.log("Remove liquidity success:", signature);
           alert(`Liquidity removed successfully!
 TX: ${signature}`);
+          await sync(void 0, true);
         },
         onError: (error) => {
           console.error("Remove liquidity error:", error);

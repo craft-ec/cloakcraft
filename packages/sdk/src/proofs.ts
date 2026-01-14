@@ -383,6 +383,8 @@ export class ProofGenerator {
     nullifier: Uint8Array;
     outCommitment: Uint8Array;
     changeCommitment: Uint8Array;
+    outRandomness: Uint8Array;
+    changeRandomness: Uint8Array;
   }> {
     const circuitName = 'swap/swap';
 
@@ -498,11 +500,14 @@ export class ProofGenerator {
     const proof = await this.prove(circuitName, witnessInputs);
 
     // Return proof along with public outputs so caller can use SAME values
+    // CRITICAL: Return randomness so encryption uses same values as proof!
     return {
       proof,
       nullifier,
       outCommitment,
       changeCommitment,
+      outRandomness,
+      changeRandomness,
     };
   }
 

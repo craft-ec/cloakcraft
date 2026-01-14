@@ -496,6 +496,8 @@ declare class ProofGenerator {
         nullifier: Uint8Array;
         outCommitment: Uint8Array;
         changeCommitment: Uint8Array;
+        outRandomness: Uint8Array;
+        changeRandomness: Uint8Array;
     }>;
     /**
      * Generate an add liquidity proof
@@ -1864,6 +1866,10 @@ interface SwapInstructionParams {
     inputPool: PublicKey;
     /** Output token pool */
     outputPool: PublicKey;
+    /** Input token mint (SPL token address) */
+    inputTokenMint: PublicKey;
+    /** Output token mint (SPL token address) */
+    outputTokenMint: PublicKey;
     /** AMM pool state */
     ammPool: PublicKey;
     /** Relayer public key */
@@ -1892,6 +1898,9 @@ interface SwapInstructionParams {
     outputAmount: bigint;
     /** Swap direction (aToB = true, bToA = false) */
     swapDirection: 'aToB' | 'bToA';
+    /** Randomness used in proof generation (MUST be same for encryption) */
+    outRandomness: Uint8Array;
+    changeRandomness: Uint8Array;
 }
 /**
  * Swap Phase 2 parameters
@@ -2050,6 +2059,10 @@ interface RemoveLiquidityInstructionParams {
     poolA: PublicKey;
     /** Token B pool */
     poolB: PublicKey;
+    /** Token A mint (SPL token address) */
+    tokenAMint: PublicKey;
+    /** Token B mint (SPL token address) */
+    tokenBMint: PublicKey;
     /** AMM pool state */
     ammPool: PublicKey;
     /** Relayer */

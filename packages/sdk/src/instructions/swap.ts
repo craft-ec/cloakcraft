@@ -111,6 +111,10 @@ export interface SwapInstructionParams {
   inputPool: PublicKey;
   /** Output token pool */
   outputPool: PublicKey;
+  /** Input token mint (SPL token address) */
+  inputTokenMint: PublicKey;
+  /** Output token mint (SPL token address) */
+  outputTokenMint: PublicKey;
   /** AMM pool state */
   ammPool: PublicKey;
   /** Relayer public key */
@@ -139,6 +143,9 @@ export interface SwapInstructionParams {
   outputAmount: bigint;
   /** Swap direction (aToB = true, bToA = false) */
   swapDirection: 'aToB' | 'bToA';
+  /** Randomness used in proof generation (MUST be same for encryption) */
+  outRandomness: Uint8Array;
+  changeRandomness: Uint8Array;
 }
 
 /**
@@ -175,6 +182,8 @@ export async function buildSwapWithProgram(
   console.log('[DEBUG] buildSwapWithProgram params:', {
     inputPool: params.inputPool?.toBase58(),
     outputPool: params.outputPool?.toBase58(),
+    inputTokenMint: params.inputTokenMint?.toBase58(),
+    outputTokenMint: params.outputTokenMint?.toBase58(),
     ammPool: params.ammPool?.toBase58(),
     relayer: params.relayer?.toBase58(),
   });
@@ -192,24 +201,28 @@ export async function buildSwapWithProgram(
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(CIRCUIT_IDS.SWAP, programId);
 
-  // Generate randomness for outputs
-  const outputRandomness = generateRandomness();
-  const changeRandomness = generateRandomness();
+  // Use the SAME randomness that was used in proof generation
+  // This is critical so encrypted notes can be decrypted correctly
+  const outputRandomness = params.outRandomness;
+  const changeRandomness = params.changeRandomness;
 
-  // Create output notes for encryption
+  // Create output notes for encryption (use token mints, not pool addresses)
   const outputNote = {
     stealthPubX: params.outputRecipient.stealthPubkey.x,
-    tokenMint: params.outputPool,
-    amount: params.minOutput,
+    tokenMint: params.outputTokenMint,
+    amount: params.outputAmount, // Use actual output amount, not minOutput
     randomness: outputRandomness,
   };
 
   const changeNote = {
     stealthPubX: params.changeRecipient.stealthPubkey.x,
-    tokenMint: params.inputPool,
+    tokenMint: params.inputTokenMint,
     amount: params.inputAmount - params.swapAmount,
     randomness: changeRandomness,
   };
+
+  console.log('[Swap] Encrypting output note: tokenMint:', params.outputTokenMint.toBase58(), 'amount:', params.outputAmount.toString());
+  console.log('[Swap] Encrypting change note: tokenMint:', params.inputTokenMint.toBase58(), 'amount:', (params.inputAmount - params.swapAmount).toString());
 
   // Encrypt notes
   const encryptedOutputNote = encryptNote(outputNote, params.outputRecipient.stealthPubkey);
@@ -711,6 +724,10 @@ export interface RemoveLiquidityInstructionParams {
   poolA: PublicKey;
   /** Token B pool */
   poolB: PublicKey;
+  /** Token A mint (SPL token address) */
+  tokenAMint: PublicKey;
+  /** Token B mint (SPL token address) */
+  tokenBMint: PublicKey;
   /** AMM pool state */
   ammPool: PublicKey;
   /** Relayer */
@@ -778,16 +795,16 @@ export async function buildRemoveLiquidityWithProgram(
   const outputARandomness = generateRandomness();
   const outputBRandomness = generateRandomness();
 
-  // Create and encrypt notes
+  // Create and encrypt notes (use token mints, not pool addresses)
   const outputANote = {
     stealthPubX: params.outputARecipient.stealthPubkey.x,
-    tokenMint: params.poolA,
+    tokenMint: params.tokenAMint,
     amount: 0n, // Computed by circuit
     randomness: outputARandomness,
   };
   const outputBNote = {
     stealthPubX: params.outputBRecipient.stealthPubkey.x,
-    tokenMint: params.poolB,
+    tokenMint: params.tokenBMint,
     amount: 0n, // Computed by circuit
     randomness: outputBRandomness,
   };

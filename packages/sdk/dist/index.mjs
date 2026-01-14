@@ -51,7 +51,7 @@ import {
   serializeEncryptedNote,
   tryDecryptNote,
   verifyCommitment
-} from "./chunk-35GBSRGD.mjs";
+} from "./chunk-336FGBM5.mjs";
 import {
   __require
 } from "./chunk-Y6FXYEAI.mjs";
@@ -814,7 +814,9 @@ var ProofGenerator = class {
       proof,
       nullifier,
       outCommitment,
-      changeCommitment
+      changeCommitment,
+      outRandomness,
+      changeRandomness
     };
   }
   /**
@@ -1994,6 +1996,7 @@ var LightCommitmentClient = class extends LightClient {
    */
   async scanNotes(viewingKey, programId, pool) {
     const accounts = await this.getCommitmentAccounts(programId, pool);
+    console.log(`[Scanner] Found ${accounts.length} commitment accounts${pool ? ` for pool ${pool.toBase58()}` : " (all pools)"}`);
     const cacheKey = this.getCacheKey(viewingKey);
     if (!this.noteCache.has(cacheKey)) {
       this.noteCache.set(cacheKey, /* @__PURE__ */ new Map());
@@ -2066,6 +2069,7 @@ var LightCommitmentClient = class extends LightClient {
           stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? void 0
           // Store for stealth key derivation
         };
+        console.log(`[Scanner] Decrypted note: tokenMint=${new PublicKey2(note.tokenMint).toBase58().slice(0, 8)}..., amount=${note.amount}, pool=${new PublicKey2(parsed.pool).toBase58().slice(0, 8)}...`);
         cache.set(account.hash, decryptedNote);
         decryptedNotes.push(decryptedNote);
       } catch (err) {
@@ -2073,6 +2077,7 @@ var LightCommitmentClient = class extends LightClient {
         continue;
       }
     }
+    console.log(`[Scanner] Total decrypted notes: ${decryptedNotes.length}`);
     return decryptedNotes;
   }
   /**
@@ -3505,7 +3510,7 @@ var CloakCraftClient = class {
     if (!accountHash) {
       throw new Error("Input note missing accountHash. Use scanNotes() to get notes with accountHash.");
     }
-    const { proof, nullifier, outCommitment, changeCommitment } = proofResult;
+    const { proof, nullifier, outCommitment, changeCommitment, outRandomness, changeRandomness } = proofResult;
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
     const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildSwapWithProgram(
@@ -3513,6 +3518,8 @@ var CloakCraftClient = class {
       {
         inputPool: inputPoolPda,
         outputPool: outputPoolPda,
+        inputTokenMint,
+        outputTokenMint,
         ammPool: params.poolId,
         relayer: relayerPubkey,
         proof,
@@ -3526,12 +3533,14 @@ var CloakCraftClient = class {
         inputAmount: params.input.amount,
         swapAmount: params.swapAmount,
         outputAmount: params.outputAmount,
-        swapDirection: params.swapDirection
+        swapDirection: params.swapDirection,
+        outRandomness,
+        changeRandomness
       },
       heliusRpcUrl
     );
     const phase1Signature = await phase1Tx.rpc();
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-3C5JBXY5.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-NFBQIICS.mjs");
     for (let i = 0; i < pendingNullifiers.length; i++) {
       const pn = pendingNullifiers[i];
       const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(
@@ -3546,9 +3555,14 @@ var CloakCraftClient = class {
       );
       await nullifierTx.rpc();
     }
+    console.log(`[Phase 3] Creating ${pendingCommitments.length} commitments...`);
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
-      if (pc.commitment.every((b) => b === 0)) continue;
+      if (pc.commitment.every((b) => b === 0)) {
+        console.log(`[Phase 3] Skipping zero commitment at index ${i}`);
+        continue;
+      }
+      console.log(`[Phase 3] Creating commitment ${i}: pool=${pc.pool.toBase58()}`);
       const { tx: commitmentTx } = await buildCreateCommitmentWithProgram2(
         this.program,
         {
@@ -3561,7 +3575,8 @@ var CloakCraftClient = class {
         },
         heliusRpcUrl
       );
-      await commitmentTx.rpc();
+      const sig = await commitmentTx.rpc();
+      console.log(`[Phase 3] Commitment ${i} created: ${sig}`);
     }
     const { tx: closeTx } = await buildClosePendingOperationWithProgram2(
       this.program,
@@ -3670,7 +3685,7 @@ var CloakCraftClient = class {
       heliusRpcUrl
     );
     const phase1Signature = await phase1Tx.rpc();
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-3C5JBXY5.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-NFBQIICS.mjs");
     for (let i = 0; i < pendingNullifiers.length; i++) {
       const pn = pendingNullifiers[i];
       const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(
@@ -3748,6 +3763,8 @@ var CloakCraftClient = class {
         lpPool,
         poolA,
         poolB,
+        tokenAMint,
+        tokenBMint,
         ammPool: params.poolId,
         relayer: relayerPubkey,
         proof,
@@ -3763,7 +3780,7 @@ var CloakCraftClient = class {
       heliusRpcUrl
     );
     const phase1Signature = await phase1Tx.rpc();
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-3C5JBXY5.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-NFBQIICS.mjs");
     for (let i = 0; i < pendingNullifiers.length; i++) {
       const pn = pendingNullifiers[i];
       const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(

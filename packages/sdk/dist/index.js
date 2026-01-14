@@ -631,6 +631,8 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
   console.log("[DEBUG] buildSwapWithProgram params:", {
     inputPool: params.inputPool?.toBase58(),
     outputPool: params.outputPool?.toBase58(),
+    inputTokenMint: params.inputTokenMint?.toBase58(),
+    outputTokenMint: params.outputTokenMint?.toBase58(),
     ammPool: params.ammPool?.toBase58(),
     relayer: params.relayer?.toBase58()
   });
@@ -643,20 +645,23 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
   );
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(CIRCUIT_IDS.SWAP, programId);
-  const outputRandomness = generateRandomness();
-  const changeRandomness = generateRandomness();
+  const outputRandomness = params.outRandomness;
+  const changeRandomness = params.changeRandomness;
   const outputNote = {
     stealthPubX: params.outputRecipient.stealthPubkey.x,
-    tokenMint: params.outputPool,
-    amount: params.minOutput,
+    tokenMint: params.outputTokenMint,
+    amount: params.outputAmount,
+    // Use actual output amount, not minOutput
     randomness: outputRandomness
   };
   const changeNote = {
     stealthPubX: params.changeRecipient.stealthPubkey.x,
-    tokenMint: params.inputPool,
+    tokenMint: params.inputTokenMint,
     amount: params.inputAmount - params.swapAmount,
     randomness: changeRandomness
   };
+  console.log("[Swap] Encrypting output note: tokenMint:", params.outputTokenMint.toBase58(), "amount:", params.outputAmount.toString());
+  console.log("[Swap] Encrypting change note: tokenMint:", params.inputTokenMint.toBase58(), "amount:", (params.inputAmount - params.swapAmount).toString());
   const encryptedOutputNote = encryptNote(outputNote, params.outputRecipient.stealthPubkey);
   const encryptedChangeNote = encryptNote(changeNote, params.changeRecipient.stealthPubkey);
   const outputEphemeralBytes = new Uint8Array(64);
@@ -929,14 +934,14 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
   const outputBRandomness = generateRandomness();
   const outputANote = {
     stealthPubX: params.outputARecipient.stealthPubkey.x,
-    tokenMint: params.poolA,
+    tokenMint: params.tokenAMint,
     amount: 0n,
     // Computed by circuit
     randomness: outputARandomness
   };
   const outputBNote = {
     stealthPubX: params.outputBRecipient.stealthPubkey.x,
-    tokenMint: params.poolB,
+    tokenMint: params.tokenBMint,
     amount: 0n,
     // Computed by circuit
     randomness: outputBRandomness
@@ -1918,7 +1923,9 @@ var ProofGenerator = class {
       proof,
       nullifier,
       outCommitment,
-      changeCommitment
+      changeCommitment,
+      outRandomness,
+      changeRandomness
     };
   }
   /**
@@ -3107,6 +3114,7 @@ var LightCommitmentClient = class extends LightClient {
    */
   async scanNotes(viewingKey, programId, pool) {
     const accounts = await this.getCommitmentAccounts(programId, pool);
+    console.log(`[Scanner] Found ${accounts.length} commitment accounts${pool ? ` for pool ${pool.toBase58()}` : " (all pools)"}`);
     const cacheKey = this.getCacheKey(viewingKey);
     if (!this.noteCache.has(cacheKey)) {
       this.noteCache.set(cacheKey, /* @__PURE__ */ new Map());
@@ -3179,6 +3187,7 @@ var LightCommitmentClient = class extends LightClient {
           stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? void 0
           // Store for stealth key derivation
         };
+        console.log(`[Scanner] Decrypted note: tokenMint=${new import_web33.PublicKey(note.tokenMint).toBase58().slice(0, 8)}..., amount=${note.amount}, pool=${new import_web33.PublicKey(parsed.pool).toBase58().slice(0, 8)}...`);
         cache.set(account.hash, decryptedNote);
         decryptedNotes.push(decryptedNote);
       } catch (err) {
@@ -3186,6 +3195,7 @@ var LightCommitmentClient = class extends LightClient {
         continue;
       }
     }
+    console.log(`[Scanner] Total decrypted notes: ${decryptedNotes.length}`);
     return decryptedNotes;
   }
   /**
@@ -4628,7 +4638,7 @@ var CloakCraftClient = class {
     if (!accountHash) {
       throw new Error("Input note missing accountHash. Use scanNotes() to get notes with accountHash.");
     }
-    const { proof, nullifier, outCommitment, changeCommitment } = proofResult;
+    const { proof, nullifier, outCommitment, changeCommitment, outRandomness, changeRandomness } = proofResult;
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
     const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildSwapWithProgram(
@@ -4636,6 +4646,8 @@ var CloakCraftClient = class {
       {
         inputPool: inputPoolPda,
         outputPool: outputPoolPda,
+        inputTokenMint,
+        outputTokenMint,
         ammPool: params.poolId,
         relayer: relayerPubkey,
         proof,
@@ -4649,7 +4661,9 @@ var CloakCraftClient = class {
         inputAmount: params.input.amount,
         swapAmount: params.swapAmount,
         outputAmount: params.outputAmount,
-        swapDirection: params.swapDirection
+        swapDirection: params.swapDirection,
+        outRandomness,
+        changeRandomness
       },
       heliusRpcUrl
     );
@@ -4669,9 +4683,14 @@ var CloakCraftClient = class {
       );
       await nullifierTx.rpc();
     }
+    console.log(`[Phase 3] Creating ${pendingCommitments.length} commitments...`);
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
-      if (pc.commitment.every((b) => b === 0)) continue;
+      if (pc.commitment.every((b) => b === 0)) {
+        console.log(`[Phase 3] Skipping zero commitment at index ${i}`);
+        continue;
+      }
+      console.log(`[Phase 3] Creating commitment ${i}: pool=${pc.pool.toBase58()}`);
       const { tx: commitmentTx } = await buildCreateCommitmentWithProgram2(
         this.program,
         {
@@ -4684,7 +4703,8 @@ var CloakCraftClient = class {
         },
         heliusRpcUrl
       );
-      await commitmentTx.rpc();
+      const sig = await commitmentTx.rpc();
+      console.log(`[Phase 3] Commitment ${i} created: ${sig}`);
     }
     const { tx: closeTx } = await buildClosePendingOperationWithProgram2(
       this.program,
@@ -4871,6 +4891,8 @@ var CloakCraftClient = class {
         lpPool,
         poolA,
         poolB,
+        tokenAMint,
+        tokenBMint,
         ammPool: params.poolId,
         relayer: relayerPubkey,
         proof,
