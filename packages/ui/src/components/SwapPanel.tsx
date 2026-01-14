@@ -2,8 +2,9 @@
  * Swap Panel - AMM interface with tabs for Swap, Add Liquidity, Remove Liquidity
  */
 
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { PublicKey } from '@solana/web3.js';
+import { useCloakCraft } from '@cloakcraft/hooks';
 import { colors } from '../styles';
 import { SwapForm } from './SwapForm';
 import { AddLiquidityForm } from './AddLiquidityForm';
@@ -11,6 +12,14 @@ import { RemoveLiquidityForm } from './RemoveLiquidityForm';
 import { DEVNET_TOKENS } from './TokenSelector';
 
 type AmmTab = 'swap' | 'add' | 'remove';
+
+interface TokenInfo {
+  mint: PublicKey;
+  symbol: string;
+  name: string;
+  decimals: number;
+  logoUri?: string;
+}
 
 interface SwapPanelProps {
   /** Optional initial tab */
@@ -21,12 +30,70 @@ interface SwapPanelProps {
 
 export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelProps) {
   const [activeTab, setActiveTab] = useState<AmmTab>(initialTab);
+  const [initializedPoolMints, setInitializedPoolMints] = useState<Set<string>>(new Set());
+  const [isLoadingPools, setIsLoadingPools] = useState(true);
+  const { client, notes } = useCloakCraft();
+
+  // Fetch initialized pools on mount
+  useEffect(() => {
+    const fetchPools = async () => {
+      if (!client) return;
+      setIsLoadingPools(true);
+
+      try {
+        const pools = await client.getAllPools();
+        const mints = new Set(pools.map((pool) => pool.tokenMint.toBase58()));
+        setInitializedPoolMints(mints);
+      } catch (err) {
+        console.error('Error fetching pools:', err);
+        setInitializedPoolMints(new Set());
+      }
+      setIsLoadingPools(false);
+    };
+
+    fetchPools();
+  }, [client]);
+
+  // Filter tokens to only those with initialized pools
+  const poolTokens = useMemo(() => {
+    return DEVNET_TOKENS.filter((token) => initializedPoolMints.has(token.mint.toBase58()));
+  }, [initializedPoolMints]);
+
+  // For remove liquidity, additionally filter to tokens user has notes for
+  const tokensWithNotes = useMemo(() => {
+    const notesByMint = new Map<string, number>();
+    notes.forEach((note) => {
+      const mintStr = note.tokenMint.toBase58();
+      notesByMint.set(mintStr, (notesByMint.get(mintStr) || 0) + 1);
+    });
+
+    return poolTokens.filter((token) => {
+      const noteCount = notesByMint.get(token.mint.toBase58()) || 0;
+      return noteCount > 0;
+    });
+  }, [poolTokens, notes]);
 
   const tabs: { id: AmmTab; label: string }[] = [
     { id: 'swap', label: 'Swap' },
     { id: 'add', label: 'Add Liquidity' },
     { id: 'remove', label: 'Remove Liquidity' },
   ];
+
+  if (isLoadingPools) {
+    return (
+      <div style={{ width: '100%', maxWidth: '600px', padding: '24px', textAlign: 'center' }}>
+        Loading pools...
+      </div>
+    );
+  }
+
+  if (poolTokens.length === 0) {
+    return (
+      <div style={{ width: '100%', maxWidth: '600px', padding: '24px', textAlign: 'center' }}>
+        No initialized pools found. Please initialize a pool first.
+      </div>
+    );
+  }
 
   return (
     <div style={{ width: '100%', maxWidth: '600px' }}>
@@ -64,7 +131,7 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
       {/* Tab Content */}
       {activeTab === 'swap' && (
         <SwapForm
-          tokens={DEVNET_TOKENS}
+          tokens={poolTokens}
           walletPublicKey={walletPublicKey}
           onSuccess={(signature) => {
             console.log('Swap success:', signature);
@@ -79,7 +146,7 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
 
       {activeTab === 'add' && (
         <AddLiquidityForm
-          tokens={DEVNET_TOKENS}
+          tokens={poolTokens}
           walletPublicKey={walletPublicKey}
           onSuccess={(signature) => {
             console.log('Add liquidity success:', signature);
@@ -92,9 +159,13 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
         />
       )}
 
-      {activeTab === 'remove' && (
+      {activeTab === 'remove' && tokensWithNotes.length === 0 ? (
+        <div style={{ padding: '24px', textAlign: 'center', color: colors.textMuted }}>
+          No LP tokens found. Add liquidity to a pool first.
+        </div>
+      ) : activeTab === 'remove' ? (
         <RemoveLiquidityForm
-          tokens={DEVNET_TOKENS}
+          tokens={tokensWithNotes}
           walletPublicKey={walletPublicKey}
           onSuccess={(signature) => {
             console.log('Remove liquidity success:', signature);
@@ -105,7 +176,7 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
             alert(`Remove liquidity error: ${error}`);
           }}
         />
-      )}
+      ) : null}
     </div>
   );
 }

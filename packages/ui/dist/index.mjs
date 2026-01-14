@@ -2715,7 +2715,8 @@ function WalletManager({ className }) {
 }
 
 // src/components/SwapPanel.tsx
-import { useState as useState12 } from "react";
+import { useState as useState12, useEffect as useEffect2, useMemo as useMemo5 } from "react";
+import { useCloakCraft as useCloakCraft9 } from "@cloakcraft/hooks";
 
 // src/components/SwapForm.tsx
 import { useState as useState9, useMemo as useMemo2 } from "react";
@@ -3448,11 +3449,50 @@ function RemoveLiquidityForm({
 import { jsx as jsx18, jsxs as jsxs18 } from "react/jsx-runtime";
 function SwapPanel({ initialTab = "swap", walletPublicKey }) {
   const [activeTab, setActiveTab] = useState12(initialTab);
+  const [initializedPoolMints, setInitializedPoolMints] = useState12(/* @__PURE__ */ new Set());
+  const [isLoadingPools, setIsLoadingPools] = useState12(true);
+  const { client, notes } = useCloakCraft9();
+  useEffect2(() => {
+    const fetchPools = async () => {
+      if (!client) return;
+      setIsLoadingPools(true);
+      try {
+        const pools = await client.getAllPools();
+        const mints = new Set(pools.map((pool) => pool.tokenMint.toBase58()));
+        setInitializedPoolMints(mints);
+      } catch (err) {
+        console.error("Error fetching pools:", err);
+        setInitializedPoolMints(/* @__PURE__ */ new Set());
+      }
+      setIsLoadingPools(false);
+    };
+    fetchPools();
+  }, [client]);
+  const poolTokens = useMemo5(() => {
+    return DEVNET_TOKENS.filter((token) => initializedPoolMints.has(token.mint.toBase58()));
+  }, [initializedPoolMints]);
+  const tokensWithNotes = useMemo5(() => {
+    const notesByMint = /* @__PURE__ */ new Map();
+    notes.forEach((note) => {
+      const mintStr = note.tokenMint.toBase58();
+      notesByMint.set(mintStr, (notesByMint.get(mintStr) || 0) + 1);
+    });
+    return poolTokens.filter((token) => {
+      const noteCount = notesByMint.get(token.mint.toBase58()) || 0;
+      return noteCount > 0;
+    });
+  }, [poolTokens, notes]);
   const tabs = [
     { id: "swap", label: "Swap" },
     { id: "add", label: "Add Liquidity" },
     { id: "remove", label: "Remove Liquidity" }
   ];
+  if (isLoadingPools) {
+    return /* @__PURE__ */ jsx18("div", { style: { width: "100%", maxWidth: "600px", padding: "24px", textAlign: "center" }, children: "Loading pools..." });
+  }
+  if (poolTokens.length === 0) {
+    return /* @__PURE__ */ jsx18("div", { style: { width: "100%", maxWidth: "600px", padding: "24px", textAlign: "center" }, children: "No initialized pools found. Please initialize a pool first." });
+  }
   return /* @__PURE__ */ jsxs18("div", { style: { width: "100%", maxWidth: "600px" }, children: [
     /* @__PURE__ */ jsx18(
       "div",
@@ -3487,7 +3527,7 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
     activeTab === "swap" && /* @__PURE__ */ jsx18(
       SwapForm,
       {
-        tokens: DEVNET_TOKENS,
+        tokens: poolTokens,
         walletPublicKey,
         onSuccess: (signature) => {
           console.log("Swap success:", signature);
@@ -3503,7 +3543,7 @@ TX: ${signature}`);
     activeTab === "add" && /* @__PURE__ */ jsx18(
       AddLiquidityForm,
       {
-        tokens: DEVNET_TOKENS,
+        tokens: poolTokens,
         walletPublicKey,
         onSuccess: (signature) => {
           console.log("Add liquidity success:", signature);
@@ -3516,10 +3556,10 @@ TX: ${signature}`);
         }
       }
     ),
-    activeTab === "remove" && /* @__PURE__ */ jsx18(
+    activeTab === "remove" && tokensWithNotes.length === 0 ? /* @__PURE__ */ jsx18("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No LP tokens found. Add liquidity to a pool first." }) : activeTab === "remove" ? /* @__PURE__ */ jsx18(
       RemoveLiquidityForm,
       {
-        tokens: DEVNET_TOKENS,
+        tokens: tokensWithNotes,
         walletPublicKey,
         onSuccess: (signature) => {
           console.log("Remove liquidity success:", signature);
@@ -3531,7 +3571,7 @@ TX: ${signature}`);
           alert(`Remove liquidity error: ${error}`);
         }
       }
-    )
+    ) : null
   ] });
 }
 export {

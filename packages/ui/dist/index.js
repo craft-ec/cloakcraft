@@ -34,7 +34,7 @@ __export(index_exports, {
   BalanceDisplay: () => BalanceDisplay,
   BalanceInline: () => BalanceInline,
   BalanceSummary: () => BalanceSummary,
-  CloakCraftProvider: () => import_hooks18.CloakCraftProvider,
+  CloakCraftProvider: () => import_hooks19.CloakCraftProvider,
   DEVNET_TOKENS: () => DEVNET_TOKENS,
   InitializePoolForm: () => InitializePoolForm,
   MAINNET_TOKENS: () => MAINNET_TOKENS,
@@ -61,7 +61,7 @@ __export(index_exports, {
   styles: () => styles
 });
 module.exports = __toCommonJS(index_exports);
-var import_hooks18 = require("@cloakcraft/hooks");
+var import_hooks19 = require("@cloakcraft/hooks");
 
 // src/components/WalletButton.tsx
 var import_react = require("react");
@@ -2778,6 +2778,7 @@ function WalletManager({ className }) {
 
 // src/components/SwapPanel.tsx
 var import_react15 = require("react");
+var import_hooks18 = require("@cloakcraft/hooks");
 
 // src/components/SwapForm.tsx
 var import_react12 = require("react");
@@ -3510,11 +3511,50 @@ function RemoveLiquidityForm({
 var import_jsx_runtime18 = require("react/jsx-runtime");
 function SwapPanel({ initialTab = "swap", walletPublicKey }) {
   const [activeTab, setActiveTab] = (0, import_react15.useState)(initialTab);
+  const [initializedPoolMints, setInitializedPoolMints] = (0, import_react15.useState)(/* @__PURE__ */ new Set());
+  const [isLoadingPools, setIsLoadingPools] = (0, import_react15.useState)(true);
+  const { client, notes } = (0, import_hooks18.useCloakCraft)();
+  (0, import_react15.useEffect)(() => {
+    const fetchPools = async () => {
+      if (!client) return;
+      setIsLoadingPools(true);
+      try {
+        const pools = await client.getAllPools();
+        const mints = new Set(pools.map((pool) => pool.tokenMint.toBase58()));
+        setInitializedPoolMints(mints);
+      } catch (err) {
+        console.error("Error fetching pools:", err);
+        setInitializedPoolMints(/* @__PURE__ */ new Set());
+      }
+      setIsLoadingPools(false);
+    };
+    fetchPools();
+  }, [client]);
+  const poolTokens = (0, import_react15.useMemo)(() => {
+    return DEVNET_TOKENS.filter((token) => initializedPoolMints.has(token.mint.toBase58()));
+  }, [initializedPoolMints]);
+  const tokensWithNotes = (0, import_react15.useMemo)(() => {
+    const notesByMint = /* @__PURE__ */ new Map();
+    notes.forEach((note) => {
+      const mintStr = note.tokenMint.toBase58();
+      notesByMint.set(mintStr, (notesByMint.get(mintStr) || 0) + 1);
+    });
+    return poolTokens.filter((token) => {
+      const noteCount = notesByMint.get(token.mint.toBase58()) || 0;
+      return noteCount > 0;
+    });
+  }, [poolTokens, notes]);
   const tabs = [
     { id: "swap", label: "Swap" },
     { id: "add", label: "Add Liquidity" },
     { id: "remove", label: "Remove Liquidity" }
   ];
+  if (isLoadingPools) {
+    return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { style: { width: "100%", maxWidth: "600px", padding: "24px", textAlign: "center" }, children: "Loading pools..." });
+  }
+  if (poolTokens.length === 0) {
+    return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { style: { width: "100%", maxWidth: "600px", padding: "24px", textAlign: "center" }, children: "No initialized pools found. Please initialize a pool first." });
+  }
   return /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { style: { width: "100%", maxWidth: "600px" }, children: [
     /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
       "div",
@@ -3549,7 +3589,7 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
     activeTab === "swap" && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
       SwapForm,
       {
-        tokens: DEVNET_TOKENS,
+        tokens: poolTokens,
         walletPublicKey,
         onSuccess: (signature) => {
           console.log("Swap success:", signature);
@@ -3565,7 +3605,7 @@ TX: ${signature}`);
     activeTab === "add" && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
       AddLiquidityForm,
       {
-        tokens: DEVNET_TOKENS,
+        tokens: poolTokens,
         walletPublicKey,
         onSuccess: (signature) => {
           console.log("Add liquidity success:", signature);
@@ -3578,10 +3618,10 @@ TX: ${signature}`);
         }
       }
     ),
-    activeTab === "remove" && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+    activeTab === "remove" && tokensWithNotes.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No LP tokens found. Add liquidity to a pool first." }) : activeTab === "remove" ? /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
       RemoveLiquidityForm,
       {
-        tokens: DEVNET_TOKENS,
+        tokens: tokensWithNotes,
         walletPublicKey,
         onSuccess: (signature) => {
           console.log("Remove liquidity success:", signature);
@@ -3593,7 +3633,7 @@ TX: ${signature}`);
           alert(`Remove liquidity error: ${error}`);
         }
       }
-    )
+    ) : null
   ] });
 }
 // Annotate the CommonJS export names for ESM import in node:
