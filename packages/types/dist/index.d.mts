@@ -255,6 +255,8 @@ interface AddLiquidityParams {
     depositA: bigint;
     /** Amount of token B to deposit */
     depositB: bigint;
+    /** Actual LP tokens to receive (calculated from pool state) */
+    lpAmount: bigint;
     /** Recipient for LP tokens */
     lpRecipient: StealthAddress;
     /** Recipient for token A change */

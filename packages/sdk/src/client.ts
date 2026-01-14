@@ -1112,6 +1112,11 @@ export class CloakCraftClient {
       throw new Error("Prover not initialized. Call initializeProver(['swap/add_liquidity']) first.");
     }
 
+    // CRITICAL: lpAmount was already calculated and passed in params
+    // We must use the SAME value in the proof that will be used in encryption
+    // (This is the same pattern as swap where we pass outputAmount)
+    const lpAmount = params.lpAmount;
+
     // Generate proof (returns both proof and computed commitments/nullifiers)
     const proofResult = await this.proofGenerator.generateAddLiquidityProof(
       params,
@@ -1128,49 +1133,11 @@ export class CloakCraftClient {
 
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
-
-    // Get LP token mint from AMM pool state
-    // Fetch AMM pool state to get LP mint and calculate LP tokens
-    const accountInfo = await this.connection.getAccountInfo(params.poolId);
-    if (!accountInfo) {
-      throw new Error(`AMM pool account not found: ${params.poolId.toBase58()}`);
-    }
-
-    // Manually parse account data (IDL doesn't include fields)
-    const data = accountInfo.data;
-    let offset = 8; // Skip discriminator
-    offset += 32; // poolId
-    offset += 32; // tokenAMint
-    offset += 32; // tokenBMint
-    const lpMint = new PublicKey(data.slice(offset, offset + 32));
-    offset += 32;
-    offset += 32; // stateHash
-
-    const view = new DataView(data.buffer, data.byteOffset);
-    const reserveA = view.getBigUint64(offset, true);
-    offset += 8;
-    const reserveB = view.getBigUint64(offset, true);
-    offset += 8;
-    const lpSupply = view.getBigUint64(offset, true);
-
-    const [lpPool] = derivePoolPda(lpMint, this.programId);
+    const [lpPool] = derivePoolPda(params.lpMint, this.programId);
 
     // Use SAME commitments, nullifiers, AND randomness that the proof used
     const { proof, nullifierA, nullifierB, lpCommitment, changeACommitment, changeBCommitment,
             lpRandomness, changeARandomness, changeBRandomness } = proofResult;
-
-    // Calculate LP tokens based on current pool state
-    let lpAmount: bigint;
-
-    if (reserveA === 0n && reserveB === 0n) {
-      // Initial liquidity: LP = sqrt(depositA * depositB)
-      lpAmount = BigInt(Math.floor(Math.sqrt(Number(params.depositA) * Number(params.depositB))));
-    } else {
-      // Subsequent deposits: LP = min(depositA * lpSupply / reserveA, depositB * lpSupply / reserveB)
-      const lpFromA = (params.depositA * lpSupply) / reserveA;
-      const lpFromB = (params.depositB * lpSupply) / reserveB;
-      lpAmount = lpFromA < lpFromB ? lpFromA : lpFromB;
-    }
 
     // Build Phase 1 transaction (two-phase API)
     const heliusRpcUrl = this.getHeliusRpcUrl();
@@ -1184,7 +1151,7 @@ export class CloakCraftClient {
         tokenAMint: params.inputA.tokenMint,
         tokenBMint: params.inputB.tokenMint,
         lpPool,
-        lpMint,
+        lpMint: params.lpMint,
         ammPool: params.poolId,
         relayer: relayerPubkey,
         proof,

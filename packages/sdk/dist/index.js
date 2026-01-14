@@ -1974,7 +1974,7 @@ var ProofGenerator = class {
     const changeBRandomness = params.changeBRandomness ?? generateRandomness();
     const changeAAmount = params.inputA.amount - params.depositA;
     const changeBAmount = params.inputB.amount - params.depositB;
-    const lpAmount = BigInt(Math.floor(Math.sqrt(Number(params.depositA * params.depositB))));
+    const lpAmount = params.lpAmount;
     const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? params.inputA.tokenMint : params.inputA.tokenMint.toBytes();
     const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? params.inputB.tokenMint : params.inputB.tokenMint.toBytes();
     const lpTokenMint = params.lpMint instanceof Uint8Array ? params.lpMint : params.lpMint.toBytes();
@@ -4733,6 +4733,7 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("swap/add_liquidity")) {
       throw new Error("Prover not initialized. Call initializeProver(['swap/add_liquidity']) first.");
     }
+    const lpAmount = params.lpAmount;
     const proofResult = await this.proofGenerator.generateAddLiquidityProof(
       params,
       this.wallet.keypair
@@ -4741,25 +4742,7 @@ var CloakCraftClient = class {
     const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new import_web312.PublicKey(params.inputB.tokenMint) : params.inputB.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
-    const accountInfo = await this.connection.getAccountInfo(params.poolId);
-    if (!accountInfo) {
-      throw new Error(`AMM pool account not found: ${params.poolId.toBase58()}`);
-    }
-    const data = accountInfo.data;
-    let offset = 8;
-    offset += 32;
-    offset += 32;
-    offset += 32;
-    const lpMint = new import_web312.PublicKey(data.slice(offset, offset + 32));
-    offset += 32;
-    offset += 32;
-    const view = new DataView(data.buffer, data.byteOffset);
-    const reserveA = view.getBigUint64(offset, true);
-    offset += 8;
-    const reserveB = view.getBigUint64(offset, true);
-    offset += 8;
-    const lpSupply = view.getBigUint64(offset, true);
-    const [lpPool] = derivePoolPda(lpMint, this.programId);
+    const [lpPool] = derivePoolPda(params.lpMint, this.programId);
     const {
       proof,
       nullifierA,
@@ -4771,14 +4754,6 @@ var CloakCraftClient = class {
       changeARandomness,
       changeBRandomness
     } = proofResult;
-    let lpAmount;
-    if (reserveA === 0n && reserveB === 0n) {
-      lpAmount = BigInt(Math.floor(Math.sqrt(Number(params.depositA) * Number(params.depositB))));
-    } else {
-      const lpFromA = params.depositA * lpSupply / reserveA;
-      const lpFromB = params.depositB * lpSupply / reserveB;
-      lpAmount = lpFromA < lpFromB ? lpFromA : lpFromB;
-    }
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
     const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildAddLiquidityWithProgram(
@@ -4789,7 +4764,7 @@ var CloakCraftClient = class {
         tokenAMint: params.inputA.tokenMint,
         tokenBMint: params.inputB.tokenMint,
         lpPool,
-        lpMint,
+        lpMint: params.lpMint,
         ammPool: params.poolId,
         relayer: relayerPubkey,
         proof,

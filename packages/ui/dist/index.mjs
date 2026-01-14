@@ -3415,6 +3415,7 @@ function AddLiquidityForm({
         lpMint: selectedPool.lpMint,
         depositA: liquidityQuote.depositA,
         depositB: liquidityQuote.depositB,
+        lpAmount: liquidityQuote.lpAmount,
         lpRecipient: lpAddress,
         changeARecipient: changeAAddress,
         changeBRecipient: changeBAddress

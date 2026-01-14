@@ -584,8 +584,9 @@ export class ProofGenerator {
     const changeAAmount = params.inputA.amount - params.depositA;
     const changeBAmount = params.inputB.amount - params.depositB;
 
-    // Estimate LP amount (sqrt(depositA * depositB) for simplicity - actual calculation on-chain)
-    const lpAmount = BigInt(Math.floor(Math.sqrt(Number(params.depositA * params.depositB))));
+    // Use the actual LP amount provided by caller (calculated from pool state)
+    // CRITICAL: Must match the amount used in encryption!
+    const lpAmount = params.lpAmount;
 
     // Token mints
     const tokenAMint = params.inputA.tokenMint instanceof Uint8Array
