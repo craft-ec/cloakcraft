@@ -1095,11 +1095,11 @@ export class CloakCraftClient {
       });
 
       // Sign and send
+      let ammSignature: string;
       if (payerKeypair) {
         // CLI mode: explicitly sign with payer keypair
-        const signature = await tx.signers([payerKeypair, lpMintKeypair]).rpc();
-        console.log(`[AMM] Pool initialized (CLI): ${signature}`);
-        return signature;
+        ammSignature = await tx.signers([payerKeypair, lpMintKeypair]).rpc();
+        console.log(`[AMM] Pool initialized (CLI): ${ammSignature}`);
       } else {
         // Wallet adapter mode: build transaction, partial sign with lpMintKeypair, then send
         const transaction = await tx.transaction();
@@ -1123,18 +1123,30 @@ export class CloakCraftClient {
         const signedTx = await wallet.signTransaction(transaction);
 
         // Send the signed transaction
-        const signature = await this.connection.sendRawTransaction(signedTx.serialize());
+        ammSignature = await this.connection.sendRawTransaction(signedTx.serialize());
 
         // Wait for confirmation
         await this.connection.confirmTransaction({
-          signature,
+          signature: ammSignature,
           blockhash,
           lastValidBlockHeight
         });
 
-        console.log(`[AMM] Pool initialized (wallet): ${signature}`);
-        return signature;
+        console.log(`[AMM] Pool initialized (wallet): ${ammSignature}`);
       }
+
+      // Initialize the LP pool for storing LP token commitments
+      // This is required before users can add liquidity
+      console.log(`[AMM] Initializing LP token pool: ${lpMintKeypair.publicKey.toBase58()}`);
+      try {
+        // Call initPool directly which will use wallet adapter
+        const lpPoolInit = await initPool(this.program, lpMintKeypair.publicKey, payerPublicKey, payerPublicKey);
+        console.log(`[AMM] LP pool initialized: ${lpPoolInit.poolTx}`);
+      } catch (err) {
+        console.warn(`[AMM] LP pool initialization failed (may already exist): ${err instanceof Error ? err.message : err}`);
+      }
+
+      return ammSignature;
     } catch (err) {
       console.error('[AMM] Failed to initialize pool:', err);
       throw err;

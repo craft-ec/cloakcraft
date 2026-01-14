@@ -657,7 +657,9 @@ function useUnshield() {
         try {
           recipientTokenAccount = (0, import_spl_token.getAssociatedTokenAddressSync)(
             inputs[0].tokenMint,
-            recipient
+            recipient,
+            true
+            // allowOwnerOffCurve - standard practice for flexibility
           );
         } catch (err) {
           setState({

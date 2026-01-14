@@ -3762,6 +3762,8 @@ function AddLiquidityForm({
   };
   useEffect2(() => {
     if (!selectedPool) return;
+    const isEmptyPool = selectedPool.reserveA === 0n || selectedPool.reserveB === 0n;
+    if (isEmptyPool) return;
     if (lastEditedField === "A" && amountA) {
       const amountANum = parseFloat(amountA);
       if (!isNaN(amountANum) && amountANum > 0) {
@@ -3983,6 +3985,17 @@ function AddLiquidityForm({
               tokenB.symbol
             ] })
           ] })
+        ] }),
+        selectedPool && (selectedPool.reserveA === 0n || selectedPool.reserveB === 0n) && /* @__PURE__ */ jsxs18("div", { style: {
+          background: colors.backgroundMuted,
+          padding: "12px",
+          borderRadius: "8px",
+          fontSize: "0.875rem",
+          color: colors.textMuted,
+          border: `1px solid ${colors.border}`
+        }, children: [
+          /* @__PURE__ */ jsx18("strong", { style: { color: colors.text }, children: "Initial Liquidity" }),
+          /* @__PURE__ */ jsx18("div", { style: { marginTop: "4px" }, children: "You're adding the first liquidity to this pool. The ratio you provide will set the initial price." })
         ] }),
         liquidityQuote && /* @__PURE__ */ jsxs18("div", { style: {
           background: colors.backgroundMuted,

@@ -78,8 +78,15 @@ export function AddLiquidityForm({
   };
 
   // Auto-calculate the other amount when one field is edited
+  // Skip for empty pools (initial liquidity) - let user set both amounts freely
   useEffect(() => {
     if (!selectedPool) return;
+
+    // Check if pool is empty (initial liquidity)
+    const isEmptyPool = selectedPool.reserveA === 0n || selectedPool.reserveB === 0n;
+
+    // For empty pools, don't auto-calculate - let user set initial price ratio
+    if (isEmptyPool) return;
 
     if (lastEditedField === 'A' && amountA) {
       const amountANum = parseFloat(amountA);
@@ -338,6 +345,23 @@ export function AddLiquidityForm({
               </span>
             </div>
           </div>
+
+        {/* Empty Pool Notice */}
+        {selectedPool && (selectedPool.reserveA === 0n || selectedPool.reserveB === 0n) && (
+          <div style={{
+            background: colors.backgroundMuted,
+            padding: '12px',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            color: colors.textMuted,
+            border: `1px solid ${colors.border}`,
+          }}>
+            <strong style={{ color: colors.text }}>Initial Liquidity</strong>
+            <div style={{ marginTop: '4px' }}>
+              You're adding the first liquidity to this pool. The ratio you provide will set the initial price.
+            </div>
+          </div>
+        )}
 
         {/* Liquidity Quote */}
         {liquidityQuote && (

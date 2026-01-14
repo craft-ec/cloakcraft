@@ -9,7 +9,7 @@ import {
   TransactionInstruction,
   ComputeBudgetProgram,
 } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
+import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { Program, BN } from '@coral-xyz/anchor';
 import type { Point } from '@cloakcraft/types';
 
@@ -231,15 +231,12 @@ export async function buildTransactWithProgram(
     outputTreeIndex,
   };
 
-  // Derive unshield recipient token account (ATA) if wallet address provided
+  // The unshieldRecipient parameter should already be the token account address
+  // (not the wallet address - that should be derived by the caller)
+  // So we just use it directly without deriving again
   let unshieldRecipientAta: PublicKey | null = null;
   if (params.unshieldRecipient && params.unshieldAmount && params.unshieldAmount > 0n) {
-    // Derive the associated token account for the recipient wallet
-    unshieldRecipientAta = getAssociatedTokenAddressSync(
-      params.tokenMint,
-      params.unshieldRecipient,
-      true // allowOwnerOffCurve - in case recipient is a PDA
-    );
+    unshieldRecipientAta = params.unshieldRecipient;
   }
 
   // Build transaction using Anchor

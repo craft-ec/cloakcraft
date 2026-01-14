@@ -481,6 +481,13 @@ function SwapTabContent({
     });
   }, [poolTokens, notes]);
 
+  // Filter pools with liquidity for swap only
+  // Must be before any conditional returns to avoid React Hooks order violation
+  const poolsWithLiquidity = useMemo(
+    () => ammPools.filter((pool) => pool.reserveA > BigInt(0) && pool.reserveB > BigInt(0)),
+    [ammPools]
+  );
+
   if (isLoadingPools || isInitializingCircuits) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 0' }}>
@@ -505,12 +512,6 @@ function SwapTabContent({
       </div>
     );
   }
-
-  // Filter pools with liquidity for swap only
-  const poolsWithLiquidity = useMemo(
-    () => ammPools.filter((pool) => pool.reserveA > BigInt(0) && pool.reserveB > BigInt(0)),
-    [ammPools]
-  );
 
   return (
     <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>

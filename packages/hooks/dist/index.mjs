@@ -600,7 +600,9 @@ function useUnshield() {
         try {
           recipientTokenAccount = getAssociatedTokenAddressSync(
             inputs[0].tokenMint,
-            recipient
+            recipient,
+            true
+            // allowOwnerOffCurve - standard practice for flexibility
           );
         } catch (err) {
           setState({

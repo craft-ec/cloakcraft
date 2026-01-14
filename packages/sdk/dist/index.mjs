@@ -2353,7 +2353,7 @@ async function buildShieldWithProgram(program, params, rpcUrl) {
 import {
   ComputeBudgetProgram as ComputeBudgetProgram2
 } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID as TOKEN_PROGRAM_ID2, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID as TOKEN_PROGRAM_ID2 } from "@solana/spl-token";
 import { BN as BN2 } from "@coral-xyz/anchor";
 async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIRCUIT_IDS.TRANSFER_1X2) {
   const programId = program.programId;
@@ -2436,12 +2436,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
   };
   let unshieldRecipientAta = null;
   if (params.unshieldRecipient && params.unshieldAmount && params.unshieldAmount > 0n) {
-    unshieldRecipientAta = getAssociatedTokenAddressSync(
-      params.tokenMint,
-      params.unshieldRecipient,
-      true
-      // allowOwnerOffCurve - in case recipient is a PDA
-    );
+    unshieldRecipientAta = params.unshieldRecipient;
   }
   const tx = await program.methods.transact(
     Buffer.from(params.proof),
@@ -3782,10 +3777,10 @@ var CloakCraftClient = class {
         authority: payerPublicKey,
         payer: payerPublicKey
       });
+      let ammSignature;
       if (payerKeypair) {
-        const signature = await tx.signers([payerKeypair, lpMintKeypair]).rpc();
-        console.log(`[AMM] Pool initialized (CLI): ${signature}`);
-        return signature;
+        ammSignature = await tx.signers([payerKeypair, lpMintKeypair]).rpc();
+        console.log(`[AMM] Pool initialized (CLI): ${ammSignature}`);
       } else {
         const transaction = await tx.transaction();
         const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
@@ -3798,15 +3793,22 @@ var CloakCraftClient = class {
           throw new Error("Wallet does not support transaction signing");
         }
         const signedTx = await wallet.signTransaction(transaction);
-        const signature = await this.connection.sendRawTransaction(signedTx.serialize());
+        ammSignature = await this.connection.sendRawTransaction(signedTx.serialize());
         await this.connection.confirmTransaction({
-          signature,
+          signature: ammSignature,
           blockhash,
           lastValidBlockHeight
         });
-        console.log(`[AMM] Pool initialized (wallet): ${signature}`);
-        return signature;
+        console.log(`[AMM] Pool initialized (wallet): ${ammSignature}`);
       }
+      console.log(`[AMM] Initializing LP token pool: ${lpMintKeypair.publicKey.toBase58()}`);
+      try {
+        const lpPoolInit = await initializePool(this.program, lpMintKeypair.publicKey, payerPublicKey, payerPublicKey);
+        console.log(`[AMM] LP pool initialized: ${lpPoolInit.poolTx}`);
+      } catch (err) {
+        console.warn(`[AMM] LP pool initialization failed (may already exist): ${err instanceof Error ? err.message : err}`);
+      }
+      return ammSignature;
     } catch (err) {
       console.error("[AMM] Failed to initialize pool:", err);
       throw err;
