@@ -16,7 +16,7 @@
 
 - `packages/sdk/` - TypeScript SDK for client-side operations
 - `programs/cloakcraft/` - Solana program (Rust/Anchor)
-- `circuits/` - Noir ZK circuits
+- `circom-circuits/` - Circom ZK circuits (using Groth16)
 - `scripts/` - Development and testing scripts
 - `types/` - Shared TypeScript type declarations
 

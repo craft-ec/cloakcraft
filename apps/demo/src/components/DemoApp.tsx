@@ -87,24 +87,30 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
 
 
   return (
-    <div style={{ minHeight: '100vh', padding: '24px' }}>
+    <div style={{ minHeight: '100vh', padding: '32px 24px' }}>
       {/* Header */}
       <header
         style={{
           maxWidth: '1200px',
-          margin: '0 auto 32px',
+          margin: '0 auto 48px',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
           flexWrap: 'wrap',
-          gap: '16px',
+          gap: '24px',
         }}
       >
         <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '4px' }}>
+          <h1 style={{
+            fontSize: '2rem',
+            fontWeight: 700,
+            marginBottom: '6px',
+            fontFamily: "'Playfair Display', Georgia, serif",
+            letterSpacing: '-0.02em',
+          }}>
             CloakCraft
           </h1>
-          <p style={{ fontSize: '0.875rem', color: colors.textMuted }}>
+          <p style={{ fontSize: '0.9375rem', color: colors.textMuted, lineHeight: 1.5 }}>
             Privacy-preserving token transfers on Solana
           </p>
         </div>
@@ -116,24 +122,48 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
           {/* Status Indicator */}
           <div
             style={{
-              padding: '8px 16px',
-              background: colors.backgroundMuted,
-              borderRadius: '8px',
-              fontSize: '0.75rem',
+              padding: '12px 20px',
+              background: colors.background,
+              border: `1px solid ${colors.border}`,
+              borderRadius: '12px',
+              fontSize: '0.8125rem',
               display: 'flex',
               flexDirection: 'column',
-              gap: '2px',
+              gap: '6px',
+              boxShadow: '0 1px 3px rgba(44, 36, 22, 0.06)',
             }}
           >
-            <div>
-              Solana:{' '}
-              <span style={{ color: isSolanaConnected ? colors.success : colors.textMuted }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ color: colors.textMuted, fontWeight: 500 }}>Solana</span>
+              <span style={{
+                display: 'inline-block',
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                backgroundColor: isSolanaConnected ? colors.success : colors.textLight,
+              }} />
+              <span style={{
+                color: isSolanaConnected ? colors.success : colors.textMuted,
+                fontWeight: 600,
+                fontSize: '0.75rem',
+              }}>
                 {isSolanaConnected ? 'Connected' : 'Disconnected'}
               </span>
             </div>
-            <div>
-              Stealth:{' '}
-              <span style={{ color: isCloakConnected ? colors.success : colors.textMuted }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ color: colors.textMuted, fontWeight: 500 }}>Stealth</span>
+              <span style={{
+                display: 'inline-block',
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                backgroundColor: isCloakConnected ? colors.success : colors.textLight,
+              }} />
+              <span style={{
+                color: isCloakConnected ? colors.success : colors.textMuted,
+                fontWeight: 600,
+                fontSize: '0.75rem',
+              }}>
                 {isInitializing ? 'Loading...' : isCloakConnected ? 'Active' : 'Inactive'}
               </span>
             </div>
@@ -147,9 +177,9 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
         <nav
           style={{
             display: 'flex',
-            gap: '4px',
-            marginBottom: '24px',
-            borderBottom: `1px solid ${colors.border}`,
+            gap: '8px',
+            marginBottom: '32px',
+            borderBottom: `2px solid ${colors.border}`,
             paddingBottom: '0',
             overflowX: 'auto',
           }}
@@ -162,21 +192,23 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
                 onClick={() => !isDisabled && setActiveTab(tab.id)}
                 disabled={isDisabled}
                 style={{
-                  padding: '12px 24px',
+                  padding: '14px 28px',
                   background: 'none',
                   border: 'none',
                   borderBottom:
-                    activeTab === tab.id ? `2px solid ${colors.primary}` : '2px solid transparent',
+                    activeTab === tab.id ? `3px solid ${colors.primary}` : '3px solid transparent',
                   color: isDisabled
                     ? colors.textMuted
                     : activeTab === tab.id
                     ? colors.primary
                     : colors.text,
                   cursor: isDisabled ? 'not-allowed' : 'pointer',
-                  fontWeight: activeTab === tab.id ? 600 : 400,
-                  fontSize: '0.9375rem',
-                  opacity: isDisabled ? 0.5 : 1,
+                  fontWeight: activeTab === tab.id ? 600 : 500,
+                  fontSize: '1rem',
+                  opacity: isDisabled ? 0.4 : 1,
                   whiteSpace: 'nowrap',
+                  transition: 'all 0.2s ease',
+                  letterSpacing: '0.01em',
                 }}
               >
                 {tab.label}
@@ -192,8 +224,8 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
             <div
               style={{
                 display: 'flex',
-                gap: '8px',
-                marginBottom: '24px',
+                gap: '4px',
+                marginBottom: '28px',
                 borderBottom: `1px solid ${colors.border}`,
               }}
             >
@@ -207,19 +239,19 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
                   key={subTab.id}
                   onClick={() => setWalletSubTab(subTab.id)}
                   style={{
-                    padding: '12px 24px',
+                    padding: '10px 20px',
                     background: 'transparent',
                     border: 'none',
                     borderBottom:
                       walletSubTab === subTab.id
                         ? `2px solid ${colors.primary}`
                         : '2px solid transparent',
-                    color: walletSubTab === subTab.id ? colors.text : colors.textMuted,
+                    color: walletSubTab === subTab.id ? colors.primary : colors.textMuted,
                     fontWeight: 600,
-                    opacity: walletSubTab === subTab.id ? 1 : 0.6,
                     cursor: 'pointer',
-                    transition: 'color 0.2s, opacity 0.2s, border-color 0.2s',
-                    fontSize: '14px',
+                    transition: 'all 0.2s ease',
+                    fontSize: '0.875rem',
+                    letterSpacing: '0.01em',
                   }}
                 >
                   {subTab.label}
@@ -275,15 +307,17 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
       <footer
         style={{
           maxWidth: '1200px',
-          margin: '48px auto 0',
-          padding: '24px 0',
+          margin: '64px auto 0',
+          padding: '32px 0',
           borderTop: `1px solid ${colors.border}`,
           textAlign: 'center',
-          fontSize: '0.8125rem',
+          fontSize: '0.875rem',
           color: colors.textMuted,
         }}
       >
-        CloakCraft Demo - Running on Solana Devnet
+        <p style={{ margin: 0 }}>
+          CloakCraft Demo · Running on Solana Devnet
+        </p>
       </footer>
     </div>
   );
@@ -305,7 +339,15 @@ function WalletTab({
       {/* Column 1: Wallet Management */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
         <div>
-          <h3 style={{ marginBottom: '16px', fontSize: '1.125rem' }}>Stealth Wallet</h3>
+          <h3 style={{
+            marginBottom: '20px',
+            fontSize: '1.25rem',
+            fontFamily: "'Playfair Display', Georgia, serif",
+            fontWeight: 700,
+            letterSpacing: '-0.02em',
+          }}>
+            Stealth Wallet
+          </h3>
           <WalletButton solanaConnected={solanaConnected} signMessage={signMessage} />
         </div>
         <WalletManager />
@@ -315,7 +357,15 @@ function WalletTab({
       <div>
         {solanaPublicKey ? (
           <>
-            <h3 style={{ marginBottom: '16px', fontSize: '1.125rem' }}>Public Balances</h3>
+            <h3 style={{
+              marginBottom: '20px',
+              fontSize: '1.25rem',
+              fontFamily: "'Playfair Display', Georgia, serif",
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
+            }}>
+              Public Balances
+            </h3>
             <MultiTokenBalanceDisplay owner={solanaPublicKey} tokens={DEVNET_TOKENS} showSol={true} />
           </>
         ) : (
@@ -331,7 +381,15 @@ function WalletTab({
       <div>
         {isConnected ? (
           <>
-            <h3 style={{ marginBottom: '16px', fontSize: '1.125rem' }}>Private Balances</h3>
+            <h3 style={{
+              marginBottom: '20px',
+              fontSize: '1.25rem',
+              fontFamily: "'Playfair Display', Georgia, serif",
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
+            }}>
+              Private Balances
+            </h3>
             <MultiPrivateBalanceDisplay tokens={DEVNET_TOKENS} />
           </>
         ) : (

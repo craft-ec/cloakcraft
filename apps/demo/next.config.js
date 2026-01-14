@@ -1,3 +1,5 @@
+const webpack = require('webpack');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -11,7 +13,14 @@ const nextConfig = {
         tls: false,
         child_process: false,
         'pino-pretty': false,
+        buffer: require.resolve('buffer/'),
       };
+
+      config.plugins.push(
+        new webpack.ProvidePlugin({
+          Buffer: ['buffer', 'Buffer'],
+        })
+      );
     }
     return config;
   },

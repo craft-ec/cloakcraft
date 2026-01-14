@@ -188,7 +188,7 @@ function TokenSelectorWithBalance({
     const divisor = BigInt(10 ** decimals);
     const whole = balance / divisor;
     const fractional = balance % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, '0').slice(0, 4);
+    const fractionalStr = fractional.toString().padStart(decimals, '0').slice(0, 8);
     return `${whole.toLocaleString()}.${fractionalStr}`;
   };
 

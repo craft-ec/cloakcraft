@@ -197,15 +197,9 @@ export class ProofGenerator {
     }
 
     // Circom circuits are auto-loaded on-demand via snarkjs, skip pre-loading
-    // They're loaded directly from .wasm and .zkey files at prove time
+    // Circom circuits are loaded directly from .wasm and .zkey files at prove time
     console.log(`[Circuit] ${name} will be auto-loaded on-demand from ${this.baseUrl}/`);
     return;
-
-    // Legacy Noir circuit loading (not used for Circom)
-    // const basePath = `${this.baseUrl}/target`;
-    // const manifestUrl = `${basePath}/${circuitFileName}.json`;
-    // const pkUrl = `${basePath}/${circuitFileName}.pk`;
-    // ...
   }
 
   /**
@@ -214,7 +208,7 @@ export class ProofGenerator {
    * Circom circuits are auto-loaded on-demand, so we return true for known circuit names.
    */
   hasCircuit(name: string): boolean {
-    // Check if already loaded in circuits cache (Noir legacy)
+    // Check if already loaded in circuits cache
     if (this.circuits.has(name)) {
       return true;
     }

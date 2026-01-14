@@ -70,180 +70,245 @@ var import_hooks = require("@cloakcraft/hooks");
 
 // src/styles.ts
 var colors = {
-  primary: "#6366f1",
-  primaryHover: "#4f46e5",
-  success: "#10b981",
-  error: "#ef4444",
-  warning: "#f59e0b",
-  text: "#1f2937",
-  textMuted: "#6b7280",
-  textLight: "#9ca3af",
-  border: "#e5e7eb",
-  borderHover: "#d1d5db",
+  primary: "#4f46e5",
+  primaryHover: "#4338ca",
+  primaryLight: "#eef2ff",
+  success: "#059669",
+  successLight: "#d1fae5",
+  error: "#dc2626",
+  errorLight: "#fee2e2",
+  warning: "#d97706",
+  warningLight: "#fef3c7",
+  text: "#2c2416",
+  textMuted: "#6b5d4f",
+  textLight: "#9c8b7a",
+  border: "#e7e0d8",
+  borderHover: "#d4c8bc",
   background: "#ffffff",
-  backgroundMuted: "#f9fafb",
-  backgroundDark: "#f3f4f6"
+  backgroundMuted: "#faf8f5",
+  backgroundDark: "#f5f3f0"
 };
 var styles = {
   // Card container
   card: {
-    padding: "24px",
-    borderRadius: "12px",
+    padding: "28px",
+    borderRadius: "16px",
     border: `1px solid ${colors.border}`,
-    backgroundColor: colors.background
+    backgroundColor: colors.background,
+    boxShadow: "0 1px 3px rgba(44, 36, 22, 0.06)",
+    transition: "box-shadow 0.3s ease, transform 0.3s ease"
+  },
+  cardHover: {
+    boxShadow: "0 4px 12px rgba(44, 36, 22, 0.08)",
+    transform: "translateY(-2px)"
   },
   cardTitle: {
-    margin: "0 0 8px 0",
-    fontSize: "1.25rem",
-    fontWeight: 600,
+    margin: "0 0 10px 0",
+    fontSize: "1.375rem",
+    fontWeight: 700,
+    fontFamily: "'Playfair Display', Georgia, serif",
+    letterSpacing: "-0.02em",
     color: colors.text
   },
   cardDescription: {
-    margin: "0 0 20px 0",
-    fontSize: "0.875rem",
-    color: colors.textMuted
+    margin: "0 0 24px 0",
+    fontSize: "0.9375rem",
+    color: colors.textMuted,
+    lineHeight: 1.6
   },
   // Form elements
   form: {
     display: "flex",
     flexDirection: "column",
-    gap: "16px"
+    gap: "20px"
   },
   label: {
     display: "flex",
     flexDirection: "column",
-    gap: "6px",
+    gap: "8px",
     fontSize: "0.875rem",
-    fontWeight: 500,
-    color: colors.text
+    fontWeight: 600,
+    color: colors.text,
+    letterSpacing: "0.01em"
   },
   input: {
     width: "100%",
-    padding: "10px 14px",
-    borderRadius: "8px",
+    padding: "12px 16px",
+    borderRadius: "10px",
     border: `1px solid ${colors.border}`,
     fontSize: "1rem",
     outline: "none",
-    transition: "border-color 0.15s ease",
-    boxSizing: "border-box"
+    transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+    boxSizing: "border-box",
+    backgroundColor: colors.background,
+    color: colors.text,
+    fontFamily: "inherit"
   },
   inputFocused: {
-    borderColor: colors.primary
+    borderColor: colors.primary,
+    boxShadow: `0 0 0 3px ${colors.primaryLight}`
   },
   textarea: {
     width: "100%",
-    padding: "10px 14px",
-    borderRadius: "8px",
+    padding: "12px 16px",
+    borderRadius: "10px",
     border: `1px solid ${colors.border}`,
-    fontSize: "0.875rem",
-    fontFamily: "monospace",
+    fontSize: "0.9375rem",
+    fontFamily: "'SF Mono', 'Monaco', 'Inconsolata', monospace",
     outline: "none",
     resize: "vertical",
-    minHeight: "80px",
-    boxSizing: "border-box"
+    minHeight: "100px",
+    boxSizing: "border-box",
+    backgroundColor: colors.background,
+    color: colors.text,
+    lineHeight: 1.5
   },
   // Buttons
   buttonPrimary: {
-    padding: "12px 20px",
-    borderRadius: "8px",
+    padding: "14px 24px",
+    borderRadius: "10px",
     border: "none",
     backgroundColor: colors.primary,
     color: "white",
     fontSize: "0.9375rem",
-    fontWeight: 500,
+    fontWeight: 600,
     cursor: "pointer",
-    transition: "background-color 0.15s ease"
+    transition: "all 0.2s ease",
+    boxShadow: "0 2px 4px rgba(79, 70, 229, 0.2)",
+    letterSpacing: "0.01em"
+  },
+  buttonPrimaryHover: {
+    backgroundColor: colors.primaryHover,
+    boxShadow: "0 4px 8px rgba(79, 70, 229, 0.3)",
+    transform: "translateY(-1px)"
   },
   buttonSecondary: {
-    padding: "12px 20px",
-    borderRadius: "8px",
-    border: `1px solid ${colors.border}`,
+    padding: "14px 24px",
+    borderRadius: "10px",
+    border: `1.5px solid ${colors.border}`,
     backgroundColor: colors.background,
     color: colors.text,
     fontSize: "0.9375rem",
-    fontWeight: 500,
+    fontWeight: 600,
     cursor: "pointer",
-    transition: "background-color 0.15s ease, border-color 0.15s ease"
+    transition: "all 0.2s ease",
+    letterSpacing: "0.01em"
+  },
+  buttonSecondaryHover: {
+    borderColor: colors.borderHover,
+    backgroundColor: colors.backgroundMuted,
+    transform: "translateY(-1px)"
   },
   buttonDisabled: {
     backgroundColor: colors.textLight,
-    cursor: "not-allowed"
+    cursor: "not-allowed",
+    opacity: 0.5,
+    boxShadow: "none"
   },
   buttonSmall: {
-    padding: "6px 12px",
+    padding: "8px 16px",
     fontSize: "0.8125rem"
   },
   // Status messages
   errorText: {
     color: colors.error,
     fontSize: "0.875rem",
-    marginTop: "4px"
+    marginTop: "6px",
+    fontWeight: 500
   },
   successText: {
     color: colors.success,
     fontSize: "0.875rem",
-    fontWeight: 500
+    fontWeight: 600
   },
   successBox: {
-    padding: "12px 16px",
-    borderRadius: "8px",
-    backgroundColor: "#ecfdf5",
-    border: `1px solid ${colors.success}`
+    padding: "16px 20px",
+    borderRadius: "12px",
+    backgroundColor: colors.successLight,
+    border: `1px solid ${colors.success}`,
+    color: colors.success
   },
   warningBox: {
-    padding: "12px 16px",
-    borderRadius: "8px",
-    backgroundColor: "#fffbeb",
-    border: `1px solid ${colors.warning}`
+    padding: "16px 20px",
+    borderRadius: "12px",
+    backgroundColor: colors.warningLight,
+    border: `1px solid ${colors.warning}`,
+    color: colors.warning
+  },
+  errorBox: {
+    padding: "16px 20px",
+    borderRadius: "12px",
+    backgroundColor: colors.errorLight,
+    border: `1px solid ${colors.error}`,
+    color: colors.error
   },
   // Links
   link: {
     color: colors.primary,
     textDecoration: "none",
-    fontSize: "0.875rem"
+    fontSize: "0.875rem",
+    fontWeight: 500,
+    transition: "color 0.2s ease"
+  },
+  linkHover: {
+    color: colors.primaryHover,
+    textDecoration: "underline"
   },
   txLink: {
-    marginTop: "8px",
+    marginTop: "10px",
     fontSize: "0.8125rem"
   },
   // List items
   listItem: {
-    padding: "12px 16px",
+    padding: "16px 20px",
     border: `1px solid ${colors.border}`,
-    borderRadius: "8px",
+    borderRadius: "12px",
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "center"
+    alignItems: "center",
+    transition: "all 0.2s ease",
+    backgroundColor: colors.background
+  },
+  listItemHover: {
+    borderColor: colors.borderHover,
+    backgroundColor: colors.backgroundMuted,
+    transform: "translateX(2px)"
   },
   listItemSelected: {
     borderColor: colors.primary,
-    backgroundColor: "#eef2ff"
+    backgroundColor: colors.primaryLight,
+    boxShadow: `0 0 0 3px ${colors.primaryLight}`
   },
   // Badge
   badge: {
     display: "inline-block",
-    padding: "2px 8px",
+    padding: "4px 12px",
     borderRadius: "9999px",
     fontSize: "0.75rem",
-    fontWeight: 500
+    fontWeight: 600,
+    letterSpacing: "0.02em"
   },
   badgeSuccess: {
-    backgroundColor: "#ecfdf5",
+    backgroundColor: colors.successLight,
     color: colors.success
   },
   badgeWarning: {
-    backgroundColor: "#fffbeb",
+    backgroundColor: colors.warningLight,
     color: colors.warning
   },
   badgeError: {
-    backgroundColor: "#fef2f2",
+    backgroundColor: colors.errorLight,
     color: colors.error
+  },
+  badgePrimary: {
+    backgroundColor: colors.primaryLight,
+    color: colors.primary
   },
   // Layout
   row: {
     display: "flex",
     alignItems: "center",
-    gap: "8px"
+    gap: "12px"
   },
   spaceBetween: {
     display: "flex",
@@ -253,35 +318,41 @@ var styles = {
   stack: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px"
+    gap: "12px"
   },
   // Typography
   heading: {
-    margin: "0 0 16px 0",
-    fontSize: "1.5rem",
-    fontWeight: 600,
+    margin: "0 0 20px 0",
+    fontSize: "1.75rem",
+    fontWeight: 700,
+    fontFamily: "'Playfair Display', Georgia, serif",
+    letterSpacing: "-0.02em",
     color: colors.text
   },
   subheading: {
     margin: 0,
-    fontSize: "0.875rem",
-    color: colors.textMuted
+    fontSize: "0.9375rem",
+    color: colors.textMuted,
+    lineHeight: 1.6
   },
   mono: {
-    fontFamily: "monospace",
-    fontSize: "0.8125rem"
+    fontFamily: "'SF Mono', 'Monaco', 'Inconsolata', monospace",
+    fontSize: "0.8125rem",
+    backgroundColor: colors.backgroundDark,
+    padding: "2px 6px",
+    borderRadius: "4px"
   },
   truncate: {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap"
   },
-  // Loading spinner placeholder
+  // Loading spinner
   spinner: {
     display: "inline-block",
-    width: "16px",
-    height: "16px",
-    border: "2px solid #e5e7eb",
+    width: "18px",
+    height: "18px",
+    border: "2px solid rgba(79, 70, 229, 0.2)",
     borderTopColor: colors.primary,
     borderRadius: "50%",
     animation: "spin 0.8s linear infinite"
@@ -289,8 +360,46 @@ var styles = {
   // Empty state
   emptyState: {
     textAlign: "center",
-    padding: "32px",
-    color: colors.textMuted
+    padding: "48px 32px",
+    color: colors.textMuted,
+    fontSize: "0.9375rem"
+  },
+  // Divider
+  divider: {
+    height: "1px",
+    backgroundColor: colors.border,
+    border: "none",
+    margin: "24px 0"
+  },
+  // Info box
+  infoBox: {
+    padding: "16px 20px",
+    borderRadius: "12px",
+    backgroundColor: colors.backgroundMuted,
+    border: `1px solid ${colors.border}`,
+    fontSize: "0.875rem",
+    color: colors.textMuted,
+    lineHeight: 1.6
+  },
+  // Stat display
+  stat: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px"
+  },
+  statLabel: {
+    fontSize: "0.75rem",
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+    color: colors.textLight,
+    fontWeight: 600
+  },
+  statValue: {
+    fontSize: "1.5rem",
+    fontWeight: 700,
+    fontFamily: "'Playfair Display', Georgia, serif",
+    color: colors.text,
+    letterSpacing: "-0.02em"
   }
 };
 
@@ -475,7 +584,7 @@ function BalanceDisplay({
     const divisor = BigInt(10 ** decimals);
     const whole = amount / divisor;
     const fractional = amount % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 4);
+    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 8);
     return `${whole}.${fractionalStr}`;
   };
   return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className, style: styles.card, children: [
@@ -663,7 +772,7 @@ function TokenSelectorWithBalance({
     const divisor = BigInt(10 ** decimals);
     const whole = balance / divisor;
     const fractional = balance % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 4);
+    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 8);
     return `${whole.toLocaleString()}.${fractionalStr}`;
   };
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
@@ -715,13 +824,13 @@ function TransferForm({
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
     const fractional = value % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 8)}`;
   };
   const parseRecipientPublicKey = (hex) => {
     try {
-      const clean = hex.trim().startsWith("0x") ? hex.trim().slice(2) : hex.trim();
-      if (clean.length !== 128) return null;
-      const bytes = Buffer.from(clean, "hex");
+      const clean2 = hex.trim().startsWith("0x") ? hex.trim().slice(2) : hex.trim();
+      if (clean2.length !== 128) return null;
+      const bytes = Buffer.from(clean2, "hex");
       return {
         x: new Uint8Array(bytes.slice(0, 32)),
         y: new Uint8Array(bytes.slice(32, 64))
@@ -800,17 +909,18 @@ function TransferForm({
         )
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("label", { style: styles.label, children: [
-        "Recipient Public Key",
+        "Recipient Stealth Public Key",
         /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
           "textarea",
           {
             value: recipientPubkey,
             onChange: (e) => setRecipientPubkey(e.target.value),
-            placeholder: "Enter recipient's BabyJubJub public key (128 hex chars)",
+            placeholder: "Paste the recipient's stealth public key from their Account tab (128 hex characters)",
             disabled: isTransferring,
-            style: styles.textarea
+            style: { ...styles.textarea, minHeight: "80px" }
           }
-        )
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "4px" }, children: `Find this in the recipient's Account tab under "Stealth Public Key"` })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("label", { style: styles.label, children: [
         "Amount (",
@@ -865,13 +975,6 @@ function PrivateTokenSelectorWithBalance({
   onSelect,
   disabled
 }) {
-  const formatBalance = (balance, decimals) => {
-    const divisor = BigInt(10 ** decimals);
-    const whole = balance / divisor;
-    const fractional = balance % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 4);
-    return `${whole.toLocaleString()}.${fractionalStr}`;
-  };
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
     "select",
     {
@@ -882,15 +985,7 @@ function PrivateTokenSelectorWithBalance({
       },
       disabled,
       style: styles.input,
-      children: tokens.map((token) => {
-        const { totalAvailable } = (0, import_hooks4.useNoteSelector)(token.mint);
-        const balanceStr = formatBalance(totalAvailable, token.decimals);
-        return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("option", { value: token.mint.toBase58(), children: [
-          token.symbol,
-          " - ",
-          balanceStr
-        ] }, token.mint.toBase58());
-      })
+      children: tokens.map((token) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
     }
   );
 }
@@ -922,7 +1017,7 @@ function UnshieldForm({
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
     const fractional = value % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 8)}`;
   };
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -936,7 +1031,7 @@ function UnshieldForm({
     try {
       recipientPubkey = new import_web3.PublicKey(recipient);
     } catch {
-      onError?.("Invalid recipient token account address");
+      onError?.("Invalid recipient wallet address");
       return;
     }
     if (!client?.getProgram()) {
@@ -956,7 +1051,8 @@ function UnshieldForm({
         inputs: selectedNotes,
         amount: amountLamports,
         recipient: recipientPubkey,
-        walletPublicKey: walletPublicKey ?? void 0
+        walletPublicKey: walletPublicKey ?? void 0,
+        isWalletAddress: true
       }
     );
     if (txResult) {
@@ -972,8 +1068,8 @@ function UnshieldForm({
   };
   const isDisabled = !isConnected || !isInitialized || isUnshielding || !amount || !recipient;
   return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { className, style: styles.card, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { style: styles.cardTitle, children: "Withdraw Tokens" }),
-    /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { style: styles.cardDescription, children: "Withdraw tokens from the privacy pool back to your public wallet." }),
+    /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { style: styles.cardTitle, children: "Unshield Tokens" }),
+    /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { style: styles.cardDescription, children: "Unshield tokens from the privacy pool back to your public wallet." }),
     /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: { marginBottom: "16px", ...styles.spaceBetween }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: { fontSize: "0.875rem", color: colors.textMuted }, children: "Private Balance" }),
       /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { style: { fontWeight: 600 }, children: [
@@ -996,14 +1092,14 @@ function UnshieldForm({
         )
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("label", { style: styles.label, children: [
-        "Recipient Token Account",
+        "Recipient Wallet Address",
         /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
           "input",
           {
             type: "text",
             value: recipient,
             onChange: (e) => setRecipient(e.target.value),
-            placeholder: "Enter token account address",
+            placeholder: "Enter recipient's Solana wallet address",
             disabled: isUnshielding,
             style: { ...styles.input, fontFamily: "monospace", fontSize: "0.875rem" }
           }
@@ -1055,12 +1151,12 @@ function UnshieldForm({
             ...styles.buttonPrimary,
             ...isDisabled ? styles.buttonDisabled : {}
           },
-          children: !isConnected ? "Connect Wallet" : !isInitialized ? "Initializing..." : isUnshielding ? "Withdrawing..." : "Withdraw Tokens"
+          children: !isConnected ? "Connect Wallet" : !isInitialized ? "Initializing..." : isUnshielding ? "Unshielding..." : "Unshield Tokens"
         }
       ),
       error && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: styles.errorText, children: error }),
       result && /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: styles.successBox, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: styles.successText, children: "Withdrawal successful!" }),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: styles.successText, children: "Unshield successful!" }),
         /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: styles.txLink, children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
           "a",
           {
@@ -1081,13 +1177,6 @@ function PrivateTokenSelectorWithBalance2({
   onSelect,
   disabled
 }) {
-  const formatBalance = (balance, decimals) => {
-    const divisor = BigInt(10 ** decimals);
-    const whole = balance / divisor;
-    const fractional = balance % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 4);
-    return `${whole.toLocaleString()}.${fractionalStr}`;
-  };
   return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
     "select",
     {
@@ -1098,15 +1187,7 @@ function PrivateTokenSelectorWithBalance2({
       },
       disabled,
       style: styles.input,
-      children: tokens.map((token) => {
-        const { totalAvailable } = (0, import_hooks5.useNoteSelector)(token.mint);
-        const balanceStr = formatBalance(totalAvailable, token.decimals);
-        return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("option", { value: token.mint.toBase58(), children: [
-          token.symbol,
-          " - ",
-          balanceStr
-        ] }, token.mint.toBase58());
-      })
+      children: tokens.map((token) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
     }
   );
 }
@@ -1127,7 +1208,7 @@ function NotesList({
     const divisor = BigInt(10 ** decimals);
     const whole = amount / divisor;
     const fractional = amount % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 4);
+    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 8);
     return `${whole}.${fractionalStr}`;
   };
   const formatTime = (date) => {
@@ -1246,7 +1327,7 @@ function TransactionHistory({
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
     const fractional = value % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 8)}`;
   };
   const formatTime = (timestamp) => {
     const date = new Date(timestamp * 1e3);
@@ -1610,12 +1691,12 @@ function PoolInfo({
     const divisor = BigInt(10 ** decimals);
     const whole = amount / divisor;
     const fractional = amount % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 8)}`;
   };
   const truncateAddress = (address) => {
     if (!address) return "---";
     const str = address.toBase58();
-    return `${str.slice(0, 4)}...${str.slice(-4)}`;
+    return `${str.slice(0, 8)}...${str.slice(-4)}`;
   };
   if (isLoading) {
     return /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className, style: styles.card, children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { style: styles.emptyState, children: "Loading pool info..." }) });
@@ -2054,7 +2135,7 @@ function PublicBalanceDisplay({
     const divisor = BigInt(10 ** decimals);
     const whole = amount / divisor;
     const fractional = amount % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 4);
+    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 8);
     return `${whole.toLocaleString()}.${fractionalStr}`;
   };
   const formatSol = (lamports) => {
@@ -2195,7 +2276,7 @@ function BalanceRow({
     const divisor = BigInt(10 ** decimals);
     const whole = amount / divisor;
     const fractional = amount % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 4);
+    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 8);
     return `${whole.toLocaleString()}.${fractionalStr}`;
   };
   return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
@@ -2318,11 +2399,39 @@ function MultiPrivateBalanceDisplay({
   ] });
 }
 function PrivateBalanceRows({ tokens }) {
-  const balances = tokens.map((token) => {
+  const { notes } = (0, import_hooks13.useCloakCraft)();
+  const knownTokenBalances = tokens.map((token) => {
     const { totalAvailable } = (0, import_hooks13.useNoteSelector)(token.mint);
     return { token, balance: totalAvailable };
   });
-  const tokensWithBalance = balances.filter(({ balance }) => balance > BigInt(0));
+  const unknownTokenBalances = import_react10.default.useMemo(() => {
+    if (!notes) return [];
+    const balanceMap = /* @__PURE__ */ new Map();
+    notes.forEach((note) => {
+      const mintStr = note.tokenMint.toBase58();
+      const isKnownToken = tokens.some((t) => t.mint.equals(note.tokenMint));
+      if (!isKnownToken) {
+        const existing = balanceMap.get(mintStr);
+        if (existing) {
+          existing.balance += note.amount;
+        } else {
+          balanceMap.set(mintStr, {
+            token: {
+              mint: note.tokenMint,
+              symbol: `${mintStr.slice(0, 8)}...${mintStr.slice(-4)}`,
+              name: `Unknown Token (${mintStr.slice(0, 6)}...)`,
+              decimals: 9
+              // Assume 9 decimals for unknown tokens
+            },
+            balance: note.amount
+          });
+        }
+      }
+    });
+    return Array.from(balanceMap.values());
+  }, [tokens, notes]);
+  const allBalances = [...knownTokenBalances, ...unknownTokenBalances];
+  const tokensWithBalance = allBalances.filter(({ balance }) => balance > BigInt(0));
   if (tokensWithBalance.length === 0) {
     return /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { style: styles.emptyState, children: "No private balances yet" });
   }
@@ -2333,7 +2442,7 @@ function PrivateBalanceRow({ token, totalAvailable }) {
     const divisor = BigInt(10 ** token.decimals);
     const whole = amount / divisor;
     const fractional = amount % divisor;
-    const fractionalStr = fractional.toString().padStart(token.decimals, "0").slice(0, 4);
+    const fractionalStr = fractional.toString().padStart(token.decimals, "0").slice(0, 8);
     return `${whole.toLocaleString()}.${fractionalStr}`;
   };
   return /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
@@ -2392,6 +2501,7 @@ function WalletBackup({ className, onBackupComplete }) {
   const { wallet, publicKey, isConnected, exportSpendingKey } = (0, import_hooks14.useWallet)();
   const [showKey, setShowKey] = (0, import_react11.useState)(false);
   const [copied, setCopied] = (0, import_react11.useState)(false);
+  const [copiedPubKey, setCopiedPubKey] = (0, import_react11.useState)(false);
   const [acknowledged, setAcknowledged] = (0, import_react11.useState)(false);
   const spendingKeyHex = import_react11.default.useMemo(() => {
     if (!showKey) return null;
@@ -2408,12 +2518,23 @@ function WalletBackup({ className, onBackupComplete }) {
     } catch {
     }
   }, [spendingKeyHex]);
+  const handleCopyPublicKey = (0, import_react11.useCallback)(async () => {
+    if (!publicKey) return;
+    try {
+      const pubKeyHex = Buffer.from(publicKey.x).toString("hex") + Buffer.from(publicKey.y).toString("hex");
+      await navigator.clipboard.writeText(pubKeyHex);
+      setCopiedPubKey(true);
+      setTimeout(() => setCopiedPubKey(false), 3e3);
+    } catch {
+    }
+  }, [publicKey]);
   const handleDownload = (0, import_react11.useCallback)(() => {
     if (!spendingKeyHex || !publicKey) return;
+    const publicKeyHex = Buffer.from(publicKey.x).toString("hex");
     const backupData = {
       version: 1,
       type: "cloakcraft-spending-key",
-      publicKey: publicKey.toString(),
+      publicKey: publicKeyHex,
       spendingKey: spendingKeyHex,
       exportedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
@@ -2423,7 +2544,7 @@ function WalletBackup({ className, onBackupComplete }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `cloakcraft-backup-${publicKey.toString().slice(0, 8)}.json`;
+    a.download = `cloakcraft-backup-${publicKeyHex.slice(0, 8)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2443,23 +2564,42 @@ function WalletBackup({ className, onBackupComplete }) {
       "div",
       {
         style: {
-          padding: "12px",
+          padding: "16px",
           background: colors.backgroundMuted,
-          borderRadius: "8px"
+          borderRadius: "12px",
+          border: `1px solid ${colors.border}`
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginBottom: "4px" }, children: "Stealth Public Key" }),
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { style: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "8px"
+          }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: { fontSize: "0.75rem", color: colors.textMuted, fontWeight: 600 }, children: "Stealth Public Key" }),
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+              "button",
+              {
+                onClick: handleCopyPublicKey,
+                style: { ...styles.buttonSecondary, ...styles.buttonSmall },
+                children: copiedPubKey ? "\u2713 Copied!" : "Copy"
+              }
+            )
+          ] }),
           /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
             "div",
             {
               style: {
                 ...styles.mono,
-                fontSize: "0.8125rem",
-                wordBreak: "break-all"
+                fontSize: "0.75rem",
+                wordBreak: "break-all",
+                lineHeight: 1.6,
+                color: colors.text
               },
-              children: publicKey?.toString() ?? "Unknown"
+              children: publicKey ? Buffer.from(publicKey.x).toString("hex") + Buffer.from(publicKey.y).toString("hex") : "Unknown"
             }
-          )
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { style: { fontSize: "0.7rem", color: colors.textLight, marginTop: "8px", fontStyle: "italic" }, children: "Share this key with others to receive private transfers" })
         ]
       }
     ) }),
@@ -3042,7 +3182,7 @@ function SwapForm({
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
     const fractional = value % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 8)}`;
   };
   const swapQuote = (0, import_react12.useMemo)(() => {
     if (!inputToken || !outputToken || !selectedAmmPool) return null;
@@ -3382,7 +3522,7 @@ function AddLiquidityForm({
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
     const fractional = value % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 8)}`;
   };
   (0, import_react13.useEffect)(() => {
     if (!selectedPool) return;
@@ -3477,7 +3617,8 @@ function AddLiquidityForm({
       const result = await client.addLiquidity({
         inputA: selectedNotesA[0],
         inputB: selectedNotesB[0],
-        poolId: selectedPool.poolId,
+        poolId: selectedPool.address,
+        // Use account address, not stored poolId field
         lpMint: selectedPool.lpMint,
         depositA: liquidityQuote.depositA,
         depositB: liquidityQuote.depositB,
@@ -3700,66 +3841,361 @@ function AddLiquidityForm({
 var import_react14 = require("react");
 var import_hooks17 = require("@cloakcraft/hooks");
 var import_sdk4 = require("@cloakcraft/sdk");
+
+// ../../node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes/esm/_u64.js
+var U32_MASK64 = /* @__PURE__ */ BigInt(2 ** 32 - 1);
+var _32n = /* @__PURE__ */ BigInt(32);
+function fromBig(n, le = false) {
+  if (le)
+    return { h: Number(n & U32_MASK64), l: Number(n >> _32n & U32_MASK64) };
+  return { h: Number(n >> _32n & U32_MASK64) | 0, l: Number(n & U32_MASK64) | 0 };
+}
+function split(lst, le = false) {
+  const len = lst.length;
+  let Ah = new Uint32Array(len);
+  let Al = new Uint32Array(len);
+  for (let i = 0; i < len; i++) {
+    const { h, l } = fromBig(lst[i], le);
+    [Ah[i], Al[i]] = [h, l];
+  }
+  return [Ah, Al];
+}
+var rotlSH = (h, l, s) => h << s | l >>> 32 - s;
+var rotlSL = (h, l, s) => l << s | h >>> 32 - s;
+var rotlBH = (h, l, s) => l << s - 32 | h >>> 64 - s;
+var rotlBL = (h, l, s) => h << s - 32 | l >>> 64 - s;
+
+// ../../node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes/esm/utils.js
+function isBytes(a) {
+  return a instanceof Uint8Array || ArrayBuffer.isView(a) && a.constructor.name === "Uint8Array";
+}
+function anumber(n) {
+  if (!Number.isSafeInteger(n) || n < 0)
+    throw new Error("positive integer expected, got " + n);
+}
+function abytes(b, ...lengths) {
+  if (!isBytes(b))
+    throw new Error("Uint8Array expected");
+  if (lengths.length > 0 && !lengths.includes(b.length))
+    throw new Error("Uint8Array expected of length " + lengths + ", got length=" + b.length);
+}
+function aexists(instance, checkFinished = true) {
+  if (instance.destroyed)
+    throw new Error("Hash instance has been destroyed");
+  if (checkFinished && instance.finished)
+    throw new Error("Hash#digest() has already been called");
+}
+function aoutput(out, instance) {
+  abytes(out);
+  const min = instance.outputLen;
+  if (out.length < min) {
+    throw new Error("digestInto() expects output buffer of length at least " + min);
+  }
+}
+function u32(arr) {
+  return new Uint32Array(arr.buffer, arr.byteOffset, Math.floor(arr.byteLength / 4));
+}
+function clean(...arrays) {
+  for (let i = 0; i < arrays.length; i++) {
+    arrays[i].fill(0);
+  }
+}
+var isLE = /* @__PURE__ */ (() => new Uint8Array(new Uint32Array([287454020]).buffer)[0] === 68)();
+function byteSwap(word) {
+  return word << 24 & 4278190080 | word << 8 & 16711680 | word >>> 8 & 65280 | word >>> 24 & 255;
+}
+function byteSwap32(arr) {
+  for (let i = 0; i < arr.length; i++) {
+    arr[i] = byteSwap(arr[i]);
+  }
+  return arr;
+}
+var swap32IfBE = isLE ? (u) => u : byteSwap32;
+function utf8ToBytes(str) {
+  if (typeof str !== "string")
+    throw new Error("string expected");
+  return new Uint8Array(new TextEncoder().encode(str));
+}
+function toBytes(data) {
+  if (typeof data === "string")
+    data = utf8ToBytes(data);
+  abytes(data);
+  return data;
+}
+var Hash = class {
+};
+function createHasher(hashCons) {
+  const hashC = (msg) => hashCons().update(toBytes(msg)).digest();
+  const tmp = hashCons();
+  hashC.outputLen = tmp.outputLen;
+  hashC.blockLen = tmp.blockLen;
+  hashC.create = () => hashCons();
+  return hashC;
+}
+
+// ../../node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes/esm/sha3.js
+var _0n = BigInt(0);
+var _1n = BigInt(1);
+var _2n = BigInt(2);
+var _7n = BigInt(7);
+var _256n = BigInt(256);
+var _0x71n = BigInt(113);
+var SHA3_PI = [];
+var SHA3_ROTL = [];
+var _SHA3_IOTA = [];
+for (let round = 0, R = _1n, x = 1, y = 0; round < 24; round++) {
+  [x, y] = [y, (2 * x + 3 * y) % 5];
+  SHA3_PI.push(2 * (5 * y + x));
+  SHA3_ROTL.push((round + 1) * (round + 2) / 2 % 64);
+  let t = _0n;
+  for (let j = 0; j < 7; j++) {
+    R = (R << _1n ^ (R >> _7n) * _0x71n) % _256n;
+    if (R & _2n)
+      t ^= _1n << (_1n << /* @__PURE__ */ BigInt(j)) - _1n;
+  }
+  _SHA3_IOTA.push(t);
+}
+var IOTAS = split(_SHA3_IOTA, true);
+var SHA3_IOTA_H = IOTAS[0];
+var SHA3_IOTA_L = IOTAS[1];
+var rotlH = (h, l, s) => s > 32 ? rotlBH(h, l, s) : rotlSH(h, l, s);
+var rotlL = (h, l, s) => s > 32 ? rotlBL(h, l, s) : rotlSL(h, l, s);
+function keccakP(s, rounds = 24) {
+  const B = new Uint32Array(5 * 2);
+  for (let round = 24 - rounds; round < 24; round++) {
+    for (let x = 0; x < 10; x++)
+      B[x] = s[x] ^ s[x + 10] ^ s[x + 20] ^ s[x + 30] ^ s[x + 40];
+    for (let x = 0; x < 10; x += 2) {
+      const idx1 = (x + 8) % 10;
+      const idx0 = (x + 2) % 10;
+      const B0 = B[idx0];
+      const B1 = B[idx0 + 1];
+      const Th = rotlH(B0, B1, 1) ^ B[idx1];
+      const Tl = rotlL(B0, B1, 1) ^ B[idx1 + 1];
+      for (let y = 0; y < 50; y += 10) {
+        s[x + y] ^= Th;
+        s[x + y + 1] ^= Tl;
+      }
+    }
+    let curH = s[2];
+    let curL = s[3];
+    for (let t = 0; t < 24; t++) {
+      const shift = SHA3_ROTL[t];
+      const Th = rotlH(curH, curL, shift);
+      const Tl = rotlL(curH, curL, shift);
+      const PI = SHA3_PI[t];
+      curH = s[PI];
+      curL = s[PI + 1];
+      s[PI] = Th;
+      s[PI + 1] = Tl;
+    }
+    for (let y = 0; y < 50; y += 10) {
+      for (let x = 0; x < 10; x++)
+        B[x] = s[y + x];
+      for (let x = 0; x < 10; x++)
+        s[y + x] ^= ~B[(x + 2) % 10] & B[(x + 4) % 10];
+    }
+    s[0] ^= SHA3_IOTA_H[round];
+    s[1] ^= SHA3_IOTA_L[round];
+  }
+  clean(B);
+}
+var Keccak = class _Keccak extends Hash {
+  // NOTE: we accept arguments in bytes instead of bits here.
+  constructor(blockLen, suffix, outputLen, enableXOF = false, rounds = 24) {
+    super();
+    this.pos = 0;
+    this.posOut = 0;
+    this.finished = false;
+    this.destroyed = false;
+    this.enableXOF = false;
+    this.blockLen = blockLen;
+    this.suffix = suffix;
+    this.outputLen = outputLen;
+    this.enableXOF = enableXOF;
+    this.rounds = rounds;
+    anumber(outputLen);
+    if (!(0 < blockLen && blockLen < 200))
+      throw new Error("only keccak-f1600 function is supported");
+    this.state = new Uint8Array(200);
+    this.state32 = u32(this.state);
+  }
+  clone() {
+    return this._cloneInto();
+  }
+  keccak() {
+    swap32IfBE(this.state32);
+    keccakP(this.state32, this.rounds);
+    swap32IfBE(this.state32);
+    this.posOut = 0;
+    this.pos = 0;
+  }
+  update(data) {
+    aexists(this);
+    data = toBytes(data);
+    abytes(data);
+    const { blockLen, state } = this;
+    const len = data.length;
+    for (let pos = 0; pos < len; ) {
+      const take = Math.min(blockLen - this.pos, len - pos);
+      for (let i = 0; i < take; i++)
+        state[this.pos++] ^= data[pos++];
+      if (this.pos === blockLen)
+        this.keccak();
+    }
+    return this;
+  }
+  finish() {
+    if (this.finished)
+      return;
+    this.finished = true;
+    const { state, suffix, pos, blockLen } = this;
+    state[pos] ^= suffix;
+    if ((suffix & 128) !== 0 && pos === blockLen - 1)
+      this.keccak();
+    state[blockLen - 1] ^= 128;
+    this.keccak();
+  }
+  writeInto(out) {
+    aexists(this, false);
+    abytes(out);
+    this.finish();
+    const bufferOut = this.state;
+    const { blockLen } = this;
+    for (let pos = 0, len = out.length; pos < len; ) {
+      if (this.posOut >= blockLen)
+        this.keccak();
+      const take = Math.min(blockLen - this.posOut, len - pos);
+      out.set(bufferOut.subarray(this.posOut, this.posOut + take), pos);
+      this.posOut += take;
+      pos += take;
+    }
+    return out;
+  }
+  xofInto(out) {
+    if (!this.enableXOF)
+      throw new Error("XOF is not possible for this instance");
+    return this.writeInto(out);
+  }
+  xof(bytes) {
+    anumber(bytes);
+    return this.xofInto(new Uint8Array(bytes));
+  }
+  digestInto(out) {
+    aoutput(out, this);
+    if (this.finished)
+      throw new Error("digest() was already called");
+    this.writeInto(out);
+    this.destroy();
+    return out;
+  }
+  digest() {
+    return this.digestInto(new Uint8Array(this.outputLen));
+  }
+  destroy() {
+    this.destroyed = true;
+    clean(this.state);
+  }
+  _cloneInto(to) {
+    const { blockLen, suffix, outputLen, rounds, enableXOF } = this;
+    to || (to = new _Keccak(blockLen, suffix, outputLen, enableXOF, rounds));
+    to.state32.set(this.state32);
+    to.pos = this.pos;
+    to.posOut = this.posOut;
+    to.finished = this.finished;
+    to.rounds = rounds;
+    to.suffix = suffix;
+    to.outputLen = outputLen;
+    to.enableXOF = enableXOF;
+    to.destroyed = this.destroyed;
+    return to;
+  }
+};
+var gen = (suffix, blockLen, outputLen) => createHasher(() => new Keccak(blockLen, suffix, outputLen));
+var keccak_256 = /* @__PURE__ */ (() => gen(1, 136, 256 / 8))();
+
+// src/components/RemoveLiquidityForm.tsx
 var import_jsx_runtime18 = require("react/jsx-runtime");
 function RemoveLiquidityForm({
   tokens,
+  ammPools,
   onSuccess,
   onError,
   className,
   walletPublicKey
 }) {
-  const [tokenA, setTokenA] = (0, import_react14.useState)(tokens[0]);
-  const [tokenB, setTokenB] = (0, import_react14.useState)(tokens[1] || tokens[0]);
+  const [selectedPool, setSelectedPool] = (0, import_react14.useState)(ammPools[0]);
   const [lpAmount, setLpAmount] = (0, import_react14.useState)("");
+  const [exactLpAmount, setExactLpAmount] = (0, import_react14.useState)(null);
   const [isRemoving, setIsRemoving] = (0, import_react14.useState)(false);
   const { isConnected, isInitialized, wallet } = (0, import_hooks17.useWallet)();
   const { client } = (0, import_hooks17.useCloakCraft)();
-  const lpTokenMint = tokenA.mint;
+  const lpTokenMint = selectedPool?.lpMint;
   const { availableNotes: lpNotes, totalAvailable: totalLp, selectNotesForAmount: selectLp } = (0, import_hooks17.useNoteSelector)(lpTokenMint);
-  const mockReserveA = 1000000n * BigInt(10 ** tokenA.decimals);
-  const mockReserveB = 1000000n * BigInt(10 ** tokenB.decimals);
-  const mockLpSupply = 1000000n * 1000000000n;
+  const tokenA = (0, import_react14.useMemo)(() => {
+    if (!selectedPool) return tokens[0];
+    return tokens.find((t) => t.mint.equals(selectedPool.tokenAMint)) || {
+      mint: selectedPool.tokenAMint,
+      symbol: selectedPool.tokenAMint.toBase58().slice(0, 8) + "...",
+      name: selectedPool.tokenAMint.toBase58(),
+      decimals: 9
+    };
+  }, [selectedPool, tokens]);
+  const tokenB = (0, import_react14.useMemo)(() => {
+    if (!selectedPool) return tokens[1] || tokens[0];
+    return tokens.find((t) => t.mint.equals(selectedPool.tokenBMint)) || {
+      mint: selectedPool.tokenBMint,
+      symbol: selectedPool.tokenBMint.toBase58().slice(0, 8) + "...",
+      name: selectedPool.tokenBMint.toBase58(),
+      decimals: 9
+    };
+  }, [selectedPool, tokens]);
   const formatAmount = (value, decimals) => {
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
     const fractional = value % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 8)}`;
   };
   const withdrawQuote = (0, import_react14.useMemo)(() => {
-    const lpAmountNum = parseFloat(lpAmount);
-    if (isNaN(lpAmountNum) || lpAmountNum <= 0) {
-      return null;
+    if (!selectedPool) return null;
+    let lpAmountLamports;
+    if (exactLpAmount !== null) {
+      lpAmountLamports = exactLpAmount;
+    } else {
+      const lpAmountNum = parseFloat(lpAmount);
+      if (isNaN(lpAmountNum) || lpAmountNum <= 0) {
+        return null;
+      }
+      lpAmountLamports = BigInt(Math.floor(lpAmountNum * 10 ** 9));
     }
-    const lpAmountLamports = BigInt(Math.floor(lpAmountNum * 10 ** 9));
     try {
       const { outputA, outputB } = (0, import_sdk4.calculateRemoveLiquidityOutput)(
         lpAmountLamports,
-        mockLpSupply,
-        mockReserveA,
-        mockReserveB
+        selectedPool.lpSupply,
+        selectedPool.reserveA,
+        selectedPool.reserveB
       );
+      const shareOfPool = Number(lpAmountLamports * 10000n / selectedPool.lpSupply) / 100;
       return {
         outputA,
         outputB,
-        shareOfPool: Number(lpAmountLamports * 10000n / mockLpSupply) / 100
+        shareOfPool,
+        lpAmountLamports
+        // Include exact amount in quote
       };
     } catch (err) {
       return null;
     }
-  }, [lpAmount, mockLpSupply, mockReserveA, mockReserveB]);
+  }, [lpAmount, exactLpAmount, selectedPool]);
   const handleSetMaxLp = () => {
     const maxLp = formatAmount(totalLp, 9);
     setLpAmount(maxLp);
+    setExactLpAmount(totalLp);
   };
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const lpAmountNum = parseFloat(lpAmount);
-    if (isNaN(lpAmountNum) || lpAmountNum <= 0) {
-      onError?.("Please enter a valid LP token amount");
-      return;
-    }
-    if (tokenA.mint.equals(tokenB.mint)) {
-      onError?.("Token A and Token B must be different");
+    if (!selectedPool) {
+      onError?.("Please select a pool");
       return;
     }
     if (!client?.getProgram()) {
@@ -3774,7 +4210,7 @@ function RemoveLiquidityForm({
       onError?.("Wallet not connected");
       return;
     }
-    const lpAmountLamports = BigInt(Math.floor(lpAmountNum * 10 ** 9));
+    const lpAmountLamports = withdrawQuote.lpAmountLamports;
     let selectedLpNotes;
     try {
       selectedLpNotes = selectLp(lpAmountLamports);
@@ -3788,48 +4224,142 @@ function RemoveLiquidityForm({
     }
     setIsRemoving(true);
     try {
-      onError?.("Remove liquidity functionality not yet implemented");
+      const { stealthAddress: outputAAddress } = (0, import_sdk4.generateStealthAddress)(wallet.publicKey);
+      const { stealthAddress: outputBAddress } = (0, import_sdk4.generateStealthAddress)(wallet.publicKey);
+      if (!selectedLpNotes[0].accountHash) {
+        throw new Error("LP note missing accountHash. Try rescanning notes.");
+      }
+      const merkleProof = await client.getMerkleProof(selectedLpNotes[0].accountHash);
+      const computePoolStateHash = (reserveA, reserveB, lpSupply, poolAddress) => {
+        const data = new Uint8Array(8 + 8 + 8 + 32);
+        const bigintToLE = (value, offset) => {
+          let v = value;
+          for (let i = 0; i < 8; i++) {
+            data[offset + i] = Number(v & 0xFFn);
+            v = v >> 8n;
+          }
+        };
+        bigintToLE(reserveA, 0);
+        bigintToLE(reserveB, 8);
+        bigintToLE(lpSupply, 16);
+        data.set(poolAddress.toBytes(), 24);
+        return keccak_256(data);
+      };
+      const oldPoolStateHash = computePoolStateHash(
+        selectedPool.reserveA,
+        selectedPool.reserveB,
+        selectedPool.lpSupply,
+        selectedPool.address
+      );
+      const newReserveA = selectedPool.reserveA - withdrawQuote.outputA;
+      const newReserveB = selectedPool.reserveB - withdrawQuote.outputB;
+      const newLpSupply = selectedPool.lpSupply - lpAmountLamports;
+      const newPoolStateHash = computePoolStateHash(
+        newReserveA,
+        newReserveB,
+        newLpSupply,
+        selectedPool.address
+      );
+      const result = await client.removeLiquidity({
+        lpInput: selectedLpNotes[0],
+        poolId: selectedPool.address,
+        // Use account address, not stored poolId field
+        lpAmount: lpAmountLamports,
+        tokenAMint: tokenA.mint,
+        tokenBMint: tokenB.mint,
+        oldPoolStateHash,
+        newPoolStateHash,
+        outputARecipient: outputAAddress,
+        outputBRecipient: outputBAddress,
+        merklePath: merkleProof.pathElements,
+        merklePathIndices: merkleProof.pathIndices,
+        outputAAmount: withdrawQuote.outputA,
+        outputBAmount: withdrawQuote.outputB
+      });
+      onSuccess?.(result.signature);
+      setLpAmount("");
+      setExactLpAmount(null);
     } catch (err) {
       onError?.(err instanceof Error ? err.message : "Remove liquidity failed");
     } finally {
       setIsRemoving(false);
     }
   };
-  const isDisabled = !isConnected || !isInitialized || isRemoving || !lpAmount || !withdrawQuote;
+  const isDisabled = !isConnected || !isInitialized || isRemoving || !lpAmount || !withdrawQuote || ammPools.length === 0;
+  if (ammPools.length === 0) {
+    return /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className, style: styles.card, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("h3", { style: styles.cardTitle, children: "Remove Liquidity" }),
+      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("p", { style: { ...styles.cardDescription, marginTop: "16px", color: colors.textMuted }, children: "No AMM pools available. Add liquidity to a pool first." })
+    ] });
+  }
   return /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className, style: styles.card, children: [
     /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("h3", { style: styles.cardTitle, children: "Remove Liquidity" }),
     /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("p", { style: styles.cardDescription, children: "Withdraw your liquidity by burning LP tokens" }),
     /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("form", { onSubmit: handleSubmit, style: styles.form, children: [
       /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("label", { style: styles.label, children: "Pool" }),
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { style: { display: "flex", gap: "8px", marginBottom: "16px" }, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
-            "select",
-            {
-              value: tokenA.mint.toBase58(),
-              onChange: (e) => {
-                const token = tokens.find((t) => t.mint.toBase58() === e.target.value);
-                if (token) setTokenA(token);
-              },
-              disabled: isRemoving,
-              style: { ...styles.input, flex: 1 },
-              children: tokens.map((token) => /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { style: { padding: "12px 0", color: colors.textMuted }, children: "-" }),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
-            "select",
-            {
-              value: tokenB.mint.toBase58(),
-              onChange: (e) => {
-                const token = tokens.find((t) => t.mint.toBase58() === e.target.value);
-                if (token) setTokenB(token);
-              },
-              disabled: isRemoving,
-              style: { ...styles.input, flex: 1 },
-              children: tokens.map((token) => /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
-            }
-          )
+        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("label", { style: styles.label, children: "Select Pool" }),
+        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+          "select",
+          {
+            value: selectedPool?.address.toBase58() || "",
+            onChange: (e) => {
+              const pool = ammPools.find((p) => p.address.toBase58() === e.target.value);
+              if (pool) {
+                setSelectedPool(pool);
+                setLpAmount("");
+              }
+            },
+            disabled: isRemoving,
+            style: styles.input,
+            children: ammPools.map((pool) => {
+              const tA = tokens.find((t) => t.mint.equals(pool.tokenAMint));
+              const tB = tokens.find((t) => t.mint.equals(pool.tokenBMint));
+              const symbolA = tA?.symbol || pool.tokenAMint.toBase58().slice(0, 6) + "...";
+              const symbolB = tB?.symbol || pool.tokenBMint.toBase58().slice(0, 6) + "...";
+              return /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("option", { value: pool.address.toBase58(), children: [
+                symbolA,
+                " / ",
+                symbolB
+              ] }, pool.address.toBase58());
+            })
+          }
+        ),
+        selectedPool && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { style: {
+          marginTop: "12px",
+          padding: "12px",
+          background: colors.backgroundMuted,
+          borderRadius: "8px",
+          fontSize: "0.875rem"
+        }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { style: { color: colors.textMuted }, children: [
+              "Reserve ",
+              tokenA.symbol
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { children: [
+              formatAmount(selectedPool.reserveA, tokenA.decimals),
+              " ",
+              tokenA.symbol
+            ] })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { style: { color: colors.textMuted }, children: [
+              "Reserve ",
+              tokenB.symbol
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { children: [
+              formatAmount(selectedPool.reserveB, tokenB.decimals),
+              " ",
+              tokenB.symbol
+            ] })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { style: styles.spaceBetween, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { style: { color: colors.textMuted }, children: "Total LP Supply" }),
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { children: [
+              formatAmount(selectedPool.lpSupply, 9),
+              " LP"
+            ] })
+          ] })
         ] })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { children: [
@@ -3839,7 +4369,10 @@ function RemoveLiquidityForm({
           {
             type: "number",
             value: lpAmount,
-            onChange: (e) => setLpAmount(e.target.value),
+            onChange: (e) => {
+              setLpAmount(e.target.value);
+              setExactLpAmount(null);
+            },
             placeholder: "0.00",
             step: "any",
             min: "0",
@@ -3943,27 +4476,31 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
     };
     initCircuits();
   }, [client, initializeProver]);
+  const fetchPools = async () => {
+    if (!client) return;
+    if (!client.getProgram()) {
+      console.log("[SwapPanel] Waiting for program to be configured...");
+      return;
+    }
+    setIsLoadingPools(true);
+    try {
+      const pools = await client.getAllPools();
+      const poolsWithLiquidity = pools.filter((pool) => pool.totalShielded > BigInt(0));
+      const mints = new Set(poolsWithLiquidity.map((pool) => pool.tokenMint.toBase58()));
+      setInitializedPoolMints(mints);
+      const ammPoolList = await client.getAllAmmPools();
+      const activeAmmPools = ammPoolList.filter(
+        (pool) => pool.isActive && pool.reserveA > BigInt(0) && pool.reserveB > BigInt(0)
+      );
+      setAmmPools(activeAmmPools);
+    } catch (err) {
+      console.error("Error fetching pools:", err);
+      setInitializedPoolMints(/* @__PURE__ */ new Set());
+      setAmmPools([]);
+    }
+    setIsLoadingPools(false);
+  };
   (0, import_react15.useEffect)(() => {
-    const fetchPools = async () => {
-      if (!client) return;
-      setIsLoadingPools(true);
-      try {
-        const pools = await client.getAllPools();
-        const poolsWithLiquidity = pools.filter((pool) => pool.totalShielded > BigInt(0));
-        const mints = new Set(poolsWithLiquidity.map((pool) => pool.tokenMint.toBase58()));
-        setInitializedPoolMints(mints);
-        const ammPoolList = await client.getAllAmmPools();
-        const activeAmmPools = ammPoolList.filter(
-          (pool) => pool.isActive && pool.reserveA > BigInt(0) && pool.reserveB > BigInt(0)
-        );
-        setAmmPools(activeAmmPools);
-      } catch (err) {
-        console.error("Error fetching pools:", err);
-        setInitializedPoolMints(/* @__PURE__ */ new Set());
-        setAmmPools([]);
-      }
-      setIsLoadingPools(false);
-    };
     fetchPools();
   }, [client]);
   const poolTokens = (0, import_react15.useMemo)(() => {
@@ -4050,6 +4587,7 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
           alert(`Swap successful!
 TX: ${signature}`);
           await sync(void 0, true);
+          await fetchPools();
         },
         onError: (error) => {
           console.error("Swap error:", error);
@@ -4068,6 +4606,7 @@ TX: ${signature}`);
           alert(`Liquidity added successfully!
 TX: ${signature}`);
           await sync(void 0, true);
+          await fetchPools();
         },
         onError: (error) => {
           console.error("Add liquidity error:", error);
@@ -4079,12 +4618,14 @@ TX: ${signature}`);
       RemoveLiquidityForm,
       {
         tokens: tokensWithNotes,
+        ammPools,
         walletPublicKey,
         onSuccess: async (signature) => {
           console.log("Remove liquidity success:", signature);
           alert(`Liquidity removed successfully!
 TX: ${signature}`);
           await sync(void 0, true);
+          await fetchPools();
         },
         onError: (error) => {
           console.error("Remove liquidity error:", error);
@@ -4127,3 +4668,8 @@ TX: ${signature}`);
   colors,
   styles
 });
+/*! Bundled license information:
+
+@noble/hashes/esm/utils.js:
+  (*! noble-hashes - MIT License (c) 2022 Paul Miller (paulmillr.com) *)
+*/

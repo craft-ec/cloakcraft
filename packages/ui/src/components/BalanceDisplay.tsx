@@ -31,7 +31,7 @@ export function BalanceDisplay({
     const divisor = BigInt(10 ** decimals);
     const whole = amount / divisor;
     const fractional = amount % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, '0').slice(0, 4);
+    const fractionalStr = fractional.toString().padStart(decimals, '0').slice(0, 8);
     return `${whole}.${fractionalStr}`;
   };
 

@@ -1,7 +1,7 @@
 /**
  * Unshield form component
  *
- * Withdraw tokens from the privacy pool back to a public wallet
+ * Unshield tokens from the privacy pool back to a public wallet
  */
 
 import React, { useState } from 'react';
@@ -57,7 +57,7 @@ export function UnshieldForm({
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
     const fractional = value % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 8)}`;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -70,12 +70,12 @@ export function UnshieldForm({
       return;
     }
 
-    // Validate recipient address
+    // Validate recipient wallet address
     let recipientPubkey: PublicKey;
     try {
       recipientPubkey = new PublicKey(recipient);
     } catch {
-      onError?.('Invalid recipient token account address');
+      onError?.('Invalid recipient wallet address');
       return;
     }
 
@@ -101,6 +101,7 @@ export function UnshieldForm({
         amount: amountLamports,
         recipient: recipientPubkey,
         walletPublicKey: walletPublicKey ?? undefined,
+        isWalletAddress: true,
       }
     );
 
@@ -121,9 +122,9 @@ export function UnshieldForm({
 
   return (
     <div className={className} style={styles.card}>
-      <h3 style={styles.cardTitle}>Withdraw Tokens</h3>
+      <h3 style={styles.cardTitle}>Unshield Tokens</h3>
       <p style={styles.cardDescription}>
-        Withdraw tokens from the privacy pool back to your public wallet.
+        Unshield tokens from the privacy pool back to your public wallet.
       </p>
 
       <div style={{ marginBottom: '16px', ...styles.spaceBetween }}>
@@ -145,12 +146,12 @@ export function UnshieldForm({
         )}
 
         <label style={styles.label}>
-          Recipient Token Account
+          Recipient Wallet Address
           <input
             type="text"
             value={recipient}
             onChange={(e) => setRecipient(e.target.value)}
-            placeholder="Enter token account address"
+            placeholder="Enter recipient's Solana wallet address"
             disabled={isUnshielding}
             style={{ ...styles.input, fontFamily: 'monospace', fontSize: '0.875rem' }}
           />
@@ -198,15 +199,15 @@ export function UnshieldForm({
             : !isInitialized
             ? 'Initializing...'
             : isUnshielding
-            ? 'Withdrawing...'
-            : 'Withdraw Tokens'}
+            ? 'Unshielding...'
+            : 'Unshield Tokens'}
         </button>
 
         {error && <div style={styles.errorText}>{error}</div>}
 
         {result && (
           <div style={styles.successBox}>
-            <div style={styles.successText}>Withdrawal successful!</div>
+            <div style={styles.successText}>Unshield successful!</div>
             <div style={styles.txLink}>
               <a
                 href={`https://explorer.solana.com/tx/${result.signature}?cluster=devnet`}
@@ -235,14 +236,6 @@ function PrivateTokenSelectorWithBalance({
   onSelect: (token: TokenInfo) => void;
   disabled?: boolean;
 }) {
-  const formatBalance = (balance: bigint, decimals: number) => {
-    const divisor = BigInt(10 ** decimals);
-    const whole = balance / divisor;
-    const fractional = balance % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, '0').slice(0, 4);
-    return `${whole.toLocaleString()}.${fractionalStr}`;
-  };
-
   return (
     <select
       value={selected.toBase58()}
@@ -253,16 +246,11 @@ function PrivateTokenSelectorWithBalance({
       disabled={disabled}
       style={styles.input}
     >
-      {tokens.map(token => {
-        // Get private balance for each token
-        const { totalAvailable } = useNoteSelector(token.mint);
-        const balanceStr = formatBalance(totalAvailable, token.decimals);
-        return (
-          <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
-            {token.symbol} - {balanceStr}
-          </option>
-        );
-      })}
+      {tokens.map(token => (
+        <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
+          {token.symbol}
+        </option>
+      ))}
     </select>
   );
 }

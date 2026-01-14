@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { PublicKey } from '@solana/web3.js';
-import { useNoteSelector } from '@cloakcraft/hooks';
+import { useNoteSelector, useCloakCraft } from '@cloakcraft/hooks';
 import { styles, colors } from '../styles';
 
 interface TokenInfo {
@@ -59,14 +59,53 @@ export function MultiPrivateBalanceDisplay({
 }
 
 function PrivateBalanceRows({ tokens }: { tokens: TokenInfo[] }) {
-  // Get balances for all tokens
-  const balances = tokens.map((token) => {
+  // IMPORTANT: Also show unknown tokens (like LP tokens) that have balances
+  const { notes } = useCloakCraft();
+
+  // Get balances for known tokens
+  const knownTokenBalances = tokens.map((token) => {
     const { totalAvailable } = useNoteSelector(token.mint);
     return { token, balance: totalAvailable };
   });
 
+  // Group all notes by token mint to find unknown tokens
+  const unknownTokenBalances = React.useMemo(() => {
+    if (!notes) return [];
+
+    const balanceMap = new Map<string, { token: TokenInfo; balance: bigint }>();
+
+    notes.forEach((note) => {
+      const mintStr = note.tokenMint.toBase58();
+      const isKnownToken = tokens.some(t => t.mint.equals(note.tokenMint));
+
+      // Only process unknown tokens
+      if (!isKnownToken) {
+        const existing = balanceMap.get(mintStr);
+        if (existing) {
+          existing.balance += note.amount;
+        } else {
+          // Create a placeholder token info for unknown mints
+          balanceMap.set(mintStr, {
+            token: {
+              mint: note.tokenMint,
+              symbol: `${mintStr.slice(0, 8)}...${mintStr.slice(-4)}`,
+              name: `Unknown Token (${mintStr.slice(0, 6)}...)`,
+              decimals: 9, // Assume 9 decimals for unknown tokens
+            },
+            balance: note.amount,
+          });
+        }
+      }
+    });
+
+    return Array.from(balanceMap.values());
+  }, [tokens, notes]);
+
+  // Combine known and unknown balances
+  const allBalances = [...knownTokenBalances, ...unknownTokenBalances];
+
   // Filter out zero balances
-  const tokensWithBalance = balances.filter(({ balance }) => balance > BigInt(0));
+  const tokensWithBalance = allBalances.filter(({ balance }) => balance > BigInt(0));
 
   if (tokensWithBalance.length === 0) {
     return <div style={styles.emptyState}>No private balances yet</div>;
@@ -86,7 +125,7 @@ function PrivateBalanceRow({ token, totalAvailable }: { token: TokenInfo; totalA
     const divisor = BigInt(10 ** token.decimals);
     const whole = amount / divisor;
     const fractional = amount % divisor;
-    const fractionalStr = fractional.toString().padStart(token.decimals, '0').slice(0, 4);
+    const fractionalStr = fractional.toString().padStart(token.decimals, '0').slice(0, 8);
     return `${whole.toLocaleString()}.${fractionalStr}`;
   };
 

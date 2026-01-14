@@ -40,8 +40,10 @@ interface CloakCraftProviderProps {
     autoInitialize?: boolean;
     /** Connected Solana wallet public key (for per-wallet stealth key storage) */
     solanaWalletPubkey?: string;
+    /** Address Lookup Table addresses for atomic transaction compression (optional) */
+    addressLookupTables?: string[];
 }
-declare function CloakCraftProvider({ children, rpcUrl, indexerUrl, programId, heliusApiKey, network, autoInitialize, solanaWalletPubkey, }: CloakCraftProviderProps): react_jsx_runtime.JSX.Element;
+declare function CloakCraftProvider({ children, rpcUrl, indexerUrl, programId, heliusApiKey, network, autoInitialize, solanaWalletPubkey, addressLookupTables, }: CloakCraftProviderProps): react_jsx_runtime.JSX.Element;
 declare function useCloakCraft(): CloakCraftContextValue;
 
 /**
@@ -191,10 +193,12 @@ interface UnshieldOptions {
     inputs: DecryptedNote[];
     /** Amount to withdraw */
     amount: bigint;
-    /** Recipient token account for withdrawn tokens */
+    /** Recipient wallet address (will derive token account) or token account directly */
     recipient: PublicKey;
     /** Wallet public key (for wallet adapter) */
     walletPublicKey?: PublicKey;
+    /** If true, recipient is a wallet address and token account will be derived */
+    isWalletAddress?: boolean;
 }
 declare function useUnshield(): {
     unshield: (options: UnshieldOptions) => Promise<TransactionResult | null>;

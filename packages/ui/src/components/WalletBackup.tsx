@@ -17,6 +17,7 @@ export function WalletBackup({ className, onBackupComplete }: WalletBackupProps)
   const { wallet, publicKey, isConnected, exportSpendingKey } = useWallet();
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedPubKey, setCopiedPubKey] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
 
   const spendingKeyHex = React.useMemo(() => {
@@ -37,13 +38,26 @@ export function WalletBackup({ className, onBackupComplete }: WalletBackupProps)
     }
   }, [spendingKeyHex]);
 
+  const handleCopyPublicKey = useCallback(async () => {
+    if (!publicKey) return;
+    try {
+      const pubKeyHex = Buffer.from(publicKey.x).toString('hex') + Buffer.from(publicKey.y).toString('hex');
+      await navigator.clipboard.writeText(pubKeyHex);
+      setCopiedPubKey(true);
+      setTimeout(() => setCopiedPubKey(false), 3000);
+    } catch {
+      // Clipboard API not available
+    }
+  }, [publicKey]);
+
   const handleDownload = useCallback(() => {
     if (!spendingKeyHex || !publicKey) return;
 
+    const publicKeyHex = Buffer.from(publicKey.x).toString('hex');
     const backupData = {
       version: 1,
       type: 'cloakcraft-spending-key',
-      publicKey: publicKey.toString(),
+      publicKey: publicKeyHex,
       spendingKey: spendingKeyHex,
       exportedAt: new Date().toISOString(),
     };
@@ -54,7 +68,7 @@ export function WalletBackup({ className, onBackupComplete }: WalletBackupProps)
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cloakcraft-backup-${publicKey.toString().slice(0, 8)}.json`;
+    a.download = `cloakcraft-backup-${publicKeyHex.slice(0, 8)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -84,22 +98,41 @@ export function WalletBackup({ className, onBackupComplete }: WalletBackupProps)
       <div style={{ ...styles.stack, marginBottom: '16px' }}>
         <div
           style={{
-            padding: '12px',
+            padding: '16px',
             background: colors.backgroundMuted,
-            borderRadius: '8px',
+            borderRadius: '12px',
+            border: `1px solid ${colors.border}`,
           }}
         >
-          <div style={{ fontSize: '0.75rem', color: colors.textMuted, marginBottom: '4px' }}>
-            Stealth Public Key
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '8px'
+          }}>
+            <div style={{ fontSize: '0.75rem', color: colors.textMuted, fontWeight: 600 }}>
+              Stealth Public Key
+            </div>
+            <button
+              onClick={handleCopyPublicKey}
+              style={{ ...styles.buttonSecondary, ...styles.buttonSmall }}
+            >
+              {copiedPubKey ? '✓ Copied!' : 'Copy'}
+            </button>
           </div>
           <div
             style={{
               ...styles.mono,
-              fontSize: '0.8125rem',
+              fontSize: '0.75rem',
               wordBreak: 'break-all',
+              lineHeight: 1.6,
+              color: colors.text,
             }}
           >
-            {publicKey?.toString() ?? 'Unknown'}
+            {publicKey ? Buffer.from(publicKey.x).toString('hex') + Buffer.from(publicKey.y).toString('hex') : 'Unknown'}
+          </div>
+          <div style={{ fontSize: '0.7rem', color: colors.textLight, marginTop: '8px', fontStyle: 'italic' }}>
+            Share this key with others to receive private transfers
           </div>
         </div>
       </div>

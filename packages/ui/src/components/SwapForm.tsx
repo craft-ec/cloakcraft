@@ -121,7 +121,7 @@ export function SwapForm({
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
     const fractional = value % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 8)}`;
   };
 
   const swapQuote = useMemo(() => {

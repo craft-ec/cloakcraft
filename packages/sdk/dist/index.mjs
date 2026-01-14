@@ -15,15 +15,16 @@ import {
   LightProtocol,
   PROGRAM_ID,
   SEEDS,
+  buildAddLiquidityInstructionsForVersionedTx,
   buildAddLiquidityWithProgram,
   buildClosePendingOperationWithProgram,
   buildCreateCommitmentWithProgram,
   buildCreateNullifierWithProgram,
+  buildRemoveLiquidityInstructionsForVersionedTx,
   buildRemoveLiquidityWithProgram,
+  buildSwapInstructionsForVersionedTx,
   buildSwapWithProgram,
   bytesToField,
-  computeCommitment,
-  createNote,
   decryptNote,
   deriveAmmPoolPda,
   deriveCommitmentCounterPda,
@@ -36,7 +37,6 @@ import {
   encryptNote,
   fieldToBytes,
   generateOperationId,
-  generateRandomness,
   initPoseidon,
   isInSubgroup,
   isOnCurve,
@@ -49,9 +49,17 @@ import {
   poseidonHashDomainAsync,
   scalarMul,
   serializeEncryptedNote,
-  tryDecryptNote,
-  verifyCommitment
-} from "./chunk-QAXCG3EM.mjs";
+  tryDecryptNote
+} from "./chunk-Y7T3GNME.mjs";
+import {
+  MAX_TRANSACTION_SIZE,
+  buildAtomicMultiPhaseTransaction,
+  buildVersionedTransaction,
+  canFitInSingleTransaction,
+  estimateTransactionSize,
+  executeVersionedTransaction,
+  getInstructionFromAnchorMethod
+} from "./chunk-DYUX7D5W.mjs";
 import {
   __require
 } from "./chunk-Y6FXYEAI.mjs";
@@ -61,9 +69,9 @@ export * from "@cloakcraft/types";
 
 // src/client.ts
 import {
-  Connection,
-  PublicKey as PublicKey9,
-  Transaction
+  Connection as Connection2,
+  PublicKey as PublicKey10,
+  Transaction as Transaction2
 } from "@solana/web3.js";
 
 // src/crypto/nullifier.ts
@@ -209,6 +217,49 @@ function generateRandomSpendingKey() {
 
 // src/notes.ts
 import { PublicKey } from "@solana/web3.js";
+
+// src/crypto/commitment.ts
+function computeCommitment(note) {
+  const stealthPubX = note.stealthPubX;
+  const tokenMintBytes = note.tokenMint instanceof Uint8Array ? note.tokenMint : note.tokenMint.toBytes();
+  const amountBytes = fieldToBytes(note.amount);
+  const randomness = note.randomness;
+  if (typeof process !== "undefined" && process.env.DEBUG_COMMITMENT) {
+    console.log("[computeCommitment] Inputs:");
+    console.log("  stealthPubX:", Buffer.from(stealthPubX).toString("hex").slice(0, 32));
+    console.log("  tokenMint:", Buffer.from(tokenMintBytes).toString("hex").slice(0, 32));
+    console.log("  amount (bigint):", note.amount.toString());
+    console.log("  amount (bytes):", Buffer.from(amountBytes).toString("hex").slice(0, 32));
+    console.log("  randomness:", Buffer.from(randomness).toString("hex").slice(0, 32));
+  }
+  return poseidonHashDomain(
+    DOMAIN_COMMITMENT,
+    stealthPubX,
+    tokenMintBytes,
+    amountBytes,
+    randomness
+  );
+}
+function verifyCommitment(commitment, note) {
+  const computed = computeCommitment(note);
+  return bytesToField(computed) === bytesToField(commitment);
+}
+function generateRandomness() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const value = bytesToField(bytes);
+  return fieldToBytes(value);
+}
+function createNote(stealthPubX, tokenMint, amount, randomness) {
+  return {
+    stealthPubX,
+    tokenMint,
+    amount,
+    randomness: randomness ?? generateRandomness()
+  };
+}
+
+// src/notes.ts
 var NoteManager = class {
   constructor(indexerUrl) {
     this.cachedNotes = /* @__PURE__ */ new Map();
@@ -598,20 +649,8 @@ var ProofGenerator = class {
       console.warn(`Unknown circuit: ${name}`);
       return;
     }
-    const basePath = `${this.baseUrl}/target`;
-    try {
-      const manifestUrl = `${basePath}/${circuitFileName}.json`;
-      const manifestRes = await fetch(manifestUrl);
-      if (!manifestRes.ok) throw new Error(`Failed to load manifest: ${manifestRes.status}`);
-      const manifest = await manifestRes.json();
-      const pkUrl = `${basePath}/${circuitFileName}.pk`;
-      const pkRes = await fetch(pkUrl);
-      if (!pkRes.ok) throw new Error(`Failed to load proving key: ${pkRes.status}`);
-      const provingKey = new Uint8Array(await pkRes.arrayBuffer());
-      this.circuits.set(name, { manifest, provingKey });
-    } catch (err) {
-      console.warn(`Failed to load circuit ${name}:`, err);
-    }
+    console.log(`[Circuit] ${name} will be auto-loaded on-demand from ${this.baseUrl}/`);
+    return;
   }
   /**
    * Check if a circuit is loaded or can be auto-loaded
@@ -1026,7 +1065,9 @@ var ProofGenerator = class {
       proof,
       lpNullifier,
       outputACommitment,
-      outputBCommitment
+      outputBCommitment,
+      outputARandomness,
+      outputBRandomness
     };
   }
   // =============================================================================
@@ -2853,6 +2894,165 @@ async function buildFinalizeDecryptionWithProgram(program, params) {
   return tx;
 }
 
+// src/address-lookup-table.ts
+import {
+  PublicKey as PublicKey9,
+  AddressLookupTableProgram,
+  Transaction,
+  sendAndConfirmTransaction
+} from "@solana/web3.js";
+async function createAddressLookupTable(connection, authority, recentSlot) {
+  const slot = recentSlot ?? await connection.getSlot();
+  const [instruction, address] = AddressLookupTableProgram.createLookupTable({
+    authority,
+    payer: authority,
+    recentSlot: slot
+  });
+  console.log(`[ALT] Created lookup table at ${address.toBase58()}`);
+  return { address, instruction };
+}
+function extendAddressLookupTable(address, authority, addresses) {
+  console.log(`[ALT] Extending lookup table with ${addresses.length} addresses`);
+  return AddressLookupTableProgram.extendLookupTable({
+    lookupTable: address,
+    authority,
+    payer: authority,
+    addresses
+  });
+}
+async function fetchAddressLookupTable(connection, address) {
+  try {
+    const accountInfo = await connection.getAddressLookupTable(address);
+    if (!accountInfo.value) {
+      console.warn(`[ALT] Lookup table not found: ${address.toBase58()}`);
+      return null;
+    }
+    console.log(`[ALT] Loaded lookup table with ${accountInfo.value.state.addresses.length} addresses`);
+    return accountInfo.value;
+  } catch (err) {
+    console.error(`[ALT] Failed to fetch lookup table:`, err);
+    return null;
+  }
+}
+async function createCloakCraftALT(connection, authority, accounts) {
+  console.log("[ALT] Creating CloakCraft Address Lookup Table...");
+  const { address, instruction: createIx } = await createAddressLookupTable(
+    connection,
+    authority.publicKey
+  );
+  const createTx = new Transaction().add(createIx);
+  const createSig = await sendAndConfirmTransaction(connection, createTx, [authority]);
+  console.log(`[ALT] Created ALT: ${address.toBase58()} (${createSig})`);
+  await new Promise((resolve2) => setTimeout(resolve2, 500));
+  const allAddresses = [
+    accounts.program,
+    accounts.lightProtocol,
+    ...accounts.stateTrees,
+    ...accounts.addressTrees,
+    ...accounts.nullifierQueues,
+    ...accounts.systemAccounts,
+    accounts.systemProgram,
+    accounts.tokenProgram
+  ];
+  const BATCH_SIZE = 30;
+  for (let i = 0; i < allAddresses.length; i += BATCH_SIZE) {
+    const batch = allAddresses.slice(i, i + BATCH_SIZE);
+    const extendIx = extendAddressLookupTable(address, authority.publicKey, batch);
+    const extendTx = new Transaction().add(extendIx);
+    const extendSig = await sendAndConfirmTransaction(connection, extendTx, [authority]);
+    console.log(`[ALT] Extended ALT with ${batch.length} addresses (${extendSig})`);
+    await new Promise((resolve2) => setTimeout(resolve2, 500));
+  }
+  console.log(`[ALT] CloakCraft ALT ready: ${address.toBase58()}`);
+  console.log(`[ALT] Total addresses: ${allAddresses.length}`);
+  return address;
+}
+function getLightProtocolCommonAccounts(network) {
+  if (network === "devnet") {
+    return {
+      stateTrees: [
+        new PublicKey9("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
+        // State tree 0
+      ],
+      addressTrees: [
+        new PublicKey9("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
+        // Address tree 0
+      ],
+      nullifierQueues: [
+        new PublicKey9("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
+        // Nullifier queue 0
+      ],
+      // Additional Light Protocol system accounts (from PackedAccounts)
+      systemAccounts: [
+        new PublicKey9("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
+        new PublicKey9("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
+        new PublicKey9("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
+        new PublicKey9("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
+        new PublicKey9("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
+      ]
+    };
+  } else {
+    return {
+      stateTrees: [
+        new PublicKey9("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
+        // Placeholder
+      ],
+      addressTrees: [
+        new PublicKey9("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
+        // Placeholder
+      ],
+      nullifierQueues: [
+        new PublicKey9("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
+        // Placeholder
+      ],
+      systemAccounts: [
+        new PublicKey9("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
+        // Placeholder
+        new PublicKey9("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
+        // Placeholder
+        new PublicKey9("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
+        // Placeholder
+        new PublicKey9("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
+        // Placeholder
+        new PublicKey9("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
+        // Placeholder
+      ]
+    };
+  }
+}
+var ALTManager = class {
+  constructor(connection) {
+    this.cache = /* @__PURE__ */ new Map();
+    this.connection = connection;
+  }
+  /**
+   * Get an ALT account (from cache or fetch)
+   */
+  async get(address) {
+    const key = address.toBase58();
+    if (this.cache.has(key)) {
+      return this.cache.get(key);
+    }
+    const alt = await fetchAddressLookupTable(this.connection, address);
+    if (alt) {
+      this.cache.set(key, alt);
+    }
+    return alt;
+  }
+  /**
+   * Preload multiple ALTs
+   */
+  async preload(addresses) {
+    await Promise.all(addresses.map((addr) => this.get(addr)));
+  }
+  /**
+   * Clear the cache
+   */
+  clear() {
+    this.cache.clear();
+  }
+};
+
 // src/client.ts
 var CloakCraftClient = class {
   constructor(config) {
@@ -2860,7 +3060,7 @@ var CloakCraftClient = class {
     this.lightClient = null;
     this.program = null;
     this.heliusRpcUrl = null;
-    this.connection = new Connection(config.rpcUrl, config.commitment ?? "confirmed");
+    this.connection = new Connection2(config.rpcUrl, config.commitment ?? "confirmed");
     this.programId = config.programId;
     this.rpcUrl = config.rpcUrl;
     this.indexerUrl = config.indexerUrl;
@@ -2880,6 +3080,14 @@ var CloakCraftClient = class {
       this.lightClient = new LightCommitmentClient({
         apiKey: config.heliusApiKey,
         network: this.network
+      });
+    }
+    this.altManager = new ALTManager(this.connection);
+    this.altAddresses = config.addressLookupTables ?? [];
+    if (this.altAddresses.length > 0) {
+      console.log(`[Client] Preloading ${this.altAddresses.length} Address Lookup Tables...`);
+      this.altManager.preload(this.altAddresses).catch((err) => {
+        console.error("[Client] Failed to preload ALTs:", err);
       });
     }
   }
@@ -2911,6 +3119,20 @@ var CloakCraftClient = class {
    */
   getProofGenerator() {
     return this.proofGenerator;
+  }
+  /**
+   * Get loaded Address Lookup Tables
+   *
+   * Returns null if no ALTs configured or failed to load
+   */
+  async getAddressLookupTables() {
+    if (this.altAddresses.length === 0) {
+      return [];
+    }
+    const alts = await Promise.all(
+      this.altAddresses.map((addr) => this.altManager.get(addr))
+    );
+    return alts.filter((alt) => alt !== null);
   }
   /**
    * Set the Anchor program instance
@@ -3027,7 +3249,7 @@ var CloakCraftClient = class {
    * Get pool state
    */
   async getPool(tokenMint) {
-    const [poolPda] = PublicKey9.findProgramAddressSync(
+    const [poolPda] = PublicKey10.findProgramAddressSync(
       [Buffer.from("pool"), tokenMint.toBuffer()],
       this.programId
     );
@@ -3055,10 +3277,10 @@ var CloakCraftClient = class {
     const data = accountInfo.data;
     if (data.length < 114) return null;
     return {
-      tokenMint: new PublicKey9(data.subarray(8, 40)),
-      tokenVault: new PublicKey9(data.subarray(40, 72)),
+      tokenMint: new PublicKey10(data.subarray(8, 40)),
+      tokenVault: new PublicKey10(data.subarray(40, 72)),
       totalShielded: data.readBigUInt64LE(72),
-      authority: new PublicKey9(data.subarray(80, 112)),
+      authority: new PublicKey10(data.subarray(80, 112)),
       bump: data[112],
       vaultBump: data[113]
     };
@@ -3234,12 +3456,12 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit(circuitName)) {
       throw new Error(`Prover not initialized. Call initializeProver(['${circuitName}']) first.`);
     }
-    const tokenMint = params.inputs[0].tokenMint instanceof Uint8Array ? new PublicKey9(params.inputs[0].tokenMint) : params.inputs[0].tokenMint;
-    const [poolPda] = PublicKey9.findProgramAddressSync(
+    const tokenMint = params.inputs[0].tokenMint instanceof Uint8Array ? new PublicKey10(params.inputs[0].tokenMint) : params.inputs[0].tokenMint;
+    const [poolPda] = PublicKey10.findProgramAddressSync(
       [Buffer.from("pool"), tokenMint.toBuffer()],
       this.programId
     );
-    const [counterPda] = PublicKey9.findProgramAddressSync(
+    const [counterPda] = PublicKey10.findProgramAddressSync(
       [Buffer.from("commitment_counter"), poolPda.toBuffer()],
       this.programId
     );
@@ -3348,6 +3570,46 @@ var CloakCraftClient = class {
       return providerWallet.publicKey;
     }
     throw new Error("No relayer configured and no provider wallet available.");
+  }
+  /**
+   * Sign all transactions at once (batch signing)
+   *
+   * @param transactions - Array of transactions to sign
+   * @param relayer - Optional relayer keypair. If not provided, uses wallet adapter's signAllTransactions
+   * @returns Array of signed transactions
+   */
+  async signAllTransactions(transactions, relayer) {
+    const { Transaction: Transaction3 } = await import("@solana/web3.js");
+    if (relayer) {
+      const signedTxs = transactions.map((tx) => {
+        const signedTx = new Transaction3();
+        signedTx.recentBlockhash = tx.recentBlockhash;
+        signedTx.feePayer = tx.feePayer;
+        signedTx.instructions = tx.instructions;
+        signedTx.sign(relayer);
+        return signedTx;
+      });
+      return signedTxs;
+    }
+    if (this.program?.provider && "wallet" in this.program.provider) {
+      const provider = this.program.provider;
+      const wallet = provider.wallet;
+      if (wallet && typeof wallet.signAllTransactions === "function") {
+        console.log("[Batch Sign] Using wallet adapter signAllTransactions");
+        const signedTxs = await wallet.signAllTransactions(transactions);
+        return signedTxs;
+      }
+      if (wallet && typeof wallet.signTransaction === "function") {
+        console.warn("[Batch Sign] Wallet does not support signAllTransactions, signing individually");
+        const signedTxs = [];
+        for (const tx of transactions) {
+          const signedTx = await wallet.signTransaction(tx);
+          signedTxs.push(signedTx);
+        }
+        return signedTxs;
+      }
+    }
+    throw new Error("No signing method available - provide relayer keypair or ensure wallet adapter is connected");
   }
   /**
    * Prepare simple transfer inputs and execute transfer
@@ -3501,7 +3763,7 @@ var CloakCraftClient = class {
       params,
       this.wallet.keypair
     );
-    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey9(params.input.tokenMint) : params.input.tokenMint;
+    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey10(params.input.tokenMint) : params.input.tokenMint;
     const ammPoolAccount = await this.program.account.ammPool.fetch(params.poolId);
     const outputTokenMint = params.swapDirection === "aToB" ? ammPoolAccount.tokenBMint : ammPoolAccount.tokenAMint;
     const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
@@ -3513,34 +3775,82 @@ var CloakCraftClient = class {
     const { proof, nullifier, outCommitment, changeCommitment, outRandomness, changeRandomness } = proofResult;
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
+    const instructionParams = {
+      inputPool: inputPoolPda,
+      outputPool: outputPoolPda,
+      inputTokenMint,
+      outputTokenMint,
+      ammPool: params.poolId,
+      relayer: relayerPubkey,
+      proof,
+      merkleRoot: params.merkleRoot,
+      nullifier,
+      outputCommitment: outCommitment,
+      changeCommitment,
+      minOutput: params.minOutput,
+      outputRecipient: params.outputRecipient,
+      changeRecipient: params.changeRecipient,
+      inputAmount: params.input.amount,
+      swapAmount: params.swapAmount,
+      outputAmount: params.outputAmount,
+      swapDirection: params.swapDirection,
+      outRandomness,
+      changeRandomness
+    };
+    console.log("[Swap] Attempting atomic execution with versioned transaction...");
+    try {
+      const { instructions, operationId: operationId2 } = await buildSwapInstructionsForVersionedTx(
+        this.program,
+        instructionParams,
+        heliusRpcUrl
+      );
+      console.log(`[Swap] Built ${instructions.length} instructions for atomic execution`);
+      const lookupTables = await this.getAddressLookupTables();
+      if (lookupTables.length > 0) {
+        console.log(`[Swap] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      }
+      const versionedTx = await buildVersionedTransaction(
+        this.connection,
+        instructions,
+        relayerPubkey,
+        {
+          computeUnits: 14e5,
+          computeUnitPrice: 5e4,
+          lookupTables
+        }
+      );
+      const size = estimateTransactionSize(versionedTx);
+      if (size === -1) {
+        console.log("[Swap] Transaction serialization failed, falling back to sequential execution");
+      } else {
+        console.log(`[Swap] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE} bytes`);
+      }
+      if (size > 0 && size <= MAX_TRANSACTION_SIZE) {
+        if (relayer) {
+          versionedTx.sign([relayer]);
+        } else {
+          throw new Error("Relayer keypair required for signing versioned transaction");
+        }
+        console.log("[Swap] Executing atomic transaction...");
+        const signature = await executeVersionedTransaction(this.connection, versionedTx, {
+          skipPreflight: false
+        });
+        console.log("[Swap] Atomic execution successful!");
+        return { signature, slot: 0 };
+      }
+      console.log("[Swap] Transaction too large, falling back to sequential execution");
+    } catch (err) {
+      console.error("[Swap] Atomic execution failed, falling back to sequential:", err);
+    }
+    console.log("[Swap] Using sequential multi-phase execution with batch signing...");
     const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildSwapWithProgram(
       this.program,
-      {
-        inputPool: inputPoolPda,
-        outputPool: outputPoolPda,
-        inputTokenMint,
-        outputTokenMint,
-        ammPool: params.poolId,
-        relayer: relayerPubkey,
-        proof,
-        merkleRoot: params.merkleRoot,
-        nullifier,
-        outputCommitment: outCommitment,
-        changeCommitment,
-        minOutput: params.minOutput,
-        outputRecipient: params.outputRecipient,
-        changeRecipient: params.changeRecipient,
-        inputAmount: params.input.amount,
-        swapAmount: params.swapAmount,
-        outputAmount: params.outputAmount,
-        swapDirection: params.swapDirection,
-        outRandomness,
-        changeRandomness
-      },
+      instructionParams,
       heliusRpcUrl
     );
-    const phase1Signature = await phase1Tx.rpc();
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-II7GUIGJ.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-UUMNFRQB.mjs");
+    const transactionBuilders = [];
+    transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
     for (let i = 0; i < pendingNullifiers.length; i++) {
       const pn = pendingNullifiers[i];
       const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(
@@ -3553,16 +3863,11 @@ var CloakCraftClient = class {
         },
         heliusRpcUrl
       );
-      await nullifierTx.rpc();
+      transactionBuilders.push({ name: `Nullifier ${i}`, builder: nullifierTx });
     }
-    console.log(`[Phase 3] Creating ${pendingCommitments.length} commitments...`);
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
-      if (pc.commitment.every((b) => b === 0)) {
-        console.log(`[Phase 3] Skipping zero commitment at index ${i}`);
-        continue;
-      }
-      console.log(`[Phase 3] Creating commitment ${i}: pool=${pc.pool.toBase58()}`);
+      if (pc.commitment.every((b) => b === 0)) continue;
       const { tx: commitmentTx } = await buildCreateCommitmentWithProgram2(
         this.program,
         {
@@ -3575,15 +3880,39 @@ var CloakCraftClient = class {
         },
         heliusRpcUrl
       );
-      const sig = await commitmentTx.rpc();
-      console.log(`[Phase 3] Commitment ${i} created: ${sig}`);
+      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
     }
     const { tx: closeTx } = await buildClosePendingOperationWithProgram2(
       this.program,
       operationId,
       relayerPubkey
     );
-    await closeTx.rpc();
+    transactionBuilders.push({ name: "Close", builder: closeTx });
+    console.log(`[Swap] Built ${transactionBuilders.length} transactions for batch signing`);
+    const { Transaction: Transaction3 } = await import("@solana/web3.js");
+    const transactions = await Promise.all(
+      transactionBuilders.map(async ({ builder }) => await builder.transaction())
+    );
+    const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
+    transactions.forEach((tx) => {
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = relayerPubkey;
+    });
+    console.log("[Swap] Requesting signature for all transactions...");
+    const signedTransactions = await this.signAllTransactions(transactions, relayer);
+    console.log(`[Swap] All ${signedTransactions.length} transactions signed!`);
+    let phase1Signature = "";
+    for (let i = 0; i < signedTransactions.length; i++) {
+      const tx = signedTransactions[i];
+      const name = transactionBuilders[i].name;
+      const signature = await this.connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: "confirmed"
+      });
+      await this.connection.confirmTransaction(signature, "confirmed");
+      console.log(`[Swap] ${name} confirmed: ${signature}`);
+      if (i === 0) phase1Signature = signature;
+    }
     return {
       signature: phase1Signature,
       slot: 0
@@ -3610,8 +3939,8 @@ var CloakCraftClient = class {
       params,
       this.wallet.keypair
     );
-    const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new PublicKey9(params.inputA.tokenMint) : params.inputA.tokenMint;
-    const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new PublicKey9(params.inputB.tokenMint) : params.inputB.tokenMint;
+    const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new PublicKey10(params.inputA.tokenMint) : params.inputA.tokenMint;
+    const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new PublicKey10(params.inputB.tokenMint) : params.inputB.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
     const [lpPool] = derivePoolPda(params.lpMint, this.programId);
@@ -3628,40 +3957,89 @@ var CloakCraftClient = class {
     } = proofResult;
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
+    const instructionParams = {
+      poolA,
+      poolB,
+      tokenAMint: params.inputA.tokenMint,
+      tokenBMint: params.inputB.tokenMint,
+      lpPool,
+      lpMint: params.lpMint,
+      ammPool: params.poolId,
+      relayer: relayerPubkey,
+      proof,
+      nullifierA,
+      nullifierB,
+      lpCommitment,
+      changeACommitment,
+      changeBCommitment,
+      lpRandomness,
+      changeARandomness,
+      changeBRandomness,
+      lpRecipient: params.lpRecipient,
+      changeARecipient: params.changeARecipient,
+      changeBRecipient: params.changeBRecipient,
+      inputAAmount: params.inputA.amount,
+      inputBAmount: params.inputB.amount,
+      depositA: params.depositA,
+      depositB: params.depositB,
+      lpAmount,
+      minLpAmount: params.minLpAmount
+    };
+    console.log("[Add Liquidity] Attempting atomic execution with versioned transaction...");
+    try {
+      const { instructions, operationId: operationId2 } = await buildAddLiquidityInstructionsForVersionedTx(
+        this.program,
+        instructionParams,
+        heliusRpcUrl
+      );
+      console.log(`[Add Liquidity] Built ${instructions.length} instructions for atomic execution`);
+      const lookupTables = await this.getAddressLookupTables();
+      if (lookupTables.length > 0) {
+        console.log(`[Add Liquidity] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      }
+      const versionedTx = await buildVersionedTransaction(
+        this.connection,
+        instructions,
+        relayerPubkey,
+        {
+          computeUnits: 14e5,
+          computeUnitPrice: 5e4,
+          lookupTables
+        }
+      );
+      const size = estimateTransactionSize(versionedTx);
+      if (size === -1) {
+        console.log("[Add Liquidity] Transaction serialization failed, falling back to sequential execution");
+      } else {
+        console.log(`[Add Liquidity] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE} bytes`);
+      }
+      if (size > 0 && size <= MAX_TRANSACTION_SIZE) {
+        if (relayer) {
+          versionedTx.sign([relayer]);
+        } else {
+          throw new Error("Relayer keypair required for signing versioned transaction");
+        }
+        console.log("[Add Liquidity] Executing atomic transaction...");
+        const signature = await executeVersionedTransaction(this.connection, versionedTx, {
+          skipPreflight: false
+        });
+        console.log("[Add Liquidity] Atomic execution successful!");
+        return { signature, slot: 0 };
+      }
+      console.log("[Add Liquidity] Transaction too large, falling back to sequential execution");
+    } catch (err) {
+      console.error("[Add Liquidity] Atomic execution failed, falling back to sequential:", err);
+    }
+    console.log("[Add Liquidity] Using sequential multi-phase execution with batch signing...");
     const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildAddLiquidityWithProgram(
       this.program,
-      {
-        poolA,
-        poolB,
-        tokenAMint: params.inputA.tokenMint,
-        tokenBMint: params.inputB.tokenMint,
-        lpPool,
-        lpMint: params.lpMint,
-        ammPool: params.poolId,
-        relayer: relayerPubkey,
-        proof,
-        nullifierA,
-        nullifierB,
-        lpCommitment,
-        changeACommitment,
-        changeBCommitment,
-        lpRandomness,
-        changeARandomness,
-        changeBRandomness,
-        lpRecipient: params.lpRecipient,
-        changeARecipient: params.changeARecipient,
-        changeBRecipient: params.changeBRecipient,
-        inputAAmount: params.inputA.amount,
-        inputBAmount: params.inputB.amount,
-        depositA: params.depositA,
-        depositB: params.depositB,
-        lpAmount,
-        minLpAmount: params.minLpAmount
-      },
+      instructionParams,
       heliusRpcUrl
     );
-    const phase1Signature = await phase1Tx.rpc();
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-II7GUIGJ.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-UUMNFRQB.mjs");
+    console.log("[Add Liquidity] Building all transactions for batch signing...");
+    const transactionBuilders = [];
+    transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
     for (let i = 0; i < pendingNullifiers.length; i++) {
       const pn = pendingNullifiers[i];
       const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(
@@ -3670,11 +4048,13 @@ var CloakCraftClient = class {
           operationId,
           nullifierIndex: i,
           pool: pn.pool,
-          relayer: relayerPubkey
+          relayer: relayerPubkey,
+          nullifier: pn.nullifier
+          // Pass nullifier directly for batch signing
         },
         heliusRpcUrl
       );
-      await nullifierTx.rpc();
+      transactionBuilders.push({ name: `Nullifier ${i}`, builder: nullifierTx });
     }
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
@@ -3687,18 +4067,53 @@ var CloakCraftClient = class {
           pool: pc.pool,
           relayer: relayerPubkey,
           stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
-          encryptedNote: pc.encryptedNote
+          encryptedNote: pc.encryptedNote,
+          commitment: pc.commitment
+          // Pass commitment directly for batch signing
         },
         heliusRpcUrl
       );
-      await commitmentTx.rpc();
+      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
     }
     const { tx: closeTx } = await buildClosePendingOperationWithProgram2(
       this.program,
       operationId,
       relayerPubkey
     );
-    await closeTx.rpc();
+    transactionBuilders.push({ name: "Close", builder: closeTx });
+    console.log(`[Add Liquidity] Built ${transactionBuilders.length} transactions`);
+    const { Transaction: Transaction3 } = await import("@solana/web3.js");
+    const transactions = await Promise.all(
+      transactionBuilders.map(async ({ builder }) => {
+        const tx = await builder.transaction();
+        return tx;
+      })
+    );
+    const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
+    transactions.forEach((tx) => {
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = relayerPubkey;
+    });
+    console.log("[Add Liquidity] Requesting signature for all transactions...");
+    const signedTransactions = await this.signAllTransactions(transactions, relayer);
+    console.log(`[Add Liquidity] All ${signedTransactions.length} transactions signed!`);
+    console.log("[Add Liquidity] Executing signed transactions sequentially...");
+    let phase1Signature = "";
+    for (let i = 0; i < signedTransactions.length; i++) {
+      const tx = signedTransactions[i];
+      const name = transactionBuilders[i].name;
+      console.log(`[Add Liquidity] Sending ${name}...`);
+      const signature = await this.connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: "confirmed"
+      });
+      await this.connection.confirmTransaction(signature, "confirmed");
+      console.log(`[Add Liquidity] ${name} confirmed: ${signature}`);
+      if (i === 0) {
+        phase1Signature = signature;
+      }
+    }
+    console.log("[Add Liquidity] All transactions executed successfully!");
     return {
       signature: phase1Signature,
       slot: 0
@@ -3720,43 +4135,103 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("swap/remove_liquidity")) {
       throw new Error("Prover not initialized. Call initializeProver(['swap/remove_liquidity']) first.");
     }
-    const ammPoolAccount = await this.program.account.ammPool.fetch(params.poolId);
-    const tokenAMint = ammPoolAccount.tokenAMint;
-    const tokenBMint = ammPoolAccount.tokenBMint;
-    const lpMint = ammPoolAccount.lpMint;
+    const tokenAMint = params.tokenAMint;
+    const tokenBMint = params.tokenBMint;
+    const lpMint = params.lpInput.tokenMint instanceof Uint8Array ? new PublicKey10(params.lpInput.tokenMint) : params.lpInput.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
     const [lpPool] = derivePoolPda(lpMint, this.programId);
-    const { proof, lpNullifier, outputACommitment, outputBCommitment } = await this.proofGenerator.generateRemoveLiquidityProof(
+    console.log("[Remove Liquidity] Pool PDAs:");
+    console.log(`  Token A Pool: ${poolA.toBase58()}`);
+    console.log(`  Token B Pool: ${poolB.toBase58()}`);
+    console.log(`  LP Token Pool: ${lpPool.toBase58()}`);
+    const { proof, lpNullifier, outputACommitment, outputBCommitment, outputARandomness, outputBRandomness } = await this.proofGenerator.generateRemoveLiquidityProof(
       params,
       this.wallet.keypair
     );
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
+    const instructionParams = {
+      lpPool,
+      poolA,
+      poolB,
+      tokenAMint: params.tokenAMint,
+      // Use raw format like addLiquidity
+      tokenBMint: params.tokenBMint,
+      // Use raw format like addLiquidity
+      ammPool: params.poolId,
+      relayer: relayerPubkey,
+      proof,
+      lpNullifier,
+      outputACommitment,
+      outputBCommitment,
+      oldPoolStateHash: params.oldPoolStateHash,
+      newPoolStateHash: params.newPoolStateHash,
+      outputARecipient: params.outputARecipient,
+      outputBRecipient: params.outputBRecipient,
+      lpAmount: params.lpAmount,
+      outputAAmount: params.outputAAmount,
+      outputBAmount: params.outputBAmount,
+      outputARandomness,
+      outputBRandomness
+    };
+    console.log("[Remove Liquidity] Attempting atomic execution with versioned transaction...");
+    try {
+      const { buildRemoveLiquidityInstructionsForVersionedTx: buildRemoveLiquidityInstructionsForVersionedTx3 } = await import("./swap-UUMNFRQB.mjs");
+      const { instructions, operationId: operationId2 } = await buildRemoveLiquidityInstructionsForVersionedTx3(
+        this.program,
+        instructionParams,
+        heliusRpcUrl
+      );
+      console.log(`[Remove Liquidity] Built ${instructions.length} instructions for atomic execution`);
+      const lookupTables = await this.getAddressLookupTables();
+      if (lookupTables.length > 0) {
+        console.log(`[Remove Liquidity] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      }
+      const { buildVersionedTransaction: buildVersionedTransaction2, estimateTransactionSize: estimateTransactionSize2, executeVersionedTransaction: executeVersionedTransaction2, MAX_TRANSACTION_SIZE: MAX_TRANSACTION_SIZE2 } = await import("./versioned-transaction-IWYBACS7.mjs");
+      const versionedTx = await buildVersionedTransaction2(
+        this.connection,
+        instructions,
+        relayerPubkey,
+        {
+          computeUnits: 14e5,
+          computeUnitPrice: 5e4,
+          lookupTables
+        }
+      );
+      const size = estimateTransactionSize2(versionedTx);
+      if (size === -1) {
+        console.log("[Remove Liquidity] Transaction serialization failed, falling back to sequential execution");
+      } else {
+        console.log(`[Remove Liquidity] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE2} bytes`);
+      }
+      if (size > 0 && size <= MAX_TRANSACTION_SIZE2) {
+        if (relayer) {
+          versionedTx.sign([relayer]);
+        } else {
+          throw new Error("Relayer keypair required for signing versioned transaction");
+        }
+        console.log("[Remove Liquidity] Executing atomic transaction...");
+        const signature = await executeVersionedTransaction2(this.connection, versionedTx, {
+          skipPreflight: false
+        });
+        console.log("[Remove Liquidity] Atomic execution successful!");
+        return { signature, slot: 0 };
+      }
+      console.log("[Remove Liquidity] Transaction too large, falling back to sequential execution");
+    } catch (err) {
+      console.error("[Remove Liquidity] Atomic execution failed, falling back to sequential:", err);
+    }
+    console.log("[Remove Liquidity] Using sequential multi-phase execution with batch signing...");
     const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildRemoveLiquidityWithProgram(
       this.program,
-      {
-        lpPool,
-        poolA,
-        poolB,
-        tokenAMint,
-        tokenBMint,
-        ammPool: params.poolId,
-        relayer: relayerPubkey,
-        proof,
-        lpNullifier,
-        outputACommitment,
-        outputBCommitment,
-        oldPoolStateHash: params.oldPoolStateHash,
-        newPoolStateHash: params.newPoolStateHash,
-        outputARecipient: params.outputARecipient,
-        outputBRecipient: params.outputBRecipient,
-        lpAmount: params.lpAmount
-      },
+      instructionParams,
       heliusRpcUrl
     );
-    const phase1Signature = await phase1Tx.rpc();
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-II7GUIGJ.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-UUMNFRQB.mjs");
+    console.log("[Remove Liquidity] Building all transactions for batch signing...");
+    const transactionBuilders = [];
+    transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
     for (let i = 0; i < pendingNullifiers.length; i++) {
       const pn = pendingNullifiers[i];
       const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(
@@ -3765,11 +4240,13 @@ var CloakCraftClient = class {
           operationId,
           nullifierIndex: i,
           pool: pn.pool,
-          relayer: relayerPubkey
+          relayer: relayerPubkey,
+          nullifier: pn.nullifier
+          // Pass nullifier directly for batch signing
         },
         heliusRpcUrl
       );
-      await nullifierTx.rpc();
+      transactionBuilders.push({ name: `Nullifier ${i}`, builder: nullifierTx });
     }
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
@@ -3782,18 +4259,53 @@ var CloakCraftClient = class {
           pool: pc.pool,
           relayer: relayerPubkey,
           stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
-          encryptedNote: pc.encryptedNote
+          encryptedNote: pc.encryptedNote,
+          commitment: pc.commitment
+          // Pass commitment directly for batch signing
         },
         heliusRpcUrl
       );
-      await commitmentTx.rpc();
+      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
     }
     const { tx: closeTx } = await buildClosePendingOperationWithProgram2(
       this.program,
       operationId,
       relayerPubkey
     );
-    await closeTx.rpc();
+    transactionBuilders.push({ name: "Close", builder: closeTx });
+    console.log(`[Remove Liquidity] Built ${transactionBuilders.length} transactions`);
+    const { Transaction: Transaction3 } = await import("@solana/web3.js");
+    const transactions = await Promise.all(
+      transactionBuilders.map(async ({ builder }) => {
+        const tx = await builder.transaction();
+        return tx;
+      })
+    );
+    const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
+    transactions.forEach((tx) => {
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = relayerPubkey;
+    });
+    console.log("[Remove Liquidity] Requesting signature for all transactions...");
+    const signedTransactions = await this.signAllTransactions(transactions, relayer);
+    console.log(`[Remove Liquidity] All ${signedTransactions.length} transactions signed!`);
+    console.log("[Remove Liquidity] Executing signed transactions sequentially...");
+    let phase1Signature = "";
+    for (let i = 0; i < signedTransactions.length; i++) {
+      const tx = signedTransactions[i];
+      const name = transactionBuilders[i].name;
+      console.log(`[Remove Liquidity] Sending ${name}...`);
+      const signature = await this.connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: "confirmed"
+      });
+      await this.connection.confirmTransaction(signature, "confirmed");
+      console.log(`[Remove Liquidity] ${name} confirmed: ${signature}`);
+      if (i === 0) {
+        phase1Signature = signature;
+      }
+    }
+    console.log("[Remove Liquidity] All transactions executed successfully!");
     return {
       signature: phase1Signature,
       slot: 0
@@ -3827,8 +4339,8 @@ var CloakCraftClient = class {
     );
     const [orderPda] = deriveOrderPda(params.orderId, this.programId);
     const orderAccount = await this.program.account.order.fetch(orderPda);
-    const makerPool = new PublicKey9(orderAccount.makerPool || params.order.escrowCommitment);
-    const takerInputMint = params.takerInput.tokenMint instanceof Uint8Array ? new PublicKey9(params.takerInput.tokenMint) : params.takerInput.tokenMint;
+    const makerPool = new PublicKey10(orderAccount.makerPool || params.order.escrowCommitment);
+    const takerInputMint = params.takerInput.tokenMint instanceof Uint8Array ? new PublicKey10(params.takerInput.tokenMint) : params.takerInput.tokenMint;
     const [takerPool] = derivePoolPda(takerInputMint, this.programId);
     const escrowNullifier = new Uint8Array(32);
     const takerNullifier = this.computeInputNullifier(params.takerInput);
@@ -3912,7 +4424,7 @@ var CloakCraftClient = class {
     );
     const [orderPda] = deriveOrderPda(params.orderId, this.programId);
     const orderAccount = await this.program.account.order.fetch(orderPda);
-    const pool = new PublicKey9(orderAccount.pool || orderAccount.makerPool);
+    const pool = new PublicKey10(orderAccount.pool || orderAccount.makerPool);
     const escrowNullifier = new Uint8Array(32);
     const refundCommitment = computeCommitment({
       stealthPubX: params.refundRecipient.stealthPubkey.x,
@@ -3996,7 +4508,7 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("governance/encrypted_submit")) {
       throw new Error("Prover not initialized. Call initializeProver(['governance/encrypted_submit']) first.");
     }
-    const tokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey9(params.input.tokenMint) : params.input.tokenMint;
+    const tokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey10(params.input.tokenMint) : params.input.tokenMint;
     const [tokenPool] = derivePoolPda(tokenMint, this.programId);
     const randomness = generateVoteRandomness();
     const voteOption = params.voteChoice === 0 ? 0 /* Yes */ : params.voteChoice === 1 ? 1 /* No */ : 2 /* Abstain */;
@@ -4172,7 +4684,7 @@ var CloakCraftClient = class {
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     let poolPda;
     if (tokenMint) {
-      [poolPda] = PublicKey9.findProgramAddressSync(
+      [poolPda] = PublicKey10.findProgramAddressSync(
         [Buffer.from("pool"), tokenMint.toBuffer()],
         this.programId
       );
@@ -4197,7 +4709,7 @@ var CloakCraftClient = class {
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     let poolPda;
     if (tokenMint) {
-      [poolPda] = PublicKey9.findProgramAddressSync(
+      [poolPda] = PublicKey10.findProgramAddressSync(
         [Buffer.from("pool"), tokenMint.toBuffer()],
         this.programId
       );
@@ -4218,11 +4730,11 @@ var CloakCraftClient = class {
   // Private Methods
   // =============================================================================
   async buildAdapterSwapTransaction(_params, _proof) {
-    const tx = new Transaction();
+    const tx = new Transaction2();
     return tx;
   }
   async buildCreateOrderTransaction(_params, _proof) {
-    const tx = new Transaction();
+    const tx = new Transaction2();
     return tx;
   }
   async getRelayer() {
@@ -4302,7 +4814,7 @@ var CloakCraftClient = class {
 };
 
 // src/amm/pool.ts
-import { PublicKey as PublicKey10 } from "@solana/web3.js";
+import { PublicKey as PublicKey11 } from "@solana/web3.js";
 import { keccak_256 } from "@noble/hashes/sha3";
 async function fetchAmmPool(connection, ammPoolPda) {
   const accountInfo = await connection.getAccountInfo(ammPoolPda);
@@ -4314,13 +4826,13 @@ async function fetchAmmPool(connection, ammPoolPda) {
 }
 function deserializeAmmPool(data) {
   let offset = 8;
-  const poolId = new PublicKey10(data.slice(offset, offset + 32));
+  const poolId = new PublicKey11(data.slice(offset, offset + 32));
   offset += 32;
-  const tokenAMint = new PublicKey10(data.slice(offset, offset + 32));
+  const tokenAMint = new PublicKey11(data.slice(offset, offset + 32));
   offset += 32;
-  const tokenBMint = new PublicKey10(data.slice(offset, offset + 32));
+  const tokenBMint = new PublicKey11(data.slice(offset, offset + 32));
   offset += 32;
-  const lpMint = new PublicKey10(data.slice(offset, offset + 32));
+  const lpMint = new PublicKey11(data.slice(offset, offset + 32));
   offset += 32;
   const stateHash = new Uint8Array(data.slice(offset, offset + 32));
   offset += 32;
@@ -4330,7 +4842,7 @@ function deserializeAmmPool(data) {
   const lpSupply = view.getBigUint64(16, true);
   const feeBps = view.getUint16(24, true);
   offset += 26;
-  const authority = new PublicKey10(data.slice(offset, offset + 32));
+  const authority = new PublicKey11(data.slice(offset, offset + 32));
   offset += 32;
   const isActive = data[offset] === 1;
   offset += 1;
@@ -4560,6 +5072,7 @@ function validateLiquidityAmounts(amountA, amountB, balanceA, balanceB) {
   return null;
 }
 export {
+  ALTManager,
   CIRCUIT_IDS,
   CloakCraftClient,
   DEVNET_LIGHT_TREES,
@@ -4579,6 +5092,7 @@ export {
   LightCommitmentClient,
   LightProtocol,
   MAINNET_LIGHT_TREES,
+  MAX_TRANSACTION_SIZE,
   NoteManager,
   PROGRAM_ID,
   ProofGenerator,
@@ -4589,7 +5103,9 @@ export {
   addCiphertexts,
   ammPoolExists,
   bigintToFieldString,
+  buildAddLiquidityInstructionsForVersionedTx,
   buildAddLiquidityWithProgram,
+  buildAtomicMultiPhaseTransaction,
   buildCancelOrderWithProgram,
   buildClosePendingOperationWithProgram,
   buildCreateAggregationWithProgram,
@@ -4599,14 +5115,17 @@ export {
   buildFinalizeDecryptionWithProgram,
   buildInitializeCommitmentCounterWithProgram,
   buildInitializePoolWithProgram,
+  buildRemoveLiquidityInstructionsForVersionedTx,
   buildRemoveLiquidityWithProgram,
   buildShieldInstructions,
   buildShieldWithProgram,
   buildStoreCommitmentWithProgram,
   buildSubmitDecryptionShareWithProgram,
   buildSubmitVoteWithProgram,
+  buildSwapInstructionsForVersionedTx,
   buildSwapWithProgram,
   buildTransactWithProgram,
+  buildVersionedTransaction,
   bytesToField,
   bytesToFieldString,
   calculateAddLiquidityAmounts,
@@ -4617,6 +5136,7 @@ export {
   calculateSlippage,
   calculateSwapOutput,
   calculateTotalLiquidity,
+  canFitInSingleTransaction,
   checkNullifierSpent,
   checkStealthOwnership,
   combineShares,
@@ -4624,6 +5144,8 @@ export {
   computeCircuitInputs,
   computeCommitment,
   computeDecryptionShare,
+  createAddressLookupTable,
+  createCloakCraftALT,
   createNote,
   createWallet,
   createWatchOnlyWallet,
@@ -4648,6 +5170,10 @@ export {
   elgamalEncrypt,
   encryptNote,
   encryptVote,
+  estimateTransactionSize,
+  executeVersionedTransaction,
+  extendAddressLookupTable,
+  fetchAddressLookupTable,
   fetchAmmPool,
   fieldToBytes,
   formatAmmPool,
@@ -4658,6 +5184,8 @@ export {
   generateStealthAddress,
   generateVoteRandomness,
   getAmmPool,
+  getInstructionFromAnchorMethod,
+  getLightProtocolCommonAccounts,
   getRandomStateTreeSet,
   getStateTreeSet,
   initPoseidon,

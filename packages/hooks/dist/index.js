@@ -69,7 +69,8 @@ function CloakCraftProvider({
   heliusApiKey,
   network = "devnet",
   autoInitialize = true,
-  solanaWalletPubkey
+  solanaWalletPubkey,
+  addressLookupTables
 }) {
   const [wallet, setWallet] = (0, import_react.useState)(null);
   const [isInitialized, setIsInitialized] = (0, import_react.useState)(false);
@@ -93,9 +94,12 @@ function CloakCraftProvider({
       indexerUrl,
       programId: new import_web3.PublicKey(programId),
       heliusApiKey,
-      network
+      network,
+      circuitsBaseUrl: "/circom",
+      // Circom circuits in /public/circom/
+      addressLookupTables: addressLookupTables?.map((addr) => new import_web3.PublicKey(addr))
     }),
-    [rpcUrl, indexerUrl, programId, heliusApiKey, network]
+    [rpcUrl, indexerUrl, programId, heliusApiKey, network, addressLookupTables]
   );
   (0, import_react.useEffect)(() => {
     if (autoInitialize && !isInitialized && !isInitializing) {
@@ -628,6 +632,7 @@ function useNoteSelector(tokenMint) {
 
 // src/useUnshield.ts
 var import_react7 = require("react");
+var import_spl_token = require("@solana/spl-token");
 function useUnshield() {
   const { client, wallet, sync } = useCloakCraft();
   const [state, setState] = (0, import_react7.useState)({
@@ -645,8 +650,24 @@ function useUnshield() {
         setState({ isUnshielding: false, error: "Program not set. Call setProgram() first.", result: null });
         return null;
       }
-      const { inputs, amount, recipient } = options;
+      const { inputs, amount, recipient, isWalletAddress } = options;
       setState({ isUnshielding: true, error: null, result: null });
+      let recipientTokenAccount = recipient;
+      if (isWalletAddress && inputs[0]?.tokenMint) {
+        try {
+          recipientTokenAccount = (0, import_spl_token.getAssociatedTokenAddressSync)(
+            inputs[0].tokenMint,
+            recipient
+          );
+        } catch (err) {
+          setState({
+            isUnshielding: false,
+            error: `Failed to derive token account: ${err instanceof Error ? err.message : "Unknown error"}`,
+            result: null
+          });
+          return null;
+        }
+      }
       let freshNotes;
       try {
         const tokenMint = inputs[0]?.tokenMint;
@@ -698,7 +719,7 @@ function useUnshield() {
             inputs: matchedInputs,
             // Use fresh notes with stealthEphemeralPubkey
             outputs,
-            unshield: { amount, recipient }
+            unshield: { amount, recipient: recipientTokenAccount }
           },
           void 0
           // relayer - wallet adapter will be used via provider
@@ -998,7 +1019,7 @@ function usePoolList() {
 
 // src/usePublicBalance.ts
 var import_react10 = require("react");
-var import_spl_token = require("@solana/spl-token");
+var import_spl_token2 = require("@solana/spl-token");
 function usePublicBalance(tokenMint, owner) {
   const { client } = useCloakCraft();
   const [state, setState] = (0, import_react10.useState)({
@@ -1014,7 +1035,7 @@ function usePublicBalance(tokenMint, owner) {
     }
     setState((s) => ({ ...s, isLoading: true, error: null }));
     try {
-      const tokenAccount = (0, import_spl_token.getAssociatedTokenAddressSync)(tokenMint, owner);
+      const tokenAccount = (0, import_spl_token2.getAssociatedTokenAddressSync)(tokenMint, owner);
       const accountInfo = await client.connection.getAccountInfo(tokenAccount);
       if (!accountInfo) {
         setState({
@@ -1099,7 +1120,7 @@ function useTokenBalances(tokenMints, owner) {
     setError(null);
     try {
       const newBalances = /* @__PURE__ */ new Map();
-      const tokenAccounts = tokenMints.map((mint) => (0, import_spl_token.getAssociatedTokenAddressSync)(mint, owner));
+      const tokenAccounts = tokenMints.map((mint) => (0, import_spl_token2.getAssociatedTokenAddressSync)(mint, owner));
       const accountInfos = await client.connection.getMultipleAccountsInfo(tokenAccounts);
       for (let i = 0; i < tokenMints.length; i++) {
         const mint = tokenMints[i];

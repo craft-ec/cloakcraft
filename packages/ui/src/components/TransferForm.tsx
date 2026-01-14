@@ -56,7 +56,7 @@ export function TransferForm({
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
     const fractional = value % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 8)}`;
   };
 
   const parseRecipientPublicKey = (hex: string): { x: Uint8Array; y: Uint8Array } | null => {
@@ -163,14 +163,17 @@ export function TransferForm({
         )}
 
         <label style={styles.label}>
-          Recipient Public Key
+          Recipient Stealth Public Key
           <textarea
             value={recipientPubkey}
             onChange={(e) => setRecipientPubkey(e.target.value)}
-            placeholder="Enter recipient's BabyJubJub public key (128 hex chars)"
+            placeholder="Paste the recipient's stealth public key from their Account tab (128 hex characters)"
             disabled={isTransferring}
-            style={styles.textarea}
+            style={{...styles.textarea, minHeight: '80px'}}
           />
+          <span style={{ fontSize: '0.75rem', color: colors.textMuted, marginTop: '4px' }}>
+            Find this in the recipient's Account tab under "Stealth Public Key"
+          </span>
         </label>
 
         <label style={styles.label}>
@@ -237,14 +240,6 @@ function PrivateTokenSelectorWithBalance({
   onSelect: (token: TokenInfo) => void;
   disabled?: boolean;
 }) {
-  const formatBalance = (balance: bigint, decimals: number) => {
-    const divisor = BigInt(10 ** decimals);
-    const whole = balance / divisor;
-    const fractional = balance % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, '0').slice(0, 4);
-    return `${whole.toLocaleString()}.${fractionalStr}`;
-  };
-
   return (
     <select
       value={selected.toBase58()}
@@ -255,16 +250,11 @@ function PrivateTokenSelectorWithBalance({
       disabled={disabled}
       style={styles.input}
     >
-      {tokens.map(token => {
-        // Get private balance for each token
-        const { totalAvailable } = useNoteSelector(token.mint);
-        const balanceStr = formatBalance(totalAvailable, token.decimals);
-        return (
-          <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
-            {token.symbol} - {balanceStr}
-          </option>
-        );
-      })}
+      {tokens.map(token => (
+        <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
+          {token.symbol}
+        </option>
+      ))}
     </select>
   );
 }

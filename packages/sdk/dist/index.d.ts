@@ -1,7 +1,7 @@
 import { DecryptedNote, Keypair, SpendingKey, ViewingKey, Point, TransferParams, AdapterSwapParams, OrderParams, AmmSwapParams, AddLiquidityParams, RemoveLiquidityParams, FillOrderParams, CancelOrderParams, VoteParams, Groth16Proof, PoolState, AmmPoolState, ShieldParams, TransactionResult, StealthAddress, SyncStatus, CreateAggregationParams, SubmitVoteParams, SubmitDecryptionShareParams, FinalizeVotingParams, FieldElement, PoseidonHash, Note, Commitment, Nullifier, EncryptedNote, ElGamalCiphertext } from '@cloakcraft/types';
 export * from '@cloakcraft/types';
 import * as _solana_web3_js from '@solana/web3.js';
-import { PublicKey, AccountMeta, Connection, Keypair as Keypair$1, TransactionInstruction } from '@solana/web3.js';
+import { PublicKey, AccountMeta, Connection, Keypair as Keypair$1, TransactionInstruction, AddressLookupTableAccount, VersionedTransaction } from '@solana/web3.js';
 import * as _lightprotocol_stateless_js from '@lightprotocol/stateless.js';
 import { Rpc } from '@lightprotocol/stateless.js';
 import { Program } from '@coral-xyz/anchor';
@@ -524,6 +524,8 @@ declare class ProofGenerator {
         lpNullifier: Uint8Array;
         outputACommitment: Uint8Array;
         outputBCommitment: Uint8Array;
+        outputARandomness: Uint8Array;
+        outputBRandomness: Uint8Array;
     }>;
     /**
      * Generate a fill order proof
@@ -622,6 +624,8 @@ interface CloakCraftClientConfig {
         circuitsDir: string;
         circomBuildDir: string;
     };
+    /** Address Lookup Table addresses for atomic transaction compression (optional) */
+    addressLookupTables?: PublicKey[];
 }
 declare class CloakCraftClient {
     readonly connection: Connection;
@@ -635,6 +639,8 @@ declare class CloakCraftClient {
     private lightClient;
     private program;
     private heliusRpcUrl;
+    private altManager;
+    private altAddresses;
     constructor(config: CloakCraftClientConfig);
     /**
      * Get the Helius RPC URL (required for Light Protocol operations)
@@ -655,6 +661,12 @@ declare class CloakCraftClient {
      * For advanced usage - direct proof generation
      */
     getProofGenerator(): ProofGenerator;
+    /**
+     * Get loaded Address Lookup Tables
+     *
+     * Returns null if no ALTs configured or failed to load
+     */
+    getAddressLookupTables(): Promise<_solana_web3_js.AddressLookupTableAccount[]>;
     /**
      * Set the Anchor program instance
      * Required for transaction building
@@ -779,6 +791,14 @@ declare class CloakCraftClient {
      * Falls back to self-relay mode (provider wallet pays own fees) if no relayer configured
      */
     private getRelayerPubkey;
+    /**
+     * Sign all transactions at once (batch signing)
+     *
+     * @param transactions - Array of transactions to sign
+     * @param relayer - Optional relayer keypair. If not provided, uses wallet adapter's signAllTransactions
+     * @returns Array of signed transactions
+     */
+    private signAllTransactions;
     /**
      * Prepare simple transfer inputs and execute transfer
      *
@@ -1821,16 +1841,6 @@ declare function initializePool(program: Program, tokenMint: PublicKey, authorit
 }>;
 
 /**
- * AMM Swap Instruction Builders (Multi-Phase)
- *
- * All AMM operations use multi-phase commit due to Solana transaction size limits:
- * - Phase 1: Verify proof + Store pending operation (+ create nullifier for single-nullifier ops)
- * - Phase 2: Create each nullifier (for multi-nullifier ops like add_liquidity)
- * - Phase 3: Create each commitment
- * - Phase 4: Close pending operation
- */
-
-/**
  * AMM Pool derivation
  */
 declare function deriveAmmPoolPda(tokenAMint: PublicKey, tokenBMint: PublicKey, programId: PublicKey): [PublicKey, number];
@@ -2010,6 +2020,8 @@ interface CreateNullifierParams {
     pool: PublicKey;
     /** Relayer */
     relayer: PublicKey;
+    /** Nullifier value (optional, if not provided will fetch from PendingOperation) */
+    nullifier?: Uint8Array;
 }
 /**
  * Build Create Nullifier instruction (generic)
@@ -2035,6 +2047,8 @@ interface CreateCommitmentParams {
     stealthEphemeralPubkey: Uint8Array;
     /** Encrypted note */
     encryptedNote: Uint8Array;
+    /** Commitment value (optional, if not provided will fetch from PendingOperation) */
+    commitment?: Uint8Array;
 }
 /**
  * Build Create Commitment instruction (generic)
@@ -2081,6 +2095,12 @@ interface RemoveLiquidityInstructionParams {
     outputBRecipient: StealthAddress;
     /** LP amount being removed */
     lpAmount: bigint;
+    /** Output amounts */
+    outputAAmount: bigint;
+    outputBAmount: bigint;
+    /** Randomness used in proof generation */
+    outputARandomness: Uint8Array;
+    outputBRandomness: Uint8Array;
 }
 /**
  * Remove Liquidity Phase 2 parameters
@@ -2107,6 +2127,42 @@ declare function buildRemoveLiquidityWithProgram(program: Program, params: Remov
     operationId: Uint8Array;
     pendingNullifiers: PendingNullifierData[];
     pendingCommitments: PendingCommitmentData[];
+}>;
+/**
+ * Build all swap instructions for atomic execution (Versioned Transaction)
+ *
+ * This builds all phases (1-4) as individual instructions that can be combined
+ * into a single versioned transaction for atomic execution.
+ *
+ * @returns Array of instructions in execution order
+ */
+declare function buildSwapInstructionsForVersionedTx(program: Program, params: SwapInstructionParams, rpcUrl: string): Promise<{
+    instructions: _solana_web3_js.TransactionInstruction[];
+    operationId: Uint8Array;
+}>;
+/**
+ * Build all add liquidity instructions for atomic execution (Versioned Transaction)
+ *
+ * This builds all phases (1-4) as individual instructions that can be combined
+ * into a single versioned transaction for atomic execution.
+ *
+ * @returns Array of instructions in execution order
+ */
+declare function buildAddLiquidityInstructionsForVersionedTx(program: Program, params: AddLiquidityInstructionParams, rpcUrl: string): Promise<{
+    instructions: _solana_web3_js.TransactionInstruction[];
+    operationId: Uint8Array;
+}>;
+/**
+ * Build all remove liquidity instructions for atomic execution (Versioned Transaction)
+ *
+ * This builds all phases (1-4) as individual instructions that can be combined
+ * into a single versioned transaction for atomic execution.
+ *
+ * @returns Array of instructions in execution order
+ */
+declare function buildRemoveLiquidityInstructionsForVersionedTx(program: Program, params: RemoveLiquidityInstructionParams, rpcUrl: string): Promise<{
+    instructions: _solana_web3_js.TransactionInstruction[];
+    operationId: Uint8Array;
 }>;
 
 /**
@@ -2543,4 +2599,211 @@ declare function validateSwapAmount(inputAmount: bigint, maxBalance: bigint, sli
  */
 declare function validateLiquidityAmounts(amountA: bigint, amountB: bigint, balanceA: bigint, balanceB: bigint): string | null;
 
-export { type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, GENERATOR, type HeliusConfig, IDENTITY, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, MAINNET_LIGHT_TREES, NoteManager, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, ProofGenerator, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, SEEDS, type ScannedNote, type ShieldInstructionParams, type ShieldResult, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type ValidityProof, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePoolWithProgram, buildRemoveLiquidityWithProgram, buildShieldInstructions, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapWithProgram, buildTransactWithProgram, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateMinOutput, calculatePriceImpact, calculatePriceRatio, calculateRemoveLiquidityOutput, calculateSlippage, calculateSwapOutput, calculateTotalLiquidity, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, createNote, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePoolPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, elgamalEncrypt, encryptNote, encryptVote, fetchAmmPool, fieldToBytes, formatAmmPool, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isInSubgroup, isOnCurve, lagrangeCoefficient, loadCircomArtifacts, loadWallet, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof };
+/**
+ * Versioned Transaction Utilities
+ *
+ * Enables atomic multi-phase execution by combining all instructions
+ * into a single versioned transaction.
+ *
+ * Benefits:
+ * - Single signature (vs 5 separate signatures)
+ * - Atomic execution (all succeed or all revert)
+ * - Works on devnet and mainnet
+ */
+
+/**
+ * Maximum transaction size in bytes
+ * Solana's limit is 1232 bytes for versioned transactions
+ */
+declare const MAX_TRANSACTION_SIZE = 1232;
+/**
+ * Configuration for versioned transaction builder
+ */
+interface VersionedTransactionConfig {
+    /** Compute unit limit (default: 1.4M for complex ZK operations) */
+    computeUnits?: number;
+    /** Compute unit price in micro-lamports (default: auto) */
+    computeUnitPrice?: number;
+    /** Address lookup tables for address compression (enables larger transactions) */
+    lookupTables?: AddressLookupTableAccount[];
+}
+/**
+ * Build a versioned transaction from instructions
+ *
+ * @param connection - Solana connection
+ * @param instructions - Instructions to include
+ * @param payer - Transaction fee payer
+ * @param config - Configuration options
+ * @returns Versioned transaction
+ */
+declare function buildVersionedTransaction(connection: Connection, instructions: TransactionInstruction[], payer: PublicKey, config?: VersionedTransactionConfig): Promise<VersionedTransaction>;
+/**
+ * Estimate the size of a versioned transaction
+ *
+ * @param tx - Versioned transaction
+ * @returns Estimated size in bytes, or -1 if serialization fails
+ */
+declare function estimateTransactionSize(tx: VersionedTransaction): number;
+/**
+ * Check if instructions will fit in a single versioned transaction
+ *
+ * @param connection - Solana connection
+ * @param instructions - Instructions to check
+ * @param payer - Transaction fee payer
+ * @param config - Configuration options
+ * @returns True if instructions fit within size limit
+ */
+declare function canFitInSingleTransaction(connection: Connection, instructions: TransactionInstruction[], payer: PublicKey, config?: VersionedTransactionConfig): Promise<boolean>;
+/**
+ * Multi-phase operation instructions
+ */
+interface MultiPhaseInstructions {
+    /** Phase 1: Verify proof + update state */
+    phase1: TransactionInstruction;
+    /** Phase 2: Create nullifiers */
+    nullifiers: TransactionInstruction[];
+    /** Phase 3: Create commitments */
+    commitments: TransactionInstruction[];
+    /** Phase 4: Close pending operation */
+    cleanup: TransactionInstruction;
+}
+/**
+ * Build atomic multi-phase transaction
+ *
+ * Combines all phases into a single versioned transaction for atomic execution.
+ *
+ * @param connection - Solana connection
+ * @param phases - Multi-phase instructions
+ * @param payer - Transaction fee payer
+ * @param config - Configuration options
+ * @returns Versioned transaction or null if too large
+ */
+declare function buildAtomicMultiPhaseTransaction(connection: Connection, phases: MultiPhaseInstructions, payer: PublicKey, config?: VersionedTransactionConfig): Promise<VersionedTransaction | null>;
+/**
+ * Execute versioned transaction with retry logic
+ *
+ * @param connection - Solana connection
+ * @param tx - Versioned transaction (must be signed)
+ * @param options - Send options
+ * @returns Transaction signature
+ */
+declare function executeVersionedTransaction(connection: Connection, tx: VersionedTransaction, options?: {
+    maxRetries?: number;
+    skipPreflight?: boolean;
+}): Promise<string>;
+/**
+ * Build instruction from Anchor method builder
+ *
+ * Helper to extract TransactionInstruction from Anchor's method builder.
+ *
+ * @param methodBuilder - Anchor method builder (with .instruction())
+ * @returns TransactionInstruction
+ */
+declare function getInstructionFromAnchorMethod(methodBuilder: any): Promise<TransactionInstruction>;
+
+/**
+ * Address Lookup Table (ALT) Management
+ *
+ * ALTs compress account references from 32 bytes to 1 byte,
+ * enabling larger transactions to fit within the 1232 byte limit.
+ */
+
+/**
+ * Common accounts that appear in most CloakCraft transactions
+ * These should be added to the ALT for maximum compression benefit
+ */
+interface CloakCraftALTAccounts {
+    /** CloakCraft program ID */
+    program: PublicKey;
+    /** Light Protocol program ID */
+    lightProtocol: PublicKey;
+    /** Light Protocol state tree accounts (frequently used) */
+    stateTrees: PublicKey[];
+    /** Light Protocol address tree accounts */
+    addressTrees: PublicKey[];
+    /** Light Protocol nullifier queue accounts */
+    nullifierQueues: PublicKey[];
+    /** Light Protocol additional system accounts */
+    systemAccounts: PublicKey[];
+    /** System program */
+    systemProgram: PublicKey;
+    /** Token program */
+    tokenProgram: PublicKey;
+}
+/**
+ * Create a new Address Lookup Table
+ *
+ * @param connection - Solana connection
+ * @param authority - ALT authority (must sign)
+ * @param recentSlot - Recent slot for ALT creation
+ * @returns ALT address and creation instruction
+ */
+declare function createAddressLookupTable(connection: Connection, authority: PublicKey, recentSlot?: number): Promise<{
+    address: PublicKey;
+    instruction: TransactionInstruction;
+}>;
+/**
+ * Extend an Address Lookup Table with new addresses
+ *
+ * @param address - ALT address
+ * @param authority - ALT authority (must sign)
+ * @param addresses - Addresses to add
+ * @returns Extend instruction
+ */
+declare function extendAddressLookupTable(address: PublicKey, authority: PublicKey, addresses: PublicKey[]): TransactionInstruction;
+/**
+ * Fetch an Address Lookup Table account
+ *
+ * @param connection - Solana connection
+ * @param address - ALT address
+ * @returns ALT account or null if doesn't exist
+ */
+declare function fetchAddressLookupTable(connection: Connection, address: PublicKey): Promise<AddressLookupTableAccount | null>;
+/**
+ * Create and populate a CloakCraft ALT with common accounts
+ *
+ * This is a helper that creates an ALT and adds all common CloakCraft accounts.
+ * Should be called once during setup.
+ *
+ * @param connection - Solana connection
+ * @param authority - Authority keypair
+ * @param accounts - Common CloakCraft accounts to add
+ * @returns ALT address
+ */
+declare function createCloakCraftALT(connection: Connection, authority: Keypair$1, accounts: CloakCraftALTAccounts): Promise<PublicKey>;
+/**
+ * Get Light Protocol common accounts for ALT
+ *
+ * These are the Merkle tree accounts that appear in every Light Protocol operation.
+ *
+ * @param network - Network (mainnet-beta or devnet)
+ * @returns Light Protocol account addresses
+ */
+declare function getLightProtocolCommonAccounts(network: 'mainnet-beta' | 'devnet'): {
+    stateTrees: PublicKey[];
+    addressTrees: PublicKey[];
+    nullifierQueues: PublicKey[];
+    systemAccounts: PublicKey[];
+};
+/**
+ * ALT Manager - Caches loaded ALTs for reuse
+ */
+declare class ALTManager {
+    private cache;
+    private connection;
+    constructor(connection: Connection);
+    /**
+     * Get an ALT account (from cache or fetch)
+     */
+    get(address: PublicKey): Promise<AddressLookupTableAccount | null>;
+    /**
+     * Preload multiple ALTs
+     */
+    preload(addresses: PublicKey[]): Promise<void>;
+    /**
+     * Clear the cache
+     */
+    clear(): void;
+}
+
+export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, GENERATOR, type HeliusConfig, IDENTITY, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, MAINNET_LIGHT_TREES, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, ProofGenerator, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, SEEDS, type ScannedNote, type ShieldInstructionParams, type ShieldResult, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityInstructionsForVersionedTx, buildAddLiquidityWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePoolWithProgram, buildRemoveLiquidityInstructionsForVersionedTx, buildRemoveLiquidityWithProgram, buildShieldInstructions, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapInstructionsForVersionedTx, buildSwapWithProgram, buildTransactWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateMinOutput, calculatePriceImpact, calculatePriceRatio, calculateRemoveLiquidityOutput, calculateSlippage, calculateSwapOutput, calculateTotalLiquidity, canFitInSingleTransaction, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, createAddressLookupTable, createCloakCraftALT, createNote, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePoolPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, elgamalEncrypt, encryptNote, encryptVote, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fieldToBytes, formatAmmPool, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isInSubgroup, isOnCurve, lagrangeCoefficient, loadCircomArtifacts, loadWallet, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof };

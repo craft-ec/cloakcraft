@@ -322,12 +322,13 @@ interface TokenInfo$1 {
 }
 interface RemoveLiquidityFormProps {
     tokens: TokenInfo$1[];
+    ammPools: any[];
     onSuccess?: (signature: string) => void;
     onError?: (error: string) => void;
     className?: string;
     walletPublicKey?: PublicKey | null;
 }
-declare function RemoveLiquidityForm({ tokens, onSuccess, onError, className, walletPublicKey, }: RemoveLiquidityFormProps): react_jsx_runtime.JSX.Element;
+declare function RemoveLiquidityForm({ tokens, ammPools, onSuccess, onError, className, walletPublicKey, }: RemoveLiquidityFormProps): react_jsx_runtime.JSX.Element;
 
 interface TokenInfo {
     mint: PublicKey;
@@ -344,14 +345,19 @@ declare function AmmPoolDetails({ tokenA, tokenB, pool, className, }: AmmPoolDet
 
 /**
  * Shared styles for CloakCraft UI components
+ * Theme: Cryptographic Elegance - Refined light theme with sophisticated details
  */
 
 declare const colors: {
     primary: string;
     primaryHover: string;
+    primaryLight: string;
     success: string;
+    successLight: string;
     error: string;
+    errorLight: string;
     warning: string;
+    warningLight: string;
     text: string;
     textMuted: string;
     textLight: string;

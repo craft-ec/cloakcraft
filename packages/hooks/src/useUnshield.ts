@@ -7,6 +7,7 @@
 
 import { useState, useCallback } from 'react';
 import { PublicKey, Keypair as SolanaKeypair } from '@solana/web3.js';
+import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { useCloakCraft } from './provider';
 import type { DecryptedNote, TransactionResult } from '@cloakcraft/types';
 
@@ -21,10 +22,12 @@ interface UnshieldOptions {
   inputs: DecryptedNote[];
   /** Amount to withdraw */
   amount: bigint;
-  /** Recipient token account for withdrawn tokens */
+  /** Recipient wallet address (will derive token account) or token account directly */
   recipient: PublicKey;
   /** Wallet public key (for wallet adapter) */
   walletPublicKey?: PublicKey;
+  /** If true, recipient is a wallet address and token account will be derived */
+  isWalletAddress?: boolean;
 }
 
 export function useUnshield() {
@@ -49,9 +52,27 @@ export function useUnshield() {
         return null;
       }
 
-      const { inputs, amount, recipient } = options;
+      const { inputs, amount, recipient, isWalletAddress } = options;
 
       setState({ isUnshielding: true, error: null, result: null });
+
+      // Derive token account from wallet address if needed
+      let recipientTokenAccount = recipient;
+      if (isWalletAddress && inputs[0]?.tokenMint) {
+        try {
+          recipientTokenAccount = getAssociatedTokenAddressSync(
+            inputs[0].tokenMint,
+            recipient
+          );
+        } catch (err) {
+          setState({
+            isUnshielding: false,
+            error: `Failed to derive token account: ${err instanceof Error ? err.message : 'Unknown error'}`,
+            result: null,
+          });
+          return null;
+        }
+      }
 
       // Force re-scan to get fresh notes with stealthEphemeralPubkey
       // Clear cache to ensure we get truly fresh data
@@ -122,7 +143,7 @@ export function useUnshield() {
           {
             inputs: matchedInputs,  // Use fresh notes with stealthEphemeralPubkey
             outputs,
-            unshield: { amount, recipient },
+            unshield: { amount, recipient: recipientTokenAccount },
           },
           undefined // relayer - wallet adapter will be used via provider
         );

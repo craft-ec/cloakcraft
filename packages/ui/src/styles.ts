@@ -1,123 +1,163 @@
 /**
  * Shared styles for CloakCraft UI components
+ * Theme: Cryptographic Elegance - Refined light theme with sophisticated details
  */
 
 import type { CSSProperties } from 'react';
 
 export const colors = {
-  primary: '#6366f1',
-  primaryHover: '#4f46e5',
-  success: '#10b981',
-  error: '#ef4444',
-  warning: '#f59e0b',
-  text: '#1f2937',
-  textMuted: '#6b7280',
-  textLight: '#9ca3af',
-  border: '#e5e7eb',
-  borderHover: '#d1d5db',
+  primary: '#4f46e5',
+  primaryHover: '#4338ca',
+  primaryLight: '#eef2ff',
+  success: '#059669',
+  successLight: '#d1fae5',
+  error: '#dc2626',
+  errorLight: '#fee2e2',
+  warning: '#d97706',
+  warningLight: '#fef3c7',
+  text: '#2c2416',
+  textMuted: '#6b5d4f',
+  textLight: '#9c8b7a',
+  border: '#e7e0d8',
+  borderHover: '#d4c8bc',
   background: '#ffffff',
-  backgroundMuted: '#f9fafb',
-  backgroundDark: '#f3f4f6',
+  backgroundMuted: '#faf8f5',
+  backgroundDark: '#f5f3f0',
 };
 
 export const styles: Record<string, CSSProperties> = {
   // Card container
   card: {
-    padding: '24px',
-    borderRadius: '12px',
+    padding: '28px',
+    borderRadius: '16px',
     border: `1px solid ${colors.border}`,
     backgroundColor: colors.background,
+    boxShadow: '0 1px 3px rgba(44, 36, 22, 0.06)',
+    transition: 'box-shadow 0.3s ease, transform 0.3s ease',
+  },
+
+  cardHover: {
+    boxShadow: '0 4px 12px rgba(44, 36, 22, 0.08)',
+    transform: 'translateY(-2px)',
   },
 
   cardTitle: {
-    margin: '0 0 8px 0',
-    fontSize: '1.25rem',
-    fontWeight: 600,
+    margin: '0 0 10px 0',
+    fontSize: '1.375rem',
+    fontWeight: 700,
+    fontFamily: "'Playfair Display', Georgia, serif",
+    letterSpacing: '-0.02em',
     color: colors.text,
   },
 
   cardDescription: {
-    margin: '0 0 20px 0',
-    fontSize: '0.875rem',
+    margin: '0 0 24px 0',
+    fontSize: '0.9375rem',
     color: colors.textMuted,
+    lineHeight: 1.6,
   },
 
   // Form elements
   form: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
+    gap: '20px',
   },
 
   label: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '6px',
+    gap: '8px',
     fontSize: '0.875rem',
-    fontWeight: 500,
+    fontWeight: 600,
     color: colors.text,
+    letterSpacing: '0.01em',
   },
 
   input: {
     width: '100%',
-    padding: '10px 14px',
-    borderRadius: '8px',
+    padding: '12px 16px',
+    borderRadius: '10px',
     border: `1px solid ${colors.border}`,
     fontSize: '1rem',
     outline: 'none',
-    transition: 'border-color 0.15s ease',
+    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
     boxSizing: 'border-box',
+    backgroundColor: colors.background,
+    color: colors.text,
+    fontFamily: 'inherit',
   },
 
   inputFocused: {
     borderColor: colors.primary,
+    boxShadow: `0 0 0 3px ${colors.primaryLight}`,
   },
 
   textarea: {
     width: '100%',
-    padding: '10px 14px',
-    borderRadius: '8px',
+    padding: '12px 16px',
+    borderRadius: '10px',
     border: `1px solid ${colors.border}`,
-    fontSize: '0.875rem',
-    fontFamily: 'monospace',
+    fontSize: '0.9375rem',
+    fontFamily: "'SF Mono', 'Monaco', 'Inconsolata', monospace",
     outline: 'none',
     resize: 'vertical',
-    minHeight: '80px',
+    minHeight: '100px',
     boxSizing: 'border-box',
+    backgroundColor: colors.background,
+    color: colors.text,
+    lineHeight: 1.5,
   },
 
   // Buttons
   buttonPrimary: {
-    padding: '12px 20px',
-    borderRadius: '8px',
+    padding: '14px 24px',
+    borderRadius: '10px',
     border: 'none',
     backgroundColor: colors.primary,
     color: 'white',
     fontSize: '0.9375rem',
-    fontWeight: 500,
+    fontWeight: 600,
     cursor: 'pointer',
-    transition: 'background-color 0.15s ease',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 2px 4px rgba(79, 70, 229, 0.2)',
+    letterSpacing: '0.01em',
+  },
+
+  buttonPrimaryHover: {
+    backgroundColor: colors.primaryHover,
+    boxShadow: '0 4px 8px rgba(79, 70, 229, 0.3)',
+    transform: 'translateY(-1px)',
   },
 
   buttonSecondary: {
-    padding: '12px 20px',
-    borderRadius: '8px',
-    border: `1px solid ${colors.border}`,
+    padding: '14px 24px',
+    borderRadius: '10px',
+    border: `1.5px solid ${colors.border}`,
     backgroundColor: colors.background,
     color: colors.text,
     fontSize: '0.9375rem',
-    fontWeight: 500,
+    fontWeight: 600,
     cursor: 'pointer',
-    transition: 'background-color 0.15s ease, border-color 0.15s ease',
+    transition: 'all 0.2s ease',
+    letterSpacing: '0.01em',
+  },
+
+  buttonSecondaryHover: {
+    borderColor: colors.borderHover,
+    backgroundColor: colors.backgroundMuted,
+    transform: 'translateY(-1px)',
   },
 
   buttonDisabled: {
     backgroundColor: colors.textLight,
     cursor: 'not-allowed',
+    opacity: 0.5,
+    boxShadow: 'none',
   },
 
   buttonSmall: {
-    padding: '6px 12px',
+    padding: '8px 16px',
     fontSize: '0.8125rem',
   },
 
@@ -125,27 +165,38 @@ export const styles: Record<string, CSSProperties> = {
   errorText: {
     color: colors.error,
     fontSize: '0.875rem',
-    marginTop: '4px',
+    marginTop: '6px',
+    fontWeight: 500,
   },
 
   successText: {
     color: colors.success,
     fontSize: '0.875rem',
-    fontWeight: 500,
+    fontWeight: 600,
   },
 
   successBox: {
-    padding: '12px 16px',
-    borderRadius: '8px',
-    backgroundColor: '#ecfdf5',
+    padding: '16px 20px',
+    borderRadius: '12px',
+    backgroundColor: colors.successLight,
     border: `1px solid ${colors.success}`,
+    color: colors.success,
   },
 
   warningBox: {
-    padding: '12px 16px',
-    borderRadius: '8px',
-    backgroundColor: '#fffbeb',
+    padding: '16px 20px',
+    borderRadius: '12px',
+    backgroundColor: colors.warningLight,
     border: `1px solid ${colors.warning}`,
+    color: colors.warning,
+  },
+
+  errorBox: {
+    padding: '16px 20px',
+    borderRadius: '12px',
+    backgroundColor: colors.errorLight,
+    border: `1px solid ${colors.error}`,
+    color: colors.error,
   },
 
   // Links
@@ -153,57 +204,79 @@ export const styles: Record<string, CSSProperties> = {
     color: colors.primary,
     textDecoration: 'none',
     fontSize: '0.875rem',
+    fontWeight: 500,
+    transition: 'color 0.2s ease',
+  },
+
+  linkHover: {
+    color: colors.primaryHover,
+    textDecoration: 'underline',
   },
 
   txLink: {
-    marginTop: '8px',
+    marginTop: '10px',
     fontSize: '0.8125rem',
   },
 
   // List items
   listItem: {
-    padding: '12px 16px',
+    padding: '16px 20px',
     border: `1px solid ${colors.border}`,
-    borderRadius: '8px',
+    borderRadius: '12px',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
+    transition: 'all 0.2s ease',
+    backgroundColor: colors.background,
+  },
+
+  listItemHover: {
+    borderColor: colors.borderHover,
+    backgroundColor: colors.backgroundMuted,
+    transform: 'translateX(2px)',
   },
 
   listItemSelected: {
     borderColor: colors.primary,
-    backgroundColor: '#eef2ff',
+    backgroundColor: colors.primaryLight,
+    boxShadow: `0 0 0 3px ${colors.primaryLight}`,
   },
 
   // Badge
   badge: {
     display: 'inline-block',
-    padding: '2px 8px',
+    padding: '4px 12px',
     borderRadius: '9999px',
     fontSize: '0.75rem',
-    fontWeight: 500,
+    fontWeight: 600,
+    letterSpacing: '0.02em',
   },
 
   badgeSuccess: {
-    backgroundColor: '#ecfdf5',
+    backgroundColor: colors.successLight,
     color: colors.success,
   },
 
   badgeWarning: {
-    backgroundColor: '#fffbeb',
+    backgroundColor: colors.warningLight,
     color: colors.warning,
   },
 
   badgeError: {
-    backgroundColor: '#fef2f2',
+    backgroundColor: colors.errorLight,
     color: colors.error,
+  },
+
+  badgePrimary: {
+    backgroundColor: colors.primaryLight,
+    color: colors.primary,
   },
 
   // Layout
   row: {
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
+    gap: '12px',
   },
 
   spaceBetween: {
@@ -215,26 +288,32 @@ export const styles: Record<string, CSSProperties> = {
   stack: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '8px',
+    gap: '12px',
   },
 
   // Typography
   heading: {
-    margin: '0 0 16px 0',
-    fontSize: '1.5rem',
-    fontWeight: 600,
+    margin: '0 0 20px 0',
+    fontSize: '1.75rem',
+    fontWeight: 700,
+    fontFamily: "'Playfair Display', Georgia, serif",
+    letterSpacing: '-0.02em',
     color: colors.text,
   },
 
   subheading: {
     margin: 0,
-    fontSize: '0.875rem',
+    fontSize: '0.9375rem',
     color: colors.textMuted,
+    lineHeight: 1.6,
   },
 
   mono: {
-    fontFamily: 'monospace',
+    fontFamily: "'SF Mono', 'Monaco', 'Inconsolata', monospace",
     fontSize: '0.8125rem',
+    backgroundColor: colors.backgroundDark,
+    padding: '2px 6px',
+    borderRadius: '4px',
   },
 
   truncate: {
@@ -243,12 +322,12 @@ export const styles: Record<string, CSSProperties> = {
     whiteSpace: 'nowrap',
   },
 
-  // Loading spinner placeholder
+  // Loading spinner
   spinner: {
     display: 'inline-block',
-    width: '16px',
-    height: '16px',
-    border: '2px solid #e5e7eb',
+    width: '18px',
+    height: '18px',
+    border: '2px solid rgba(79, 70, 229, 0.2)',
     borderTopColor: colors.primary,
     borderRadius: '50%',
     animation: 'spin 0.8s linear infinite',
@@ -257,7 +336,50 @@ export const styles: Record<string, CSSProperties> = {
   // Empty state
   emptyState: {
     textAlign: 'center',
-    padding: '32px',
+    padding: '48px 32px',
     color: colors.textMuted,
+    fontSize: '0.9375rem',
+  },
+
+  // Divider
+  divider: {
+    height: '1px',
+    backgroundColor: colors.border,
+    border: 'none',
+    margin: '24px 0',
+  },
+
+  // Info box
+  infoBox: {
+    padding: '16px 20px',
+    borderRadius: '12px',
+    backgroundColor: colors.backgroundMuted,
+    border: `1px solid ${colors.border}`,
+    fontSize: '0.875rem',
+    color: colors.textMuted,
+    lineHeight: 1.6,
+  },
+
+  // Stat display
+  stat: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+
+  statLabel: {
+    fontSize: '0.75rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    color: colors.textLight,
+    fontWeight: 600,
+  },
+
+  statValue: {
+    fontSize: '1.5rem',
+    fontWeight: 700,
+    fontFamily: "'Playfair Display', Georgia, serif",
+    color: colors.text,
+    letterSpacing: '-0.02em',
   },
 };

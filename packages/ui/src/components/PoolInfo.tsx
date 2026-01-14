@@ -28,13 +28,13 @@ export function PoolInfo({
     const divisor = BigInt(10 ** decimals);
     const whole = amount / divisor;
     const fractional = amount % divisor;
-    return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 4)}`;
+    return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 8)}`;
   };
 
   const truncateAddress = (address: PublicKey | null) => {
     if (!address) return '---';
     const str = address.toBase58();
-    return `${str.slice(0, 4)}...${str.slice(-4)}`;
+    return `${str.slice(0, 8)}...${str.slice(-4)}`;
   };
 
   if (isLoading) {
