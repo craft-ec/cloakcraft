@@ -2970,14 +2970,14 @@ function SwapForm({
         /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" }, children: /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
           "select",
           {
-            value: outputToken.mint.toBase58(),
+            value: outputToken?.mint.toBase58() || "",
             onChange: (e) => {
               const token = tokens.find((t) => t.mint.toBase58() === e.target.value);
               if (token) setOutputToken(token);
             },
             disabled: isSwapping,
             style: { ...styles.input, flex: 1 },
-            children: tokens.map((token) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
+            children: tokens.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("option", { value: "", children: "No pools with liquidity" }) : tokens.map((token) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
           }
         ) }),
         /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(

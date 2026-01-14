@@ -273,7 +273,7 @@ export function SwapForm({
           <label style={styles.label}>To (estimated)</label>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
             <select
-              value={outputToken.mint.toBase58()}
+              value={outputToken?.mint.toBase58() || ''}
               onChange={(e) => {
                 const token = tokens.find(t => t.mint.toBase58() === e.target.value);
                 if (token) setOutputToken(token);
@@ -281,11 +281,15 @@ export function SwapForm({
               disabled={isSwapping}
               style={{ ...styles.input, flex: 1 }}
             >
-              {tokens.map(token => (
-                <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
-                  {token.symbol}
-                </option>
-              ))}
+              {tokens.length === 0 ? (
+                <option value="">No pools with liquidity</option>
+              ) : (
+                tokens.map(token => (
+                  <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
+                    {token.symbol}
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
