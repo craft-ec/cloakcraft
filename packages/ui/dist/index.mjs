@@ -2716,6 +2716,7 @@ function WalletManager({ className }) {
 
 // src/components/SwapPanel.tsx
 import { useState as useState12, useEffect as useEffect2, useMemo as useMemo5 } from "react";
+import { PublicKey as PublicKey4 } from "@solana/web3.js";
 import { useCloakCraft as useCloakCraft9 } from "@cloakcraft/hooks";
 
 // src/components/SwapForm.tsx
@@ -3469,7 +3470,24 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
     fetchPools();
   }, [client]);
   const poolTokens = useMemo5(() => {
-    return DEVNET_TOKENS.filter((token) => initializedPoolMints.has(token.mint.toBase58()));
+    const tokens = [];
+    DEVNET_TOKENS.forEach((token) => {
+      if (initializedPoolMints.has(token.mint.toBase58())) {
+        tokens.push(token);
+      }
+    });
+    initializedPoolMints.forEach((mintStr) => {
+      const isKnown = DEVNET_TOKENS.some((t) => t.mint.toBase58() === mintStr);
+      if (!isKnown) {
+        tokens.push({
+          mint: new PublicKey4(mintStr),
+          symbol: mintStr.slice(0, 8) + "...",
+          name: mintStr,
+          decimals: 9
+        });
+      }
+    });
+    return tokens;
   }, [initializedPoolMints]);
   const tokensWithNotes = useMemo5(() => {
     const notesByMint = /* @__PURE__ */ new Map();

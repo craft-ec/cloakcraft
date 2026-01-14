@@ -54,9 +54,31 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
     fetchPools();
   }, [client]);
 
-  // Filter tokens to only those with initialized pools
+  // Get all tokens (known + unknown from initialized pools)
   const poolTokens = useMemo(() => {
-    return DEVNET_TOKENS.filter((token) => initializedPoolMints.has(token.mint.toBase58()));
+    const tokens: TokenInfo[] = [];
+
+    // Add known tokens that have pools
+    DEVNET_TOKENS.forEach((token) => {
+      if (initializedPoolMints.has(token.mint.toBase58())) {
+        tokens.push(token);
+      }
+    });
+
+    // Add unknown tokens from pools
+    initializedPoolMints.forEach((mintStr) => {
+      const isKnown = DEVNET_TOKENS.some(t => t.mint.toBase58() === mintStr);
+      if (!isKnown) {
+        tokens.push({
+          mint: new PublicKey(mintStr),
+          symbol: mintStr.slice(0, 8) + '...',
+          name: mintStr,
+          decimals: 9,
+        });
+      }
+    });
+
+    return tokens;
   }, [initializedPoolMints]);
 
   // For remove liquidity, additionally filter to tokens user has notes for

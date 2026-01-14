@@ -390,21 +390,27 @@ function PoolInfoCard({ refreshKey }: { refreshKey: number }) {
       try {
         const pools = await client.getAllPools();
 
-        // Only show pools for DEVNET_TOKENS (SOL, USDC, TEST)
-        const poolDisplays = pools
-          .filter((pool) => {
-            // Only include pools for known tokens
-            return DEVNET_TOKENS.some(t => t.mint.equals(pool.tokenMint));
-          })
-          .map((pool) => {
-            const knownToken = DEVNET_TOKENS.find(t => t.mint.equals(pool.tokenMint))!;
+        // Show all initialized pools
+        const poolDisplays = pools.map((pool) => {
+          const knownToken = DEVNET_TOKENS.find(t => t.mint.equals(pool.tokenMint));
+
+          if (knownToken) {
             return {
               mint: pool.tokenMint,
               symbol: knownToken.symbol,
               name: knownToken.name,
               decimals: knownToken.decimals,
-            } as PoolDisplay;
-          });
+            };
+          } else {
+            // Unknown token - show mint address
+            return {
+              mint: pool.tokenMint,
+              symbol: pool.tokenMint.toBase58().slice(0, 8) + '...',
+              name: pool.tokenMint.toBase58(),
+              decimals: 9,
+            };
+          }
+        });
 
         setInitializedPools(poolDisplays);
         if (poolDisplays.length > 0 && !selectedPool) {

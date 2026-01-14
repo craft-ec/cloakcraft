@@ -2778,6 +2778,7 @@ function WalletManager({ className }) {
 
 // src/components/SwapPanel.tsx
 var import_react15 = require("react");
+var import_web34 = require("@solana/web3.js");
 var import_hooks18 = require("@cloakcraft/hooks");
 
 // src/components/SwapForm.tsx
@@ -3531,7 +3532,24 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
     fetchPools();
   }, [client]);
   const poolTokens = (0, import_react15.useMemo)(() => {
-    return DEVNET_TOKENS.filter((token) => initializedPoolMints.has(token.mint.toBase58()));
+    const tokens = [];
+    DEVNET_TOKENS.forEach((token) => {
+      if (initializedPoolMints.has(token.mint.toBase58())) {
+        tokens.push(token);
+      }
+    });
+    initializedPoolMints.forEach((mintStr) => {
+      const isKnown = DEVNET_TOKENS.some((t) => t.mint.toBase58() === mintStr);
+      if (!isKnown) {
+        tokens.push({
+          mint: new import_web34.PublicKey(mintStr),
+          symbol: mintStr.slice(0, 8) + "...",
+          name: mintStr,
+          decimals: 9
+        });
+      }
+    });
+    return tokens;
   }, [initializedPoolMints]);
   const tokensWithNotes = (0, import_react15.useMemo)(() => {
     const notesByMint = /* @__PURE__ */ new Map();
