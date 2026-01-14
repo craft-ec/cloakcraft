@@ -2736,11 +2736,14 @@ function AmmPoolDetails({
     return /* @__PURE__ */ jsx15("div", { className, style: styles.card, children: /* @__PURE__ */ jsx15("div", { style: { padding: "16px", textAlign: "center", color: colors.textMuted }, children: "No AMM pool found for this pair" }) });
   }
   const formatAmount = (amount, decimals) => {
-    const divisor = BigInt(10 ** decimals);
-    const whole = amount / divisor;
-    const fractional = amount % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, "0").slice(0, 4);
-    return `${whole.toLocaleString()}.${fractionalStr}`;
+    const num = Number(amount) / Math.pow(10, decimals);
+    if (num < 1e-4 && num > 0) {
+      return num.toFixed(decimals);
+    }
+    return num.toLocaleString(void 0, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4
+    });
   };
   const formatCompact = (amount, decimals) => {
     const num = Number(amount) / Math.pow(10, decimals);
@@ -2751,8 +2754,16 @@ function AmmPoolDetails({
     }
     return num.toFixed(2);
   };
-  const priceRatio = pool.reserveA > 0n ? Number(pool.reserveB) / Number(pool.reserveA) * Math.pow(10, tokenA.decimals - tokenB.decimals) : 0;
-  const inversePriceRatio = priceRatio > 0 ? 1 / priceRatio : 0;
+  const reserveANum = Number(pool.reserveA) / Math.pow(10, tokenA.decimals);
+  const reserveBNum = Number(pool.reserveB) / Math.pow(10, tokenB.decimals);
+  const priceRatio = reserveANum > 0 ? reserveBNum / reserveANum : 0;
+  const inversePriceRatio = reserveBNum > 0 ? reserveANum / reserveBNum : 0;
+  const formatPrice = (price) => {
+    if (price === 0) return "0";
+    if (price < 1e-6) return price.toExponential(6);
+    if (price < 0.01) return price.toFixed(8);
+    return price.toFixed(6);
+  };
   const totalValueLocked = formatCompact(pool.reserveA, tokenA.decimals);
   return /* @__PURE__ */ jsxs15("div", { className, style: styles.card, children: [
     /* @__PURE__ */ jsxs15("h3", { style: { ...styles.cardTitle, marginBottom: "16px" }, children: [
@@ -2769,7 +2780,7 @@ function AmmPoolDetails({
     }, children: /* @__PURE__ */ jsxs15("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }, children: [
       /* @__PURE__ */ jsxs15("div", { children: [
         /* @__PURE__ */ jsx15("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginBottom: "4px" }, children: "Price" }),
-        /* @__PURE__ */ jsx15("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: priceRatio.toFixed(6) }),
+        /* @__PURE__ */ jsx15("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: formatPrice(priceRatio) }),
         /* @__PURE__ */ jsxs15("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "2px" }, children: [
           tokenB.symbol,
           " per ",
@@ -2778,7 +2789,7 @@ function AmmPoolDetails({
       ] }),
       /* @__PURE__ */ jsxs15("div", { children: [
         /* @__PURE__ */ jsx15("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginBottom: "4px" }, children: "Inverse Price" }),
-        /* @__PURE__ */ jsx15("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: inversePriceRatio.toFixed(6) }),
+        /* @__PURE__ */ jsx15("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: formatPrice(inversePriceRatio) }),
         /* @__PURE__ */ jsxs15("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "2px" }, children: [
           tokenA.symbol,
           " per ",
@@ -2964,8 +2975,6 @@ function SwapForm({
     }
   }, [availableOutputTokens]);
   const { availableNotes, totalAvailable, selectNotesForAmount } = useNoteSelector4(inputToken?.mint);
-  const mockReserveIn = 1000000n * BigInt(10 ** inputToken.decimals);
-  const mockReserveOut = 1000000n * BigInt(10 ** outputToken.decimals);
   const formatAmount = (value, decimals) => {
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
@@ -2973,31 +2982,36 @@ function SwapForm({
     return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 4)}`;
   };
   const swapQuote = useMemo2(() => {
-    if (!inputToken) return null;
+    if (!inputToken || !outputToken || !selectedAmmPool) return null;
     const amountNum = parseFloat(inputAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
       return null;
     }
     const amountLamports = BigInt(Math.floor(amountNum * 10 ** inputToken.decimals));
     try {
+      const inputMintStr = inputToken.mint.toBase58();
+      const tokenAMintStr = selectedAmmPool.tokenAMint.toBase58();
+      const isInputTokenA = inputMintStr === tokenAMintStr;
+      const reserveIn = isInputTokenA ? selectedAmmPool.reserveA : selectedAmmPool.reserveB;
+      const reserveOut = isInputTokenA ? selectedAmmPool.reserveB : selectedAmmPool.reserveA;
       const { outputAmount, priceImpact } = calculateSwapOutput(
         amountLamports,
-        mockReserveIn,
-        mockReserveOut,
-        30
-        // 0.3% fee
+        reserveIn,
+        reserveOut,
+        selectedAmmPool.feeBps || 30
+        // Use pool's fee or default to 0.3%
       );
       const minOutput = calculateMinOutput(outputAmount, slippageBps);
       return {
         outputAmount,
         minOutput,
         priceImpact,
-        priceRatio: Number(mockReserveOut) / Number(mockReserveIn)
+        priceRatio: Number(reserveOut) / Number(reserveIn)
       };
     } catch (err) {
       return null;
     }
-  }, [inputAmount, inputToken, mockReserveIn, mockReserveOut, slippageBps]);
+  }, [inputAmount, inputToken, outputToken, selectedAmmPool, slippageBps]);
   const handleSwapTokens = () => {
     const temp = inputToken;
     setInputToken(outputToken);
@@ -3214,15 +3228,22 @@ function SwapForm({
         swapQuote && swapQuote.priceImpact > 10 && /* @__PURE__ */ jsx16("div", { style: { ...styles.errorText, background: colors.backgroundMuted, padding: "12px", borderRadius: "8px" }, children: "Warning: High price impact! Consider reducing swap amount." })
       ] })
     ] }),
-    inputToken && outputToken && selectedAmmPool && /* @__PURE__ */ jsx16(
-      AmmPoolDetails,
-      {
-        tokenA: inputToken,
-        tokenB: outputToken,
-        pool: selectedAmmPool,
-        className
-      }
-    )
+    inputToken && outputToken && selectedAmmPool && (() => {
+      const poolTokenAStr = selectedAmmPool.tokenAMint.toBase58();
+      const inputMintStr = inputToken.mint.toBase58();
+      const outputMintStr = outputToken.mint.toBase58();
+      const poolTokenA = poolTokenAStr === inputMintStr ? inputToken : outputToken;
+      const poolTokenB = poolTokenAStr === inputMintStr ? outputToken : inputToken;
+      return /* @__PURE__ */ jsx16(
+        AmmPoolDetails,
+        {
+          tokenA: poolTokenA,
+          tokenB: poolTokenB,
+          pool: selectedAmmPool,
+          className
+        }
+      );
+    })()
   ] });
 }
 

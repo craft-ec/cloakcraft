@@ -117,10 +117,6 @@ export function SwapForm({
 
   const { availableNotes, totalAvailable, selectNotesForAmount } = useNoteSelector(inputToken?.mint);
 
-  // Mock pool reserves (TODO: fetch from on-chain pool state)
-  const mockReserveIn = 1000000n * BigInt(10 ** inputToken.decimals);
-  const mockReserveOut = 1000000n * BigInt(10 ** outputToken.decimals);
-
   const formatAmount = (value: bigint, decimals: number) => {
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
@@ -129,7 +125,7 @@ export function SwapForm({
   };
 
   const swapQuote = useMemo(() => {
-    if (!inputToken) return null;
+    if (!inputToken || !outputToken || !selectedAmmPool) return null;
 
     const amountNum = parseFloat(inputAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
@@ -139,11 +135,19 @@ export function SwapForm({
     const amountLamports = BigInt(Math.floor(amountNum * 10 ** inputToken.decimals));
 
     try {
+      // Determine which reserve is input and which is output based on token order
+      const inputMintStr = inputToken.mint.toBase58();
+      const tokenAMintStr = selectedAmmPool.tokenAMint.toBase58();
+
+      const isInputTokenA = inputMintStr === tokenAMintStr;
+      const reserveIn = isInputTokenA ? selectedAmmPool.reserveA : selectedAmmPool.reserveB;
+      const reserveOut = isInputTokenA ? selectedAmmPool.reserveB : selectedAmmPool.reserveA;
+
       const { outputAmount, priceImpact } = calculateSwapOutput(
         amountLamports,
-        mockReserveIn,
-        mockReserveOut,
-        30 // 0.3% fee
+        reserveIn,
+        reserveOut,
+        selectedAmmPool.feeBps || 30 // Use pool's fee or default to 0.3%
       );
 
       const minOutput = calculateMinOutput(outputAmount, slippageBps);
@@ -152,12 +156,12 @@ export function SwapForm({
         outputAmount,
         minOutput,
         priceImpact,
-        priceRatio: Number(mockReserveOut) / Number(mockReserveIn),
+        priceRatio: Number(reserveOut) / Number(reserveIn),
       };
     } catch (err) {
       return null;
     }
-  }, [inputAmount, inputToken, mockReserveIn, mockReserveOut, slippageBps]);
+  }, [inputAmount, inputToken, outputToken, selectedAmmPool, slippageBps]);
 
   const handleSwapTokens = () => {
     const temp = inputToken;
@@ -440,14 +444,24 @@ export function SwapForm({
       </div>
 
       {/* AMM Pool Details */}
-      {inputToken && outputToken && selectedAmmPool && (
-        <AmmPoolDetails
-          tokenA={inputToken}
-          tokenB={outputToken}
-          pool={selectedAmmPool}
-          className={className}
-        />
-      )}
+      {inputToken && outputToken && selectedAmmPool && (() => {
+        // Determine which token is A and which is B based on pool
+        const poolTokenAStr = selectedAmmPool.tokenAMint.toBase58();
+        const inputMintStr = inputToken.mint.toBase58();
+        const outputMintStr = outputToken.mint.toBase58();
+
+        const poolTokenA = poolTokenAStr === inputMintStr ? inputToken : outputToken;
+        const poolTokenB = poolTokenAStr === inputMintStr ? outputToken : inputToken;
+
+        return (
+          <AmmPoolDetails
+            tokenA={poolTokenA}
+            tokenB={poolTokenB}
+            pool={selectedAmmPool}
+            className={className}
+          />
+        );
+      })()}
     </>
   );
 }

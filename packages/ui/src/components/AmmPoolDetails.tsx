@@ -38,11 +38,18 @@ export function AmmPoolDetails({
   }
 
   const formatAmount = (amount: bigint, decimals: number) => {
-    const divisor = BigInt(10 ** decimals);
-    const whole = amount / divisor;
-    const fractional = amount % divisor;
-    const fractionalStr = fractional.toString().padStart(decimals, '0').slice(0, 4);
-    return `${whole.toLocaleString()}.${fractionalStr}`;
+    const num = Number(amount) / Math.pow(10, decimals);
+
+    // For very small amounts, show more decimals
+    if (num < 0.0001 && num > 0) {
+      return num.toFixed(decimals);
+    }
+
+    // For normal amounts, show 4 decimal places
+    return num.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    });
   };
 
   const formatCompact = (amount: bigint, decimals: number) => {
@@ -56,12 +63,21 @@ export function AmmPoolDetails({
   };
 
   // Calculate price ratio (Token B per Token A)
-  const priceRatio = pool.reserveA > 0n
-    ? (Number(pool.reserveB) / Number(pool.reserveA)) * Math.pow(10, tokenA.decimals - tokenB.decimals)
-    : 0;
+  // Price = (reserveB / decimalsB) / (reserveA / decimalsA)
+  const reserveANum = Number(pool.reserveA) / Math.pow(10, tokenA.decimals);
+  const reserveBNum = Number(pool.reserveB) / Math.pow(10, tokenB.decimals);
+
+  const priceRatio = reserveANum > 0 ? reserveBNum / reserveANum : 0;
 
   // Calculate inverse price (Token A per Token B)
-  const inversePriceRatio = priceRatio > 0 ? 1 / priceRatio : 0;
+  const inversePriceRatio = reserveBNum > 0 ? reserveANum / reserveBNum : 0;
+
+  const formatPrice = (price: number) => {
+    if (price === 0) return '0';
+    if (price < 0.000001) return price.toExponential(6);
+    if (price < 0.01) return price.toFixed(8);
+    return price.toFixed(6);
+  };
 
   // Calculate pool depth percentage
   const totalValueLocked = formatCompact(pool.reserveA, tokenA.decimals);
@@ -85,7 +101,7 @@ export function AmmPoolDetails({
               Price
             </div>
             <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>
-              {priceRatio.toFixed(6)}
+              {formatPrice(priceRatio)}
             </div>
             <div style={{ fontSize: '0.75rem', color: colors.textMuted, marginTop: '2px' }}>
               {tokenB.symbol} per {tokenA.symbol}
@@ -96,7 +112,7 @@ export function AmmPoolDetails({
               Inverse Price
             </div>
             <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>
-              {inversePriceRatio.toFixed(6)}
+              {formatPrice(inversePriceRatio)}
             </div>
             <div style={{ fontSize: '0.75rem', color: colors.textMuted, marginTop: '2px' }}>
               {tokenA.symbol} per {tokenB.symbol}
