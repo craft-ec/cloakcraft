@@ -36,6 +36,7 @@ export { SwapPanel } from './components/SwapPanel';
 export { SwapForm } from './components/SwapForm';
 export { AddLiquidityForm } from './components/AddLiquidityForm';
 export { RemoveLiquidityForm } from './components/RemoveLiquidityForm';
+export { AmmPoolDetails } from './components/AmmPoolDetails';
 
 // Styles (for customization)
 export { styles, colors } from './styles';

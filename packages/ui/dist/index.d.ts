@@ -34,7 +34,7 @@ declare function BalanceInline({ tokenMint, decimals, symbol, }: {
     symbol?: string;
 }): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$8 {
+interface TokenInfo$9 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -52,13 +52,13 @@ interface ShieldFormProps {
     /** Wallet public key (for wallet adapter) */
     walletPublicKey?: PublicKey | null;
     /** Token list for dropdown */
-    tokens?: TokenInfo$8[];
+    tokens?: TokenInfo$9[];
     /** Callback when token changes */
-    onTokenChange?: (token: TokenInfo$8) => void;
+    onTokenChange?: (token: TokenInfo$9) => void;
 }
 declare function ShieldForm({ tokenMint, userTokenAccount, decimals, symbol, onSuccess, onError, className, walletPublicKey, tokens, onTokenChange, }: ShieldFormProps): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$7 {
+interface TokenInfo$8 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -75,13 +75,13 @@ interface TransferFormProps {
     /** Wallet public key (for wallet adapter) */
     walletPublicKey?: PublicKey | null;
     /** Token list for dropdown */
-    tokens?: TokenInfo$7[];
+    tokens?: TokenInfo$8[];
     /** Callback when token changes */
-    onTokenChange?: (token: TokenInfo$7) => void;
+    onTokenChange?: (token: TokenInfo$8) => void;
 }
 declare function TransferForm({ tokenMint, decimals, symbol, onSuccess, onError, className, walletPublicKey, tokens, onTokenChange, }: TransferFormProps): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$6 {
+interface TokenInfo$7 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -100,9 +100,9 @@ interface UnshieldFormProps {
     /** Wallet public key (for wallet adapter) */
     walletPublicKey?: PublicKey | null;
     /** Token list for dropdown */
-    tokens?: TokenInfo$6[];
+    tokens?: TokenInfo$7[];
     /** Callback when token changes */
-    onTokenChange?: (token: TokenInfo$6) => void;
+    onTokenChange?: (token: TokenInfo$7) => void;
 }
 declare function UnshieldForm({ tokenMint, decimals, symbol, defaultRecipient, onSuccess, onError, className, walletPublicKey, tokens, onTokenChange, }: UnshieldFormProps): react_jsx_runtime.JSX.Element;
 
@@ -160,7 +160,7 @@ declare function PoolStatusBadge({ tokenMint }: {
     tokenMint: PublicKey;
 }): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$5 {
+interface TokenInfo$6 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -169,11 +169,11 @@ interface TokenInfo$5 {
 }
 interface TokenSelectorProps {
     /** List of available tokens */
-    tokens: TokenInfo$5[];
+    tokens: TokenInfo$6[];
     /** Currently selected token */
     selected?: PublicKey;
     /** Callback when token is selected */
-    onSelect: (token: TokenInfo$5) => void;
+    onSelect: (token: TokenInfo$6) => void;
     /** Show pool status badge */
     showPoolStatus?: boolean;
     /** Allow custom token input */
@@ -184,10 +184,10 @@ declare function TokenSelector({ tokens, selected, onSelect, showPoolStatus, all
 /**
  * Common token presets for devnet/mainnet
  */
-declare const DEVNET_TOKENS: TokenInfo$5[];
-declare const MAINNET_TOKENS: TokenInfo$5[];
+declare const DEVNET_TOKENS: TokenInfo$6[];
+declare const MAINNET_TOKENS: TokenInfo$6[];
 
-interface TokenInfo$4 {
+interface TokenInfo$5 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -198,7 +198,7 @@ interface PublicBalanceDisplayProps {
     /** Owner wallet address */
     owner: PublicKey;
     /** Token to display balance for */
-    token?: TokenInfo$4;
+    token?: TokenInfo$5;
     /** Show SOL balance alongside token */
     showSol?: boolean;
     /** Compact display mode */
@@ -211,7 +211,7 @@ interface PublicBalanceDisplayProps {
 declare function PublicBalanceDisplay({ owner, token, showSol, compact, className, }: PublicBalanceDisplayProps): react_jsx_runtime.JSX.Element;
 interface MultiTokenBalanceDisplayProps {
     owner: PublicKey;
-    tokens: TokenInfo$4[];
+    tokens: TokenInfo$5[];
     showSol?: boolean;
     className?: string;
 }
@@ -224,11 +224,11 @@ declare function MultiTokenBalanceDisplay({ owner, tokens, showSol, className, }
  */
 declare function BalanceSummary({ owner, token, className, }: {
     owner: PublicKey;
-    token?: TokenInfo$4;
+    token?: TokenInfo$5;
     className?: string;
 }): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$3 {
+interface TokenInfo$4 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -236,7 +236,7 @@ interface TokenInfo$3 {
     logoUri?: string;
 }
 interface MultiPrivateBalanceDisplayProps {
-    tokens: TokenInfo$3[];
+    tokens: TokenInfo$4[];
     className?: string;
 }
 /**
@@ -279,7 +279,7 @@ interface SwapPanelProps {
 }
 declare function SwapPanel({ initialTab, walletPublicKey }: SwapPanelProps): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$2 {
+interface TokenInfo$3 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -287,7 +287,7 @@ interface TokenInfo$2 {
     logoUri?: string;
 }
 interface SwapFormProps {
-    tokens: TokenInfo$2[];
+    tokens: TokenInfo$3[];
     ammPools: any[];
     onSuccess?: (signature: string) => void;
     onError?: (error: string) => void;
@@ -296,7 +296,7 @@ interface SwapFormProps {
 }
 declare function SwapForm({ tokens, ammPools, onSuccess, onError, className, walletPublicKey, }: SwapFormProps): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$1 {
+interface TokenInfo$2 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -304,7 +304,7 @@ interface TokenInfo$1 {
     logoUri?: string;
 }
 interface AddLiquidityFormProps {
-    tokens: TokenInfo$1[];
+    tokens: TokenInfo$2[];
     onSuccess?: (signature: string) => void;
     onError?: (error: string) => void;
     className?: string;
@@ -312,7 +312,7 @@ interface AddLiquidityFormProps {
 }
 declare function AddLiquidityForm({ tokens, onSuccess, onError, className, walletPublicKey, }: AddLiquidityFormProps): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo {
+interface TokenInfo$1 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -320,13 +320,26 @@ interface TokenInfo {
     logoUri?: string;
 }
 interface RemoveLiquidityFormProps {
-    tokens: TokenInfo[];
+    tokens: TokenInfo$1[];
     onSuccess?: (signature: string) => void;
     onError?: (error: string) => void;
     className?: string;
     walletPublicKey?: PublicKey | null;
 }
 declare function RemoveLiquidityForm({ tokens, onSuccess, onError, className, walletPublicKey, }: RemoveLiquidityFormProps): react_jsx_runtime.JSX.Element;
+
+interface TokenInfo {
+    mint: PublicKey;
+    symbol: string;
+    decimals: number;
+}
+interface AmmPoolDetailsProps {
+    tokenA: TokenInfo;
+    tokenB: TokenInfo;
+    pool: any;
+    className?: string;
+}
+declare function AmmPoolDetails({ tokenA, tokenB, pool, className, }: AmmPoolDetailsProps): react_jsx_runtime.JSX.Element;
 
 /**
  * Shared styles for CloakCraft UI components
@@ -349,4 +362,4 @@ declare const colors: {
 };
 declare const styles: Record<string, CSSProperties>;
 
-export { AddLiquidityForm, BalanceDisplay, BalanceInline, BalanceSummary, DEVNET_TOKENS, InitializePoolForm, MAINNET_TOKENS, MultiPrivateBalanceDisplay, MultiTokenBalanceDisplay, NotesList, OrderBook, PoolInfo, PoolStatusBadge, PublicBalanceDisplay, RemoveLiquidityForm, ShieldForm, SwapForm, SwapPanel, TokenSelector, TransactionHistory, TransferForm, UnshieldForm, WalletBackup, WalletButton, WalletImport, WalletManager, colors, styles };
+export { AddLiquidityForm, AmmPoolDetails, BalanceDisplay, BalanceInline, BalanceSummary, DEVNET_TOKENS, InitializePoolForm, MAINNET_TOKENS, MultiPrivateBalanceDisplay, MultiTokenBalanceDisplay, NotesList, OrderBook, PoolInfo, PoolStatusBadge, PublicBalanceDisplay, RemoveLiquidityForm, ShieldForm, SwapForm, SwapPanel, TokenSelector, TransactionHistory, TransferForm, UnshieldForm, WalletBackup, WalletButton, WalletImport, WalletManager, colors, styles };

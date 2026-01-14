@@ -9,6 +9,7 @@ import { PublicKey, Keypair as SolanaKeypair } from '@solana/web3.js';
 import { useNoteSelector, useWallet, useCloakCraft } from '@cloakcraft/hooks';
 import { generateStealthAddress, calculateSwapOutput, calculateMinOutput } from '@cloakcraft/sdk';
 import { styles, colors } from '../styles';
+import { AmmPoolDetails } from './AmmPoolDetails';
 
 interface TokenInfo {
   mint: PublicKey;
@@ -82,6 +83,24 @@ export function SwapForm({
   }, [inputToken, ammPools, tokens]);
 
   const [outputToken, setOutputToken] = useState(availableOutputTokens[0] || tokens[0]);
+
+  // Find the AMM pool for the selected token pair
+  const selectedAmmPool = useMemo(() => {
+    if (!inputToken || !outputToken) return null;
+
+    const inputMintStr = inputToken.mint.toBase58();
+    const outputMintStr = outputToken.mint.toBase58();
+
+    return ammPools.find((pool) => {
+      const tokenAStr = pool.tokenAMint.toBase58();
+      const tokenBStr = pool.tokenBMint.toBase58();
+
+      return (
+        (tokenAStr === inputMintStr && tokenBStr === outputMintStr) ||
+        (tokenAStr === outputMintStr && tokenBStr === inputMintStr)
+      );
+    });
+  }, [inputToken, outputToken, ammPools]);
 
   // Update output token when available outputs change
   React.useEffect(() => {
@@ -237,13 +256,14 @@ export function SwapForm({
   }
 
   return (
-    <div className={className} style={styles.card}>
-      <h3 style={styles.cardTitle}>Swap Tokens</h3>
-      <p style={styles.cardDescription}>
-        Exchange tokens privately using the AMM pool
-      </p>
+    <>
+      <div className={className} style={styles.card}>
+        <h3 style={styles.cardTitle}>Swap Tokens</h3>
+        <p style={styles.cardDescription}>
+          Exchange tokens privately using the AMM pool
+        </p>
 
-      <form onSubmit={handleSubmit} style={styles.form}>
+        <form onSubmit={handleSubmit} style={styles.form}>
         {/* Input Token */}
         <div>
           <label style={styles.label}>From</label>
@@ -417,6 +437,17 @@ export function SwapForm({
           </div>
         )}
       </form>
-    </div>
+      </div>
+
+      {/* AMM Pool Details */}
+      {inputToken && outputToken && selectedAmmPool && (
+        <AmmPoolDetails
+          tokenA={inputToken}
+          tokenB={outputToken}
+          pool={selectedAmmPool}
+          className={className}
+        />
+      )}
+    </>
   );
 }
