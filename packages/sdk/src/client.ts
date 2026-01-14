@@ -1064,28 +1064,40 @@ export class CloakCraftClient {
     }
 
     try {
-      // Build transaction
-      const tx = await buildInitializeAmmPoolWithProgram(this.program, {
-        tokenAMint,
-        tokenBMint,
-        lpMint: lpMintKeypair.publicKey,
-        feeBps,
-        authority: payer.publicKey,
-        payer: payer.publicKey,
-      });
-
       // Check if payer has secretKey (CLI mode) or is a wallet adapter (browser mode)
       const hasSecretKey = payer.secretKey && payer.secretKey.length > 0;
 
-      // Send transaction
-      // In wallet adapter mode, the provider handles payer signing automatically
-      // We only need to explicitly sign with lpMintKeypair
-      const signature = await tx
-        .signers(hasSecretKey ? [payer, lpMintKeypair] : [lpMintKeypair])
-        .rpc();
+      if (hasSecretKey) {
+        // CLI mode: use .rpc() with both signers
+        const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+          tokenAMint,
+          tokenBMint,
+          lpMint: lpMintKeypair.publicKey,
+          feeBps,
+          authority: payer.publicKey,
+          payer: payer.publicKey,
+        });
 
-      console.log(`[AMM] Pool initialized: ${signature}`);
-      return signature;
+        const signature = await tx.signers([payer, lpMintKeypair]).rpc();
+        console.log(`[AMM] Pool initialized (CLI): ${signature}`);
+        return signature;
+      } else {
+        // Wallet adapter mode: use .rpc() with only lpMintKeypair
+        // The wallet adapter (via Anchor provider) will sign for payer/authority automatically
+        const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+          tokenAMint,
+          tokenBMint,
+          lpMint: lpMintKeypair.publicKey,
+          feeBps,
+          authority: payer.publicKey,
+          payer: payer.publicKey,
+        });
+
+        // Only pass lpMintKeypair - wallet adapter handles payer/authority signing
+        const signature = await tx.signers([lpMintKeypair]).rpc();
+        console.log(`[AMM] Pool initialized (wallet): ${signature}`);
+        return signature;
+      }
     } catch (err) {
       console.error('[AMM] Failed to initialize pool:', err);
       throw err;

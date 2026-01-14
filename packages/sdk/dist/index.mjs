@@ -3760,18 +3760,32 @@ var CloakCraftClient = class {
       throw new Error("No program set. Call setProgram() first.");
     }
     try {
-      const tx = await buildInitializeAmmPoolWithProgram(this.program, {
-        tokenAMint,
-        tokenBMint,
-        lpMint: lpMintKeypair.publicKey,
-        feeBps,
-        authority: payer.publicKey,
-        payer: payer.publicKey
-      });
       const hasSecretKey = payer.secretKey && payer.secretKey.length > 0;
-      const signature = await tx.signers(hasSecretKey ? [payer, lpMintKeypair] : [lpMintKeypair]).rpc();
-      console.log(`[AMM] Pool initialized: ${signature}`);
-      return signature;
+      if (hasSecretKey) {
+        const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+          tokenAMint,
+          tokenBMint,
+          lpMint: lpMintKeypair.publicKey,
+          feeBps,
+          authority: payer.publicKey,
+          payer: payer.publicKey
+        });
+        const signature = await tx.signers([payer, lpMintKeypair]).rpc();
+        console.log(`[AMM] Pool initialized (CLI): ${signature}`);
+        return signature;
+      } else {
+        const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+          tokenAMint,
+          tokenBMint,
+          lpMint: lpMintKeypair.publicKey,
+          feeBps,
+          authority: payer.publicKey,
+          payer: payer.publicKey
+        });
+        const signature = await tx.signers([lpMintKeypair]).rpc();
+        console.log(`[AMM] Pool initialized (wallet): ${signature}`);
+        return signature;
+      }
     } catch (err) {
       console.error("[AMM] Failed to initialize pool:", err);
       throw err;
