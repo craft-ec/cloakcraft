@@ -2935,17 +2935,11 @@ function CreatePoolForm({
       const tokenA = new PublicKey4(tokenAMint);
       const tokenB = new PublicKey4(tokenBMint);
       const lpMintKeypair = Keypair.generate();
-      const dummyPayer = Keypair.generate();
-      Object.defineProperty(dummyPayer, "publicKey", {
-        value: walletPublicKey,
-        writable: false
-      });
       const signature = await client.initializeAmmPool(
         tokenA,
         tokenB,
         lpMintKeypair,
-        Math.floor(feeNum),
-        dummyPayer
+        Math.floor(feeNum)
       );
       setResult(signature);
       const selectedTokenA2 = tokens.find((t) => t.mint.equals(tokenA));

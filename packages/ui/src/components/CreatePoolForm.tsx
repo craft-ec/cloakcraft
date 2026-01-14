@@ -118,21 +118,12 @@ export function CreatePoolForm({
       // Generate new LP mint keypair
       const lpMintKeypair = Keypair.generate();
 
-      // Create a dummy keypair for payer - the actual signing will be done by wallet adapter
-      // through the Anchor provider
-      const dummyPayer = Keypair.generate();
-      // Override public key to match connected wallet
-      Object.defineProperty(dummyPayer, 'publicKey', {
-        value: walletPublicKey,
-        writable: false,
-      });
-
+      // Call without payer - SDK will use wallet from provider automatically
       const signature = await client.initializeAmmPool(
         tokenA,
         tokenB,
         lpMintKeypair,
-        Math.floor(feeNum),
-        dummyPayer
+        Math.floor(feeNum)
       );
 
       setResult(signature);

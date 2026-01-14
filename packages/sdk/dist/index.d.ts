@@ -856,7 +856,7 @@ declare class CloakCraftClient {
      * @param payer - Payer for transaction fees and rent
      * @returns Transaction signature
      */
-    initializeAmmPool(tokenAMint: PublicKey, tokenBMint: PublicKey, lpMintKeypair: Keypair$1, feeBps: number, payer: Keypair$1): Promise<string>;
+    initializeAmmPool(tokenAMint: PublicKey, tokenBMint: PublicKey, lpMintKeypair: Keypair$1, feeBps: number, payer?: Keypair$1): Promise<string>;
     /**
      * Execute an AMM swap
      *

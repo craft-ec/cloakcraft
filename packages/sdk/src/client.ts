@@ -1057,44 +1057,81 @@ export class CloakCraftClient {
     tokenBMint: PublicKey,
     lpMintKeypair: SolanaKeypair,
     feeBps: number,
-    payer: SolanaKeypair
+    payer?: SolanaKeypair
   ): Promise<string> {
     if (!this.program) {
       throw new Error('No program set. Call setProgram() first.');
     }
 
     try {
-      // Check if payer has secretKey (CLI mode) or is a wallet adapter (browser mode)
-      const hasSecretKey = payer.secretKey && payer.secretKey.length > 0;
+      // Get payer publicKey - either from provided keypair or from wallet adapter
+      let payerPublicKey: PublicKey;
+      let payerKeypair: SolanaKeypair | null = null;
 
-      if (hasSecretKey) {
-        // CLI mode: use .rpc() with both signers
-        const tx = await buildInitializeAmmPoolWithProgram(this.program, {
-          tokenAMint,
-          tokenBMint,
-          lpMint: lpMintKeypair.publicKey,
-          feeBps,
-          authority: payer.publicKey,
-          payer: payer.publicKey,
-        });
+      if (payer && payer.secretKey && payer.secretKey.length > 0) {
+        // CLI mode: payer is a real keypair with secretKey
+        payerPublicKey = payer.publicKey;
+        payerKeypair = payer;
+      } else if (payer) {
+        // Provided publicKey only (from dummy keypair)
+        payerPublicKey = payer.publicKey;
+      } else {
+        // No payer provided - use wallet from provider
+        const wallet = this.program.provider.publicKey;
+        if (!wallet) {
+          throw new Error('No wallet connected. Please connect your wallet first.');
+        }
+        payerPublicKey = wallet;
+      }
 
-        const signature = await tx.signers([payer, lpMintKeypair]).rpc();
+      // Build transaction
+      const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+        tokenAMint,
+        tokenBMint,
+        lpMint: lpMintKeypair.publicKey,
+        feeBps,
+        authority: payerPublicKey,
+        payer: payerPublicKey,
+      });
+
+      // Sign and send
+      if (payerKeypair) {
+        // CLI mode: explicitly sign with payer keypair
+        const signature = await tx.signers([payerKeypair, lpMintKeypair]).rpc();
         console.log(`[AMM] Pool initialized (CLI): ${signature}`);
         return signature;
       } else {
-        // Wallet adapter mode: use .rpc() with only lpMintKeypair
-        // The wallet adapter (via Anchor provider) will sign for payer/authority automatically
-        const tx = await buildInitializeAmmPoolWithProgram(this.program, {
-          tokenAMint,
-          tokenBMint,
-          lpMint: lpMintKeypair.publicKey,
-          feeBps,
-          authority: payer.publicKey,
-          payer: payer.publicKey,
+        // Wallet adapter mode: build transaction, partial sign with lpMintKeypair, then send
+        const transaction = await tx.transaction();
+
+        // Get latest blockhash
+        const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
+        transaction.recentBlockhash = blockhash;
+        transaction.lastValidBlockHeight = lastValidBlockHeight;
+        transaction.feePayer = payerPublicKey;
+
+        // Partial sign with lpMintKeypair
+        transaction.partialSign(lpMintKeypair);
+
+        // Get wallet from provider
+        const wallet = this.program.provider.wallet;
+        if (!wallet || !wallet.signTransaction) {
+          throw new Error('Wallet does not support transaction signing');
+        }
+
+        // Have wallet sign the transaction
+        const signedTx = await wallet.signTransaction(transaction);
+
+        // Send the signed transaction
+        const signature = await this.connection.sendRawTransaction(signedTx.serialize());
+
+        // Wait for confirmation
+        await this.connection.confirmTransaction({
+          signature,
+          blockhash,
+          lastValidBlockHeight
         });
 
-        // Only pass lpMintKeypair - wallet adapter handles payer/authority signing
-        const signature = await tx.signers([lpMintKeypair]).rpc();
         console.log(`[AMM] Pool initialized (wallet): ${signature}`);
         return signature;
       }

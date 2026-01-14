@@ -2999,17 +2999,11 @@ function CreatePoolForm({
       const tokenA = new import_web34.PublicKey(tokenAMint);
       const tokenB = new import_web34.PublicKey(tokenBMint);
       const lpMintKeypair = import_web34.Keypair.generate();
-      const dummyPayer = import_web34.Keypair.generate();
-      Object.defineProperty(dummyPayer, "publicKey", {
-        value: walletPublicKey,
-        writable: false
-      });
       const signature = await client.initializeAmmPool(
         tokenA,
         tokenB,
         lpMintKeypair,
-        Math.floor(feeNum),
-        dummyPayer
+        Math.floor(feeNum)
       );
       setResult(signature);
       const selectedTokenA2 = tokens.find((t) => t.mint.equals(tokenA));

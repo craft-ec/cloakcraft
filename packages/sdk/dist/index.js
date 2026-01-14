@@ -5153,29 +5153,50 @@ var CloakCraftClient = class {
       throw new Error("No program set. Call setProgram() first.");
     }
     try {
-      const hasSecretKey = payer.secretKey && payer.secretKey.length > 0;
-      if (hasSecretKey) {
-        const tx = await buildInitializeAmmPoolWithProgram(this.program, {
-          tokenAMint,
-          tokenBMint,
-          lpMint: lpMintKeypair.publicKey,
-          feeBps,
-          authority: payer.publicKey,
-          payer: payer.publicKey
-        });
-        const signature = await tx.signers([payer, lpMintKeypair]).rpc();
+      let payerPublicKey;
+      let payerKeypair = null;
+      if (payer && payer.secretKey && payer.secretKey.length > 0) {
+        payerPublicKey = payer.publicKey;
+        payerKeypair = payer;
+      } else if (payer) {
+        payerPublicKey = payer.publicKey;
+      } else {
+        const wallet = this.program.provider.publicKey;
+        if (!wallet) {
+          throw new Error("No wallet connected. Please connect your wallet first.");
+        }
+        payerPublicKey = wallet;
+      }
+      const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+        tokenAMint,
+        tokenBMint,
+        lpMint: lpMintKeypair.publicKey,
+        feeBps,
+        authority: payerPublicKey,
+        payer: payerPublicKey
+      });
+      if (payerKeypair) {
+        const signature = await tx.signers([payerKeypair, lpMintKeypair]).rpc();
         console.log(`[AMM] Pool initialized (CLI): ${signature}`);
         return signature;
       } else {
-        const tx = await buildInitializeAmmPoolWithProgram(this.program, {
-          tokenAMint,
-          tokenBMint,
-          lpMint: lpMintKeypair.publicKey,
-          feeBps,
-          authority: payer.publicKey,
-          payer: payer.publicKey
+        const transaction = await tx.transaction();
+        const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
+        transaction.recentBlockhash = blockhash;
+        transaction.lastValidBlockHeight = lastValidBlockHeight;
+        transaction.feePayer = payerPublicKey;
+        transaction.partialSign(lpMintKeypair);
+        const wallet = this.program.provider.wallet;
+        if (!wallet || !wallet.signTransaction) {
+          throw new Error("Wallet does not support transaction signing");
+        }
+        const signedTx = await wallet.signTransaction(transaction);
+        const signature = await this.connection.sendRawTransaction(signedTx.serialize());
+        await this.connection.confirmTransaction({
+          signature,
+          blockhash,
+          lastValidBlockHeight
         });
-        const signature = await tx.signers([lpMintKeypair]).rpc();
         console.log(`[AMM] Pool initialized (wallet): ${signature}`);
         return signature;
       }
