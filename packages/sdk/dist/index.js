@@ -4205,6 +4205,36 @@ var CloakCraftClient = class {
     }
   }
   /**
+   * Get all AMM pools
+   */
+  async getAllAmmPools() {
+    if (!this.program) {
+      throw new Error("Program not configured. Call setProgram() first.");
+    }
+    try {
+      const pools = await this.program.account.ammPool.all();
+      return pools.map((pool) => ({
+        address: pool.publicKey,
+        poolId: pool.account.poolId,
+        tokenAMint: pool.account.tokenAMint,
+        tokenBMint: pool.account.tokenBMint,
+        lpMint: pool.account.lpMint,
+        stateHash: pool.account.stateHash,
+        reserveA: BigInt(pool.account.reserveA.toString()),
+        reserveB: BigInt(pool.account.reserveB.toString()),
+        lpSupply: BigInt(pool.account.lpSupply.toString()),
+        feeBps: pool.account.feeBps,
+        authority: pool.account.authority,
+        isActive: pool.account.isActive,
+        bump: pool.account.bump,
+        lpMintBump: pool.account.lpMintBump
+      }));
+    } catch (e) {
+      console.error("Error fetching all AMM pools:", e);
+      return [];
+    }
+  }
+  /**
    * Sync notes for the current wallet
    */
   async syncNotes() {

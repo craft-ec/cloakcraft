@@ -1,4 +1,4 @@
-import { DecryptedNote, Keypair, SpendingKey, ViewingKey, Point, TransferParams, AdapterSwapParams, OrderParams, AmmSwapParams, AddLiquidityParams, RemoveLiquidityParams, FillOrderParams, CancelOrderParams, VoteParams, Groth16Proof, PoolState, ShieldParams, TransactionResult, StealthAddress, SyncStatus, CreateAggregationParams, SubmitVoteParams, SubmitDecryptionShareParams, FinalizeVotingParams, FieldElement, PoseidonHash, Note, Commitment, Nullifier, EncryptedNote, ElGamalCiphertext, AmmPoolState } from '@cloakcraft/types';
+import { DecryptedNote, Keypair, SpendingKey, ViewingKey, Point, TransferParams, AdapterSwapParams, OrderParams, AmmSwapParams, AddLiquidityParams, RemoveLiquidityParams, FillOrderParams, CancelOrderParams, VoteParams, Groth16Proof, PoolState, AmmPoolState, ShieldParams, TransactionResult, StealthAddress, SyncStatus, CreateAggregationParams, SubmitVoteParams, SubmitDecryptionShareParams, FinalizeVotingParams, FieldElement, PoseidonHash, Note, Commitment, Nullifier, EncryptedNote, ElGamalCiphertext } from '@cloakcraft/types';
 export * from '@cloakcraft/types';
 import * as _solana_web3_js from '@solana/web3.js';
 import { PublicKey, AccountMeta, Connection, Keypair as Keypair$1, TransactionInstruction } from '@solana/web3.js';
@@ -719,6 +719,12 @@ declare class CloakCraftClient {
      * Get all initialized pools
      */
     getAllPools(): Promise<Array<PoolState & {
+        address: PublicKey;
+    }>>;
+    /**
+     * Get all AMM pools
+     */
+    getAllAmmPools(): Promise<Array<AmmPoolState & {
         address: PublicKey;
     }>>;
     /**

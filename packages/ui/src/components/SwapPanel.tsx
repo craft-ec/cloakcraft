@@ -31,24 +31,35 @@ interface SwapPanelProps {
 export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelProps) {
   const [activeTab, setActiveTab] = useState<AmmTab>(initialTab);
   const [initializedPoolMints, setInitializedPoolMints] = useState<Set<string>>(new Set());
+  const [ammPools, setAmmPools] = useState<any[]>([]);
   const [isLoadingPools, setIsLoadingPools] = useState(true);
   const { client, notes } = useCloakCraft();
 
-  // Fetch initialized pools on mount
+  // Fetch initialized pools and AMM pools on mount
   useEffect(() => {
     const fetchPools = async () => {
       if (!client) return;
       setIsLoadingPools(true);
 
       try {
+        // Fetch shield/unshield pools
         const pools = await client.getAllPools();
         // Only include pools with liquidity (totalShielded > 0)
         const poolsWithLiquidity = pools.filter((pool) => pool.totalShielded > BigInt(0));
         const mints = new Set(poolsWithLiquidity.map((pool) => pool.tokenMint.toBase58()));
         setInitializedPoolMints(mints);
+
+        // Fetch AMM pools
+        const ammPoolList = await client.getAllAmmPools();
+        // Only include active pools with liquidity in both reserves
+        const activeAmmPools = ammPoolList.filter(
+          (pool) => pool.isActive && pool.reserveA > BigInt(0) && pool.reserveB > BigInt(0)
+        );
+        setAmmPools(activeAmmPools);
       } catch (err) {
         console.error('Error fetching pools:', err);
         setInitializedPoolMints(new Set());
+        setAmmPools([]);
       }
       setIsLoadingPools(false);
     };
@@ -156,6 +167,7 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
       {activeTab === 'swap' && (
         <SwapForm
           tokens={poolTokens}
+          ammPools={ammPools}
           walletPublicKey={walletPublicKey}
           onSuccess={(signature) => {
             console.log('Swap success:', signature);

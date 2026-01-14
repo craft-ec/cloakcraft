@@ -20,6 +20,7 @@ import type {
   TransactionResult,
   DecryptedNote,
   PoolState,
+  AmmPoolState,
   SyncStatus,
   StealthAddress,
   PreparedInput,
@@ -390,6 +391,38 @@ export class CloakCraftClient {
       }));
     } catch (e: any) {
       console.error('Error fetching all pools:', e);
+      return [];
+    }
+  }
+
+  /**
+   * Get all AMM pools
+   */
+  async getAllAmmPools(): Promise<Array<AmmPoolState & { address: PublicKey }>> {
+    if (!this.program) {
+      throw new Error('Program not configured. Call setProgram() first.');
+    }
+
+    try {
+      const pools = await (this.program.account as any).ammPool.all();
+      return pools.map((pool: any) => ({
+        address: pool.publicKey,
+        poolId: pool.account.poolId,
+        tokenAMint: pool.account.tokenAMint,
+        tokenBMint: pool.account.tokenBMint,
+        lpMint: pool.account.lpMint,
+        stateHash: pool.account.stateHash,
+        reserveA: BigInt(pool.account.reserveA.toString()),
+        reserveB: BigInt(pool.account.reserveB.toString()),
+        lpSupply: BigInt(pool.account.lpSupply.toString()),
+        feeBps: pool.account.feeBps,
+        authority: pool.account.authority,
+        isActive: pool.account.isActive,
+        bump: pool.account.bump,
+        lpMintBump: pool.account.lpMintBump,
+      }));
+    } catch (e: any) {
+      console.error('Error fetching all AMM pools:', e);
       return [];
     }
   }

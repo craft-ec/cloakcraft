@@ -20,6 +20,7 @@ interface TokenInfo {
 
 interface SwapFormProps {
   tokens: TokenInfo[];
+  ammPools: any[]; // AMM pool pairs
   onSuccess?: (signature: string) => void;
   onError?: (error: string) => void;
   className?: string;
@@ -28,6 +29,7 @@ interface SwapFormProps {
 
 export function SwapForm({
   tokens,
+  ammPools,
   onSuccess,
   onError,
   className,
@@ -52,10 +54,47 @@ export function SwapForm({
   }, [tokens, notes]);
 
   const [inputToken, setInputToken] = useState(tokensWithBalance[0] || tokens[0]);
-  const [outputToken, setOutputToken] = useState(tokens[1] || tokens[0]);
   const [inputAmount, setInputAmount] = useState('');
   const [slippageBps, setSlippageBps] = useState(50); // 0.5% default
   const [isSwapping, setIsSwapping] = useState(false);
+
+  // Filter output tokens based on AMM pool pairing with input token
+  const availableOutputTokens = useMemo(() => {
+    if (!inputToken) return [];
+
+    const inputMintStr = inputToken.mint.toBase58();
+    const pairedMints = new Set<string>();
+
+    // Find all tokens paired with inputToken in AMM pools
+    ammPools.forEach((pool) => {
+      const tokenAStr = pool.tokenAMint.toBase58();
+      const tokenBStr = pool.tokenBMint.toBase58();
+
+      if (tokenAStr === inputMintStr) {
+        pairedMints.add(tokenBStr);
+      } else if (tokenBStr === inputMintStr) {
+        pairedMints.add(tokenAStr);
+      }
+    });
+
+    // Filter tokens to only those paired with inputToken
+    return tokens.filter((token) => pairedMints.has(token.mint.toBase58()));
+  }, [inputToken, ammPools, tokens]);
+
+  const [outputToken, setOutputToken] = useState(availableOutputTokens[0] || tokens[0]);
+
+  // Update output token when available outputs change
+  React.useEffect(() => {
+    if (availableOutputTokens.length > 0) {
+      // If current output token is not in available list, select first available
+      const isCurrentOutputAvailable = availableOutputTokens.some(
+        (t) => outputToken && t.mint.equals(outputToken.mint)
+      );
+      if (!isCurrentOutputAvailable) {
+        setOutputToken(availableOutputTokens[0]);
+      }
+    }
+  }, [availableOutputTokens]);
 
   const { availableNotes, totalAvailable, selectNotesForAmount } = useNoteSelector(inputToken?.mint);
 
@@ -275,16 +314,16 @@ export function SwapForm({
             <select
               value={outputToken?.mint.toBase58() || ''}
               onChange={(e) => {
-                const token = tokens.find(t => t.mint.toBase58() === e.target.value);
+                const token = availableOutputTokens.find(t => t.mint.toBase58() === e.target.value);
                 if (token) setOutputToken(token);
               }}
-              disabled={isSwapping}
+              disabled={isSwapping || availableOutputTokens.length === 0}
               style={{ ...styles.input, flex: 1 }}
             >
-              {tokens.length === 0 ? (
-                <option value="">No pools with liquidity</option>
+              {availableOutputTokens.length === 0 ? (
+                <option value="">No pools paired with {inputToken?.symbol || 'selected token'}</option>
               ) : (
-                tokens.map(token => (
+                availableOutputTokens.map(token => (
                   <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
                     {token.symbol}
                   </option>

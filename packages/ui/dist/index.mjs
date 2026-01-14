@@ -2720,12 +2720,13 @@ import { PublicKey as PublicKey4 } from "@solana/web3.js";
 import { useCloakCraft as useCloakCraft9 } from "@cloakcraft/hooks";
 
 // src/components/SwapForm.tsx
-import { useState as useState9, useMemo as useMemo2 } from "react";
+import React12, { useState as useState9, useMemo as useMemo2 } from "react";
 import { useNoteSelector as useNoteSelector4, useWallet as useWallet8, useCloakCraft as useCloakCraft6 } from "@cloakcraft/hooks";
 import { generateStealthAddress as generateStealthAddress2, calculateSwapOutput, calculateMinOutput } from "@cloakcraft/sdk";
 import { jsx as jsx15, jsxs as jsxs15 } from "react/jsx-runtime";
 function SwapForm({
   tokens,
+  ammPools,
   onSuccess,
   onError,
   className,
@@ -2746,10 +2747,35 @@ function SwapForm({
     });
   }, [tokens, notes]);
   const [inputToken, setInputToken] = useState9(tokensWithBalance[0] || tokens[0]);
-  const [outputToken, setOutputToken] = useState9(tokens[1] || tokens[0]);
   const [inputAmount, setInputAmount] = useState9("");
   const [slippageBps, setSlippageBps] = useState9(50);
   const [isSwapping, setIsSwapping] = useState9(false);
+  const availableOutputTokens = useMemo2(() => {
+    if (!inputToken) return [];
+    const inputMintStr = inputToken.mint.toBase58();
+    const pairedMints = /* @__PURE__ */ new Set();
+    ammPools.forEach((pool) => {
+      const tokenAStr = pool.tokenAMint.toBase58();
+      const tokenBStr = pool.tokenBMint.toBase58();
+      if (tokenAStr === inputMintStr) {
+        pairedMints.add(tokenBStr);
+      } else if (tokenBStr === inputMintStr) {
+        pairedMints.add(tokenAStr);
+      }
+    });
+    return tokens.filter((token) => pairedMints.has(token.mint.toBase58()));
+  }, [inputToken, ammPools, tokens]);
+  const [outputToken, setOutputToken] = useState9(availableOutputTokens[0] || tokens[0]);
+  React12.useEffect(() => {
+    if (availableOutputTokens.length > 0) {
+      const isCurrentOutputAvailable = availableOutputTokens.some(
+        (t) => outputToken && t.mint.equals(outputToken.mint)
+      );
+      if (!isCurrentOutputAvailable) {
+        setOutputToken(availableOutputTokens[0]);
+      }
+    }
+  }, [availableOutputTokens]);
   const { availableNotes, totalAvailable, selectNotesForAmount } = useNoteSelector4(inputToken?.mint);
   const mockReserveIn = 1000000n * BigInt(10 ** inputToken.decimals);
   const mockReserveOut = 1000000n * BigInt(10 ** outputToken.decimals);
@@ -2910,12 +2936,15 @@ function SwapForm({
           {
             value: outputToken?.mint.toBase58() || "",
             onChange: (e) => {
-              const token = tokens.find((t) => t.mint.toBase58() === e.target.value);
+              const token = availableOutputTokens.find((t) => t.mint.toBase58() === e.target.value);
               if (token) setOutputToken(token);
             },
-            disabled: isSwapping,
+            disabled: isSwapping || availableOutputTokens.length === 0,
             style: { ...styles.input, flex: 1 },
-            children: tokens.length === 0 ? /* @__PURE__ */ jsx15("option", { value: "", children: "No pools with liquidity" }) : tokens.map((token) => /* @__PURE__ */ jsx15("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
+            children: availableOutputTokens.length === 0 ? /* @__PURE__ */ jsxs15("option", { value: "", children: [
+              "No pools paired with ",
+              inputToken?.symbol || "selected token"
+            ] }) : availableOutputTokens.map((token) => /* @__PURE__ */ jsx15("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
           }
         ) }),
         /* @__PURE__ */ jsxs15(
@@ -3471,6 +3500,7 @@ import { jsx as jsx18, jsxs as jsxs18 } from "react/jsx-runtime";
 function SwapPanel({ initialTab = "swap", walletPublicKey }) {
   const [activeTab, setActiveTab] = useState12(initialTab);
   const [initializedPoolMints, setInitializedPoolMints] = useState12(/* @__PURE__ */ new Set());
+  const [ammPools, setAmmPools] = useState12([]);
   const [isLoadingPools, setIsLoadingPools] = useState12(true);
   const { client, notes } = useCloakCraft9();
   useEffect2(() => {
@@ -3482,9 +3512,15 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
         const poolsWithLiquidity = pools.filter((pool) => pool.totalShielded > BigInt(0));
         const mints = new Set(poolsWithLiquidity.map((pool) => pool.tokenMint.toBase58()));
         setInitializedPoolMints(mints);
+        const ammPoolList = await client.getAllAmmPools();
+        const activeAmmPools = ammPoolList.filter(
+          (pool) => pool.isActive && pool.reserveA > BigInt(0) && pool.reserveB > BigInt(0)
+        );
+        setAmmPools(activeAmmPools);
       } catch (err) {
         console.error("Error fetching pools:", err);
         setInitializedPoolMints(/* @__PURE__ */ new Set());
+        setAmmPools([]);
       }
       setIsLoadingPools(false);
     };
@@ -3567,6 +3603,7 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
       SwapForm,
       {
         tokens: poolTokens,
+        ammPools,
         walletPublicKey,
         onSuccess: (signature) => {
           console.log("Swap success:", signature);

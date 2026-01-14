@@ -288,12 +288,13 @@ interface TokenInfo$2 {
 }
 interface SwapFormProps {
     tokens: TokenInfo$2[];
+    ammPools: any[];
     onSuccess?: (signature: string) => void;
     onError?: (error: string) => void;
     className?: string;
     walletPublicKey?: PublicKey | null;
 }
-declare function SwapForm({ tokens, onSuccess, onError, className, walletPublicKey, }: SwapFormProps): react_jsx_runtime.JSX.Element;
+declare function SwapForm({ tokens, ammPools, onSuccess, onError, className, walletPublicKey, }: SwapFormProps): react_jsx_runtime.JSX.Element;
 
 interface TokenInfo$1 {
     mint: PublicKey;
