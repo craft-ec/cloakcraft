@@ -183,26 +183,27 @@ export function AddLiquidityForm({
     setIsAdding(true);
 
     try {
-      // TODO: Implement addLiquidity method in client
-      // const { stealthAddress: lpAddress } = generateStealthAddress(wallet.publicKey);
-      // const { stealthAddress: changeAAddress } = generateStealthAddress(wallet.publicKey);
-      // const { stealthAddress: changeBAddress } = generateStealthAddress(wallet.publicKey);
+      // Generate stealth addresses for outputs
+      const { stealthAddress: lpAddress } = generateStealthAddress(wallet.publicKey);
+      const { stealthAddress: changeAAddress } = generateStealthAddress(wallet.publicKey);
+      const { stealthAddress: changeBAddress } = generateStealthAddress(wallet.publicKey);
 
-      // const result = await client.addLiquidity({
-      //   inputA: selectedNotesA[0],
-      //   inputB: selectedNotesB[0],
-      //   poolId: ...,
-      //   depositA: liquidityQuote.depositA,
-      //   depositB: liquidityQuote.depositB,
-      //   lpRecipient: lpAddress,
-      //   changeARecipient: changeAAddress,
-      //   changeBRecipient: changeBAddress,
-      // }, relayer);
+      // Call the SDK's addLiquidity method
+      const result = await client.addLiquidity({
+        inputA: selectedNotesA[0],
+        inputB: selectedNotesB[0],
+        poolId: selectedPool.poolId,
+        lpMint: selectedPool.lpMint,
+        depositA: liquidityQuote.depositA,
+        depositB: liquidityQuote.depositB,
+        lpRecipient: lpAddress,
+        changeARecipient: changeAAddress,
+        changeBRecipient: changeBAddress,
+      });
 
-      onError?.('Add liquidity functionality not yet implemented');
-      // onSuccess?.(result.signature);
-      // setAmountA('');
-      // setAmountB('');
+      onSuccess?.(result.signature);
+      setAmountA('');
+      setAmountB('');
     } catch (err) {
       onError?.(err instanceof Error ? err.message : 'Add liquidity failed');
     } finally {

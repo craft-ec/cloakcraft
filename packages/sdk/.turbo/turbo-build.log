@@ -10,15 +10,15 @@ CJS Build start
 ESM Build start
 CJS dist/index.js     208.61 KB
 CJS dist/idl/index.js 123.91 KB
-CJS ⚡️ Build success in 26ms
+CJS ⚡️ Build success in 22ms
 ESM dist/idl/index.mjs      122.97 KB
+ESM dist/chunk-336FGBM5.mjs 33.49 KB
+ESM dist/chunk-Y6FXYEAI.mjs 390.00 B
 ESM dist/swap-NFBQIICS.mjs  631.00 B
 ESM dist/index.mjs          164.50 KB
-ESM dist/chunk-Y6FXYEAI.mjs 390.00 B
-ESM dist/chunk-336FGBM5.mjs 33.49 KB
-ESM ⚡️ Build success in 26ms
+ESM ⚡️ Build success in 22ms
 DTS Build start
-DTS ⚡️ Build success in 1391ms
+DTS ⚡️ Build success in 1137ms
 DTS dist/index.d.ts      82.99 KB
 DTS dist/idl/index.d.ts  85.27 KB
 DTS dist/index.d.mts     82.99 KB

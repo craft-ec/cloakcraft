@@ -3277,7 +3277,7 @@ function SwapForm({
 // src/components/AddLiquidityForm.tsx
 import { useState as useState10, useMemo as useMemo3, useEffect as useEffect2 } from "react";
 import { useNoteSelector as useNoteSelector5, useWallet as useWallet9, useCloakCraft as useCloakCraft7 } from "@cloakcraft/hooks";
-import { calculateAddLiquidityAmounts } from "@cloakcraft/sdk";
+import { generateStealthAddress as generateStealthAddress3, calculateAddLiquidityAmounts } from "@cloakcraft/sdk";
 import { Fragment as Fragment4, jsx as jsx17, jsxs as jsxs17 } from "react/jsx-runtime";
 function AddLiquidityForm({
   tokens,
@@ -3405,7 +3405,23 @@ function AddLiquidityForm({
     }
     setIsAdding(true);
     try {
-      onError?.("Add liquidity functionality not yet implemented");
+      const { stealthAddress: lpAddress } = generateStealthAddress3(wallet.publicKey);
+      const { stealthAddress: changeAAddress } = generateStealthAddress3(wallet.publicKey);
+      const { stealthAddress: changeBAddress } = generateStealthAddress3(wallet.publicKey);
+      const result = await client.addLiquidity({
+        inputA: selectedNotesA[0],
+        inputB: selectedNotesB[0],
+        poolId: selectedPool.poolId,
+        lpMint: selectedPool.lpMint,
+        depositA: liquidityQuote.depositA,
+        depositB: liquidityQuote.depositB,
+        lpRecipient: lpAddress,
+        changeARecipient: changeAAddress,
+        changeBRecipient: changeBAddress
+      });
+      onSuccess?.(result.signature);
+      setAmountA("");
+      setAmountB("");
     } catch (err) {
       onError?.(err instanceof Error ? err.message : "Add liquidity failed");
     } finally {
@@ -3814,7 +3830,23 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
   const [initializedPoolMints, setInitializedPoolMints] = useState12(/* @__PURE__ */ new Set());
   const [ammPools, setAmmPools] = useState12([]);
   const [isLoadingPools, setIsLoadingPools] = useState12(true);
-  const { client, notes, sync } = useCloakCraft9();
+  const [isInitializingCircuits, setIsInitializingCircuits] = useState12(false);
+  const { client, notes, sync, initializeProver } = useCloakCraft9();
+  useEffect3(() => {
+    const initCircuits = async () => {
+      if (!client) return;
+      setIsInitializingCircuits(true);
+      try {
+        await initializeProver(["swap/swap", "swap/add_liquidity", "swap/remove_liquidity"]);
+        console.log("[SwapPanel] Swap circuits initialized");
+      } catch (err) {
+        console.error("[SwapPanel] Failed to initialize swap circuits:", err);
+      } finally {
+        setIsInitializingCircuits(false);
+      }
+    };
+    initCircuits();
+  }, [client, initializeProver]);
   useEffect3(() => {
     const fetchPools = async () => {
       if (!client) return;
@@ -3874,8 +3906,8 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
     { id: "add", label: "Add Liquidity" },
     { id: "remove", label: "Remove Liquidity" }
   ];
-  if (isLoadingPools) {
-    return /* @__PURE__ */ jsx19("div", { style: { width: "100%", maxWidth: "600px", padding: "24px", textAlign: "center" }, children: "Loading pools..." });
+  if (isLoadingPools || isInitializingCircuits) {
+    return /* @__PURE__ */ jsx19("div", { style: { width: "100%", maxWidth: "600px", padding: "24px", textAlign: "center" }, children: isInitializingCircuits ? "Initializing swap circuits..." : "Loading pools..." });
   }
   if (poolTokens.length === 0) {
     return /* @__PURE__ */ jsx19("div", { style: { width: "100%", maxWidth: "600px", padding: "24px", textAlign: "center" }, children: "No initialized pools found. Please initialize a pool first." });

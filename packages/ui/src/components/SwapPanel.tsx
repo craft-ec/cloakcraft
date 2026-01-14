@@ -33,7 +33,28 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
   const [initializedPoolMints, setInitializedPoolMints] = useState<Set<string>>(new Set());
   const [ammPools, setAmmPools] = useState<any[]>([]);
   const [isLoadingPools, setIsLoadingPools] = useState(true);
-  const { client, notes, sync } = useCloakCraft();
+  const [isInitializingCircuits, setIsInitializingCircuits] = useState(false);
+  const { client, notes, sync, initializeProver } = useCloakCraft();
+
+  // Initialize swap circuits on mount
+  useEffect(() => {
+    const initCircuits = async () => {
+      if (!client) return;
+      setIsInitializingCircuits(true);
+
+      try {
+        // Initialize all swap-related circuits
+        await initializeProver(['swap/swap', 'swap/add_liquidity', 'swap/remove_liquidity']);
+        console.log('[SwapPanel] Swap circuits initialized');
+      } catch (err) {
+        console.error('[SwapPanel] Failed to initialize swap circuits:', err);
+      } finally {
+        setIsInitializingCircuits(false);
+      }
+    };
+
+    initCircuits();
+  }, [client, initializeProver]);
 
   // Fetch initialized pools and AMM pools on mount
   useEffect(() => {
@@ -114,10 +135,10 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
     { id: 'remove', label: 'Remove Liquidity' },
   ];
 
-  if (isLoadingPools) {
+  if (isLoadingPools || isInitializingCircuits) {
     return (
       <div style={{ width: '100%', maxWidth: '600px', padding: '24px', textAlign: 'center' }}>
-        Loading pools...
+        {isInitializingCircuits ? 'Initializing swap circuits...' : 'Loading pools...'}
       </div>
     );
   }
