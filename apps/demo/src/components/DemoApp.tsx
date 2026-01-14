@@ -28,6 +28,7 @@ import {
   colors,
   styles,
   SwapPanel,
+  CreatePoolForm,
 } from '@cloakcraft/ui';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 
@@ -410,6 +411,18 @@ function PoolTab({ walletPublicKey }: { walletPublicKey: PublicKey | null }) {
   return (
     <>
       <PoolInfoCard refreshKey={refreshKey} />
+      <CreatePoolForm
+        tokens={DEVNET_TOKENS}
+        walletPublicKey={walletPublicKey}
+        onSuccess={(signature, tokenA, tokenB) => {
+          console.log('AMM Pool created:', { signature, tokenA, tokenB });
+          alert(`AMM Pool created!\nPair: ${tokenA.symbol}/${tokenB.symbol}\nTX: ${signature}`);
+        }}
+        onError={(error) => {
+          console.error('AMM Pool creation error:', error);
+          alert(`Error: ${error}`);
+        }}
+      />
       <InitializePoolForm
         walletPublicKey={walletPublicKey}
         defaultTokenMint={DEVNET_TOKENS[0].mint}

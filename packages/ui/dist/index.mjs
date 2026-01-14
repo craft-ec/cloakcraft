@@ -2854,18 +2854,218 @@ function WalletManager({ className }) {
   ] });
 }
 
+// src/components/CreatePoolForm.tsx
+import { useState as useState9 } from "react";
+import { PublicKey as PublicKey4, Keypair } from "@solana/web3.js";
+import { useCloakCraft as useCloakCraft7 } from "@cloakcraft/hooks";
+import { jsx as jsx15, jsxs as jsxs15 } from "react/jsx-runtime";
+function CreatePoolForm({
+  tokens,
+  onSuccess,
+  onError,
+  className,
+  walletPublicKey
+}) {
+  const [tokenAMint, setTokenAMint] = useState9("");
+  const [tokenBMint, setTokenBMint] = useState9("");
+  const [feeBps, setFeeBps] = useState9("30");
+  const [isCreating, setIsCreating] = useState9(false);
+  const [error, setError] = useState9(null);
+  const [result, setResult] = useState9(null);
+  const { client } = useCloakCraft7();
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setResult(null);
+    if (!tokenAMint || !tokenBMint) {
+      const err = "Please select both tokens";
+      setError(err);
+      onError?.(err);
+      return;
+    }
+    if (tokenAMint === tokenBMint) {
+      const err = "Cannot create pool with the same token";
+      setError(err);
+      onError?.(err);
+      return;
+    }
+    const feeNum = parseFloat(feeBps);
+    if (isNaN(feeNum) || feeNum < 0 || feeNum > 1e4) {
+      const err = "Fee must be between 0 and 10000 basis points";
+      setError(err);
+      onError?.(err);
+      return;
+    }
+    if (!client?.getProgram()) {
+      const err = "Program not configured. Call setProgram() first.";
+      setError(err);
+      onError?.(err);
+      return;
+    }
+    if (!walletPublicKey) {
+      const err = "Wallet not connected";
+      setError(err);
+      onError?.(err);
+      return;
+    }
+    setIsCreating(true);
+    try {
+      const tokenA = new PublicKey4(tokenAMint);
+      const tokenB = new PublicKey4(tokenBMint);
+      const lpMintKeypair = Keypair.generate();
+      const dummyPayer = Keypair.generate();
+      Object.defineProperty(dummyPayer, "publicKey", {
+        value: walletPublicKey,
+        writable: false
+      });
+      const signature = await client.initializeAmmPool(
+        tokenA,
+        tokenB,
+        lpMintKeypair,
+        Math.floor(feeNum),
+        dummyPayer
+      );
+      setResult(signature);
+      const selectedTokenA2 = tokens.find((t) => t.mint.equals(tokenA));
+      const selectedTokenB2 = tokens.find((t) => t.mint.equals(tokenB));
+      if (selectedTokenA2 && selectedTokenB2) {
+        onSuccess?.(signature, selectedTokenA2, selectedTokenB2);
+      }
+      setTokenAMint("");
+      setTokenBMint("");
+      setFeeBps("30");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to create pool";
+      setError(message);
+      onError?.(message);
+    } finally {
+      setIsCreating(false);
+    }
+  };
+  const selectedTokenA = tokens.find((t) => t.mint.toBase58() === tokenAMint);
+  const selectedTokenB = tokens.find((t) => t.mint.toBase58() === tokenBMint);
+  const isDisabled = isCreating || !tokenAMint || !tokenBMint || !walletPublicKey;
+  return /* @__PURE__ */ jsxs15("div", { className, style: styles.card, children: [
+    /* @__PURE__ */ jsx15("h3", { style: styles.cardTitle, children: "Create Liquidity Pool" }),
+    /* @__PURE__ */ jsx15("p", { style: styles.cardDescription, children: "Initialize a new AMM pool for a token pair. You'll need to add initial liquidity after creating the pool." }),
+    /* @__PURE__ */ jsxs15("form", { onSubmit: handleSubmit, style: styles.form, children: [
+      /* @__PURE__ */ jsxs15("label", { style: styles.label, children: [
+        "Token A",
+        /* @__PURE__ */ jsxs15(
+          "select",
+          {
+            value: tokenAMint,
+            onChange: (e) => setTokenAMint(e.target.value),
+            disabled: isCreating,
+            style: styles.input,
+            children: [
+              /* @__PURE__ */ jsx15("option", { value: "", children: "Select token..." }),
+              tokens.map((token) => /* @__PURE__ */ jsxs15("option", { value: token.mint.toBase58(), children: [
+                token.symbol,
+                " - ",
+                token.name
+              ] }, token.mint.toBase58()))
+            ]
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxs15("label", { style: styles.label, children: [
+        "Token B",
+        /* @__PURE__ */ jsxs15(
+          "select",
+          {
+            value: tokenBMint,
+            onChange: (e) => setTokenBMint(e.target.value),
+            disabled: isCreating,
+            style: styles.input,
+            children: [
+              /* @__PURE__ */ jsx15("option", { value: "", children: "Select token..." }),
+              tokens.filter((token) => token.mint.toBase58() !== tokenAMint).map((token) => /* @__PURE__ */ jsxs15("option", { value: token.mint.toBase58(), children: [
+                token.symbol,
+                " - ",
+                token.name
+              ] }, token.mint.toBase58()))
+            ]
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxs15("label", { style: styles.label, children: [
+        "Trading Fee (basis points)",
+        /* @__PURE__ */ jsx15(
+          "input",
+          {
+            type: "number",
+            value: feeBps,
+            onChange: (e) => setFeeBps(e.target.value),
+            placeholder: "30",
+            min: "0",
+            max: "10000",
+            step: "1",
+            disabled: isCreating,
+            style: styles.input
+          }
+        ),
+        /* @__PURE__ */ jsx15("span", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "4px" }, children: feeBps ? `${parseFloat(feeBps) / 100}% trading fee` : "Default: 0.3%" })
+      ] }),
+      selectedTokenA && selectedTokenB && /* @__PURE__ */ jsxs15("div", { style: styles.infoBox, children: [
+        /* @__PURE__ */ jsx15("div", { style: { fontWeight: 600, marginBottom: "8px" }, children: "Pool Details" }),
+        /* @__PURE__ */ jsxs15("div", { style: { fontSize: "0.875rem" }, children: [
+          /* @__PURE__ */ jsxs15("div", { children: [
+            "Pair: ",
+            selectedTokenA.symbol,
+            "/",
+            selectedTokenB.symbol
+          ] }),
+          /* @__PURE__ */ jsxs15("div", { children: [
+            "Fee: ",
+            parseFloat(feeBps) / 100,
+            "%"
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsx15(
+        "button",
+        {
+          type: "submit",
+          disabled: isDisabled,
+          style: {
+            ...styles.buttonPrimary,
+            ...isDisabled ? styles.buttonDisabled : {}
+          },
+          children: !walletPublicKey ? "Connect Wallet" : isCreating ? "Creating Pool..." : "Create Pool"
+        }
+      ),
+      error && /* @__PURE__ */ jsx15("div", { style: styles.errorText, children: error }),
+      result && /* @__PURE__ */ jsxs15("div", { style: styles.successBox, children: [
+        /* @__PURE__ */ jsx15("div", { style: styles.successText, children: "Pool created successfully!" }),
+        /* @__PURE__ */ jsx15("div", { style: styles.txLink, children: /* @__PURE__ */ jsx15(
+          "a",
+          {
+            href: `https://explorer.solana.com/tx/${result}?cluster=devnet`,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            style: styles.link,
+            children: "View transaction"
+          }
+        ) }),
+        /* @__PURE__ */ jsx15("div", { style: { fontSize: "0.875rem", marginTop: "12px" }, children: "Next: Add initial liquidity to activate the pool" })
+      ] })
+    ] })
+  ] });
+}
+
 // src/components/SwapPanel.tsx
-import { useState as useState12, useEffect as useEffect3, useMemo as useMemo5 } from "react";
-import { PublicKey as PublicKey4 } from "@solana/web3.js";
-import { useCloakCraft as useCloakCraft10 } from "@cloakcraft/hooks";
+import { useState as useState13, useEffect as useEffect3, useMemo as useMemo5 } from "react";
+import { PublicKey as PublicKey5 } from "@solana/web3.js";
+import { useCloakCraft as useCloakCraft11 } from "@cloakcraft/hooks";
 
 // src/components/SwapForm.tsx
-import React12, { useState as useState9, useMemo as useMemo2 } from "react";
-import { useNoteSelector as useNoteSelector4, useWallet as useWallet8, useCloakCraft as useCloakCraft7 } from "@cloakcraft/hooks";
+import React13, { useState as useState10, useMemo as useMemo2 } from "react";
+import { useNoteSelector as useNoteSelector4, useWallet as useWallet8, useCloakCraft as useCloakCraft8 } from "@cloakcraft/hooks";
 import { generateStealthAddress as generateStealthAddress2, calculateSwapOutput, calculateMinOutput } from "@cloakcraft/sdk";
 
 // src/components/AmmPoolDetails.tsx
-import { jsx as jsx15, jsxs as jsxs15 } from "react/jsx-runtime";
+import { jsx as jsx16, jsxs as jsxs16 } from "react/jsx-runtime";
 function AmmPoolDetails({
   tokenA,
   tokenB,
@@ -2873,7 +3073,7 @@ function AmmPoolDetails({
   className
 }) {
   if (!pool) {
-    return /* @__PURE__ */ jsx15("div", { className, style: styles.card, children: /* @__PURE__ */ jsx15("div", { style: { padding: "16px", textAlign: "center", color: colors.textMuted }, children: "No AMM pool found for this pair" }) });
+    return /* @__PURE__ */ jsx16("div", { className, style: styles.card, children: /* @__PURE__ */ jsx16("div", { style: { padding: "16px", textAlign: "center", color: colors.textMuted }, children: "No AMM pool found for this pair" }) });
   }
   const formatAmount = (amount, decimals) => {
     const num = Number(amount) / Math.pow(10, decimals);
@@ -2905,49 +3105,49 @@ function AmmPoolDetails({
     return price.toFixed(6);
   };
   const totalValueLocked = formatCompact(pool.reserveA, tokenA.decimals);
-  return /* @__PURE__ */ jsxs15("div", { className, style: styles.card, children: [
-    /* @__PURE__ */ jsxs15("h3", { style: { ...styles.cardTitle, marginBottom: "16px" }, children: [
+  return /* @__PURE__ */ jsxs16("div", { className, style: styles.card, children: [
+    /* @__PURE__ */ jsxs16("h3", { style: { ...styles.cardTitle, marginBottom: "16px" }, children: [
       "Pool Details: ",
       tokenA.symbol,
       "/",
       tokenB.symbol
     ] }),
-    /* @__PURE__ */ jsx15("div", { style: {
+    /* @__PURE__ */ jsx16("div", { style: {
       padding: "16px",
       background: colors.backgroundDark,
       borderRadius: "8px",
       marginBottom: "16px"
-    }, children: /* @__PURE__ */ jsxs15("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }, children: [
-      /* @__PURE__ */ jsxs15("div", { children: [
-        /* @__PURE__ */ jsx15("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginBottom: "4px" }, children: "Price" }),
-        /* @__PURE__ */ jsx15("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: formatPrice(priceRatio) }),
-        /* @__PURE__ */ jsxs15("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "2px" }, children: [
+    }, children: /* @__PURE__ */ jsxs16("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }, children: [
+      /* @__PURE__ */ jsxs16("div", { children: [
+        /* @__PURE__ */ jsx16("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginBottom: "4px" }, children: "Price" }),
+        /* @__PURE__ */ jsx16("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: formatPrice(priceRatio) }),
+        /* @__PURE__ */ jsxs16("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "2px" }, children: [
           tokenB.symbol,
           " per ",
           tokenA.symbol
         ] })
       ] }),
-      /* @__PURE__ */ jsxs15("div", { children: [
-        /* @__PURE__ */ jsx15("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginBottom: "4px" }, children: "Inverse Price" }),
-        /* @__PURE__ */ jsx15("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: formatPrice(inversePriceRatio) }),
-        /* @__PURE__ */ jsxs15("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "2px" }, children: [
+      /* @__PURE__ */ jsxs16("div", { children: [
+        /* @__PURE__ */ jsx16("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginBottom: "4px" }, children: "Inverse Price" }),
+        /* @__PURE__ */ jsx16("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: formatPrice(inversePriceRatio) }),
+        /* @__PURE__ */ jsxs16("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "2px" }, children: [
           tokenA.symbol,
           " per ",
           tokenB.symbol
         ] })
       ] })
     ] }) }),
-    /* @__PURE__ */ jsxs15("div", { style: { marginBottom: "16px" }, children: [
-      /* @__PURE__ */ jsx15("div", { style: { fontSize: "0.875rem", fontWeight: 600, marginBottom: "12px" }, children: "Liquidity Depth" }),
-      /* @__PURE__ */ jsxs15("div", { style: { marginBottom: "8px" }, children: [
-        /* @__PURE__ */ jsxs15("div", { style: styles.spaceBetween, children: [
-          /* @__PURE__ */ jsxs15("span", { style: { fontSize: "0.875rem", color: colors.textMuted }, children: [
+    /* @__PURE__ */ jsxs16("div", { style: { marginBottom: "16px" }, children: [
+      /* @__PURE__ */ jsx16("div", { style: { fontSize: "0.875rem", fontWeight: 600, marginBottom: "12px" }, children: "Liquidity Depth" }),
+      /* @__PURE__ */ jsxs16("div", { style: { marginBottom: "8px" }, children: [
+        /* @__PURE__ */ jsxs16("div", { style: styles.spaceBetween, children: [
+          /* @__PURE__ */ jsxs16("span", { style: { fontSize: "0.875rem", color: colors.textMuted }, children: [
             tokenA.symbol,
             " Reserve"
           ] }),
-          /* @__PURE__ */ jsx15("span", { style: { fontSize: "0.875rem", fontWeight: 500 }, children: formatAmount(pool.reserveA, tokenA.decimals) })
+          /* @__PURE__ */ jsx16("span", { style: { fontSize: "0.875rem", fontWeight: 500 }, children: formatAmount(pool.reserveA, tokenA.decimals) })
         ] }),
-        /* @__PURE__ */ jsx15(
+        /* @__PURE__ */ jsx16(
           LiquidityBar,
           {
             value: pool.reserveA,
@@ -2956,15 +3156,15 @@ function AmmPoolDetails({
           }
         )
       ] }),
-      /* @__PURE__ */ jsxs15("div", { children: [
-        /* @__PURE__ */ jsxs15("div", { style: styles.spaceBetween, children: [
-          /* @__PURE__ */ jsxs15("span", { style: { fontSize: "0.875rem", color: colors.textMuted }, children: [
+      /* @__PURE__ */ jsxs16("div", { children: [
+        /* @__PURE__ */ jsxs16("div", { style: styles.spaceBetween, children: [
+          /* @__PURE__ */ jsxs16("span", { style: { fontSize: "0.875rem", color: colors.textMuted }, children: [
             tokenB.symbol,
             " Reserve"
           ] }),
-          /* @__PURE__ */ jsx15("span", { style: { fontSize: "0.875rem", fontWeight: 500 }, children: formatAmount(pool.reserveB, tokenB.decimals) })
+          /* @__PURE__ */ jsx16("span", { style: { fontSize: "0.875rem", fontWeight: 500 }, children: formatAmount(pool.reserveB, tokenB.decimals) })
         ] }),
-        /* @__PURE__ */ jsx15(
+        /* @__PURE__ */ jsx16(
           LiquidityBar,
           {
             value: pool.reserveB,
@@ -2974,8 +3174,8 @@ function AmmPoolDetails({
         )
       ] })
     ] }),
-    /* @__PURE__ */ jsxs15("div", { style: { display: "grid", gap: "8px" }, children: [
-      /* @__PURE__ */ jsx15(
+    /* @__PURE__ */ jsxs16("div", { style: { display: "grid", gap: "8px" }, children: [
+      /* @__PURE__ */ jsx16(
         StatRow,
         {
           label: "LP Supply",
@@ -2983,7 +3183,7 @@ function AmmPoolDetails({
           unit: "LP"
         }
       ),
-      /* @__PURE__ */ jsx15(
+      /* @__PURE__ */ jsx16(
         StatRow,
         {
           label: "Trading Fee",
@@ -2991,7 +3191,7 @@ function AmmPoolDetails({
           unit: "%"
         }
       ),
-      /* @__PURE__ */ jsx15(
+      /* @__PURE__ */ jsx16(
         StatRow,
         {
           label: "Pool Status",
@@ -3000,14 +3200,14 @@ function AmmPoolDetails({
         }
       )
     ] }),
-    /* @__PURE__ */ jsxs15("div", { style: {
+    /* @__PURE__ */ jsxs16("div", { style: {
       marginTop: "16px",
       padding: "12px",
       background: colors.backgroundMuted,
       borderRadius: "6px"
     }, children: [
-      /* @__PURE__ */ jsx15("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginBottom: "4px" }, children: "Pool ID" }),
-      /* @__PURE__ */ jsx15("div", { style: { ...styles.mono, fontSize: "0.75rem", wordBreak: "break-all" }, children: pool.poolId.toBase58() })
+      /* @__PURE__ */ jsx16("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginBottom: "4px" }, children: "Pool ID" }),
+      /* @__PURE__ */ jsx16("div", { style: { ...styles.mono, fontSize: "0.75rem", wordBreak: "break-all" }, children: pool.poolId.toBase58() })
     ] })
   ] });
 }
@@ -3017,14 +3217,14 @@ function LiquidityBar({
   color
 }) {
   const percentage = max > 0n ? Number(value) / Number(max) * 100 : 0;
-  return /* @__PURE__ */ jsx15("div", { style: {
+  return /* @__PURE__ */ jsx16("div", { style: {
     width: "100%",
     height: "6px",
     background: colors.backgroundMuted,
     borderRadius: "3px",
     overflow: "hidden",
     marginTop: "4px"
-  }, children: /* @__PURE__ */ jsx15("div", { style: {
+  }, children: /* @__PURE__ */ jsx16("div", { style: {
     width: `${percentage}%`,
     height: "100%",
     background: color,
@@ -3037,9 +3237,9 @@ function StatRow({
   unit,
   valueColor
 }) {
-  return /* @__PURE__ */ jsxs15("div", { style: styles.spaceBetween, children: [
-    /* @__PURE__ */ jsx15("span", { style: { fontSize: "0.875rem", color: colors.textMuted }, children: label }),
-    /* @__PURE__ */ jsxs15("span", { style: {
+  return /* @__PURE__ */ jsxs16("div", { style: styles.spaceBetween, children: [
+    /* @__PURE__ */ jsx16("span", { style: { fontSize: "0.875rem", color: colors.textMuted }, children: label }),
+    /* @__PURE__ */ jsxs16("span", { style: {
       fontSize: "0.875rem",
       fontWeight: 500,
       color: valueColor || colors.text
@@ -3051,7 +3251,7 @@ function StatRow({
 }
 
 // src/components/SwapForm.tsx
-import { Fragment as Fragment3, jsx as jsx16, jsxs as jsxs16 } from "react/jsx-runtime";
+import { Fragment as Fragment3, jsx as jsx17, jsxs as jsxs17 } from "react/jsx-runtime";
 function SwapForm({
   tokens,
   ammPools,
@@ -3061,7 +3261,7 @@ function SwapForm({
   walletPublicKey
 }) {
   const { isConnected, isInitialized, wallet } = useWallet8();
-  const { client, notes } = useCloakCraft7();
+  const { client, notes } = useCloakCraft8();
   const tokensWithBalance = useMemo2(() => {
     const notesByMint = /* @__PURE__ */ new Map();
     notes.forEach((note) => {
@@ -3074,10 +3274,10 @@ function SwapForm({
       return balance > BigInt(0);
     });
   }, [tokens, notes]);
-  const [inputToken, setInputToken] = useState9(tokensWithBalance[0] || tokens[0]);
-  const [inputAmount, setInputAmount] = useState9("");
-  const [slippageBps, setSlippageBps] = useState9(50);
-  const [isSwapping, setIsSwapping] = useState9(false);
+  const [inputToken, setInputToken] = useState10(tokensWithBalance[0] || tokens[0]);
+  const [inputAmount, setInputAmount] = useState10("");
+  const [slippageBps, setSlippageBps] = useState10(50);
+  const [isSwapping, setIsSwapping] = useState10(false);
   const availableOutputTokens = useMemo2(() => {
     if (!inputToken) return [];
     const inputMintStr = inputToken.mint.toBase58();
@@ -3093,7 +3293,7 @@ function SwapForm({
     });
     return tokens.filter((token) => pairedMints.has(token.mint.toBase58()));
   }, [inputToken, ammPools, tokens]);
-  const [outputToken, setOutputToken] = useState9(availableOutputTokens[0] || tokens[0]);
+  const [outputToken, setOutputToken] = useState10(availableOutputTokens[0] || tokens[0]);
   const selectedAmmPool = useMemo2(() => {
     if (!inputToken || !outputToken) return null;
     const inputMintStr = inputToken.mint.toBase58();
@@ -3104,7 +3304,7 @@ function SwapForm({
       return tokenAStr === inputMintStr && tokenBStr === outputMintStr || tokenAStr === outputMintStr && tokenBStr === inputMintStr;
     });
   }, [inputToken, outputToken, ammPools]);
-  React12.useEffect(() => {
+  React13.useEffect(() => {
     if (availableOutputTokens.length > 0) {
       const isCurrentOutputAvailable = availableOutputTokens.some(
         (t) => outputToken && t.mint.equals(outputToken.mint)
@@ -3233,20 +3433,20 @@ function SwapForm({
   };
   const isDisabled = !isConnected || !isInitialized || isSwapping || !inputAmount || !swapQuote || tokensWithBalance.length === 0;
   if (tokensWithBalance.length === 0) {
-    return /* @__PURE__ */ jsxs16("div", { className, style: styles.card, children: [
-      /* @__PURE__ */ jsx16("h3", { style: styles.cardTitle, children: "Swap Tokens" }),
-      /* @__PURE__ */ jsx16("p", { style: styles.cardDescription, children: "Exchange tokens privately using the AMM pool" }),
-      /* @__PURE__ */ jsx16("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No tokens available to swap. Shield some tokens first." })
+    return /* @__PURE__ */ jsxs17("div", { className, style: styles.card, children: [
+      /* @__PURE__ */ jsx17("h3", { style: styles.cardTitle, children: "Swap Tokens" }),
+      /* @__PURE__ */ jsx17("p", { style: styles.cardDescription, children: "Exchange tokens privately using the AMM pool" }),
+      /* @__PURE__ */ jsx17("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No tokens available to swap. Shield some tokens first." })
     ] });
   }
-  return /* @__PURE__ */ jsxs16(Fragment3, { children: [
-    /* @__PURE__ */ jsxs16("div", { className, style: styles.card, children: [
-      /* @__PURE__ */ jsx16("h3", { style: styles.cardTitle, children: "Swap Tokens" }),
-      /* @__PURE__ */ jsx16("p", { style: styles.cardDescription, children: "Exchange tokens privately using the AMM pool" }),
-      /* @__PURE__ */ jsxs16("form", { onSubmit: handleSubmit, style: styles.form, children: [
-        /* @__PURE__ */ jsxs16("div", { children: [
-          /* @__PURE__ */ jsx16("label", { style: styles.label, children: "From" }),
-          /* @__PURE__ */ jsx16("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" }, children: /* @__PURE__ */ jsx16(
+  return /* @__PURE__ */ jsxs17(Fragment3, { children: [
+    /* @__PURE__ */ jsxs17("div", { className, style: styles.card, children: [
+      /* @__PURE__ */ jsx17("h3", { style: styles.cardTitle, children: "Swap Tokens" }),
+      /* @__PURE__ */ jsx17("p", { style: styles.cardDescription, children: "Exchange tokens privately using the AMM pool" }),
+      /* @__PURE__ */ jsxs17("form", { onSubmit: handleSubmit, style: styles.form, children: [
+        /* @__PURE__ */ jsxs17("div", { children: [
+          /* @__PURE__ */ jsx17("label", { style: styles.label, children: "From" }),
+          /* @__PURE__ */ jsx17("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" }, children: /* @__PURE__ */ jsx17(
             "select",
             {
               value: inputToken?.mint.toBase58() || "",
@@ -3256,10 +3456,10 @@ function SwapForm({
               },
               disabled: isSwapping || tokensWithBalance.length === 0,
               style: { ...styles.input, flex: 1 },
-              children: tokensWithBalance.length === 0 ? /* @__PURE__ */ jsx16("option", { value: "", children: "No tokens with balance" }) : tokensWithBalance.map((token) => /* @__PURE__ */ jsx16("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
+              children: tokensWithBalance.length === 0 ? /* @__PURE__ */ jsx17("option", { value: "", children: "No tokens with balance" }) : tokensWithBalance.map((token) => /* @__PURE__ */ jsx17("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
             }
           ) }),
-          /* @__PURE__ */ jsx16(
+          /* @__PURE__ */ jsx17(
             "input",
             {
               type: "number",
@@ -3272,16 +3472,16 @@ function SwapForm({
               style: styles.input
             }
           ),
-          /* @__PURE__ */ jsxs16("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
-            /* @__PURE__ */ jsx16("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
-            /* @__PURE__ */ jsxs16("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
+          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
+            /* @__PURE__ */ jsx17("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
+            /* @__PURE__ */ jsxs17("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
               inputToken ? formatAmount(totalAvailable, inputToken.decimals) : "0",
               " ",
               inputToken?.symbol || ""
             ] })
           ] })
         ] }),
-        /* @__PURE__ */ jsx16("div", { style: { display: "flex", justifyContent: "center", margin: "8px 0" }, children: /* @__PURE__ */ jsx16(
+        /* @__PURE__ */ jsx17("div", { style: { display: "flex", justifyContent: "center", margin: "8px 0" }, children: /* @__PURE__ */ jsx17(
           "button",
           {
             type: "button",
@@ -3298,9 +3498,9 @@ function SwapForm({
             children: "\u2193"
           }
         ) }),
-        /* @__PURE__ */ jsxs16("div", { children: [
-          /* @__PURE__ */ jsx16("label", { style: styles.label, children: "To (estimated)" }),
-          /* @__PURE__ */ jsx16("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" }, children: /* @__PURE__ */ jsx16(
+        /* @__PURE__ */ jsxs17("div", { children: [
+          /* @__PURE__ */ jsx17("label", { style: styles.label, children: "To (estimated)" }),
+          /* @__PURE__ */ jsx17("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" }, children: /* @__PURE__ */ jsx17(
             "select",
             {
               value: outputToken?.mint.toBase58() || "",
@@ -3310,13 +3510,13 @@ function SwapForm({
               },
               disabled: isSwapping || availableOutputTokens.length === 0,
               style: { ...styles.input, flex: 1 },
-              children: availableOutputTokens.length === 0 ? /* @__PURE__ */ jsxs16("option", { value: "", children: [
+              children: availableOutputTokens.length === 0 ? /* @__PURE__ */ jsxs17("option", { value: "", children: [
                 "No pools paired with ",
                 inputToken?.symbol || "selected token"
-              ] }) : availableOutputTokens.map((token) => /* @__PURE__ */ jsx16("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
+              ] }) : availableOutputTokens.map((token) => /* @__PURE__ */ jsx17("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
             }
           ) }),
-          /* @__PURE__ */ jsxs16(
+          /* @__PURE__ */ jsxs17(
             "div",
             {
               style: {
@@ -3328,44 +3528,44 @@ function SwapForm({
                 justifyContent: "space-between"
               },
               children: [
-                /* @__PURE__ */ jsx16("span", { children: swapQuote ? formatAmount(swapQuote.outputAmount, outputToken.decimals) : "0.00" }),
-                /* @__PURE__ */ jsx16("span", { style: { fontSize: "0.875rem" }, children: outputToken.symbol })
+                /* @__PURE__ */ jsx17("span", { children: swapQuote ? formatAmount(swapQuote.outputAmount, outputToken.decimals) : "0.00" }),
+                /* @__PURE__ */ jsx17("span", { style: { fontSize: "0.875rem" }, children: outputToken.symbol })
               ]
             }
           )
         ] }),
-        swapQuote && /* @__PURE__ */ jsxs16("div", { style: {
+        swapQuote && /* @__PURE__ */ jsxs17("div", { style: {
           background: colors.backgroundMuted,
           padding: "12px",
           borderRadius: "8px",
           fontSize: "0.875rem"
         }, children: [
-          /* @__PURE__ */ jsxs16("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-            /* @__PURE__ */ jsx16("span", { style: { color: colors.textMuted }, children: "Price Impact" }),
-            /* @__PURE__ */ jsxs16("span", { style: { color: swapQuote.priceImpact > 5 ? colors.error : colors.text }, children: [
+          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Price Impact" }),
+            /* @__PURE__ */ jsxs17("span", { style: { color: swapQuote.priceImpact > 5 ? colors.error : colors.text }, children: [
               swapQuote.priceImpact.toFixed(2),
               "%"
             ] })
           ] }),
-          /* @__PURE__ */ jsxs16("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-            /* @__PURE__ */ jsx16("span", { style: { color: colors.textMuted }, children: "Minimum Received" }),
-            /* @__PURE__ */ jsxs16("span", { children: [
+          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Minimum Received" }),
+            /* @__PURE__ */ jsxs17("span", { children: [
               formatAmount(swapQuote.minOutput, outputToken.decimals),
               " ",
               outputToken.symbol
             ] })
           ] }),
-          /* @__PURE__ */ jsxs16("div", { style: styles.spaceBetween, children: [
-            /* @__PURE__ */ jsx16("span", { style: { color: colors.textMuted }, children: "Slippage Tolerance" }),
-            /* @__PURE__ */ jsxs16("span", { children: [
+          /* @__PURE__ */ jsxs17("div", { style: styles.spaceBetween, children: [
+            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Slippage Tolerance" }),
+            /* @__PURE__ */ jsxs17("span", { children: [
               (slippageBps / 100).toFixed(2),
               "%"
             ] })
           ] })
         ] }),
-        /* @__PURE__ */ jsx16("div", { children: /* @__PURE__ */ jsxs16("label", { style: styles.label, children: [
+        /* @__PURE__ */ jsx17("div", { children: /* @__PURE__ */ jsxs17("label", { style: styles.label, children: [
           "Slippage Tolerance (%)",
-          /* @__PURE__ */ jsx16(
+          /* @__PURE__ */ jsx17(
             "input",
             {
               type: "number",
@@ -3380,7 +3580,7 @@ function SwapForm({
             }
           )
         ] }) }),
-        /* @__PURE__ */ jsx16(
+        /* @__PURE__ */ jsx17(
           "button",
           {
             type: "submit",
@@ -3392,7 +3592,7 @@ function SwapForm({
             children: !isConnected ? "Connect Wallet" : !isInitialized ? "Initializing..." : isSwapping ? "Swapping..." : "Swap Tokens"
           }
         ),
-        swapQuote && swapQuote.priceImpact > 10 && /* @__PURE__ */ jsx16("div", { style: { ...styles.errorText, background: colors.backgroundMuted, padding: "12px", borderRadius: "8px" }, children: "Warning: High price impact! Consider reducing swap amount." })
+        swapQuote && swapQuote.priceImpact > 10 && /* @__PURE__ */ jsx17("div", { style: { ...styles.errorText, background: colors.backgroundMuted, padding: "12px", borderRadius: "8px" }, children: "Warning: High price impact! Consider reducing swap amount." })
       ] })
     ] }),
     inputToken && outputToken && selectedAmmPool && (() => {
@@ -3401,7 +3601,7 @@ function SwapForm({
       const outputMintStr = outputToken.mint.toBase58();
       const poolTokenA = poolTokenAStr === inputMintStr ? inputToken : outputToken;
       const poolTokenB = poolTokenAStr === inputMintStr ? outputToken : inputToken;
-      return /* @__PURE__ */ jsx16(
+      return /* @__PURE__ */ jsx17(
         AmmPoolDetails,
         {
           tokenA: poolTokenA,
@@ -3415,10 +3615,10 @@ function SwapForm({
 }
 
 // src/components/AddLiquidityForm.tsx
-import { useState as useState10, useMemo as useMemo3, useEffect as useEffect2 } from "react";
-import { useNoteSelector as useNoteSelector5, useWallet as useWallet9, useCloakCraft as useCloakCraft8 } from "@cloakcraft/hooks";
+import { useState as useState11, useMemo as useMemo3, useEffect as useEffect2 } from "react";
+import { useNoteSelector as useNoteSelector5, useWallet as useWallet9, useCloakCraft as useCloakCraft9 } from "@cloakcraft/hooks";
 import { generateStealthAddress as generateStealthAddress3, calculateAddLiquidityAmounts } from "@cloakcraft/sdk";
-import { Fragment as Fragment4, jsx as jsx17, jsxs as jsxs17 } from "react/jsx-runtime";
+import { Fragment as Fragment4, jsx as jsx18, jsxs as jsxs18 } from "react/jsx-runtime";
 function AddLiquidityForm({
   tokens,
   ammPools,
@@ -3427,14 +3627,14 @@ function AddLiquidityForm({
   className,
   walletPublicKey
 }) {
-  const [selectedPool, setSelectedPool] = useState10(ammPools[0]);
-  const [amountA, setAmountA] = useState10("");
-  const [amountB, setAmountB] = useState10("");
-  const [lastEditedField, setLastEditedField] = useState10(null);
-  const [slippageBps, setSlippageBps] = useState10(100);
-  const [isAdding, setIsAdding] = useState10(false);
+  const [selectedPool, setSelectedPool] = useState11(ammPools[0]);
+  const [amountA, setAmountA] = useState11("");
+  const [amountB, setAmountB] = useState11("");
+  const [lastEditedField, setLastEditedField] = useState11(null);
+  const [slippageBps, setSlippageBps] = useState11(100);
+  const [isAdding, setIsAdding] = useState11(false);
   const { isConnected, isInitialized, wallet } = useWallet9();
-  const { client } = useCloakCraft8();
+  const { client } = useCloakCraft9();
   const tokenA = useMemo3(() => {
     if (!selectedPool) return tokens[0];
     return tokens.find((t) => t.mint.equals(selectedPool.tokenAMint)) || {
@@ -3576,20 +3776,20 @@ function AddLiquidityForm({
   };
   const isDisabled = !isConnected || !isInitialized || isAdding || !amountA || !amountB || !liquidityQuote;
   if (ammPools.length === 0) {
-    return /* @__PURE__ */ jsxs17("div", { className, style: styles.card, children: [
-      /* @__PURE__ */ jsx17("h3", { style: styles.cardTitle, children: "Add Liquidity" }),
-      /* @__PURE__ */ jsx17("p", { style: styles.cardDescription, children: "Provide liquidity to earn fees from swaps" }),
-      /* @__PURE__ */ jsx17("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No AMM pools available. Create a pool first." })
+    return /* @__PURE__ */ jsxs18("div", { className, style: styles.card, children: [
+      /* @__PURE__ */ jsx18("h3", { style: styles.cardTitle, children: "Add Liquidity" }),
+      /* @__PURE__ */ jsx18("p", { style: styles.cardDescription, children: "Provide liquidity to earn fees from swaps" }),
+      /* @__PURE__ */ jsx18("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No AMM pools available. Create a pool first." })
     ] });
   }
-  return /* @__PURE__ */ jsxs17(Fragment4, { children: [
-    /* @__PURE__ */ jsxs17("div", { className, style: styles.card, children: [
-      /* @__PURE__ */ jsx17("h3", { style: styles.cardTitle, children: "Add Liquidity" }),
-      /* @__PURE__ */ jsx17("p", { style: styles.cardDescription, children: "Provide liquidity to earn fees from swaps" }),
-      /* @__PURE__ */ jsxs17("form", { onSubmit: handleSubmit, style: styles.form, children: [
-        /* @__PURE__ */ jsxs17("div", { children: [
-          /* @__PURE__ */ jsx17("label", { style: styles.label, children: "Select Pool" }),
-          /* @__PURE__ */ jsx17(
+  return /* @__PURE__ */ jsxs18(Fragment4, { children: [
+    /* @__PURE__ */ jsxs18("div", { className, style: styles.card, children: [
+      /* @__PURE__ */ jsx18("h3", { style: styles.cardTitle, children: "Add Liquidity" }),
+      /* @__PURE__ */ jsx18("p", { style: styles.cardDescription, children: "Provide liquidity to earn fees from swaps" }),
+      /* @__PURE__ */ jsxs18("form", { onSubmit: handleSubmit, style: styles.form, children: [
+        /* @__PURE__ */ jsxs18("div", { children: [
+          /* @__PURE__ */ jsx18("label", { style: styles.label, children: "Select Pool" }),
+          /* @__PURE__ */ jsx18(
             "select",
             {
               value: selectedPool?.poolId.toBase58() || "",
@@ -3609,7 +3809,7 @@ function AddLiquidityForm({
                 const tB = tokens.find((t) => t.mint.equals(pool.tokenBMint));
                 const symbolA = tA?.symbol || pool.tokenAMint.toBase58().slice(0, 6) + "...";
                 const symbolB = tB?.symbol || pool.tokenBMint.toBase58().slice(0, 6) + "...";
-                return /* @__PURE__ */ jsxs17("option", { value: pool.poolId.toBase58(), children: [
+                return /* @__PURE__ */ jsxs18("option", { value: pool.poolId.toBase58(), children: [
                   symbolA,
                   " / ",
                   symbolB
@@ -3618,9 +3818,9 @@ function AddLiquidityForm({
             }
           )
         ] }),
-        /* @__PURE__ */ jsxs17("div", { children: [
-          /* @__PURE__ */ jsx17("label", { style: styles.label, children: tokenA.symbol }),
-          /* @__PURE__ */ jsx17(
+        /* @__PURE__ */ jsxs18("div", { children: [
+          /* @__PURE__ */ jsx18("label", { style: styles.label, children: tokenA.symbol }),
+          /* @__PURE__ */ jsx18(
             "input",
             {
               type: "number",
@@ -3636,16 +3836,16 @@ function AddLiquidityForm({
               style: styles.input
             }
           ),
-          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
-            /* @__PURE__ */ jsx17("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
-            /* @__PURE__ */ jsxs17("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
+          /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
+            /* @__PURE__ */ jsx18("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
+            /* @__PURE__ */ jsxs18("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
               formatAmount(totalA, tokenA.decimals),
               " ",
               tokenA.symbol
             ] })
           ] })
         ] }),
-        /* @__PURE__ */ jsx17("div", { style: { display: "flex", justifyContent: "center", margin: "8px 0" }, children: /* @__PURE__ */ jsx17(
+        /* @__PURE__ */ jsx18("div", { style: { display: "flex", justifyContent: "center", margin: "8px 0" }, children: /* @__PURE__ */ jsx18(
           "div",
           {
             style: {
@@ -3658,9 +3858,9 @@ function AddLiquidityForm({
             children: "+"
           }
         ) }),
-        /* @__PURE__ */ jsxs17("div", { children: [
-          /* @__PURE__ */ jsx17("label", { style: styles.label, children: tokenB.symbol }),
-          /* @__PURE__ */ jsx17(
+        /* @__PURE__ */ jsxs18("div", { children: [
+          /* @__PURE__ */ jsx18("label", { style: styles.label, children: tokenB.symbol }),
+          /* @__PURE__ */ jsx18(
             "input",
             {
               type: "number",
@@ -3676,63 +3876,63 @@ function AddLiquidityForm({
               style: styles.input
             }
           ),
-          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
-            /* @__PURE__ */ jsx17("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
-            /* @__PURE__ */ jsxs17("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
+          /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
+            /* @__PURE__ */ jsx18("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
+            /* @__PURE__ */ jsxs18("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
               formatAmount(totalB, tokenB.decimals),
               " ",
               tokenB.symbol
             ] })
           ] })
         ] }),
-        liquidityQuote && /* @__PURE__ */ jsxs17("div", { style: {
+        liquidityQuote && /* @__PURE__ */ jsxs18("div", { style: {
           background: colors.backgroundMuted,
           padding: "12px",
           borderRadius: "8px",
           fontSize: "0.875rem"
         }, children: [
-          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Actual Deposit A" }),
-            /* @__PURE__ */ jsxs17("span", { children: [
+          /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx18("span", { style: { color: colors.textMuted }, children: "Actual Deposit A" }),
+            /* @__PURE__ */ jsxs18("span", { children: [
               formatAmount(liquidityQuote.depositA, tokenA.decimals),
               " ",
               tokenA.symbol
             ] })
           ] }),
-          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Actual Deposit B" }),
-            /* @__PURE__ */ jsxs17("span", { children: [
+          /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx18("span", { style: { color: colors.textMuted }, children: "Actual Deposit B" }),
+            /* @__PURE__ */ jsxs18("span", { children: [
               formatAmount(liquidityQuote.depositB, tokenB.decimals),
               " ",
               tokenB.symbol
             ] })
           ] }),
-          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "LP Tokens" }),
-            /* @__PURE__ */ jsx17("span", { children: formatAmount(liquidityQuote.lpAmount, 9) })
+          /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx18("span", { style: { color: colors.textMuted }, children: "LP Tokens" }),
+            /* @__PURE__ */ jsx18("span", { children: formatAmount(liquidityQuote.lpAmount, 9) })
           ] }),
-          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Minimum LP Tokens" }),
-            /* @__PURE__ */ jsx17("span", { children: formatAmount(liquidityQuote.minLpAmount, 9) })
+          /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx18("span", { style: { color: colors.textMuted }, children: "Minimum LP Tokens" }),
+            /* @__PURE__ */ jsx18("span", { children: formatAmount(liquidityQuote.minLpAmount, 9) })
           ] }),
-          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Share of Pool" }),
-            /* @__PURE__ */ jsxs17("span", { children: [
+          /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx18("span", { style: { color: colors.textMuted }, children: "Share of Pool" }),
+            /* @__PURE__ */ jsxs18("span", { children: [
               liquidityQuote.shareOfPool.toFixed(2),
               "%"
             ] })
           ] }),
-          /* @__PURE__ */ jsxs17("div", { style: styles.spaceBetween, children: [
-            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Slippage Tolerance" }),
-            /* @__PURE__ */ jsxs17("span", { children: [
+          /* @__PURE__ */ jsxs18("div", { style: styles.spaceBetween, children: [
+            /* @__PURE__ */ jsx18("span", { style: { color: colors.textMuted }, children: "Slippage Tolerance" }),
+            /* @__PURE__ */ jsxs18("span", { children: [
               (slippageBps / 100).toFixed(2),
               "%"
             ] })
           ] })
         ] }),
-        /* @__PURE__ */ jsx17("div", { children: /* @__PURE__ */ jsxs17("label", { style: styles.label, children: [
+        /* @__PURE__ */ jsx18("div", { children: /* @__PURE__ */ jsxs18("label", { style: styles.label, children: [
           "Slippage Tolerance (%)",
-          /* @__PURE__ */ jsx17(
+          /* @__PURE__ */ jsx18(
             "input",
             {
               type: "number",
@@ -3747,7 +3947,7 @@ function AddLiquidityForm({
             }
           )
         ] }) }),
-        /* @__PURE__ */ jsx17(
+        /* @__PURE__ */ jsx18(
           "button",
           {
             type: "submit",
@@ -3759,10 +3959,10 @@ function AddLiquidityForm({
             children: !isConnected ? "Connect Wallet" : !isInitialized ? "Initializing..." : isAdding ? "Adding Liquidity..." : "Add Liquidity"
           }
         ),
-        liquidityQuote && (liquidityQuote.depositA !== BigInt(Math.floor(parseFloat(amountA) * 10 ** tokenA.decimals)) || liquidityQuote.depositB !== BigInt(Math.floor(parseFloat(amountB) * 10 ** tokenB.decimals))) && /* @__PURE__ */ jsx17("div", { style: { ...styles.errorText, background: colors.backgroundMuted, padding: "12px", borderRadius: "8px", color: colors.textMuted }, children: "Note: Amounts will be adjusted to match pool ratio" })
+        liquidityQuote && (liquidityQuote.depositA !== BigInt(Math.floor(parseFloat(amountA) * 10 ** tokenA.decimals)) || liquidityQuote.depositB !== BigInt(Math.floor(parseFloat(amountB) * 10 ** tokenB.decimals))) && /* @__PURE__ */ jsx18("div", { style: { ...styles.errorText, background: colors.backgroundMuted, padding: "12px", borderRadius: "8px", color: colors.textMuted }, children: "Note: Amounts will be adjusted to match pool ratio" })
       ] })
     ] }),
-    selectedPool && /* @__PURE__ */ jsx17(
+    selectedPool && /* @__PURE__ */ jsx18(
       AmmPoolDetails,
       {
         tokenA,
@@ -3775,8 +3975,8 @@ function AddLiquidityForm({
 }
 
 // src/components/RemoveLiquidityForm.tsx
-import { useState as useState11, useMemo as useMemo4 } from "react";
-import { useNoteSelector as useNoteSelector6, useWallet as useWallet10, useCloakCraft as useCloakCraft9 } from "@cloakcraft/hooks";
+import { useState as useState12, useMemo as useMemo4 } from "react";
+import { useNoteSelector as useNoteSelector6, useWallet as useWallet10, useCloakCraft as useCloakCraft10 } from "@cloakcraft/hooks";
 import { generateStealthAddress as generateStealthAddress4, calculateRemoveLiquidityOutput } from "@cloakcraft/sdk";
 
 // ../../node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes/esm/_u64.js
@@ -4052,7 +4252,7 @@ var gen = (suffix, blockLen, outputLen) => createHasher(() => new Keccak(blockLe
 var keccak_256 = /* @__PURE__ */ (() => gen(1, 136, 256 / 8))();
 
 // src/components/RemoveLiquidityForm.tsx
-import { jsx as jsx18, jsxs as jsxs18 } from "react/jsx-runtime";
+import { jsx as jsx19, jsxs as jsxs19 } from "react/jsx-runtime";
 function RemoveLiquidityForm({
   tokens,
   ammPools,
@@ -4061,12 +4261,12 @@ function RemoveLiquidityForm({
   className,
   walletPublicKey
 }) {
-  const [selectedPool, setSelectedPool] = useState11(ammPools[0]);
-  const [lpAmount, setLpAmount] = useState11("");
-  const [exactLpAmount, setExactLpAmount] = useState11(null);
-  const [isRemoving, setIsRemoving] = useState11(false);
+  const [selectedPool, setSelectedPool] = useState12(ammPools[0]);
+  const [lpAmount, setLpAmount] = useState12("");
+  const [exactLpAmount, setExactLpAmount] = useState12(null);
+  const [isRemoving, setIsRemoving] = useState12(false);
   const { isConnected, isInitialized, wallet } = useWallet10();
-  const { client } = useCloakCraft9();
+  const { client } = useCloakCraft10();
   const lpTokenMint = selectedPool?.lpMint;
   const { availableNotes: lpNotes, totalAvailable: totalLp, selectNotesForAmount: selectLp } = useNoteSelector6(lpTokenMint);
   const tokenA = useMemo4(() => {
@@ -4224,18 +4424,18 @@ function RemoveLiquidityForm({
   };
   const isDisabled = !isConnected || !isInitialized || isRemoving || !lpAmount || !withdrawQuote || ammPools.length === 0;
   if (ammPools.length === 0) {
-    return /* @__PURE__ */ jsxs18("div", { className, style: styles.card, children: [
-      /* @__PURE__ */ jsx18("h3", { style: styles.cardTitle, children: "Remove Liquidity" }),
-      /* @__PURE__ */ jsx18("p", { style: { ...styles.cardDescription, marginTop: "16px", color: colors.textMuted }, children: "No AMM pools available. Add liquidity to a pool first." })
+    return /* @__PURE__ */ jsxs19("div", { className, style: styles.card, children: [
+      /* @__PURE__ */ jsx19("h3", { style: styles.cardTitle, children: "Remove Liquidity" }),
+      /* @__PURE__ */ jsx19("p", { style: { ...styles.cardDescription, marginTop: "16px", color: colors.textMuted }, children: "No AMM pools available. Add liquidity to a pool first." })
     ] });
   }
-  return /* @__PURE__ */ jsxs18("div", { className, style: styles.card, children: [
-    /* @__PURE__ */ jsx18("h3", { style: styles.cardTitle, children: "Remove Liquidity" }),
-    /* @__PURE__ */ jsx18("p", { style: styles.cardDescription, children: "Withdraw your liquidity by burning LP tokens" }),
-    /* @__PURE__ */ jsxs18("form", { onSubmit: handleSubmit, style: styles.form, children: [
-      /* @__PURE__ */ jsxs18("div", { children: [
-        /* @__PURE__ */ jsx18("label", { style: styles.label, children: "Select Pool" }),
-        /* @__PURE__ */ jsx18(
+  return /* @__PURE__ */ jsxs19("div", { className, style: styles.card, children: [
+    /* @__PURE__ */ jsx19("h3", { style: styles.cardTitle, children: "Remove Liquidity" }),
+    /* @__PURE__ */ jsx19("p", { style: styles.cardDescription, children: "Withdraw your liquidity by burning LP tokens" }),
+    /* @__PURE__ */ jsxs19("form", { onSubmit: handleSubmit, style: styles.form, children: [
+      /* @__PURE__ */ jsxs19("div", { children: [
+        /* @__PURE__ */ jsx19("label", { style: styles.label, children: "Select Pool" }),
+        /* @__PURE__ */ jsx19(
           "select",
           {
             value: selectedPool?.address.toBase58() || "",
@@ -4253,7 +4453,7 @@ function RemoveLiquidityForm({
               const tB = tokens.find((t) => t.mint.equals(pool.tokenBMint));
               const symbolA = tA?.symbol || pool.tokenAMint.toBase58().slice(0, 6) + "...";
               const symbolB = tB?.symbol || pool.tokenBMint.toBase58().slice(0, 6) + "...";
-              return /* @__PURE__ */ jsxs18("option", { value: pool.address.toBase58(), children: [
+              return /* @__PURE__ */ jsxs19("option", { value: pool.address.toBase58(), children: [
                 symbolA,
                 " / ",
                 symbolB
@@ -4261,47 +4461,47 @@ function RemoveLiquidityForm({
             })
           }
         ),
-        selectedPool && /* @__PURE__ */ jsxs18("div", { style: {
+        selectedPool && /* @__PURE__ */ jsxs19("div", { style: {
           marginTop: "12px",
           padding: "12px",
           background: colors.backgroundMuted,
           borderRadius: "8px",
           fontSize: "0.875rem"
         }, children: [
-          /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-            /* @__PURE__ */ jsxs18("span", { style: { color: colors.textMuted }, children: [
+          /* @__PURE__ */ jsxs19("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsxs19("span", { style: { color: colors.textMuted }, children: [
               "Reserve ",
               tokenA.symbol
             ] }),
-            /* @__PURE__ */ jsxs18("span", { children: [
+            /* @__PURE__ */ jsxs19("span", { children: [
               formatAmount(selectedPool.reserveA, tokenA.decimals),
               " ",
               tokenA.symbol
             ] })
           ] }),
-          /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-            /* @__PURE__ */ jsxs18("span", { style: { color: colors.textMuted }, children: [
+          /* @__PURE__ */ jsxs19("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsxs19("span", { style: { color: colors.textMuted }, children: [
               "Reserve ",
               tokenB.symbol
             ] }),
-            /* @__PURE__ */ jsxs18("span", { children: [
+            /* @__PURE__ */ jsxs19("span", { children: [
               formatAmount(selectedPool.reserveB, tokenB.decimals),
               " ",
               tokenB.symbol
             ] })
           ] }),
-          /* @__PURE__ */ jsxs18("div", { style: styles.spaceBetween, children: [
-            /* @__PURE__ */ jsx18("span", { style: { color: colors.textMuted }, children: "Total LP Supply" }),
-            /* @__PURE__ */ jsxs18("span", { children: [
+          /* @__PURE__ */ jsxs19("div", { style: styles.spaceBetween, children: [
+            /* @__PURE__ */ jsx19("span", { style: { color: colors.textMuted }, children: "Total LP Supply" }),
+            /* @__PURE__ */ jsxs19("span", { children: [
               formatAmount(selectedPool.lpSupply, 9),
               " LP"
             ] })
           ] })
         ] })
       ] }),
-      /* @__PURE__ */ jsxs18("div", { children: [
-        /* @__PURE__ */ jsx18("label", { style: styles.label, children: "LP Tokens to Burn" }),
-        /* @__PURE__ */ jsx18(
+      /* @__PURE__ */ jsxs19("div", { children: [
+        /* @__PURE__ */ jsx19("label", { style: styles.label, children: "LP Tokens to Burn" }),
+        /* @__PURE__ */ jsx19(
           "input",
           {
             type: "number",
@@ -4317,9 +4517,9 @@ function RemoveLiquidityForm({
             style: styles.input
           }
         ),
-        /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
-          /* @__PURE__ */ jsx18("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available LP" }),
-          /* @__PURE__ */ jsxs18(
+        /* @__PURE__ */ jsxs19("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
+          /* @__PURE__ */ jsx19("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available LP" }),
+          /* @__PURE__ */ jsxs19(
             "button",
             {
               type: "button",
@@ -4342,38 +4542,38 @@ function RemoveLiquidityForm({
           )
         ] })
       ] }),
-      withdrawQuote && /* @__PURE__ */ jsxs18("div", { style: {
+      withdrawQuote && /* @__PURE__ */ jsxs19("div", { style: {
         background: colors.backgroundMuted,
         padding: "12px",
         borderRadius: "8px",
         fontSize: "0.875rem"
       }, children: [
-        /* @__PURE__ */ jsx18("div", { style: { marginBottom: "12px", fontWeight: 600, color: colors.text }, children: "You will receive:" }),
-        /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-          /* @__PURE__ */ jsx18("span", { style: { color: colors.textMuted }, children: tokenA.symbol }),
-          /* @__PURE__ */ jsxs18("span", { children: [
+        /* @__PURE__ */ jsx19("div", { style: { marginBottom: "12px", fontWeight: 600, color: colors.text }, children: "You will receive:" }),
+        /* @__PURE__ */ jsxs19("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+          /* @__PURE__ */ jsx19("span", { style: { color: colors.textMuted }, children: tokenA.symbol }),
+          /* @__PURE__ */ jsxs19("span", { children: [
             formatAmount(withdrawQuote.outputA, tokenA.decimals),
             " ",
             tokenA.symbol
           ] })
         ] }),
-        /* @__PURE__ */ jsxs18("div", { style: { ...styles.spaceBetween, marginBottom: "12px" }, children: [
-          /* @__PURE__ */ jsx18("span", { style: { color: colors.textMuted }, children: tokenB.symbol }),
-          /* @__PURE__ */ jsxs18("span", { children: [
+        /* @__PURE__ */ jsxs19("div", { style: { ...styles.spaceBetween, marginBottom: "12px" }, children: [
+          /* @__PURE__ */ jsx19("span", { style: { color: colors.textMuted }, children: tokenB.symbol }),
+          /* @__PURE__ */ jsxs19("span", { children: [
             formatAmount(withdrawQuote.outputB, tokenB.decimals),
             " ",
             tokenB.symbol
           ] })
         ] }),
-        /* @__PURE__ */ jsxs18("div", { style: styles.spaceBetween, children: [
-          /* @__PURE__ */ jsx18("span", { style: { color: colors.textMuted }, children: "Your Share" }),
-          /* @__PURE__ */ jsxs18("span", { children: [
+        /* @__PURE__ */ jsxs19("div", { style: styles.spaceBetween, children: [
+          /* @__PURE__ */ jsx19("span", { style: { color: colors.textMuted }, children: "Your Share" }),
+          /* @__PURE__ */ jsxs19("span", { children: [
             withdrawQuote.shareOfPool.toFixed(2),
             "% of pool"
           ] })
         ] })
       ] }),
-      /* @__PURE__ */ jsx18(
+      /* @__PURE__ */ jsx19(
         "button",
         {
           type: "submit",
@@ -4390,14 +4590,14 @@ function RemoveLiquidityForm({
 }
 
 // src/components/SwapPanel.tsx
-import { jsx as jsx19, jsxs as jsxs19 } from "react/jsx-runtime";
+import { jsx as jsx20, jsxs as jsxs20 } from "react/jsx-runtime";
 function SwapPanel({ initialTab = "swap", walletPublicKey }) {
-  const [activeTab, setActiveTab] = useState12(initialTab);
-  const [initializedPoolMints, setInitializedPoolMints] = useState12(/* @__PURE__ */ new Set());
-  const [ammPools, setAmmPools] = useState12([]);
-  const [isLoadingPools, setIsLoadingPools] = useState12(true);
-  const [isInitializingCircuits, setIsInitializingCircuits] = useState12(false);
-  const { client, notes, sync, initializeProver } = useCloakCraft10();
+  const [activeTab, setActiveTab] = useState13(initialTab);
+  const [initializedPoolMints, setInitializedPoolMints] = useState13(/* @__PURE__ */ new Set());
+  const [ammPools, setAmmPools] = useState13([]);
+  const [isLoadingPools, setIsLoadingPools] = useState13(true);
+  const [isInitializingCircuits, setIsInitializingCircuits] = useState13(false);
+  const { client, notes, sync, initializeProver } = useCloakCraft11();
   useEffect3(() => {
     const initCircuits = async () => {
       if (!client) return;
@@ -4451,7 +4651,7 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
       const isKnown = DEVNET_TOKENS.some((t) => t.mint.toBase58() === mintStr);
       if (!isKnown) {
         tokens.push({
-          mint: new PublicKey4(mintStr),
+          mint: new PublicKey5(mintStr),
           symbol: mintStr.slice(0, 8) + "...",
           name: mintStr,
           decimals: 9
@@ -4477,13 +4677,13 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
     { id: "remove", label: "Remove Liquidity" }
   ];
   if (isLoadingPools || isInitializingCircuits) {
-    return /* @__PURE__ */ jsx19("div", { style: { width: "100%", maxWidth: "600px", padding: "24px", textAlign: "center" }, children: isInitializingCircuits ? "Initializing swap circuits..." : "Loading pools..." });
+    return /* @__PURE__ */ jsx20("div", { style: { width: "100%", maxWidth: "600px", padding: "24px", textAlign: "center" }, children: isInitializingCircuits ? "Initializing swap circuits..." : "Loading pools..." });
   }
   if (poolTokens.length === 0) {
-    return /* @__PURE__ */ jsx19("div", { style: { width: "100%", maxWidth: "600px", padding: "24px", textAlign: "center" }, children: "No initialized pools found. Please initialize a pool first." });
+    return /* @__PURE__ */ jsx20("div", { style: { width: "100%", maxWidth: "600px", padding: "24px", textAlign: "center" }, children: "No initialized pools found. Please initialize a pool first." });
   }
-  return /* @__PURE__ */ jsxs19("div", { style: { width: "100%", maxWidth: "600px" }, children: [
-    /* @__PURE__ */ jsx19(
+  return /* @__PURE__ */ jsxs20("div", { style: { width: "100%", maxWidth: "600px" }, children: [
+    /* @__PURE__ */ jsx20(
       "div",
       {
         style: {
@@ -4492,7 +4692,7 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
           marginBottom: "24px",
           borderBottom: `1px solid ${colors.border}`
         },
-        children: tabs.map((tab) => /* @__PURE__ */ jsx19(
+        children: tabs.map((tab) => /* @__PURE__ */ jsx20(
           "button",
           {
             onClick: () => setActiveTab(tab.id),
@@ -4513,7 +4713,7 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
         ))
       }
     ),
-    activeTab === "swap" && /* @__PURE__ */ jsx19(
+    activeTab === "swap" && /* @__PURE__ */ jsx20(
       SwapForm,
       {
         tokens: poolTokens,
@@ -4532,7 +4732,7 @@ TX: ${signature}`);
         }
       }
     ),
-    activeTab === "add" && /* @__PURE__ */ jsx19(
+    activeTab === "add" && /* @__PURE__ */ jsx20(
       AddLiquidityForm,
       {
         tokens: poolTokens,
@@ -4551,7 +4751,7 @@ TX: ${signature}`);
         }
       }
     ),
-    activeTab === "remove" && tokensWithNotes.length === 0 ? /* @__PURE__ */ jsx19("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No LP tokens found. Add liquidity to a pool first." }) : activeTab === "remove" ? /* @__PURE__ */ jsx19(
+    activeTab === "remove" && tokensWithNotes.length === 0 ? /* @__PURE__ */ jsx20("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No LP tokens found. Add liquidity to a pool first." }) : activeTab === "remove" ? /* @__PURE__ */ jsx20(
       RemoveLiquidityForm,
       {
         tokens: tokensWithNotes,
@@ -4579,6 +4779,7 @@ export {
   BalanceInline,
   BalanceSummary,
   CloakCraftProvider,
+  CreatePoolForm,
   DEVNET_TOKENS,
   InitializePoolForm,
   MAINNET_TOKENS,

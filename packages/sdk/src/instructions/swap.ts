@@ -100,6 +100,65 @@ export interface PendingNullifierData {
 }
 
 // =============================================================================
+// Initialize AMM Pool
+// =============================================================================
+
+/**
+ * Initialize AMM pool instruction parameters
+ */
+export interface InitializeAmmPoolParams {
+  /** Token A mint */
+  tokenAMint: PublicKey;
+  /** Token B mint */
+  tokenBMint: PublicKey;
+  /** LP token mint keypair (must be signer) */
+  lpMint: PublicKey;
+  /** Fee in basis points (e.g., 30 = 0.3%) */
+  feeBps: number;
+  /** Authority */
+  authority: PublicKey;
+  /** Payer */
+  payer: PublicKey;
+}
+
+/**
+ * Build initialize AMM pool transaction
+ */
+export async function buildInitializeAmmPoolWithProgram(
+  program: Program,
+  params: InitializeAmmPoolParams
+): Promise<any> {
+  const programId = program.programId;
+
+  // Derive AMM pool PDA
+  const [ammPoolPda] = deriveAmmPoolPda(params.tokenAMint, params.tokenBMint, programId);
+
+  // Build transaction
+  const tx = await program.methods
+    .initializeAmmPool(
+      params.tokenAMint,
+      params.tokenBMint,
+      params.feeBps
+    )
+    .accountsStrict({
+      ammPool: ammPoolPda,
+      lpMint: params.lpMint,
+      tokenAMintAccount: params.tokenAMint,
+      tokenBMintAccount: params.tokenBMint,
+      authority: params.authority,
+      payer: params.payer,
+      systemProgram: PublicKey.default,
+      tokenProgram: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+      rent: new PublicKey('SysvarRent111111111111111111111111111111111'),
+    })
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
+    ]);
+
+  return tx;
+}
+
+// =============================================================================
 // Swap Types
 // =============================================================================
 

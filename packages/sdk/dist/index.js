@@ -551,6 +551,7 @@ __export(swap_exports, {
   buildClosePendingOperationWithProgram: () => buildClosePendingOperationWithProgram,
   buildCreateCommitmentWithProgram: () => buildCreateCommitmentWithProgram,
   buildCreateNullifierWithProgram: () => buildCreateNullifierWithProgram,
+  buildInitializeAmmPoolWithProgram: () => buildInitializeAmmPoolWithProgram,
   buildRemoveLiquidityInstructionsForVersionedTx: () => buildRemoveLiquidityInstructionsForVersionedTx,
   buildRemoveLiquidityWithProgram: () => buildRemoveLiquidityWithProgram,
   buildSwapInstructionsForVersionedTx: () => buildSwapInstructionsForVersionedTx,
@@ -582,6 +583,28 @@ function generateOperationId(nullifier, commitment, timestamp) {
     id[i] = data[i] ^ data[32 + i % 32] ^ data[64 + i % 8];
   }
   return id;
+}
+async function buildInitializeAmmPoolWithProgram(program, params) {
+  const programId = program.programId;
+  const [ammPoolPda] = deriveAmmPoolPda(params.tokenAMint, params.tokenBMint, programId);
+  const tx = await program.methods.initializeAmmPool(
+    params.tokenAMint,
+    params.tokenBMint,
+    params.feeBps
+  ).accountsStrict({
+    ammPool: ammPoolPda,
+    lpMint: params.lpMint,
+    tokenAMintAccount: params.tokenAMint,
+    tokenBMintAccount: params.tokenBMint,
+    authority: params.authority,
+    payer: params.payer,
+    systemProgram: import_web39.PublicKey.default,
+    tokenProgram: new import_web39.PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+    rent: new import_web39.PublicKey("SysvarRent111111111111111111111111111111111")
+  }).preInstructions([
+    import_web39.ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 })
+  ]);
+  return tx;
 }
 async function buildSwapWithProgram(program, params, rpcUrl) {
   console.log("[DEBUG] buildSwapWithProgram params:", {
@@ -1308,6 +1331,7 @@ __export(index_exports, {
   buildCreateNullifierWithProgram: () => buildCreateNullifierWithProgram,
   buildFillOrderWithProgram: () => buildFillOrderWithProgram,
   buildFinalizeDecryptionWithProgram: () => buildFinalizeDecryptionWithProgram,
+  buildInitializeAmmPoolWithProgram: () => buildInitializeAmmPoolWithProgram,
   buildInitializeCommitmentCounterWithProgram: () => buildInitializeCommitmentCounterWithProgram,
   buildInitializePoolWithProgram: () => buildInitializePoolWithProgram,
   buildRemoveLiquidityInstructionsForVersionedTx: () => buildRemoveLiquidityInstructionsForVersionedTx,
@@ -5112,6 +5136,35 @@ var CloakCraftClient = class {
   // AMM Swap Methods
   // =============================================================================
   /**
+   * Initialize a new AMM liquidity pool
+   *
+   * Creates a new AMM pool for a token pair. This must be done before
+   * anyone can add liquidity or swap between these tokens.
+   *
+   * @param tokenAMint - First token mint
+   * @param tokenBMint - Second token mint
+   * @param lpMintKeypair - LP token mint keypair (newly generated)
+   * @param feeBps - Trading fee in basis points (e.g., 30 = 0.3%)
+   * @param payer - Payer for transaction fees and rent
+   * @returns Transaction signature
+   */
+  async initializeAmmPool(tokenAMint, tokenBMint, lpMintKeypair, feeBps, payer) {
+    if (!this.program) {
+      throw new Error("No program set. Call setProgram() first.");
+    }
+    const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+      tokenAMint,
+      tokenBMint,
+      lpMint: lpMintKeypair.publicKey,
+      feeBps,
+      authority: payer.publicKey,
+      payer: payer.publicKey
+    });
+    const signature = await tx.signers([payer, lpMintKeypair]).rpc();
+    console.log(`[AMM] Pool initialized: ${signature}`);
+    return signature;
+  }
+  /**
    * Execute an AMM swap
    *
    * Swaps tokens through the private AMM pool.
@@ -6493,6 +6546,7 @@ init_versioned_transaction();
   buildCreateNullifierWithProgram,
   buildFillOrderWithProgram,
   buildFinalizeDecryptionWithProgram,
+  buildInitializeAmmPoolWithProgram,
   buildInitializeCommitmentCounterWithProgram,
   buildInitializePoolWithProgram,
   buildRemoveLiquidityInstructionsForVersionedTx,

@@ -63,6 +63,7 @@ import {
   buildTransactWithProgram,
   storeCommitments,
   initializePool as initPool,
+  buildInitializeAmmPoolWithProgram,
   buildSwapWithProgram,
   buildAddLiquidityWithProgram,
   buildRemoveLiquidityWithProgram,
@@ -1037,6 +1038,49 @@ export class CloakCraftClient {
   // =============================================================================
   // AMM Swap Methods
   // =============================================================================
+
+  /**
+   * Initialize a new AMM liquidity pool
+   *
+   * Creates a new AMM pool for a token pair. This must be done before
+   * anyone can add liquidity or swap between these tokens.
+   *
+   * @param tokenAMint - First token mint
+   * @param tokenBMint - Second token mint
+   * @param lpMintKeypair - LP token mint keypair (newly generated)
+   * @param feeBps - Trading fee in basis points (e.g., 30 = 0.3%)
+   * @param payer - Payer for transaction fees and rent
+   * @returns Transaction signature
+   */
+  async initializeAmmPool(
+    tokenAMint: PublicKey,
+    tokenBMint: PublicKey,
+    lpMintKeypair: SolanaKeypair,
+    feeBps: number,
+    payer: SolanaKeypair
+  ): Promise<string> {
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    // Build transaction
+    const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+      tokenAMint,
+      tokenBMint,
+      lpMint: lpMintKeypair.publicKey,
+      feeBps,
+      authority: payer.publicKey,
+      payer: payer.publicKey,
+    });
+
+    // Send transaction
+    const signature = await tx
+      .signers([payer, lpMintKeypair])
+      .rpc();
+
+    console.log(`[AMM] Pool initialized: ${signature}`);
+    return signature;
+  }
 
   /**
    * Execute an AMM swap

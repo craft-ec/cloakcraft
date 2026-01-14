@@ -20,6 +20,7 @@ import {
   buildClosePendingOperationWithProgram,
   buildCreateCommitmentWithProgram,
   buildCreateNullifierWithProgram,
+  buildInitializeAmmPoolWithProgram,
   buildRemoveLiquidityInstructionsForVersionedTx,
   buildRemoveLiquidityWithProgram,
   buildSwapInstructionsForVersionedTx,
@@ -50,7 +51,7 @@ import {
   scalarMul,
   serializeEncryptedNote,
   tryDecryptNote
-} from "./chunk-Y7T3GNME.mjs";
+} from "./chunk-TKC5TGE6.mjs";
 import {
   MAX_TRANSACTION_SIZE,
   buildAtomicMultiPhaseTransaction,
@@ -3742,6 +3743,35 @@ var CloakCraftClient = class {
   // AMM Swap Methods
   // =============================================================================
   /**
+   * Initialize a new AMM liquidity pool
+   *
+   * Creates a new AMM pool for a token pair. This must be done before
+   * anyone can add liquidity or swap between these tokens.
+   *
+   * @param tokenAMint - First token mint
+   * @param tokenBMint - Second token mint
+   * @param lpMintKeypair - LP token mint keypair (newly generated)
+   * @param feeBps - Trading fee in basis points (e.g., 30 = 0.3%)
+   * @param payer - Payer for transaction fees and rent
+   * @returns Transaction signature
+   */
+  async initializeAmmPool(tokenAMint, tokenBMint, lpMintKeypair, feeBps, payer) {
+    if (!this.program) {
+      throw new Error("No program set. Call setProgram() first.");
+    }
+    const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+      tokenAMint,
+      tokenBMint,
+      lpMint: lpMintKeypair.publicKey,
+      feeBps,
+      authority: payer.publicKey,
+      payer: payer.publicKey
+    });
+    const signature = await tx.signers([payer, lpMintKeypair]).rpc();
+    console.log(`[AMM] Pool initialized: ${signature}`);
+    return signature;
+  }
+  /**
    * Execute an AMM swap
    *
    * Swaps tokens through the private AMM pool.
@@ -3848,7 +3878,7 @@ var CloakCraftClient = class {
       instructionParams,
       heliusRpcUrl
     );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-UUMNFRQB.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CR2ENZOE.mjs");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
     for (let i = 0; i < pendingNullifiers.length; i++) {
@@ -4036,7 +4066,7 @@ var CloakCraftClient = class {
       instructionParams,
       heliusRpcUrl
     );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-UUMNFRQB.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CR2ENZOE.mjs");
     console.log("[Add Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
@@ -4177,7 +4207,7 @@ var CloakCraftClient = class {
     };
     console.log("[Remove Liquidity] Attempting atomic execution with versioned transaction...");
     try {
-      const { buildRemoveLiquidityInstructionsForVersionedTx: buildRemoveLiquidityInstructionsForVersionedTx3 } = await import("./swap-UUMNFRQB.mjs");
+      const { buildRemoveLiquidityInstructionsForVersionedTx: buildRemoveLiquidityInstructionsForVersionedTx3 } = await import("./swap-CR2ENZOE.mjs");
       const { instructions, operationId: operationId2 } = await buildRemoveLiquidityInstructionsForVersionedTx3(
         this.program,
         instructionParams,
@@ -4228,7 +4258,7 @@ var CloakCraftClient = class {
       instructionParams,
       heliusRpcUrl
     );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-UUMNFRQB.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CR2ENZOE.mjs");
     console.log("[Remove Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
@@ -5113,6 +5143,7 @@ export {
   buildCreateNullifierWithProgram,
   buildFillOrderWithProgram,
   buildFinalizeDecryptionWithProgram,
+  buildInitializeAmmPoolWithProgram,
   buildInitializeCommitmentCounterWithProgram,
   buildInitializePoolWithProgram,
   buildRemoveLiquidityInstructionsForVersionedTx,

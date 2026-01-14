@@ -34,7 +34,7 @@ declare function BalanceInline({ tokenMint, decimals, symbol, }: {
     symbol?: string;
 }): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$9 {
+interface TokenInfo$a {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -52,13 +52,13 @@ interface ShieldFormProps {
     /** Wallet public key (for wallet adapter) */
     walletPublicKey?: PublicKey | null;
     /** Token list for dropdown */
-    tokens?: TokenInfo$9[];
+    tokens?: TokenInfo$a[];
     /** Callback when token changes */
-    onTokenChange?: (token: TokenInfo$9) => void;
+    onTokenChange?: (token: TokenInfo$a) => void;
 }
 declare function ShieldForm({ tokenMint, userTokenAccount, decimals, symbol, onSuccess, onError, className, walletPublicKey, tokens, onTokenChange, }: ShieldFormProps): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$8 {
+interface TokenInfo$9 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -75,13 +75,13 @@ interface TransferFormProps {
     /** Wallet public key (for wallet adapter) */
     walletPublicKey?: PublicKey | null;
     /** Token list for dropdown */
-    tokens?: TokenInfo$8[];
+    tokens?: TokenInfo$9[];
     /** Callback when token changes */
-    onTokenChange?: (token: TokenInfo$8) => void;
+    onTokenChange?: (token: TokenInfo$9) => void;
 }
 declare function TransferForm({ tokenMint, decimals, symbol, onSuccess, onError, className, walletPublicKey, tokens, onTokenChange, }: TransferFormProps): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$7 {
+interface TokenInfo$8 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -100,9 +100,9 @@ interface UnshieldFormProps {
     /** Wallet public key (for wallet adapter) */
     walletPublicKey?: PublicKey | null;
     /** Token list for dropdown */
-    tokens?: TokenInfo$7[];
+    tokens?: TokenInfo$8[];
     /** Callback when token changes */
-    onTokenChange?: (token: TokenInfo$7) => void;
+    onTokenChange?: (token: TokenInfo$8) => void;
 }
 declare function UnshieldForm({ tokenMint, decimals, symbol, defaultRecipient, onSuccess, onError, className, walletPublicKey, tokens, onTokenChange, }: UnshieldFormProps): react_jsx_runtime.JSX.Element;
 
@@ -160,7 +160,7 @@ declare function PoolStatusBadge({ tokenMint }: {
     tokenMint: PublicKey;
 }): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$6 {
+interface TokenInfo$7 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -169,11 +169,11 @@ interface TokenInfo$6 {
 }
 interface TokenSelectorProps {
     /** List of available tokens */
-    tokens: TokenInfo$6[];
+    tokens: TokenInfo$7[];
     /** Currently selected token */
     selected?: PublicKey;
     /** Callback when token is selected */
-    onSelect: (token: TokenInfo$6) => void;
+    onSelect: (token: TokenInfo$7) => void;
     /** Show pool status badge */
     showPoolStatus?: boolean;
     /** Allow custom token input */
@@ -184,10 +184,10 @@ declare function TokenSelector({ tokens, selected, onSelect, showPoolStatus, all
 /**
  * Common token presets for devnet/mainnet
  */
-declare const DEVNET_TOKENS: TokenInfo$6[];
-declare const MAINNET_TOKENS: TokenInfo$6[];
+declare const DEVNET_TOKENS: TokenInfo$7[];
+declare const MAINNET_TOKENS: TokenInfo$7[];
 
-interface TokenInfo$5 {
+interface TokenInfo$6 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -198,7 +198,7 @@ interface PublicBalanceDisplayProps {
     /** Owner wallet address */
     owner: PublicKey;
     /** Token to display balance for */
-    token?: TokenInfo$5;
+    token?: TokenInfo$6;
     /** Show SOL balance alongside token */
     showSol?: boolean;
     /** Compact display mode */
@@ -211,7 +211,7 @@ interface PublicBalanceDisplayProps {
 declare function PublicBalanceDisplay({ owner, token, showSol, compact, className, }: PublicBalanceDisplayProps): react_jsx_runtime.JSX.Element;
 interface MultiTokenBalanceDisplayProps {
     owner: PublicKey;
-    tokens: TokenInfo$5[];
+    tokens: TokenInfo$6[];
     showSol?: boolean;
     className?: string;
 }
@@ -224,11 +224,11 @@ declare function MultiTokenBalanceDisplay({ owner, tokens, showSol, className, }
  */
 declare function BalanceSummary({ owner, token, className, }: {
     owner: PublicKey;
-    token?: TokenInfo$5;
+    token?: TokenInfo$6;
     className?: string;
 }): react_jsx_runtime.JSX.Element;
 
-interface TokenInfo$4 {
+interface TokenInfo$5 {
     mint: PublicKey;
     symbol: string;
     name: string;
@@ -236,7 +236,7 @@ interface TokenInfo$4 {
     logoUri?: string;
 }
 interface MultiPrivateBalanceDisplayProps {
-    tokens: TokenInfo$4[];
+    tokens: TokenInfo$5[];
     className?: string;
 }
 /**
@@ -269,6 +269,23 @@ declare function WalletImport({ className, onImportSuccess, onError }: WalletImp
 declare function WalletManager({ className }: {
     className?: string;
 }): react_jsx_runtime.JSX.Element;
+
+interface TokenInfo$4 {
+    mint: PublicKey;
+    symbol: string;
+    name: string;
+    decimals: number;
+    logoUri?: string;
+}
+interface CreatePoolFormProps {
+    tokens: TokenInfo$4[];
+    onSuccess?: (signature: string, tokenA: TokenInfo$4, tokenB: TokenInfo$4) => void;
+    onError?: (error: string) => void;
+    className?: string;
+    /** Wallet public key for transaction signing */
+    walletPublicKey?: PublicKey | null;
+}
+declare function CreatePoolForm({ tokens, onSuccess, onError, className, walletPublicKey, }: CreatePoolFormProps): react_jsx_runtime.JSX.Element;
 
 type AmmTab = 'swap' | 'add' | 'remove';
 interface SwapPanelProps {
@@ -369,4 +386,4 @@ declare const colors: {
 };
 declare const styles: Record<string, CSSProperties>;
 
-export { AddLiquidityForm, AmmPoolDetails, BalanceDisplay, BalanceInline, BalanceSummary, DEVNET_TOKENS, InitializePoolForm, MAINNET_TOKENS, MultiPrivateBalanceDisplay, MultiTokenBalanceDisplay, NotesList, OrderBook, PoolInfo, PoolStatusBadge, PublicBalanceDisplay, RemoveLiquidityForm, ShieldForm, SwapForm, SwapPanel, TokenSelector, TransactionHistory, TransferForm, UnshieldForm, WalletBackup, WalletButton, WalletImport, WalletManager, colors, styles };
+export { AddLiquidityForm, AmmPoolDetails, BalanceDisplay, BalanceInline, BalanceSummary, CreatePoolForm, DEVNET_TOKENS, InitializePoolForm, MAINNET_TOKENS, MultiPrivateBalanceDisplay, MultiTokenBalanceDisplay, NotesList, OrderBook, PoolInfo, PoolStatusBadge, PublicBalanceDisplay, RemoveLiquidityForm, ShieldForm, SwapForm, SwapPanel, TokenSelector, TransactionHistory, TransferForm, UnshieldForm, WalletBackup, WalletButton, WalletImport, WalletManager, colors, styles };

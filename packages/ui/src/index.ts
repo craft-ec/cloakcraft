@@ -32,6 +32,7 @@ export { MultiPrivateBalanceDisplay } from './components/MultiPrivateBalanceDisp
 export { WalletBackup, WalletImport, WalletManager } from './components/WalletBackup';
 
 // AMM / Swap
+export { CreatePoolForm } from './components/CreatePoolForm';
 export { SwapPanel } from './components/SwapPanel';
 export { SwapForm } from './components/SwapForm';
 export { AddLiquidityForm } from './components/AddLiquidityForm';
