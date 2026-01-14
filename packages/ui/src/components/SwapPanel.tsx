@@ -185,6 +185,7 @@ export function SwapPanel({ initialTab = 'swap', walletPublicKey }: SwapPanelPro
       {activeTab === 'add' && (
         <AddLiquidityForm
           tokens={poolTokens}
+          ammPools={ammPools}
           walletPublicKey={walletPublicKey}
           onSuccess={async (signature) => {
             console.log('Add liquidity success:', signature);

@@ -4,11 +4,12 @@
  * Add liquidity to an AMM pool and receive LP tokens
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { PublicKey } from '@solana/web3.js';
 import { useNoteSelector, useWallet, useCloakCraft } from '@cloakcraft/hooks';
 import { generateStealthAddress, calculateAddLiquidityAmounts } from '@cloakcraft/sdk';
 import { styles, colors } from '../styles';
+import { AmmPoolDetails } from './AmmPoolDetails';
 
 interface TokenInfo {
   mint: PublicKey;
@@ -20,6 +21,7 @@ interface TokenInfo {
 
 interface AddLiquidityFormProps {
   tokens: TokenInfo[];
+  ammPools: any[]; // AMM pool data
   onSuccess?: (signature: string) => void;
   onError?: (error: string) => void;
   className?: string;
@@ -28,26 +30,44 @@ interface AddLiquidityFormProps {
 
 export function AddLiquidityForm({
   tokens,
+  ammPools,
   onSuccess,
   onError,
   className,
   walletPublicKey,
 }: AddLiquidityFormProps) {
-  const [tokenA, setTokenA] = useState(tokens[0]);
-  const [tokenB, setTokenB] = useState(tokens[1] || tokens[0]);
+  const [selectedPool, setSelectedPool] = useState(ammPools[0]);
   const [amountA, setAmountA] = useState('');
   const [amountB, setAmountB] = useState('');
+  const [lastEditedField, setLastEditedField] = useState<'A' | 'B' | null>(null);
   const [isAdding, setIsAdding] = useState(false);
 
   const { isConnected, isInitialized, wallet } = useWallet();
   const { client } = useCloakCraft();
+
+  // Get token info for the selected pool
+  const tokenA = useMemo(() => {
+    if (!selectedPool) return tokens[0];
+    return tokens.find(t => t.mint.equals(selectedPool.tokenAMint)) || {
+      mint: selectedPool.tokenAMint,
+      symbol: selectedPool.tokenAMint.toBase58().slice(0, 8) + '...',
+      name: selectedPool.tokenAMint.toBase58(),
+      decimals: 9,
+    };
+  }, [selectedPool, tokens]);
+
+  const tokenB = useMemo(() => {
+    if (!selectedPool) return tokens[1] || tokens[0];
+    return tokens.find(t => t.mint.equals(selectedPool.tokenBMint)) || {
+      mint: selectedPool.tokenBMint,
+      symbol: selectedPool.tokenBMint.toBase58().slice(0, 8) + '...',
+      name: selectedPool.tokenBMint.toBase58(),
+      decimals: 9,
+    };
+  }, [selectedPool, tokens]);
+
   const { availableNotes: notesA, totalAvailable: totalA, selectNotesForAmount: selectA } = useNoteSelector(tokenA.mint);
   const { availableNotes: notesB, totalAvailable: totalB, selectNotesForAmount: selectB } = useNoteSelector(tokenB.mint);
-
-  // Mock pool state (TODO: fetch from on-chain)
-  const mockReserveA = 1000000n * BigInt(10 ** tokenA.decimals);
-  const mockReserveB = 1000000n * BigInt(10 ** tokenB.decimals);
-  const mockLpSupply = 1000000n * 1000000000n; // 1M LP tokens with 9 decimals
 
   const formatAmount = (value: bigint, decimals: number) => {
     const divisor = BigInt(10 ** decimals);
@@ -56,7 +76,34 @@ export function AddLiquidityForm({
     return `${whole}.${fractional.toString().padStart(decimals, '0').slice(0, 4)}`;
   };
 
+  // Auto-calculate the other amount when one field is edited
+  useEffect(() => {
+    if (!selectedPool) return;
+
+    if (lastEditedField === 'A' && amountA) {
+      const amountANum = parseFloat(amountA);
+      if (!isNaN(amountANum) && amountANum > 0) {
+        // Calculate B based on pool ratio: B = A * (reserveB / reserveA)
+        const amountALamports = BigInt(Math.floor(amountANum * 10 ** tokenA.decimals));
+        const calculatedBLamports = (amountALamports * selectedPool.reserveB) / selectedPool.reserveA;
+        const calculatedB = Number(calculatedBLamports) / (10 ** tokenB.decimals);
+        setAmountB(calculatedB.toFixed(Math.min(6, tokenB.decimals)));
+      }
+    } else if (lastEditedField === 'B' && amountB) {
+      const amountBNum = parseFloat(amountB);
+      if (!isNaN(amountBNum) && amountBNum > 0) {
+        // Calculate A based on pool ratio: A = B * (reserveA / reserveB)
+        const amountBLamports = BigInt(Math.floor(amountBNum * 10 ** tokenB.decimals));
+        const calculatedALamports = (amountBLamports * selectedPool.reserveA) / selectedPool.reserveB;
+        const calculatedA = Number(calculatedALamports) / (10 ** tokenA.decimals);
+        setAmountA(calculatedA.toFixed(Math.min(6, tokenA.decimals)));
+      }
+    }
+  }, [lastEditedField, amountA, amountB, selectedPool, tokenA.decimals, tokenB.decimals]);
+
   const liquidityQuote = useMemo(() => {
+    if (!selectedPool) return null;
+
     const amountANum = parseFloat(amountA);
     const amountBNum = parseFloat(amountB);
 
@@ -71,21 +118,21 @@ export function AddLiquidityForm({
       const { depositA, depositB, lpAmount } = calculateAddLiquidityAmounts(
         desiredA,
         desiredB,
-        mockReserveA,
-        mockReserveB,
-        mockLpSupply
+        selectedPool.reserveA,
+        selectedPool.reserveB,
+        selectedPool.lpSupply
       );
 
       return {
         depositA,
         depositB,
         lpAmount,
-        shareOfPool: Number(lpAmount * 10000n / (mockLpSupply + lpAmount)) / 100,
+        shareOfPool: Number(lpAmount * 10000n / (selectedPool.lpSupply + lpAmount)) / 100,
       };
     } catch (err) {
       return null;
     }
-  }, [amountA, amountB, tokenA.decimals, tokenB.decimals, mockReserveA, mockReserveB, mockLpSupply]);
+  }, [amountA, amountB, tokenA.decimals, tokenB.decimals, selectedPool]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -165,108 +212,124 @@ export function AddLiquidityForm({
 
   const isDisabled = !isConnected || !isInitialized || isAdding || !amountA || !amountB || !liquidityQuote;
 
+  if (ammPools.length === 0) {
+    return (
+      <div className={className} style={styles.card}>
+        <h3 style={styles.cardTitle}>Add Liquidity</h3>
+        <p style={styles.cardDescription}>
+          Provide liquidity to earn fees from swaps
+        </p>
+        <div style={{ padding: '24px', textAlign: 'center', color: colors.textMuted }}>
+          No AMM pools available. Create a pool first.
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={className} style={styles.card}>
-      <h3 style={styles.cardTitle}>Add Liquidity</h3>
-      <p style={styles.cardDescription}>
-        Provide liquidity to earn fees from swaps
-      </p>
+    <>
+      <div className={className} style={styles.card}>
+        <h3 style={styles.cardTitle}>Add Liquidity</h3>
+        <p style={styles.cardDescription}>
+          Provide liquidity to earn fees from swaps
+        </p>
 
-      <form onSubmit={handleSubmit} style={styles.form}>
-        {/* Token A */}
-        <div>
-          <label style={styles.label}>Token A</label>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+        <form onSubmit={handleSubmit} style={styles.form}>
+          {/* Pool Selection */}
+          <div>
+            <label style={styles.label}>Select Pool</label>
             <select
-              value={tokenA.mint.toBase58()}
+              value={selectedPool?.poolId.toBase58() || ''}
               onChange={(e) => {
-                const token = tokens.find(t => t.mint.toBase58() === e.target.value);
-                if (token) setTokenA(token);
+                const pool = ammPools.find(p => p.poolId.toBase58() === e.target.value);
+                if (pool) {
+                  setSelectedPool(pool);
+                  setAmountA('');
+                  setAmountB('');
+                  setLastEditedField(null);
+                }
               }}
               disabled={isAdding}
-              style={{ ...styles.input, flex: 1 }}
+              style={styles.input}
             >
-              {tokens.map(token => (
-                <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
-                  {token.symbol}
-                </option>
-              ))}
+              {ammPools.map(pool => {
+                const tA = tokens.find(t => t.mint.equals(pool.tokenAMint));
+                const tB = tokens.find(t => t.mint.equals(pool.tokenBMint));
+                const symbolA = tA?.symbol || pool.tokenAMint.toBase58().slice(0, 6) + '...';
+                const symbolB = tB?.symbol || pool.tokenBMint.toBase58().slice(0, 6) + '...';
+                return (
+                  <option key={pool.poolId.toBase58()} value={pool.poolId.toBase58()}>
+                    {symbolA} / {symbolB}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
-          <input
-            type="number"
-            value={amountA}
-            onChange={(e) => setAmountA(e.target.value)}
-            placeholder="0.00"
-            step="any"
-            min="0"
-            disabled={isAdding}
-            style={styles.input}
-          />
-
-          <div style={{ ...styles.spaceBetween, marginTop: '8px' }}>
-            <span style={{ fontSize: '0.75rem', color: colors.textMuted }}>Available</span>
-            <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>
-              {formatAmount(totalA, tokenA.decimals)} {tokenA.symbol}
-            </span>
-          </div>
-        </div>
-
-        {/* Plus Icon */}
-        <div style={{ display: 'flex', justifyContent: 'center', margin: '8px 0' }}>
-          <div
-            style={{
-              background: colors.backgroundMuted,
-              border: `1px solid ${colors.border}`,
-              borderRadius: '8px',
-              padding: '8px',
-              color: colors.text,
-            }}
-          >
-            +
-          </div>
-        </div>
-
-        {/* Token B */}
-        <div>
-          <label style={styles.label}>Token B</label>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-            <select
-              value={tokenB.mint.toBase58()}
+          {/* Token A Amount */}
+          <div>
+            <label style={styles.label}>{tokenA.symbol}</label>
+            <input
+              type="number"
+              value={amountA}
               onChange={(e) => {
-                const token = tokens.find(t => t.mint.toBase58() === e.target.value);
-                if (token) setTokenB(token);
+                setAmountA(e.target.value);
+                setLastEditedField('A');
               }}
+              placeholder="0.00"
+              step="any"
+              min="0"
               disabled={isAdding}
-              style={{ ...styles.input, flex: 1 }}
+              style={styles.input}
+            />
+
+            <div style={{ ...styles.spaceBetween, marginTop: '8px' }}>
+              <span style={{ fontSize: '0.75rem', color: colors.textMuted }}>Available</span>
+              <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                {formatAmount(totalA, tokenA.decimals)} {tokenA.symbol}
+              </span>
+            </div>
+          </div>
+
+          {/* Plus Icon */}
+          <div style={{ display: 'flex', justifyContent: 'center', margin: '8px 0' }}>
+            <div
+              style={{
+                background: colors.backgroundMuted,
+                border: `1px solid ${colors.border}`,
+                borderRadius: '8px',
+                padding: '8px',
+                color: colors.text,
+              }}
             >
-              {tokens.map(token => (
-                <option key={token.mint.toBase58()} value={token.mint.toBase58()}>
-                  {token.symbol}
-                </option>
-              ))}
-            </select>
+              +
+            </div>
           </div>
 
-          <input
-            type="number"
-            value={amountB}
-            onChange={(e) => setAmountB(e.target.value)}
-            placeholder="0.00"
-            step="any"
-            min="0"
-            disabled={isAdding}
-            style={styles.input}
-          />
+          {/* Token B Amount */}
+          <div>
+            <label style={styles.label}>{tokenB.symbol}</label>
+            <input
+              type="number"
+              value={amountB}
+              onChange={(e) => {
+                setAmountB(e.target.value);
+                setLastEditedField('B');
+              }}
+              placeholder="0.00"
+              step="any"
+              min="0"
+              disabled={isAdding}
+              style={styles.input}
+            />
 
-          <div style={{ ...styles.spaceBetween, marginTop: '8px' }}>
-            <span style={{ fontSize: '0.75rem', color: colors.textMuted }}>Available</span>
-            <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>
-              {formatAmount(totalB, tokenB.decimals)} {tokenB.symbol}
-            </span>
+            <div style={{ ...styles.spaceBetween, marginTop: '8px' }}>
+              <span style={{ fontSize: '0.75rem', color: colors.textMuted }}>Available</span>
+              <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                {formatAmount(totalB, tokenB.decimals)} {tokenB.symbol}
+              </span>
+            </div>
           </div>
-        </div>
 
         {/* Liquidity Quote */}
         {liquidityQuote && (
@@ -319,6 +382,17 @@ export function AddLiquidityForm({
           </div>
         )}
       </form>
-    </div>
+      </div>
+
+      {/* AMM Pool Details */}
+      {selectedPool && (
+        <AmmPoolDetails
+          tokenA={tokenA}
+          tokenB={tokenB}
+          pool={selectedPool}
+          className={className}
+        />
+      )}
+    </>
   );
 }

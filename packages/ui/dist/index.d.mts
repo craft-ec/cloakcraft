@@ -305,12 +305,13 @@ interface TokenInfo$2 {
 }
 interface AddLiquidityFormProps {
     tokens: TokenInfo$2[];
+    ammPools: any[];
     onSuccess?: (signature: string) => void;
     onError?: (error: string) => void;
     className?: string;
     walletPublicKey?: PublicKey | null;
 }
-declare function AddLiquidityForm({ tokens, onSuccess, onError, className, walletPublicKey, }: AddLiquidityFormProps): react_jsx_runtime.JSX.Element;
+declare function AddLiquidityForm({ tokens, ammPools, onSuccess, onError, className, walletPublicKey, }: AddLiquidityFormProps): react_jsx_runtime.JSX.Element;
 
 interface TokenInfo$1 {
     mint: PublicKey;

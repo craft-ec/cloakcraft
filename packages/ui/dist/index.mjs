@@ -2715,7 +2715,7 @@ function WalletManager({ className }) {
 }
 
 // src/components/SwapPanel.tsx
-import { useState as useState12, useEffect as useEffect2, useMemo as useMemo5 } from "react";
+import { useState as useState12, useEffect as useEffect3, useMemo as useMemo5 } from "react";
 import { PublicKey as PublicKey4 } from "@solana/web3.js";
 import { useCloakCraft as useCloakCraft9 } from "@cloakcraft/hooks";
 
@@ -3275,36 +3275,73 @@ function SwapForm({
 }
 
 // src/components/AddLiquidityForm.tsx
-import { useState as useState10, useMemo as useMemo3 } from "react";
+import { useState as useState10, useMemo as useMemo3, useEffect as useEffect2 } from "react";
 import { useNoteSelector as useNoteSelector5, useWallet as useWallet9, useCloakCraft as useCloakCraft7 } from "@cloakcraft/hooks";
 import { calculateAddLiquidityAmounts } from "@cloakcraft/sdk";
-import { jsx as jsx17, jsxs as jsxs17 } from "react/jsx-runtime";
+import { Fragment as Fragment4, jsx as jsx17, jsxs as jsxs17 } from "react/jsx-runtime";
 function AddLiquidityForm({
   tokens,
+  ammPools,
   onSuccess,
   onError,
   className,
   walletPublicKey
 }) {
-  const [tokenA, setTokenA] = useState10(tokens[0]);
-  const [tokenB, setTokenB] = useState10(tokens[1] || tokens[0]);
+  const [selectedPool, setSelectedPool] = useState10(ammPools[0]);
   const [amountA, setAmountA] = useState10("");
   const [amountB, setAmountB] = useState10("");
+  const [lastEditedField, setLastEditedField] = useState10(null);
   const [isAdding, setIsAdding] = useState10(false);
   const { isConnected, isInitialized, wallet } = useWallet9();
   const { client } = useCloakCraft7();
+  const tokenA = useMemo3(() => {
+    if (!selectedPool) return tokens[0];
+    return tokens.find((t) => t.mint.equals(selectedPool.tokenAMint)) || {
+      mint: selectedPool.tokenAMint,
+      symbol: selectedPool.tokenAMint.toBase58().slice(0, 8) + "...",
+      name: selectedPool.tokenAMint.toBase58(),
+      decimals: 9
+    };
+  }, [selectedPool, tokens]);
+  const tokenB = useMemo3(() => {
+    if (!selectedPool) return tokens[1] || tokens[0];
+    return tokens.find((t) => t.mint.equals(selectedPool.tokenBMint)) || {
+      mint: selectedPool.tokenBMint,
+      symbol: selectedPool.tokenBMint.toBase58().slice(0, 8) + "...",
+      name: selectedPool.tokenBMint.toBase58(),
+      decimals: 9
+    };
+  }, [selectedPool, tokens]);
   const { availableNotes: notesA, totalAvailable: totalA, selectNotesForAmount: selectA } = useNoteSelector5(tokenA.mint);
   const { availableNotes: notesB, totalAvailable: totalB, selectNotesForAmount: selectB } = useNoteSelector5(tokenB.mint);
-  const mockReserveA = 1000000n * BigInt(10 ** tokenA.decimals);
-  const mockReserveB = 1000000n * BigInt(10 ** tokenB.decimals);
-  const mockLpSupply = 1000000n * 1000000000n;
   const formatAmount = (value, decimals) => {
     const divisor = BigInt(10 ** decimals);
     const whole = value / divisor;
     const fractional = value % divisor;
     return `${whole}.${fractional.toString().padStart(decimals, "0").slice(0, 4)}`;
   };
+  useEffect2(() => {
+    if (!selectedPool) return;
+    if (lastEditedField === "A" && amountA) {
+      const amountANum = parseFloat(amountA);
+      if (!isNaN(amountANum) && amountANum > 0) {
+        const amountALamports = BigInt(Math.floor(amountANum * 10 ** tokenA.decimals));
+        const calculatedBLamports = amountALamports * selectedPool.reserveB / selectedPool.reserveA;
+        const calculatedB = Number(calculatedBLamports) / 10 ** tokenB.decimals;
+        setAmountB(calculatedB.toFixed(Math.min(6, tokenB.decimals)));
+      }
+    } else if (lastEditedField === "B" && amountB) {
+      const amountBNum = parseFloat(amountB);
+      if (!isNaN(amountBNum) && amountBNum > 0) {
+        const amountBLamports = BigInt(Math.floor(amountBNum * 10 ** tokenB.decimals));
+        const calculatedALamports = amountBLamports * selectedPool.reserveA / selectedPool.reserveB;
+        const calculatedA = Number(calculatedALamports) / 10 ** tokenA.decimals;
+        setAmountA(calculatedA.toFixed(Math.min(6, tokenA.decimals)));
+      }
+    }
+  }, [lastEditedField, amountA, amountB, selectedPool, tokenA.decimals, tokenB.decimals]);
   const liquidityQuote = useMemo3(() => {
+    if (!selectedPool) return null;
     const amountANum = parseFloat(amountA);
     const amountBNum = parseFloat(amountB);
     if (isNaN(amountANum) || amountANum <= 0 || isNaN(amountBNum) || amountBNum <= 0) {
@@ -3316,20 +3353,20 @@ function AddLiquidityForm({
       const { depositA, depositB, lpAmount } = calculateAddLiquidityAmounts(
         desiredA,
         desiredB,
-        mockReserveA,
-        mockReserveB,
-        mockLpSupply
+        selectedPool.reserveA,
+        selectedPool.reserveB,
+        selectedPool.lpSupply
       );
       return {
         depositA,
         depositB,
         lpAmount,
-        shareOfPool: Number(lpAmount * 10000n / (mockLpSupply + lpAmount)) / 100
+        shareOfPool: Number(lpAmount * 10000n / (selectedPool.lpSupply + lpAmount)) / 100
       };
     } catch (err) {
       return null;
     }
-  }, [amountA, amountB, tokenA.decimals, tokenB.decimals, mockReserveA, mockReserveB, mockLpSupply]);
+  }, [amountA, amountB, tokenA.decimals, tokenB.decimals, selectedPool]);
   const handleSubmit = async (e) => {
     e.preventDefault();
     const amountANum = parseFloat(amountA);
@@ -3376,145 +3413,174 @@ function AddLiquidityForm({
     }
   };
   const isDisabled = !isConnected || !isInitialized || isAdding || !amountA || !amountB || !liquidityQuote;
-  return /* @__PURE__ */ jsxs17("div", { className, style: styles.card, children: [
-    /* @__PURE__ */ jsx17("h3", { style: styles.cardTitle, children: "Add Liquidity" }),
-    /* @__PURE__ */ jsx17("p", { style: styles.cardDescription, children: "Provide liquidity to earn fees from swaps" }),
-    /* @__PURE__ */ jsxs17("form", { onSubmit: handleSubmit, style: styles.form, children: [
-      /* @__PURE__ */ jsxs17("div", { children: [
-        /* @__PURE__ */ jsx17("label", { style: styles.label, children: "Token A" }),
-        /* @__PURE__ */ jsx17("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" }, children: /* @__PURE__ */ jsx17(
-          "select",
+  if (ammPools.length === 0) {
+    return /* @__PURE__ */ jsxs17("div", { className, style: styles.card, children: [
+      /* @__PURE__ */ jsx17("h3", { style: styles.cardTitle, children: "Add Liquidity" }),
+      /* @__PURE__ */ jsx17("p", { style: styles.cardDescription, children: "Provide liquidity to earn fees from swaps" }),
+      /* @__PURE__ */ jsx17("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No AMM pools available. Create a pool first." })
+    ] });
+  }
+  return /* @__PURE__ */ jsxs17(Fragment4, { children: [
+    /* @__PURE__ */ jsxs17("div", { className, style: styles.card, children: [
+      /* @__PURE__ */ jsx17("h3", { style: styles.cardTitle, children: "Add Liquidity" }),
+      /* @__PURE__ */ jsx17("p", { style: styles.cardDescription, children: "Provide liquidity to earn fees from swaps" }),
+      /* @__PURE__ */ jsxs17("form", { onSubmit: handleSubmit, style: styles.form, children: [
+        /* @__PURE__ */ jsxs17("div", { children: [
+          /* @__PURE__ */ jsx17("label", { style: styles.label, children: "Select Pool" }),
+          /* @__PURE__ */ jsx17(
+            "select",
+            {
+              value: selectedPool?.poolId.toBase58() || "",
+              onChange: (e) => {
+                const pool = ammPools.find((p) => p.poolId.toBase58() === e.target.value);
+                if (pool) {
+                  setSelectedPool(pool);
+                  setAmountA("");
+                  setAmountB("");
+                  setLastEditedField(null);
+                }
+              },
+              disabled: isAdding,
+              style: styles.input,
+              children: ammPools.map((pool) => {
+                const tA = tokens.find((t) => t.mint.equals(pool.tokenAMint));
+                const tB = tokens.find((t) => t.mint.equals(pool.tokenBMint));
+                const symbolA = tA?.symbol || pool.tokenAMint.toBase58().slice(0, 6) + "...";
+                const symbolB = tB?.symbol || pool.tokenBMint.toBase58().slice(0, 6) + "...";
+                return /* @__PURE__ */ jsxs17("option", { value: pool.poolId.toBase58(), children: [
+                  symbolA,
+                  " / ",
+                  symbolB
+                ] }, pool.poolId.toBase58());
+              })
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxs17("div", { children: [
+          /* @__PURE__ */ jsx17("label", { style: styles.label, children: tokenA.symbol }),
+          /* @__PURE__ */ jsx17(
+            "input",
+            {
+              type: "number",
+              value: amountA,
+              onChange: (e) => {
+                setAmountA(e.target.value);
+                setLastEditedField("A");
+              },
+              placeholder: "0.00",
+              step: "any",
+              min: "0",
+              disabled: isAdding,
+              style: styles.input
+            }
+          ),
+          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
+            /* @__PURE__ */ jsx17("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
+            /* @__PURE__ */ jsxs17("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
+              formatAmount(totalA, tokenA.decimals),
+              " ",
+              tokenA.symbol
+            ] })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsx17("div", { style: { display: "flex", justifyContent: "center", margin: "8px 0" }, children: /* @__PURE__ */ jsx17(
+          "div",
           {
-            value: tokenA.mint.toBase58(),
-            onChange: (e) => {
-              const token = tokens.find((t) => t.mint.toBase58() === e.target.value);
-              if (token) setTokenA(token);
+            style: {
+              background: colors.backgroundMuted,
+              border: `1px solid ${colors.border}`,
+              borderRadius: "8px",
+              padding: "8px",
+              color: colors.text
             },
-            disabled: isAdding,
-            style: { ...styles.input, flex: 1 },
-            children: tokens.map((token) => /* @__PURE__ */ jsx17("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
+            children: "+"
           }
         ) }),
-        /* @__PURE__ */ jsx17(
-          "input",
-          {
-            type: "number",
-            value: amountA,
-            onChange: (e) => setAmountA(e.target.value),
-            placeholder: "0.00",
-            step: "any",
-            min: "0",
-            disabled: isAdding,
-            style: styles.input
-          }
-        ),
-        /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
-          /* @__PURE__ */ jsx17("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
-          /* @__PURE__ */ jsxs17("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
-            formatAmount(totalA, tokenA.decimals),
-            " ",
-            tokenA.symbol
+        /* @__PURE__ */ jsxs17("div", { children: [
+          /* @__PURE__ */ jsx17("label", { style: styles.label, children: tokenB.symbol }),
+          /* @__PURE__ */ jsx17(
+            "input",
+            {
+              type: "number",
+              value: amountB,
+              onChange: (e) => {
+                setAmountB(e.target.value);
+                setLastEditedField("B");
+              },
+              placeholder: "0.00",
+              step: "any",
+              min: "0",
+              disabled: isAdding,
+              style: styles.input
+            }
+          ),
+          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
+            /* @__PURE__ */ jsx17("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
+            /* @__PURE__ */ jsxs17("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
+              formatAmount(totalB, tokenB.decimals),
+              " ",
+              tokenB.symbol
+            ] })
           ] })
-        ] })
-      ] }),
-      /* @__PURE__ */ jsx17("div", { style: { display: "flex", justifyContent: "center", margin: "8px 0" }, children: /* @__PURE__ */ jsx17(
-        "div",
-        {
-          style: {
-            background: colors.backgroundMuted,
-            border: `1px solid ${colors.border}`,
-            borderRadius: "8px",
-            padding: "8px",
-            color: colors.text
-          },
-          children: "+"
-        }
-      ) }),
-      /* @__PURE__ */ jsxs17("div", { children: [
-        /* @__PURE__ */ jsx17("label", { style: styles.label, children: "Token B" }),
-        /* @__PURE__ */ jsx17("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" }, children: /* @__PURE__ */ jsx17(
-          "select",
+        ] }),
+        liquidityQuote && /* @__PURE__ */ jsxs17("div", { style: {
+          background: colors.backgroundMuted,
+          padding: "12px",
+          borderRadius: "8px",
+          fontSize: "0.875rem"
+        }, children: [
+          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Actual Deposit A" }),
+            /* @__PURE__ */ jsxs17("span", { children: [
+              formatAmount(liquidityQuote.depositA, tokenA.decimals),
+              " ",
+              tokenA.symbol
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Actual Deposit B" }),
+            /* @__PURE__ */ jsxs17("span", { children: [
+              formatAmount(liquidityQuote.depositB, tokenB.decimals),
+              " ",
+              tokenB.symbol
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "LP Tokens" }),
+            /* @__PURE__ */ jsx17("span", { children: formatAmount(liquidityQuote.lpAmount, 9) })
+          ] }),
+          /* @__PURE__ */ jsxs17("div", { style: styles.spaceBetween, children: [
+            /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Share of Pool" }),
+            /* @__PURE__ */ jsxs17("span", { children: [
+              liquidityQuote.shareOfPool.toFixed(2),
+              "%"
+            ] })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsx17(
+          "button",
           {
-            value: tokenB.mint.toBase58(),
-            onChange: (e) => {
-              const token = tokens.find((t) => t.mint.toBase58() === e.target.value);
-              if (token) setTokenB(token);
+            type: "submit",
+            disabled: isDisabled,
+            style: {
+              ...styles.buttonPrimary,
+              ...isDisabled ? styles.buttonDisabled : {}
             },
-            disabled: isAdding,
-            style: { ...styles.input, flex: 1 },
-            children: tokens.map((token) => /* @__PURE__ */ jsx17("option", { value: token.mint.toBase58(), children: token.symbol }, token.mint.toBase58()))
-          }
-        ) }),
-        /* @__PURE__ */ jsx17(
-          "input",
-          {
-            type: "number",
-            value: amountB,
-            onChange: (e) => setAmountB(e.target.value),
-            placeholder: "0.00",
-            step: "any",
-            min: "0",
-            disabled: isAdding,
-            style: styles.input
+            children: !isConnected ? "Connect Wallet" : !isInitialized ? "Initializing..." : isAdding ? "Adding Liquidity..." : "Add Liquidity"
           }
         ),
-        /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginTop: "8px" }, children: [
-          /* @__PURE__ */ jsx17("span", { style: { fontSize: "0.75rem", color: colors.textMuted }, children: "Available" }),
-          /* @__PURE__ */ jsxs17("span", { style: { fontSize: "0.75rem", fontWeight: 600 }, children: [
-            formatAmount(totalB, tokenB.decimals),
-            " ",
-            tokenB.symbol
-          ] })
-        ] })
-      ] }),
-      liquidityQuote && /* @__PURE__ */ jsxs17("div", { style: {
-        background: colors.backgroundMuted,
-        padding: "12px",
-        borderRadius: "8px",
-        fontSize: "0.875rem"
-      }, children: [
-        /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-          /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Actual Deposit A" }),
-          /* @__PURE__ */ jsxs17("span", { children: [
-            formatAmount(liquidityQuote.depositA, tokenA.decimals),
-            " ",
-            tokenA.symbol
-          ] })
-        ] }),
-        /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-          /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Actual Deposit B" }),
-          /* @__PURE__ */ jsxs17("span", { children: [
-            formatAmount(liquidityQuote.depositB, tokenB.decimals),
-            " ",
-            tokenB.symbol
-          ] })
-        ] }),
-        /* @__PURE__ */ jsxs17("div", { style: { ...styles.spaceBetween, marginBottom: "8px" }, children: [
-          /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "LP Tokens" }),
-          /* @__PURE__ */ jsx17("span", { children: formatAmount(liquidityQuote.lpAmount, 9) })
-        ] }),
-        /* @__PURE__ */ jsxs17("div", { style: styles.spaceBetween, children: [
-          /* @__PURE__ */ jsx17("span", { style: { color: colors.textMuted }, children: "Share of Pool" }),
-          /* @__PURE__ */ jsxs17("span", { children: [
-            liquidityQuote.shareOfPool.toFixed(2),
-            "%"
-          ] })
-        ] })
-      ] }),
-      /* @__PURE__ */ jsx17(
-        "button",
-        {
-          type: "submit",
-          disabled: isDisabled,
-          style: {
-            ...styles.buttonPrimary,
-            ...isDisabled ? styles.buttonDisabled : {}
-          },
-          children: !isConnected ? "Connect Wallet" : !isInitialized ? "Initializing..." : isAdding ? "Adding Liquidity..." : "Add Liquidity"
-        }
-      ),
-      liquidityQuote && (liquidityQuote.depositA !== BigInt(Math.floor(parseFloat(amountA) * 10 ** tokenA.decimals)) || liquidityQuote.depositB !== BigInt(Math.floor(parseFloat(amountB) * 10 ** tokenB.decimals))) && /* @__PURE__ */ jsx17("div", { style: { ...styles.errorText, background: colors.backgroundMuted, padding: "12px", borderRadius: "8px", color: colors.textMuted }, children: "Note: Amounts will be adjusted to match pool ratio" })
-    ] })
+        liquidityQuote && (liquidityQuote.depositA !== BigInt(Math.floor(parseFloat(amountA) * 10 ** tokenA.decimals)) || liquidityQuote.depositB !== BigInt(Math.floor(parseFloat(amountB) * 10 ** tokenB.decimals))) && /* @__PURE__ */ jsx17("div", { style: { ...styles.errorText, background: colors.backgroundMuted, padding: "12px", borderRadius: "8px", color: colors.textMuted }, children: "Note: Amounts will be adjusted to match pool ratio" })
+      ] })
+    ] }),
+    selectedPool && /* @__PURE__ */ jsx17(
+      AmmPoolDetails,
+      {
+        tokenA,
+        tokenB,
+        pool: selectedPool,
+        className
+      }
+    )
   ] });
 }
 
@@ -3749,7 +3815,7 @@ function SwapPanel({ initialTab = "swap", walletPublicKey }) {
   const [ammPools, setAmmPools] = useState12([]);
   const [isLoadingPools, setIsLoadingPools] = useState12(true);
   const { client, notes, sync } = useCloakCraft9();
-  useEffect2(() => {
+  useEffect3(() => {
     const fetchPools = async () => {
       if (!client) return;
       setIsLoadingPools(true);
@@ -3867,6 +3933,7 @@ TX: ${signature}`);
       AddLiquidityForm,
       {
         tokens: poolTokens,
+        ammPools,
         walletPublicKey,
         onSuccess: async (signature) => {
           console.log("Add liquidity success:", signature);
