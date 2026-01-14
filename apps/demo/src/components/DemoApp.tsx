@@ -27,7 +27,9 @@ import {
   DEVNET_TOKENS,
   colors,
   styles,
-  SwapPanel,
+  SwapForm,
+  AddLiquidityForm,
+  RemoveLiquidityForm,
   CreatePoolForm,
 } from '@cloakcraft/ui';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
@@ -55,12 +57,12 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
 
   // Sub-tab state for Wallet (synced with URL)
   type WalletSubTab = 'account' | 'pool' | 'operations' | 'notes';
-  type SwapSubTab = 'swap' | 'liquidity' | 'create-pool';
+  type SwapSubTab = 'swap' | 'add-liquidity' | 'remove-liquidity' | 'create-pool';
   const subTabParam = searchParams.get('subtab');
   const walletSubTab = (subTabParam && ['account', 'pool', 'operations', 'notes'].includes(subTabParam)
     ? subTabParam
     : 'account') as WalletSubTab;
-  const swapSubTab = (subTabParam && ['swap', 'liquidity', 'create-pool'].includes(subTabParam)
+  const swapSubTab = (subTabParam && ['swap', 'add-liquidity', 'remove-liquidity', 'create-pool'].includes(subTabParam)
     ? subTabParam
     : 'swap') as SwapSubTab;
 
@@ -320,7 +322,8 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
             >
               {[
                 { id: 'swap' as SwapSubTab, label: 'Swap' },
-                { id: 'liquidity' as SwapSubTab, label: 'Liquidity' },
+                { id: 'add-liquidity' as SwapSubTab, label: 'Add Liquidity' },
+                { id: 'remove-liquidity' as SwapSubTab, label: 'Remove Liquidity' },
                 { id: 'create-pool' as SwapSubTab, label: 'Create Pool' },
               ].map((subTab) => (
                 <button
@@ -348,23 +351,7 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
             </div>
 
             {/* Sub-tab Content */}
-            {swapSubTab === 'swap' && (
-              <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
-                <SwapPanel walletPublicKey={solanaPublicKey} />
-              </div>
-            )}
-
-            {swapSubTab === 'liquidity' && (
-              <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
-                <div style={{ color: colors.textMuted, textAlign: 'center' }}>
-                  Liquidity management coming soon
-                </div>
-              </div>
-            )}
-
-            {swapSubTab === 'create-pool' && (
-              <CreatePoolTab walletPublicKey={solanaPublicKey} />
-            )}
+            <SwapTabContent swapSubTab={swapSubTab} walletPublicKey={solanaPublicKey} />
           </div>
         )}
       </main>
@@ -385,6 +372,191 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
           CloakCraft Demo · Running on Solana Devnet
         </p>
       </footer>
+    </div>
+  );
+}
+
+function SwapTabContent({
+  swapSubTab,
+  walletPublicKey,
+}: {
+  swapSubTab: 'swap' | 'add-liquidity' | 'remove-liquidity' | 'create-pool';
+  walletPublicKey: PublicKey | null;
+}) {
+  const [initializedPoolMints, setInitializedPoolMints] = useState<Set<string>>(new Set());
+  const [ammPools, setAmmPools] = useState<any[]>([]);
+  const [isLoadingPools, setIsLoadingPools] = useState(true);
+  const [isInitializingCircuits, setIsInitializingCircuits] = useState(false);
+  const { client, notes, initializeProver } = useCloakCraft();
+
+  // Initialize swap circuits on mount
+  useEffect(() => {
+    const initCircuits = async () => {
+      if (!client) return;
+      setIsInitializingCircuits(true);
+
+      try {
+        await initializeProver(['swap/swap', 'swap/add_liquidity', 'swap/remove_liquidity']);
+        console.log('[SwapTab] Swap circuits initialized');
+      } catch (err) {
+        console.error('[SwapTab] Failed to initialize swap circuits:', err);
+      } finally {
+        setIsInitializingCircuits(false);
+      }
+    };
+
+    initCircuits();
+  }, [client, initializeProver]);
+
+  // Fetch pools
+  useEffect(() => {
+    const fetchPools = async () => {
+      if (!client) return;
+
+      if (!client.getProgram()) {
+        console.log('[SwapTab] Waiting for program to be configured...');
+        return;
+      }
+
+      setIsLoadingPools(true);
+
+      try {
+        const pools = await client.getAllPools();
+        const poolsWithLiquidity = pools.filter((pool) => pool.totalShielded > BigInt(0));
+        const mints = new Set(poolsWithLiquidity.map((pool) => pool.tokenMint.toBase58()));
+        setInitializedPoolMints(mints);
+
+        const ammPoolList = await client.getAllAmmPools();
+        const activeAmmPools = ammPoolList.filter(
+          (pool) => pool.isActive && pool.reserveA > BigInt(0) && pool.reserveB > BigInt(0)
+        );
+        setAmmPools(activeAmmPools);
+      } catch (err) {
+        console.error('Error fetching pools:', err);
+        setInitializedPoolMints(new Set());
+        setAmmPools([]);
+      }
+      setIsLoadingPools(false);
+    };
+
+    fetchPools();
+  }, [client]);
+
+  // Get pool tokens
+  const poolTokens = useMemo(() => {
+    const tokens: typeof DEVNET_TOKENS = [];
+
+    DEVNET_TOKENS.forEach((token) => {
+      if (initializedPoolMints.has(token.mint.toBase58())) {
+        tokens.push(token);
+      }
+    });
+
+    initializedPoolMints.forEach((mintStr) => {
+      const isKnown = DEVNET_TOKENS.some(t => t.mint.toBase58() === mintStr);
+      if (!isKnown) {
+        tokens.push({
+          mint: new PublicKey(mintStr),
+          symbol: mintStr.slice(0, 8) + '...',
+          name: mintStr,
+          decimals: 9,
+        });
+      }
+    });
+
+    return tokens;
+  }, [initializedPoolMints]);
+
+  // Tokens with notes (for remove liquidity)
+  const tokensWithNotes = useMemo(() => {
+    const notesByMint = new Map<string, number>();
+    notes.forEach((note) => {
+      const mintStr = note.tokenMint.toBase58();
+      notesByMint.set(mintStr, (notesByMint.get(mintStr) || 0) + 1);
+    });
+
+    return poolTokens.filter((token) => {
+      const noteCount = notesByMint.get(token.mint.toBase58()) || 0;
+      return noteCount > 0;
+    });
+  }, [poolTokens, notes]);
+
+  if (isLoadingPools || isInitializingCircuits) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 0' }}>
+        <div style={{ color: colors.textMuted, textAlign: 'center' }}>
+          {isInitializingCircuits ? 'Initializing swap circuits...' : 'Loading pools...'}
+        </div>
+      </div>
+    );
+  }
+
+  // Create pool doesn't need pools to be loaded
+  if (swapSubTab === 'create-pool') {
+    return <CreatePoolTab walletPublicKey={walletPublicKey} />;
+  }
+
+  if (poolTokens.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 0' }}>
+        <div style={{ color: colors.textMuted, textAlign: 'center', maxWidth: '500px' }}>
+          <p>No initialized pools found. Please initialize a pool first in the Wallet tab, or create a new AMM pool.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
+      <div style={{ width: '100%', maxWidth: '600px' }}>
+        {swapSubTab === 'swap' && (
+          <SwapForm
+            tokens={poolTokens}
+            ammPools={ammPools}
+            walletPublicKey={walletPublicKey}
+            onSuccess={async (tx) => {
+              console.log('Swap success:', tx);
+              alert(`Swap successful!\nTX: ${tx}`);
+            }}
+            onError={(err) => {
+              console.error('Swap error:', err);
+              alert(`Swap error: ${err}`);
+            }}
+          />
+        )}
+
+        {swapSubTab === 'add-liquidity' && (
+          <AddLiquidityForm
+            tokens={poolTokens}
+            ammPools={ammPools}
+            walletPublicKey={walletPublicKey}
+            onSuccess={async (tx) => {
+              console.log('Add liquidity success:', tx);
+              alert(`Liquidity added!\nTX: ${tx}`);
+            }}
+            onError={(err) => {
+              console.error('Add liquidity error:', err);
+              alert(`Add liquidity error: ${err}`);
+            }}
+          />
+        )}
+
+        {swapSubTab === 'remove-liquidity' && (
+          <RemoveLiquidityForm
+            tokens={tokensWithNotes}
+            ammPools={ammPools}
+            walletPublicKey={walletPublicKey}
+            onSuccess={async (tx) => {
+              console.log('Remove liquidity success:', tx);
+              alert(`Liquidity removed!\nTX: ${tx}`);
+            }}
+            onError={(err) => {
+              console.error('Remove liquidity error:', err);
+              alert(`Remove liquidity error: ${err}`);
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }
