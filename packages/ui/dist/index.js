@@ -2933,10 +2933,12 @@ function CreatePoolForm({
   const [tokenAMint, setTokenAMint] = (0, import_react12.useState)("");
   const [tokenBMint, setTokenBMint] = (0, import_react12.useState)("");
   const [feeBps, setFeeBps] = (0, import_react12.useState)("30");
+  const [depositAAmount, setDepositAAmount] = (0, import_react12.useState)("");
+  const [depositBAmount, setDepositBAmount] = (0, import_react12.useState)("");
   const [isCreating, setIsCreating] = (0, import_react12.useState)(false);
   const [error, setError] = (0, import_react12.useState)(null);
   const [result, setResult] = (0, import_react12.useState)(null);
-  const { client } = (0, import_hooks15.useCloakCraft)();
+  const { client, wallet, notes } = (0, import_hooks15.useCloakCraft)();
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
@@ -2972,6 +2974,26 @@ function CreatePoolForm({
       onError?.(err);
       return;
     }
+    if (hasDeposits) {
+      if (!wallet) {
+        const err = "Stealth wallet not connected. Required for adding liquidity.";
+        setError(err);
+        onError?.(err);
+        return;
+      }
+      if (depositA > availableA) {
+        const err = `Insufficient ${selectedTokenA?.symbol} balance. Available: ${(Number(availableA) / Math.pow(10, selectedTokenA?.decimals || 9)).toFixed(6)}`;
+        setError(err);
+        onError?.(err);
+        return;
+      }
+      if (depositB > availableB) {
+        const err = `Insufficient ${selectedTokenB?.symbol} balance. Available: ${(Number(availableB) / Math.pow(10, selectedTokenB?.decimals || 9)).toFixed(6)}`;
+        setError(err);
+        onError?.(err);
+        return;
+      }
+    }
     setIsCreating(true);
     try {
       const tokenA = new import_web34.PublicKey(tokenAMint);
@@ -2995,9 +3017,16 @@ function CreatePoolForm({
       if (selectedTokenA2 && selectedTokenB2) {
         onSuccess?.(signature, selectedTokenA2, selectedTokenB2);
       }
+      if (hasDeposits) {
+        alert(`Pool created! Transaction: ${signature}
+
+To add your initial liquidity, go to the Liquidity tab.`);
+      }
       setTokenAMint("");
       setTokenBMint("");
       setFeeBps("30");
+      setDepositAAmount("");
+      setDepositBAmount("");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create pool";
       setError(message);
@@ -3008,6 +3037,11 @@ function CreatePoolForm({
   };
   const selectedTokenA = tokens.find((t) => t.mint.toBase58() === tokenAMint);
   const selectedTokenB = tokens.find((t) => t.mint.toBase58() === tokenBMint);
+  const availableA = selectedTokenA ? notes.filter((n) => n.tokenMint && n.tokenMint.equals(selectedTokenA.mint)).reduce((sum, n) => sum + (n.amount || BigInt(0)), BigInt(0)) : BigInt(0);
+  const availableB = selectedTokenB ? notes.filter((n) => n.tokenMint && n.tokenMint.equals(selectedTokenB.mint)).reduce((sum, n) => sum + (n.amount || BigInt(0)), BigInt(0)) : BigInt(0);
+  const depositA = depositAAmount ? BigInt(Math.floor(parseFloat(depositAAmount) * Math.pow(10, selectedTokenA?.decimals || 9))) : BigInt(0);
+  const depositB = depositBAmount ? BigInt(Math.floor(parseFloat(depositBAmount) * Math.pow(10, selectedTokenB?.decimals || 9))) : BigInt(0);
+  const hasDeposits = depositA > BigInt(0) && depositB > BigInt(0);
   const isDisabled = isCreating || !tokenAMint || !tokenBMint || !walletPublicKey;
   return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className, style: styles.card, children: [
     /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("h3", { style: styles.cardTitle, children: "Create Liquidity Pool" }),
@@ -3071,6 +3105,62 @@ function CreatePoolForm({
         ),
         /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "4px" }, children: feeBps ? `${parseFloat(feeBps) / 100}% trading fee` : "Default: 0.3%" })
       ] }),
+      selectedTokenA && selectedTokenB && /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(import_jsx_runtime15.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { style: {
+          borderTop: `1px solid ${colors.border}`,
+          marginTop: "20px",
+          paddingTop: "20px"
+        }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("h4", { style: { margin: "0 0 16px 0", fontSize: "0.9375rem", fontWeight: 600 }, children: "Initial Liquidity (Optional)" }),
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { style: { fontSize: "0.8125rem", color: colors.textMuted, marginBottom: "16px" }, children: "Add liquidity immediately after pool creation. Requires shielded tokens. Will be executed as a separate transaction after pool initialization." })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("label", { style: styles.label, children: [
+          selectedTokenA.symbol,
+          " Deposit Amount",
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+            "input",
+            {
+              type: "number",
+              value: depositAAmount,
+              onChange: (e) => setDepositAAmount(e.target.value),
+              placeholder: "0.0",
+              min: "0",
+              step: "0.000001",
+              disabled: isCreating,
+              style: styles.input
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "4px" }, children: [
+            "Available: ",
+            (Number(availableA) / Math.pow(10, selectedTokenA.decimals)).toFixed(6),
+            " ",
+            selectedTokenA.symbol
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("label", { style: styles.label, children: [
+          selectedTokenB.symbol,
+          " Deposit Amount",
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+            "input",
+            {
+              type: "number",
+              value: depositBAmount,
+              onChange: (e) => setDepositBAmount(e.target.value),
+              placeholder: "0.0",
+              min: "0",
+              step: "0.000001",
+              disabled: isCreating,
+              style: styles.input
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "4px" }, children: [
+            "Available: ",
+            (Number(availableB) / Math.pow(10, selectedTokenB.decimals)).toFixed(6),
+            " ",
+            selectedTokenB.symbol
+          ] })
+        ] })
+      ] }),
       selectedTokenA && selectedTokenB && /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { style: styles.infoBox, children: [
         /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { style: { fontWeight: 600, marginBottom: "8px" }, children: "Pool Details" }),
         /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { style: { fontSize: "0.875rem" }, children: [
@@ -3084,6 +3174,19 @@ function CreatePoolForm({
             "Fee: ",
             parseFloat(feeBps) / 100,
             "%"
+          ] }),
+          hasDeposits && /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(import_jsx_runtime15.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { style: { marginTop: "8px", paddingTop: "8px", borderTop: `1px solid ${colors.border}` }, children: "Initial Liquidity:" }),
+            /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { children: [
+              depositAAmount,
+              " ",
+              selectedTokenA.symbol
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { children: [
+              depositBAmount,
+              " ",
+              selectedTokenB.symbol
+            ] })
           ] })
         ] })
       ] }),

@@ -2858,7 +2858,7 @@ function WalletManager({ className }) {
 import { useState as useState9 } from "react";
 import { PublicKey as PublicKey4, Keypair } from "@solana/web3.js";
 import { useCloakCraft as useCloakCraft7 } from "@cloakcraft/hooks";
-import { jsx as jsx15, jsxs as jsxs15 } from "react/jsx-runtime";
+import { Fragment as Fragment3, jsx as jsx15, jsxs as jsxs15 } from "react/jsx-runtime";
 function CreatePoolForm({
   tokens,
   onSuccess,
@@ -2869,10 +2869,12 @@ function CreatePoolForm({
   const [tokenAMint, setTokenAMint] = useState9("");
   const [tokenBMint, setTokenBMint] = useState9("");
   const [feeBps, setFeeBps] = useState9("30");
+  const [depositAAmount, setDepositAAmount] = useState9("");
+  const [depositBAmount, setDepositBAmount] = useState9("");
   const [isCreating, setIsCreating] = useState9(false);
   const [error, setError] = useState9(null);
   const [result, setResult] = useState9(null);
-  const { client } = useCloakCraft7();
+  const { client, wallet, notes } = useCloakCraft7();
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
@@ -2908,6 +2910,26 @@ function CreatePoolForm({
       onError?.(err);
       return;
     }
+    if (hasDeposits) {
+      if (!wallet) {
+        const err = "Stealth wallet not connected. Required for adding liquidity.";
+        setError(err);
+        onError?.(err);
+        return;
+      }
+      if (depositA > availableA) {
+        const err = `Insufficient ${selectedTokenA?.symbol} balance. Available: ${(Number(availableA) / Math.pow(10, selectedTokenA?.decimals || 9)).toFixed(6)}`;
+        setError(err);
+        onError?.(err);
+        return;
+      }
+      if (depositB > availableB) {
+        const err = `Insufficient ${selectedTokenB?.symbol} balance. Available: ${(Number(availableB) / Math.pow(10, selectedTokenB?.decimals || 9)).toFixed(6)}`;
+        setError(err);
+        onError?.(err);
+        return;
+      }
+    }
     setIsCreating(true);
     try {
       const tokenA = new PublicKey4(tokenAMint);
@@ -2931,9 +2953,16 @@ function CreatePoolForm({
       if (selectedTokenA2 && selectedTokenB2) {
         onSuccess?.(signature, selectedTokenA2, selectedTokenB2);
       }
+      if (hasDeposits) {
+        alert(`Pool created! Transaction: ${signature}
+
+To add your initial liquidity, go to the Liquidity tab.`);
+      }
       setTokenAMint("");
       setTokenBMint("");
       setFeeBps("30");
+      setDepositAAmount("");
+      setDepositBAmount("");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create pool";
       setError(message);
@@ -2944,6 +2973,11 @@ function CreatePoolForm({
   };
   const selectedTokenA = tokens.find((t) => t.mint.toBase58() === tokenAMint);
   const selectedTokenB = tokens.find((t) => t.mint.toBase58() === tokenBMint);
+  const availableA = selectedTokenA ? notes.filter((n) => n.tokenMint && n.tokenMint.equals(selectedTokenA.mint)).reduce((sum, n) => sum + (n.amount || BigInt(0)), BigInt(0)) : BigInt(0);
+  const availableB = selectedTokenB ? notes.filter((n) => n.tokenMint && n.tokenMint.equals(selectedTokenB.mint)).reduce((sum, n) => sum + (n.amount || BigInt(0)), BigInt(0)) : BigInt(0);
+  const depositA = depositAAmount ? BigInt(Math.floor(parseFloat(depositAAmount) * Math.pow(10, selectedTokenA?.decimals || 9))) : BigInt(0);
+  const depositB = depositBAmount ? BigInt(Math.floor(parseFloat(depositBAmount) * Math.pow(10, selectedTokenB?.decimals || 9))) : BigInt(0);
+  const hasDeposits = depositA > BigInt(0) && depositB > BigInt(0);
   const isDisabled = isCreating || !tokenAMint || !tokenBMint || !walletPublicKey;
   return /* @__PURE__ */ jsxs15("div", { className, style: styles.card, children: [
     /* @__PURE__ */ jsx15("h3", { style: styles.cardTitle, children: "Create Liquidity Pool" }),
@@ -3007,6 +3041,62 @@ function CreatePoolForm({
         ),
         /* @__PURE__ */ jsx15("span", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "4px" }, children: feeBps ? `${parseFloat(feeBps) / 100}% trading fee` : "Default: 0.3%" })
       ] }),
+      selectedTokenA && selectedTokenB && /* @__PURE__ */ jsxs15(Fragment3, { children: [
+        /* @__PURE__ */ jsxs15("div", { style: {
+          borderTop: `1px solid ${colors.border}`,
+          marginTop: "20px",
+          paddingTop: "20px"
+        }, children: [
+          /* @__PURE__ */ jsx15("h4", { style: { margin: "0 0 16px 0", fontSize: "0.9375rem", fontWeight: 600 }, children: "Initial Liquidity (Optional)" }),
+          /* @__PURE__ */ jsx15("p", { style: { fontSize: "0.8125rem", color: colors.textMuted, marginBottom: "16px" }, children: "Add liquidity immediately after pool creation. Requires shielded tokens. Will be executed as a separate transaction after pool initialization." })
+        ] }),
+        /* @__PURE__ */ jsxs15("label", { style: styles.label, children: [
+          selectedTokenA.symbol,
+          " Deposit Amount",
+          /* @__PURE__ */ jsx15(
+            "input",
+            {
+              type: "number",
+              value: depositAAmount,
+              onChange: (e) => setDepositAAmount(e.target.value),
+              placeholder: "0.0",
+              min: "0",
+              step: "0.000001",
+              disabled: isCreating,
+              style: styles.input
+            }
+          ),
+          /* @__PURE__ */ jsxs15("span", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "4px" }, children: [
+            "Available: ",
+            (Number(availableA) / Math.pow(10, selectedTokenA.decimals)).toFixed(6),
+            " ",
+            selectedTokenA.symbol
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs15("label", { style: styles.label, children: [
+          selectedTokenB.symbol,
+          " Deposit Amount",
+          /* @__PURE__ */ jsx15(
+            "input",
+            {
+              type: "number",
+              value: depositBAmount,
+              onChange: (e) => setDepositBAmount(e.target.value),
+              placeholder: "0.0",
+              min: "0",
+              step: "0.000001",
+              disabled: isCreating,
+              style: styles.input
+            }
+          ),
+          /* @__PURE__ */ jsxs15("span", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "4px" }, children: [
+            "Available: ",
+            (Number(availableB) / Math.pow(10, selectedTokenB.decimals)).toFixed(6),
+            " ",
+            selectedTokenB.symbol
+          ] })
+        ] })
+      ] }),
       selectedTokenA && selectedTokenB && /* @__PURE__ */ jsxs15("div", { style: styles.infoBox, children: [
         /* @__PURE__ */ jsx15("div", { style: { fontWeight: 600, marginBottom: "8px" }, children: "Pool Details" }),
         /* @__PURE__ */ jsxs15("div", { style: { fontSize: "0.875rem" }, children: [
@@ -3020,6 +3110,19 @@ function CreatePoolForm({
             "Fee: ",
             parseFloat(feeBps) / 100,
             "%"
+          ] }),
+          hasDeposits && /* @__PURE__ */ jsxs15(Fragment3, { children: [
+            /* @__PURE__ */ jsx15("div", { style: { marginTop: "8px", paddingTop: "8px", borderTop: `1px solid ${colors.border}` }, children: "Initial Liquidity:" }),
+            /* @__PURE__ */ jsxs15("div", { children: [
+              depositAAmount,
+              " ",
+              selectedTokenA.symbol
+            ] }),
+            /* @__PURE__ */ jsxs15("div", { children: [
+              depositBAmount,
+              " ",
+              selectedTokenB.symbol
+            ] })
           ] })
         ] })
       ] }),
@@ -3251,7 +3354,7 @@ function StatRow({
 }
 
 // src/components/SwapForm.tsx
-import { Fragment as Fragment3, jsx as jsx17, jsxs as jsxs17 } from "react/jsx-runtime";
+import { Fragment as Fragment4, jsx as jsx17, jsxs as jsxs17 } from "react/jsx-runtime";
 function SwapForm({
   tokens,
   ammPools,
@@ -3439,7 +3542,7 @@ function SwapForm({
       /* @__PURE__ */ jsx17("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No tokens available to swap. Shield some tokens first." })
     ] });
   }
-  return /* @__PURE__ */ jsxs17(Fragment3, { children: [
+  return /* @__PURE__ */ jsxs17(Fragment4, { children: [
     /* @__PURE__ */ jsxs17("div", { className, style: styles.card, children: [
       /* @__PURE__ */ jsx17("h3", { style: styles.cardTitle, children: "Swap Tokens" }),
       /* @__PURE__ */ jsx17("p", { style: styles.cardDescription, children: "Exchange tokens privately using the AMM pool" }),
@@ -3618,7 +3721,7 @@ function SwapForm({
 import { useState as useState11, useMemo as useMemo3, useEffect as useEffect2 } from "react";
 import { useNoteSelector as useNoteSelector5, useWallet as useWallet9, useCloakCraft as useCloakCraft9 } from "@cloakcraft/hooks";
 import { generateStealthAddress as generateStealthAddress3, calculateAddLiquidityAmounts } from "@cloakcraft/sdk";
-import { Fragment as Fragment4, jsx as jsx18, jsxs as jsxs18 } from "react/jsx-runtime";
+import { Fragment as Fragment5, jsx as jsx18, jsxs as jsxs18 } from "react/jsx-runtime";
 function AddLiquidityForm({
   tokens,
   ammPools,
@@ -3782,7 +3885,7 @@ function AddLiquidityForm({
       /* @__PURE__ */ jsx18("div", { style: { padding: "24px", textAlign: "center", color: colors.textMuted }, children: "No AMM pools available. Create a pool first." })
     ] });
   }
-  return /* @__PURE__ */ jsxs18(Fragment4, { children: [
+  return /* @__PURE__ */ jsxs18(Fragment5, { children: [
     /* @__PURE__ */ jsxs18("div", { className, style: styles.card, children: [
       /* @__PURE__ */ jsx18("h3", { style: styles.cardTitle, children: "Add Liquidity" }),
       /* @__PURE__ */ jsx18("p", { style: styles.cardDescription, children: "Provide liquidity to earn fees from swaps" }),

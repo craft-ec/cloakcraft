@@ -55,10 +55,14 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
 
   // Sub-tab state for Wallet (synced with URL)
   type WalletSubTab = 'account' | 'pool' | 'operations' | 'notes';
+  type SwapSubTab = 'swap' | 'liquidity' | 'create-pool';
   const subTabParam = searchParams.get('subtab');
   const walletSubTab = (subTabParam && ['account', 'pool', 'operations', 'notes'].includes(subTabParam)
     ? subTabParam
     : 'account') as WalletSubTab;
+  const swapSubTab = (subTabParam && ['swap', 'liquidity', 'create-pool'].includes(subTabParam)
+    ? subTabParam
+    : 'swap') as SwapSubTab;
 
 
   const setActiveTab = (tab: Tab) => {
@@ -67,6 +71,12 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
   };
 
   const setWalletSubTab = useCallback((subTab: WalletSubTab) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('subtab', subTab);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [pathname, searchParams, router]);
+
+  const setSwapSubTab = useCallback((subTab: SwapSubTab) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set('subtab', subTab);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
@@ -298,8 +308,63 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
         )}
 
         {activeTab === 'swap' && (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
-            <SwapPanel walletPublicKey={solanaPublicKey} />
+          <div style={{ maxWidth: '1200px' }}>
+            {/* Sub-tab Navigation */}
+            <div
+              style={{
+                display: 'flex',
+                gap: '4px',
+                marginBottom: '28px',
+                borderBottom: `1px solid ${colors.border}`,
+              }}
+            >
+              {[
+                { id: 'swap' as SwapSubTab, label: 'Swap' },
+                { id: 'liquidity' as SwapSubTab, label: 'Liquidity' },
+                { id: 'create-pool' as SwapSubTab, label: 'Create Pool' },
+              ].map((subTab) => (
+                <button
+                  key={subTab.id}
+                  onClick={() => setSwapSubTab(subTab.id)}
+                  style={{
+                    padding: '10px 20px',
+                    background: 'transparent',
+                    border: 'none',
+                    borderBottom:
+                      swapSubTab === subTab.id
+                        ? `2px solid ${colors.primary}`
+                        : '2px solid transparent',
+                    color: swapSubTab === subTab.id ? colors.primary : colors.textMuted,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    fontSize: '0.875rem',
+                    letterSpacing: '0.01em',
+                  }}
+                >
+                  {subTab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Sub-tab Content */}
+            {swapSubTab === 'swap' && (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
+                <SwapPanel walletPublicKey={solanaPublicKey} />
+              </div>
+            )}
+
+            {swapSubTab === 'liquidity' && (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
+                <div style={{ color: colors.textMuted, textAlign: 'center' }}>
+                  Liquidity management coming soon
+                </div>
+              </div>
+            )}
+
+            {swapSubTab === 'create-pool' && (
+              <CreatePoolTab walletPublicKey={solanaPublicKey} />
+            )}
           </div>
         )}
       </main>
@@ -411,18 +476,6 @@ function PoolTab({ walletPublicKey }: { walletPublicKey: PublicKey | null }) {
   return (
     <>
       <PoolInfoCard refreshKey={refreshKey} />
-      <CreatePoolForm
-        tokens={DEVNET_TOKENS}
-        walletPublicKey={walletPublicKey}
-        onSuccess={(signature, tokenA, tokenB) => {
-          console.log('AMM Pool created:', { signature, tokenA, tokenB });
-          alert(`AMM Pool created!\nPair: ${tokenA.symbol}/${tokenB.symbol}\nTX: ${signature}`);
-        }}
-        onError={(error) => {
-          console.error('AMM Pool creation error:', error);
-          alert(`Error: ${error}`);
-        }}
-      />
       <InitializePoolForm
         walletPublicKey={walletPublicKey}
         defaultTokenMint={DEVNET_TOKENS[0].mint}
@@ -437,6 +490,25 @@ function PoolTab({ walletPublicKey }: { walletPublicKey: PublicKey | null }) {
         }}
       />
     </>
+  );
+}
+
+function CreatePoolTab({ walletPublicKey }: { walletPublicKey: PublicKey | null }) {
+  return (
+    <div style={{ display: 'grid', gap: '24px', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))' }}>
+      <CreatePoolForm
+        tokens={DEVNET_TOKENS}
+        walletPublicKey={walletPublicKey}
+        onSuccess={(signature, tokenA, tokenB) => {
+          console.log('AMM Pool created:', { signature, tokenA, tokenB });
+          alert(`AMM Pool created!\nPair: ${tokenA.symbol}/${tokenB.symbol}\nTX: ${signature}`);
+        }}
+        onError={(error) => {
+          console.error('AMM Pool creation error:', error);
+          alert(`Error: ${error}`);
+        }}
+      />
+    </div>
   );
 }
 

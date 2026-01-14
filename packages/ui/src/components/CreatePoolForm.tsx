@@ -36,10 +36,12 @@ export function CreatePoolForm({
   const [tokenAMint, setTokenAMint] = useState<string>('');
   const [tokenBMint, setTokenBMint] = useState<string>('');
   const [feeBps, setFeeBps] = useState<string>('30'); // 0.3% default
+  const [depositAAmount, setDepositAAmount] = useState<string>('');
+  const [depositBAmount, setDepositBAmount] = useState<string>('');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
-  const { client } = useCloakCraft();
+  const { client, wallet, notes } = useCloakCraft();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,6 +85,30 @@ export function CreatePoolForm({
       return;
     }
 
+    // Validate deposits if specified
+    if (hasDeposits) {
+      if (!wallet) {
+        const err = 'Stealth wallet not connected. Required for adding liquidity.';
+        setError(err);
+        onError?.(err);
+        return;
+      }
+
+      if (depositA > availableA) {
+        const err = `Insufficient ${selectedTokenA?.symbol} balance. Available: ${(Number(availableA) / Math.pow(10, selectedTokenA?.decimals || 9)).toFixed(6)}`;
+        setError(err);
+        onError?.(err);
+        return;
+      }
+
+      if (depositB > availableB) {
+        const err = `Insufficient ${selectedTokenB?.symbol} balance. Available: ${(Number(availableB) / Math.pow(10, selectedTokenB?.decimals || 9)).toFixed(6)}`;
+        setError(err);
+        onError?.(err);
+        return;
+      }
+    }
+
     setIsCreating(true);
 
     try {
@@ -117,10 +143,17 @@ export function CreatePoolForm({
         onSuccess?.(signature, selectedTokenA, selectedTokenB);
       }
 
+      // Show message about adding liquidity
+      if (hasDeposits) {
+        alert(`Pool created! Transaction: ${signature}\n\nTo add your initial liquidity, go to the Liquidity tab.`);
+      }
+
       // Reset form
       setTokenAMint('');
       setTokenBMint('');
       setFeeBps('30');
+      setDepositAAmount('');
+      setDepositBAmount('');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create pool';
       setError(message);
@@ -133,6 +166,19 @@ export function CreatePoolForm({
   const selectedTokenA = tokens.find(t => t.mint.toBase58() === tokenAMint);
   const selectedTokenB = tokens.find(t => t.mint.toBase58() === tokenBMint);
 
+  // Calculate available balances from shielded notes (notes are already filtered for unspent)
+  const availableA = selectedTokenA ? notes
+    .filter(n => n.tokenMint && n.tokenMint.equals(selectedTokenA.mint))
+    .reduce((sum, n) => sum + (n.amount || BigInt(0)), BigInt(0)) : BigInt(0);
+
+  const availableB = selectedTokenB ? notes
+    .filter(n => n.tokenMint && n.tokenMint.equals(selectedTokenB.mint))
+    .reduce((sum, n) => sum + (n.amount || BigInt(0)), BigInt(0)) : BigInt(0);
+
+  const depositA = depositAAmount ? BigInt(Math.floor(parseFloat(depositAAmount) * Math.pow(10, selectedTokenA?.decimals || 9))) : BigInt(0);
+  const depositB = depositBAmount ? BigInt(Math.floor(parseFloat(depositBAmount) * Math.pow(10, selectedTokenB?.decimals || 9))) : BigInt(0);
+
+  const hasDeposits = depositA > BigInt(0) && depositB > BigInt(0);
   const isDisabled = isCreating || !tokenAMint || !tokenBMint || !walletPublicKey;
 
   return (
@@ -199,11 +245,71 @@ export function CreatePoolForm({
         </label>
 
         {selectedTokenA && selectedTokenB && (
+          <>
+            <div style={{
+              borderTop: `1px solid ${colors.border}`,
+              marginTop: '20px',
+              paddingTop: '20px'
+            }}>
+              <h4 style={{ margin: '0 0 16px 0', fontSize: '0.9375rem', fontWeight: 600 }}>
+                Initial Liquidity (Optional)
+              </h4>
+              <p style={{ fontSize: '0.8125rem', color: colors.textMuted, marginBottom: '16px' }}>
+                Add liquidity immediately after pool creation. Requires shielded tokens. Will be executed as a separate transaction after pool initialization.
+              </p>
+            </div>
+
+            <label style={styles.label}>
+              {selectedTokenA.symbol} Deposit Amount
+              <input
+                type="number"
+                value={depositAAmount}
+                onChange={(e) => setDepositAAmount(e.target.value)}
+                placeholder="0.0"
+                min="0"
+                step="0.000001"
+                disabled={isCreating}
+                style={styles.input}
+              />
+              <span style={{ fontSize: '0.75rem', color: colors.textMuted, marginTop: '4px' }}>
+                Available: {(Number(availableA) / Math.pow(10, selectedTokenA.decimals)).toFixed(6)} {selectedTokenA.symbol}
+              </span>
+            </label>
+
+            <label style={styles.label}>
+              {selectedTokenB.symbol} Deposit Amount
+              <input
+                type="number"
+                value={depositBAmount}
+                onChange={(e) => setDepositBAmount(e.target.value)}
+                placeholder="0.0"
+                min="0"
+                step="0.000001"
+                disabled={isCreating}
+                style={styles.input}
+              />
+              <span style={{ fontSize: '0.75rem', color: colors.textMuted, marginTop: '4px' }}>
+                Available: {(Number(availableB) / Math.pow(10, selectedTokenB.decimals)).toFixed(6)} {selectedTokenB.symbol}
+              </span>
+            </label>
+          </>
+        )}
+
+        {selectedTokenA && selectedTokenB && (
           <div style={styles.infoBox}>
             <div style={{ fontWeight: 600, marginBottom: '8px' }}>Pool Details</div>
             <div style={{ fontSize: '0.875rem' }}>
               <div>Pair: {selectedTokenA.symbol}/{selectedTokenB.symbol}</div>
               <div>Fee: {parseFloat(feeBps) / 100}%</div>
+              {hasDeposits && (
+                <>
+                  <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: `1px solid ${colors.border}` }}>
+                    Initial Liquidity:
+                  </div>
+                  <div>{depositAAmount} {selectedTokenA.symbol}</div>
+                  <div>{depositBAmount} {selectedTokenB.symbol}</div>
+                </>
+              )}
             </div>
           </div>
         )}
