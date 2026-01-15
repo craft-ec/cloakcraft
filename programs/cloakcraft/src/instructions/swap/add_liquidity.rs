@@ -18,7 +18,8 @@ use crate::state::{
 };
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::helpers::{verify_groth16_proof, commitment::verify_and_spend_commitment};
+use crate::helpers::verify_groth16_proof;
+// Removed: verify_and_spend_commitment (deprecated collapsed pattern)
 use crate::helpers::field::pubkey_to_field;
 use crate::helpers::amm_math::{calculate_initial_lp, calculate_proportional_lp, validate_lp_amount};
 use crate::light_cpi::vec_to_fixed_note;
@@ -35,12 +36,16 @@ pub struct LightAddLiquidityParams {
     // Input A commitment verification
     pub commitment_a_account_hash: [u8; 32],
     pub commitment_a_merkle_context: CommitmentMerkleContext,
+    pub commitment_a_inclusion_proof: LightValidityProof,
+    pub commitment_a_address_tree_info: LightAddressTreeInfo,
     pub nullifier_a_non_inclusion_proof: LightValidityProof,
     pub nullifier_a_address_tree_info: LightAddressTreeInfo,
 
     // Input B commitment verification
     pub commitment_b_account_hash: [u8; 32],
     pub commitment_b_merkle_context: CommitmentMerkleContext,
+    pub commitment_b_inclusion_proof: LightValidityProof,
+    pub commitment_b_address_tree_info: LightAddressTreeInfo,
     pub nullifier_b_non_inclusion_proof: LightValidityProof,
     pub nullifier_b_address_tree_info: LightAddressTreeInfo,
 
@@ -135,6 +140,8 @@ pub fn add_liquidity<'info>(
     ctx: Context<'_, '_, '_, 'info, AddLiquidity<'info>>,
     operation_id: [u8; 32],
     proof: Vec<u8>,
+    input_commitment_a: [u8; 32],
+    input_commitment_b: [u8; 32],
     nullifier_a: [u8; 32],
     nullifier_b: [u8; 32],
     lp_commitment: [u8; 32],
@@ -171,35 +178,16 @@ pub fn add_liquidity<'info>(
         "AddLiquidity",
     )?;
 
-    // 2. SECURITY: Verify input A commitment exists + create nullifier A
-    msg!("=== SECURITY CHECK: Verifying commitment A + creating nullifier A ===");
-    verify_and_spend_commitment(
-        &ctx.accounts.relayer.to_account_info(),
-        ctx.remaining_accounts,
-        light_params.commitment_a_account_hash,
-        light_params.commitment_a_merkle_context.clone(),
-        light_params.nullifier_a_non_inclusion_proof.clone(),
-        light_params.nullifier_a_address_tree_info.clone(),
-        light_params.output_tree_index,
-        pool_a.key(),
-        nullifier_a,
-    )?;
-    msg!("=== SECURITY CHECK A PASSED ===");
-
-    // 3. SECURITY: Verify input B commitment exists + create nullifier B
-    msg!("=== SECURITY CHECK: Verifying commitment B + creating nullifier B ===");
-    verify_and_spend_commitment(
-        &ctx.accounts.relayer.to_account_info(),
-        ctx.remaining_accounts,
-        light_params.commitment_b_account_hash,
-        light_params.commitment_b_merkle_context.clone(),
-        light_params.nullifier_b_non_inclusion_proof.clone(),
-        light_params.nullifier_b_address_tree_info.clone(),
-        light_params.output_tree_index,
-        pool_b.key(),
-        nullifier_b,
-    )?;
-    msg!("=== SECURITY CHECK B PASSED ===");
+    // 2. DEPRECATED: This collapsed version is no longer used. Use append pattern instead:
+    // - create_pending_with_proof_add_liquidity (Phase 0)
+    // - verify_commitment_exists(index=0) for deposit A (Phase 1a)
+    // - verify_commitment_exists(index=1) for deposit B (Phase 1b)
+    // - create_nullifier_and_pending(index=0) for deposit A (Phase 2a)
+    // - create_nullifier_and_pending(index=1) for deposit B (Phase 2b)
+    // - execute_add_liquidity (Phase 3)
+    // - create_commitment (Phase 4+)
+    msg!("=== DEPRECATED: Use append pattern instead ===");
+    return Err(CloakCraftError::Deprecated.into());
 
     // 4. CRITICAL SECURITY CHECK: Validate LP amount calculation
     // This prevents attackers from minting arbitrary LP tokens

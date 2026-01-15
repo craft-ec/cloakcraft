@@ -17,7 +17,8 @@ use crate::state::{
 };
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::helpers::{verify_groth16_proof, commitment::verify_and_spend_commitment};
+use crate::helpers::verify_groth16_proof;
+// Removed: verify_and_spend_commitment (deprecated collapsed pattern)
 use crate::helpers::field::pubkey_to_field;
 use crate::instructions::pool::CommitmentMerkleContext;
 
@@ -36,6 +37,10 @@ pub struct LightSwapParams {
     pub commitment_account_hash: [u8; 32],
     /// Merkle context proving commitment exists in state tree
     pub commitment_merkle_context: CommitmentMerkleContext,
+    /// Commitment inclusion proof (SECURITY: proves commitment EXISTS)
+    pub commitment_inclusion_proof: LightValidityProof,
+    /// Address tree info for commitment verification
+    pub commitment_address_tree_info: LightAddressTreeInfo,
     /// Nullifier non-inclusion proof (proves nullifier doesn't exist yet)
     pub nullifier_non_inclusion_proof: LightValidityProof,
     /// Address tree info for nullifier creation
@@ -107,6 +112,7 @@ pub fn swap<'info>(
     operation_id: [u8; 32],
     proof: Vec<u8>,
     merkle_root: [u8; 32],
+    input_commitment: [u8; 32],
     nullifier: [u8; 32],
     out_commitment: [u8; 32],
     change_commitment: [u8; 32],
@@ -139,20 +145,14 @@ pub fn swap<'info>(
 
     verify_groth16_proof(&proof, &ctx.accounts.verification_key.vk_data, &public_inputs, "Swap")?;
 
-    // 2. SECURITY: Verify input commitment exists + create spend nullifier
-    msg!("=== SECURITY CHECK: Verifying commitment + creating nullifier ===");
-    verify_and_spend_commitment(
-        &ctx.accounts.relayer.to_account_info(),
-        ctx.remaining_accounts,
-        light_params.commitment_account_hash,
-        light_params.commitment_merkle_context.clone(),
-        light_params.nullifier_non_inclusion_proof.clone(),
-        light_params.nullifier_address_tree_info.clone(),
-        light_params.output_tree_index,
-        input_pool.key(),
-        nullifier,
-    )?;
-    msg!("=== SECURITY CHECK PASSED ===");
+    // 2. DEPRECATED: This collapsed version is no longer used. Use append pattern instead:
+    // - create_pending_with_proof_swap (Phase 0)
+    // - verify_commitment_exists (Phase 1)
+    // - create_nullifier_and_pending (Phase 2)
+    // - execute_swap (Phase 3)
+    // - create_commitment (Phase 4+)
+    msg!("=== DEPRECATED: Use append pattern instead ===");
+    return Err(CloakCraftError::Deprecated.into());
 
     // 3. Update AMM pool reserves based on swap direction
     // Apply constant product formula: k = reserve_a * reserve_b

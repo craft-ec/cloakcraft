@@ -275,6 +275,13 @@ export async function buildTransactWithProgram(
       leafIndex: commitmentProof.leafIndex,
       rootIndex: commitmentProof.rootIndex,
     },
+    // SECURITY: Convert commitment inclusion proof (Groth16 SNARK)
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    commitmentAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: commitmentProof.rootIndex,
+    },
     nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
     nullifierAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
@@ -336,80 +343,6 @@ export async function buildTransactWithProgram(
     operationId,
     pendingCommitments,
   };
-}
-
-/**
- * Build transact instructions for versioned transaction (Multi-Phase)
- *
- * Transact is a multi-phase operation:
- * - Phase 1 (transact): Verify proof + Verify commitment + Create nullifier + Store pending + Unshield
- * - Phase 2+ (create_commitment): Create each output commitment via generic instruction
- * - Final (close_pending_operation): Close pending operation to reclaim rent
- *
- * This function returns all instructions for atomic execution.
- *
- * @returns Array of instructions in execution order + result data + operation ID
- */
-export async function buildTransactInstructionsForVersionedTx(
-  program: Program,
-  params: TransactInstructionParams,
-  rpcUrl: string,
-  circuitId: string = CIRCUIT_IDS.TRANSFER_1X2
-): Promise<{
-  instructions: import('@solana/web3.js').TransactionInstruction[];
-  result: TransactResult;
-  operationId: Uint8Array;
-}> {
-  // Import generic instruction builders
-  const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./swap');
-
-  // Build Phase 1 transaction
-  const { tx: phase1Tx, result, operationId, pendingCommitments } = await buildTransactWithProgram(
-    program,
-    params,
-    rpcUrl,
-    circuitId
-  );
-
-  const instructions: import('@solana/web3.js').TransactionInstruction[] = [];
-
-  // Add Phase 1 instruction (transact - creates nullifier and stores pending operation)
-  const transactIx = await phase1Tx.instruction();
-  instructions.push(transactIx);
-
-  // Add Phase 2+ instructions (create commitments)
-  for (let i = 0; i < pendingCommitments.length; i++) {
-    const pc = pendingCommitments[i];
-
-    const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
-      program,
-      {
-        operationId,
-        commitmentIndex: i,
-        pool: pc.pool,
-        relayer: params.relayer,
-        stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
-        encryptedNote: pc.encryptedNote,
-        commitment: pc.commitment,
-      },
-      rpcUrl
-    );
-
-    const commitmentIx = await commitmentTx.instruction();
-    instructions.push(commitmentIx);
-  }
-
-  // Add final instruction (close pending operation)
-  const { tx: closeTx } = await buildClosePendingOperationWithProgram(
-    program,
-    operationId,
-    params.relayer
-  );
-
-  const closeIx = await closeTx.instruction();
-  instructions.push(closeIx);
-
-  return { instructions, result, operationId };
 }
 
 /**

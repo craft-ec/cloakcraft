@@ -1,0 +1,131 @@
+//! Process Unshield Phase 2 - Process unshield and finalize output commitments
+//!
+//! This is Phase 2 of the multi-phase transact operation.
+//! It processes the unshield (if any) and prepares output commitments for Phase 3+.
+//!
+//! Flow:
+//! Phase 0: Verify ZK proof + Create pending operation
+//! Phase 1: Create nullifier via generic instruction
+//! Phase 2 (this): Process unshield + Finalize output commitments
+//! Phase 3+: Create output commitments via generic instruction
+//! Final: Close pending operation
+
+use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+
+use crate::state::{Pool, PendingOperation};
+use crate::constants::seeds;
+use crate::errors::CloakCraftError;
+use crate::helpers::vault::{transfer_from_vault, update_pool_balance};
+
+#[derive(Accounts)]
+#[instruction(operation_id: [u8; 32])]
+pub struct ProcessUnshield<'info> {
+    /// Pool (boxed to reduce stack usage)
+    #[account(
+        mut,
+        seeds = [seeds::POOL, pool.token_mint.as_ref()],
+        bump = pool.bump,
+    )]
+    pub pool: Box<Account<'info, Pool>>,
+
+    /// Token vault
+    #[account(
+        mut,
+        seeds = [seeds::VAULT, pool.token_mint.as_ref()],
+        bump = pool.vault_bump,
+    )]
+    pub token_vault: Account<'info, TokenAccount>,
+
+    /// Pending operation PDA
+    #[account(
+        mut,
+        seeds = [PendingOperation::SEEDS_PREFIX, operation_id.as_ref()],
+        bump = pending_operation.bump,
+        constraint = !pending_operation.is_expired(Clock::get()?.unix_timestamp) @ CloakCraftError::PendingOperationExpired,
+        constraint = pending_operation.all_inputs_verified() @ CloakCraftError::CommitmentNotVerified,
+        constraint = pending_operation.all_expected_nullifiers_created() @ CloakCraftError::NullifierNotCreated,
+    )]
+    pub pending_operation: Box<Account<'info, PendingOperation>>,
+
+    /// Unshield recipient (optional)
+    /// CHECK: This is the recipient for unshielded tokens
+    #[account(mut)]
+    pub unshield_recipient: Option<Account<'info, TokenAccount>>,
+
+    /// Relayer (must match operation creator)
+    #[account(
+        mut,
+        constraint = relayer.key() == pending_operation.relayer @ CloakCraftError::InvalidRelayer,
+    )]
+    pub relayer: Signer<'info>,
+
+    /// Token program
+    pub token_program: Program<'info, Token>,
+}
+
+/// Phase 3: Process unshield only
+///
+/// This phase:
+/// 1. Verifies nullifier was created in Phase 2
+/// 2. Processes unshield if requested (transfer tokens from vault)
+///
+/// NO encrypted notes stored - they will be regenerated in Phase 4 from:
+/// - output_recipients (stored in Phase 2)
+/// - output_amounts (stored in Phase 2)
+/// - output_randomness (stored in Phase 2)
+///
+/// This saves ~1680 bytes PDA storage (~0.012 SOL temporary rent).
+/// No Light Protocol CPI calls, keeping transaction size minimal.
+pub fn process_unshield<'info>(
+    ctx: Context<'_, '_, '_, 'info, ProcessUnshield<'info>>,
+    _operation_id: [u8; 32],
+    unshield_amount: u64,
+) -> Result<()> {
+    let pool = &mut ctx.accounts.pool;
+    let pending_op = &mut ctx.accounts.pending_operation;
+
+    msg!("=== Phase 3: Process Unshield ===");
+    msg!("Unshield amount: {}", unshield_amount);
+    msg!("Output commitments pending: {}", pending_op.num_commitments);
+
+    // Verify nullifier was created
+    require!(
+        pending_op.all_nullifiers_created(),
+        CloakCraftError::NullifiersNotCreated
+    );
+
+    // Process unshield if amount > 0
+    if unshield_amount > 0 {
+        let recipient = ctx.accounts.unshield_recipient.as_ref()
+            .ok_or(CloakCraftError::InvalidAmount)?;
+
+        msg!("Unshielding {} tokens to {:?}", unshield_amount, recipient.key());
+
+        // Transfer from vault to recipient
+        let pool_seeds = &[
+            seeds::POOL,
+            pool.token_mint.as_ref(),
+            &[pool.bump],
+        ];
+        let signer_seeds = &[&pool_seeds[..]];
+
+        transfer_from_vault(
+            &ctx.accounts.token_program,
+            &ctx.accounts.token_vault,
+            recipient,
+            &pool.to_account_info(),
+            signer_seeds,
+            unshield_amount,
+        )?;
+
+        update_pool_balance(pool, unshield_amount, false)?;
+
+        msg!("✅ Unshield complete");
+    }
+
+    msg!("Phase 3 complete: unshield processed");
+    msg!("Next: Phase 4+ - create_commitment (SDK regenerates encrypted notes from randomness)");
+
+    Ok(())
+}

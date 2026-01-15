@@ -163,6 +163,14 @@ export interface LightTransactParams {
     leafIndex: number;
     rootIndex: number;
   };
+  /** Commitment inclusion proof (SECURITY: proves commitment exists) */
+  commitmentInclusionProof: { a: number[]; b: number[]; c: number[] };
+  /** Address tree info for commitment verification */
+  commitmentAddressTreeInfo: {
+    addressMerkleTreePubkeyIndex: number;
+    addressQueuePubkeyIndex: number;
+    rootIndex: number;
+  };
   /** Nullifier non-inclusion proof (prevents double-spend) */
   nullifierNonInclusionProof: { a: number[]; b: number[]; c: number[] };
   /** Address tree info for nullifier creation */

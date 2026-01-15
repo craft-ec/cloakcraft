@@ -44,6 +44,12 @@ pub enum CloakCraftError {
     #[msg("Commitment inclusion proof verification failed")]
     CommitmentInclusionFailed,
 
+    #[msg("Commitment account hash does not match derived address")]
+    CommitmentAccountHashMismatch,
+
+    #[msg("Commitment value mismatch")]
+    CommitmentMismatch,
+
     // ============ Balance Errors ============
     #[msg("Insufficient balance")]
     InsufficientBalance,
@@ -240,4 +246,24 @@ pub enum CloakCraftError {
 
     #[msg("Not all nullifiers have been created yet")]
     NullifiersNotComplete,
+
+    #[msg("Nullifiers have not been created - required before processing unshield")]
+    NullifiersNotCreated,
+
+    // ============ Append Pattern State Machine Errors ============
+    #[msg("ZK proof has not been verified - Phase 0 required")]
+    ProofNotVerified,
+
+    #[msg("Commitment existence has not been verified - Phase 1 required")]
+    CommitmentNotVerified,
+
+    #[msg("Commitment has already been verified")]
+    CommitmentAlreadyVerified,
+
+    #[msg("Nullifier has not been created - Phase 2 required")]
+    NullifierNotCreated,
+
+    // ============ Deprecated Feature Errors ============
+    #[msg("This instruction is deprecated - use append pattern instead")]
+    Deprecated,
 }

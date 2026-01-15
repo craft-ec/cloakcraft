@@ -78,9 +78,6 @@ import {
   deriveOrderPda,
   deriveAggregationPda,
   CIRCUIT_IDS,
-  buildSwapInstructionsForVersionedTx,
-  buildAddLiquidityInstructionsForVersionedTx,
-  buildRemoveLiquidityInstructionsForVersionedTx,
 } from './instructions';
 import {
   buildVersionedTransaction,
@@ -541,73 +538,40 @@ export class CloakCraftClient {
       user: payer.publicKey,
     };
 
-    // TRY ATOMIC EXECUTION FIRST (Versioned Transaction)
-    console.log('[Shield] Attempting atomic execution with versioned transaction...');
-    try {
-      const { buildShieldInstructionsForVersionedTx } = await import('./instructions/shield');
-      const { instructions, commitment, randomness } = await buildShieldInstructionsForVersionedTx(
-        this.program,
-        instructionParams,
-        heliusRpcUrl
-      );
-
-      console.log(`[Shield] Built ${instructions.length} instruction(s) for atomic execution`);
-
-      // Get ALTs for address compression
-      const lookupTables = await this.getAddressLookupTables();
-      if (lookupTables.length > 0) {
-        console.log(`[Shield] Using ${lookupTables.length} Address Lookup Tables for compression`);
-      }
-
-      // Build versioned transaction
-      const versionedTx = await buildVersionedTransaction(
-        this.connection,
-        instructions,
-        payer.publicKey,
-        {
-          computeUnits: 600_000,
-          computeUnitPrice: 50000,
-          lookupTables,
-        }
-      );
-
-      const size = estimateTransactionSize(versionedTx);
-
-      if (size === -1) {
-        console.log('[Shield] Transaction serialization failed, falling back to regular execution');
-      } else {
-        console.log(`[Shield] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE} bytes`);
-      }
-
-      if (size > 0 && size <= MAX_TRANSACTION_SIZE) {
-        // Sign transaction
-        versionedTx.sign([payer]);
-
-        // Execute atomically
-        console.log('[Shield] Executing atomic transaction...');
-        const signature = await executeVersionedTransaction(this.connection, versionedTx, {
-          skipPreflight: false,
-        });
-
-        console.log('[Shield] Atomic execution successful!');
-        return { signature, slot: 0, commitment, randomness };
-      }
-
-      console.log('[Shield] Transaction too large, falling back to regular execution');
-    } catch (err) {
-      console.error('[Shield] Atomic execution failed, falling back to regular:', err);
-    }
-
-    // FALLBACK: Regular execution
-    console.log('[Shield] Using regular execution...');
-    const { tx, commitment, randomness } = await buildShieldWithProgram(
+    // Build instruction with ALT compression
+    console.log('[Shield] Building transaction with ALT compression...');
+    const { buildShieldInstructionsForVersionedTx } = await import('./instructions/shield');
+    const { instructions, commitment, randomness } = await buildShieldInstructionsForVersionedTx(
       this.program,
       instructionParams,
       heliusRpcUrl
     );
 
-    // Execute transaction
-    const signature = await tx.rpc();
+    // Get ALTs for address compression
+    const lookupTables = await this.getAddressLookupTables();
+    if (lookupTables.length === 0) {
+      console.warn('[Shield] No Address Lookup Tables configured!');
+    } else {
+      console.log(`[Shield] Using ${lookupTables.length} Address Lookup Tables for compression`);
+    }
+
+    // Build transaction with ALT compression
+    const tx = await buildVersionedTransaction(
+      this.connection,
+      instructions,
+      payer.publicKey,
+      {
+        computeUnits: 600_000,
+        computeUnitPrice: 50000,
+        lookupTables,
+      }
+    );
+
+    // Sign and execute
+    tx.sign([payer]);
+    const signature = await executeVersionedTransaction(this.connection, tx, {
+      skipPreflight: false,
+    });
 
     return {
       signature,
@@ -643,79 +607,45 @@ export class CloakCraftClient {
       user: walletPublicKey,
     };
 
-    // TRY ATOMIC EXECUTION FIRST (Versioned Transaction)
-    console.log('[Shield] Attempting atomic execution with versioned transaction (wallet)...');
-    try {
-      const { buildShieldInstructionsForVersionedTx } = await import('./instructions/shield');
-      const { instructions, commitment, randomness } = await buildShieldInstructionsForVersionedTx(
-        this.program,
-        instructionParams,
-        heliusRpcUrl
-      );
-
-      console.log(`[Shield] Built ${instructions.length} instruction(s) for atomic execution`);
-
-      // Get ALTs for address compression
-      const lookupTables = await this.getAddressLookupTables();
-      if (lookupTables.length > 0) {
-        console.log(`[Shield] Using ${lookupTables.length} Address Lookup Tables for compression`);
-      }
-
-      // Build versioned transaction
-      const versionedTx = await buildVersionedTransaction(
-        this.connection,
-        instructions,
-        walletPublicKey,
-        {
-          computeUnits: 600_000,
-          computeUnitPrice: 50000,
-          lookupTables,
-        }
-      );
-
-      const size = estimateTransactionSize(versionedTx);
-
-      if (size === -1) {
-        console.log('[Shield] Transaction serialization failed, falling back to regular execution');
-      } else {
-        console.log(`[Shield] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE} bytes`);
-      }
-
-      if (size > 0 && size <= MAX_TRANSACTION_SIZE) {
-        // Get wallet from provider
-        const wallet = this.program.provider.wallet;
-        if (!wallet || !wallet.signTransaction) {
-          throw new Error('Wallet does not support transaction signing');
-        }
-
-        // Have wallet sign the transaction
-        const signedTx = await wallet.signTransaction(versionedTx);
-
-        // Execute atomically
-        console.log('[Shield] Executing atomic transaction (wallet)...');
-        const signature = await executeVersionedTransaction(this.connection, signedTx, {
-          skipPreflight: false,
-        });
-
-        console.log('[Shield] Atomic execution successful!');
-        return { signature, slot: 0, commitment, randomness };
-      }
-
-      console.log('[Shield] Transaction too large, falling back to regular execution');
-    } catch (err) {
-      console.error('[Shield] Atomic execution failed, falling back to regular:', err);
-    }
-
-    // FALLBACK: Regular execution
-    console.log('[Shield] Using regular execution (wallet)...');
-    const { tx, commitment, randomness } = await buildShieldWithProgram(
+    // Build instruction with ALT compression
+    console.log('[Shield] Building transaction with ALT compression (wallet)...');
+    const { buildShieldInstructionsForVersionedTx } = await import('./instructions/shield');
+    const { instructions, commitment, randomness } = await buildShieldInstructionsForVersionedTx(
       this.program,
       instructionParams,
       heliusRpcUrl
     );
 
-    // Execute transaction using wallet adapter
-    const signature = await tx.rpc();
+    // Get ALTs for address compression
+    const lookupTables = await this.getAddressLookupTables();
+    if (lookupTables.length === 0) {
+      console.warn('[Shield] No Address Lookup Tables configured!');
+    } else {
+      console.log(`[Shield] Using ${lookupTables.length} Address Lookup Tables for compression`);
+    }
+
+    // Build transaction with ALT compression
+    const tx = await buildVersionedTransaction(
+      this.connection,
+      instructions,
+      walletPublicKey,
+      {
+        computeUnits: 600_000,
+        computeUnitPrice: 50000,
+        lookupTables,
+      }
+    );
+
+    // Get wallet from provider and sign
+    const wallet = this.program.provider.wallet;
+    if (!wallet || !wallet.signTransaction) {
+      throw new Error('Wallet does not support transaction signing');
+    }
+
+    const signedTx = await wallet.signTransaction(tx);
+    const signature = await executeVersionedTransaction(this.connection, signedTx, {
+      skipPreflight: false,
+    });
 
     return {
       signature,
@@ -853,78 +783,8 @@ export class CloakCraftClient {
 
     const circuitId = circuitName === 'transfer/1x2' ? 'transfer_1x2' : 'transfer_1x3';
 
-    // TRY ATOMIC EXECUTION FIRST (Versioned Transaction)
-    console.log('[Transfer] Attempting atomic execution with versioned transaction...');
-    try {
-      const { buildTransactInstructionsForVersionedTx } = await import('./instructions/transact');
-      const { instructions, result } = await buildTransactInstructionsForVersionedTx(
-        this.program,
-        instructionParams,
-        heliusRpcUrl,
-        circuitId
-      );
-
-      console.log(`[Transfer] Built ${instructions.length} instructions for atomic execution`);
-
-      // Get ALTs for address compression
-      const lookupTables = await this.getAddressLookupTables();
-      if (lookupTables.length > 0) {
-        console.log(`[Transfer] Using ${lookupTables.length} Address Lookup Tables for compression`);
-      }
-
-      // Build versioned transaction
-      const versionedTx = await buildVersionedTransaction(
-        this.connection,
-        instructions,
-        relayerPubkey,
-        {
-          computeUnits: 1_400_000,
-          computeUnitPrice: 50000,
-          lookupTables,
-        }
-      );
-
-      const size = estimateTransactionSize(versionedTx);
-
-      if (size === -1) {
-        console.log('[Transfer] Transaction serialization failed, falling back to sequential execution');
-      } else {
-        console.log(`[Transfer] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE} bytes`);
-      }
-
-      if (size > 0 && size <= MAX_TRANSACTION_SIZE) {
-        // Sign transaction
-        if (relayer) {
-          // Sign with relayer keypair if provided
-          versionedTx.sign([relayer]);
-          console.log('[Transfer] Executing atomic transaction (relayer signed)...');
-          const signature = await executeVersionedTransaction(this.connection, versionedTx, {
-            skipPreflight: false,
-          });
-          console.log('[Transfer] Atomic execution successful!');
-          return { signature, slot: 0 };
-        } else if (this.program?.provider?.wallet) {
-          // Sign with wallet adapter if no relayer
-          console.log('[Transfer] Signing versioned transaction with wallet adapter...');
-          const signedTx = await this.program.provider.wallet.signTransaction(versionedTx);
-          console.log('[Transfer] Executing atomic transaction (wallet signed)...');
-          const signature = await executeVersionedTransaction(this.connection, signedTx, {
-            skipPreflight: false,
-          });
-          console.log('[Transfer] Atomic execution successful!');
-          return { signature, slot: 0 };
-        } else {
-          console.log('[Transfer] No signing method available, falling back to sequential');
-        }
-      }
-
-      console.log('[Transfer] Transaction too large, falling back to sequential execution');
-    } catch (err) {
-      console.error('[Transfer] Atomic execution failed, falling back to sequential:', err);
-    }
-
-    // FALLBACK: Sequential execution with batch signing
-    console.log('[Transfer] Using sequential multi-phase execution with batch signing...');
+    // Multi-phase execution with ALT compression
+    console.log('[Transfer] Using multi-phase execution with batch signing...');
 
     const { tx: phase1Tx, result, operationId, pendingCommitments } = await buildTransactWithProgram(
       this.program,
@@ -972,43 +832,74 @@ export class CloakCraftClient {
 
     console.log(`[Transfer] Built ${transactionBuilders.length} transactions`);
 
-    // Phase 1 is too large for batch signing (1543 bytes > 1232)
-    // Execute it separately, then batch sign the rest
-    console.log('[Transfer] Executing Phase 1 separately (too large for batch signing)...');
-    const phase1Signature = await phase1Tx.rpc();
-    console.log(`[Transfer] Phase 1 confirmed: ${phase1Signature}`);
+    // Get ALTs for address compression
+    const lookupTables = await this.getAddressLookupTables();
+    if (lookupTables.length === 0) {
+      console.warn('[Transfer] No Address Lookup Tables configured! Phase 1 may exceed size limit.');
+      console.warn('[Transfer] Run: pnpm tsx scripts/create-alt.ts to create an ALT');
+    } else {
+      console.log(`[Transfer] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      lookupTables.forEach((alt, i) => {
+        console.log(`[Transfer] ALT ${i}: ${alt.state.addresses.length} addresses`);
+      });
+    }
 
-    // Batch sign remaining phases (commitments + close)
-    if (transactionBuilders.length > 1) {
-      const remainingBuilders = transactionBuilders.slice(1);
-      console.log(`[Transfer] Batch signing ${remainingBuilders.length} remaining transactions...`);
+    // Build transactions with ALT compression
+    const { VersionedTransaction, TransactionMessage } = await import('@solana/web3.js');
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
 
-      const { Transaction } = await import('@solana/web3.js');
-      const transactions = await Promise.all(
-        remainingBuilders.map(async ({ builder }) => await builder.transaction())
-      );
+    const transactions = await Promise.all(
+      transactionBuilders.map(async ({ builder }) => {
+        const ix = await builder.instruction();
+        return new VersionedTransaction(
+          new TransactionMessage({
+            payerKey: relayerPubkey,
+            recentBlockhash: blockhash,
+            instructions: [ix],
+          }).compileToV0Message(lookupTables) // V0 = ALT-enabled format // V0 = ALT-enabled format
+        );
+      })
+    );
 
-      const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
-      transactions.forEach(tx => {
-        tx.recentBlockhash = blockhash;
-        tx.feePayer = relayerPubkey;
+    // Sign all transactions at once (ONE wallet popup)
+    console.log('[Transfer] Requesting signature for all transactions...');
+    let signedTransactions;
+    if (relayer) {
+      signedTransactions = transactions.map(tx => {
+        tx.sign([relayer]);
+        return tx;
+      });
+    } else if (this.program?.provider?.wallet) {
+      const wallet = this.program.provider.wallet;
+      if (typeof wallet.signAllTransactions === 'function') {
+        signedTransactions = await wallet.signAllTransactions(transactions);
+      } else {
+        throw new Error('Wallet does not support batch signing');
+      }
+    } else {
+      throw new Error('No signing method available');
+    }
+    console.log(`[Transfer] All ${signedTransactions.length} transactions signed!`);
+
+    // Execute signed transactions sequentially
+    console.log('[Transfer] Executing signed transactions sequentially...');
+    let phase1Signature = '';
+    for (let i = 0; i < signedTransactions.length; i++) {
+      const tx = signedTransactions[i];
+      const name = transactionBuilders[i].name;
+
+      console.log(`[Transfer] Sending ${name}...`);
+      const signature = await this.connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
       });
 
-      console.log('[Transfer] Requesting signature for remaining transactions...');
-      const signedTransactions = await this.signAllTransactions(transactions, relayer);
-      console.log(`[Transfer] All ${signedTransactions.length} transactions signed!`);
+      // Wait for confirmation
+      await this.connection.confirmTransaction(signature, 'confirmed');
+      console.log(`[Transfer] ${name} confirmed: ${signature}`);
 
-      // Execute sequentially
-      for (let i = 0; i < signedTransactions.length; i++) {
-        const tx = signedTransactions[i];
-        const name = remainingBuilders[i].name;
-
-        const signature = await this.connection.sendRawTransaction(tx.serialize(), {
-          skipPreflight: false,
-          preflightCommitment: 'confirmed',
-        });
-        await this.connection.confirmTransaction(signature, 'confirmed');
-        console.log(`[Transfer] ${name} confirmed: ${signature}`);
+      if (i === 0) {
+        phase1Signature = signature;
       }
     }
 
@@ -1496,68 +1387,8 @@ export class CloakCraftClient {
       changeRandomness,
     };
 
-    // TRY ATOMIC EXECUTION FIRST (Versioned Transaction)
-    console.log('[Swap] Attempting atomic execution with versioned transaction...');
-    try {
-      const { instructions, operationId } = await buildSwapInstructionsForVersionedTx(
-        this.program,
-        instructionParams,
-        heliusRpcUrl
-      );
-
-      console.log(`[Swap] Built ${instructions.length} instructions for atomic execution`);
-
-      // Get ALTs for address compression
-      const lookupTables = await this.getAddressLookupTables();
-      if (lookupTables.length > 0) {
-        console.log(`[Swap] Using ${lookupTables.length} Address Lookup Tables for compression`);
-      }
-
-      // Build versioned transaction
-      const versionedTx = await buildVersionedTransaction(
-        this.connection,
-        instructions,
-        relayerPubkey,
-        {
-          computeUnits: 1_400_000,
-          computeUnitPrice: 50000,
-          lookupTables,
-        }
-      );
-
-      const size = estimateTransactionSize(versionedTx);
-
-      if (size === -1) {
-        console.log('[Swap] Transaction serialization failed, falling back to sequential execution');
-      } else {
-        console.log(`[Swap] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE} bytes`);
-      }
-
-      if (size > 0 && size <= MAX_TRANSACTION_SIZE) {
-        // Sign transaction
-        if (relayer) {
-          versionedTx.sign([relayer]);
-        } else {
-          throw new Error('Relayer keypair required for signing versioned transaction');
-        }
-
-        // Execute atomically
-        console.log('[Swap] Executing atomic transaction...');
-        const signature = await executeVersionedTransaction(this.connection, versionedTx, {
-          skipPreflight: false,
-        });
-
-        console.log('[Swap] Atomic execution successful!');
-        return { signature, slot: 0 };
-      }
-
-      console.log('[Swap] Transaction too large, falling back to sequential execution');
-    } catch (err) {
-      console.error('[Swap] Atomic execution failed, falling back to sequential:', err);
-    }
-
-    // FALLBACK: Sequential execution with batch signing
-    console.log('[Swap] Using sequential multi-phase execution with batch signing...');
+    // Multi-phase execution with ALT compression
+    console.log('[Swap] Using multi-phase execution with batch signing...');
 
     const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildSwapWithProgram(
       this.program,
@@ -1620,20 +1451,49 @@ export class CloakCraftClient {
 
     console.log(`[Swap] Built ${transactionBuilders.length} transactions for batch signing`);
 
-    // Convert to raw transactions and batch sign
-    const { Transaction } = await import('@solana/web3.js');
+    // Get ALTs for address compression
+    const lookupTables = await this.getAddressLookupTables();
+    if (lookupTables.length === 0) {
+      console.warn('[Swap] No Address Lookup Tables configured! Phase 1 may exceed size limit.');
+    } else {
+      console.log(`[Swap] Using ${lookupTables.length} Address Lookup Tables for compression`);
+    }
+
+    // Build transactions with ALT compression
+    const { VersionedTransaction, TransactionMessage } = await import('@solana/web3.js');
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+
     const transactions = await Promise.all(
-      transactionBuilders.map(async ({ builder }) => await builder.transaction())
+      transactionBuilders.map(async ({ builder }) => {
+        const ix = await builder.instruction();
+        return new VersionedTransaction(
+          new TransactionMessage({
+            payerKey: relayerPubkey,
+            recentBlockhash: blockhash,
+            instructions: [ix],
+          }).compileToV0Message(lookupTables) // V0 = ALT-enabled format
+        );
+      })
     );
 
-    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
-    transactions.forEach(tx => {
-      tx.recentBlockhash = blockhash;
-      tx.feePayer = relayerPubkey;
-    });
-
+    // Sign all transactions
     console.log('[Swap] Requesting signature for all transactions...');
-    const signedTransactions = await this.signAllTransactions(transactions, relayer);
+    let signedTransactions;
+    if (relayer) {
+      signedTransactions = transactions.map(tx => {
+        tx.sign([relayer]);
+        return tx;
+      });
+    } else if (this.program?.provider?.wallet) {
+      const wallet = this.program.provider.wallet;
+      if (typeof wallet.signAllTransactions === 'function') {
+        signedTransactions = await wallet.signAllTransactions(transactions);
+      } else {
+        throw new Error('Wallet does not support batch signing');
+      }
+    } else {
+      throw new Error('No signing method available');
+    }
     console.log(`[Swap] All ${signedTransactions.length} transactions signed!`);
 
     // Execute sequentially
@@ -1755,68 +1615,8 @@ export class CloakCraftClient {
       minLpAmount: params.minLpAmount,
     };
 
-    // TRY ATOMIC EXECUTION FIRST (Versioned Transaction)
-    console.log('[Add Liquidity] Attempting atomic execution with versioned transaction...');
-    try {
-      const { instructions, operationId } = await buildAddLiquidityInstructionsForVersionedTx(
-        this.program,
-        instructionParams,
-        heliusRpcUrl
-      );
-
-      console.log(`[Add Liquidity] Built ${instructions.length} instructions for atomic execution`);
-
-      // Get ALTs for address compression
-      const lookupTables = await this.getAddressLookupTables();
-      if (lookupTables.length > 0) {
-        console.log(`[Add Liquidity] Using ${lookupTables.length} Address Lookup Tables for compression`);
-      }
-
-      // Build versioned transaction
-      const versionedTx = await buildVersionedTransaction(
-        this.connection,
-        instructions,
-        relayerPubkey,
-        {
-          computeUnits: 1_400_000,
-          computeUnitPrice: 50000,
-          lookupTables,
-        }
-      );
-
-      const size = estimateTransactionSize(versionedTx);
-
-      if (size === -1) {
-        console.log('[Add Liquidity] Transaction serialization failed, falling back to sequential execution');
-      } else {
-        console.log(`[Add Liquidity] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE} bytes`);
-      }
-
-      if (size > 0 && size <= MAX_TRANSACTION_SIZE) {
-        // Sign transaction
-        if (relayer) {
-          versionedTx.sign([relayer]);
-        } else {
-          throw new Error('Relayer keypair required for signing versioned transaction');
-        }
-
-        // Execute atomically
-        console.log('[Add Liquidity] Executing atomic transaction...');
-        const signature = await executeVersionedTransaction(this.connection, versionedTx, {
-          skipPreflight: false,
-        });
-
-        console.log('[Add Liquidity] Atomic execution successful!');
-        return { signature, slot: 0 };
-      }
-
-      console.log('[Add Liquidity] Transaction too large, falling back to sequential execution');
-    } catch (err) {
-      console.error('[Add Liquidity] Atomic execution failed, falling back to sequential:', err);
-    }
-
-    // FALLBACK: Sequential execution with batch signing
-    console.log('[Add Liquidity] Using sequential multi-phase execution with batch signing...');
+    // Multi-phase execution with ALT compression
+    console.log('[Add Liquidity] Using multi-phase execution with batch signing...');
 
     const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildAddLiquidityWithProgram(
       this.program,
@@ -1883,25 +1683,49 @@ export class CloakCraftClient {
 
     console.log(`[Add Liquidity] Built ${transactionBuilders.length} transactions`);
 
-    // Convert Anchor transaction builders to raw Transaction objects
-    const { Transaction } = await import('@solana/web3.js');
+    // Get ALTs for address compression
+    const lookupTables = await this.getAddressLookupTables();
+    if (lookupTables.length === 0) {
+      console.warn('[Add Liquidity] No Address Lookup Tables configured! Phase 1 may exceed size limit.');
+    } else {
+      console.log(`[Add Liquidity] Using ${lookupTables.length} Address Lookup Tables for compression`);
+    }
+
+    // Build transactions with ALT compression
+    const { VersionedTransaction, TransactionMessage } = await import('@solana/web3.js');
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ builder }) => {
-        const tx = await builder.transaction();
-        return tx;
+        const ix = await builder.instruction();
+        return new VersionedTransaction(
+          new TransactionMessage({
+            payerKey: relayerPubkey,
+            recentBlockhash: blockhash,
+            instructions: [ix],
+          }).compileToV0Message(lookupTables) // V0 = ALT-enabled format
+        );
       })
     );
 
-    // Set recent blockhash on all transactions
-    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
-    transactions.forEach(tx => {
-      tx.recentBlockhash = blockhash;
-      tx.feePayer = relayerPubkey;
-    });
-
     // Sign all transactions at once (ONE wallet popup)
     console.log('[Add Liquidity] Requesting signature for all transactions...');
-    const signedTransactions = await this.signAllTransactions(transactions, relayer);
+    let signedTransactions;
+    if (relayer) {
+      signedTransactions = transactions.map(tx => {
+        tx.sign([relayer]);
+        return tx;
+      });
+    } else if (this.program?.provider?.wallet) {
+      const wallet = this.program.provider.wallet;
+      if (typeof wallet.signAllTransactions === 'function') {
+        signedTransactions = await wallet.signAllTransactions(transactions);
+      } else {
+        throw new Error('Wallet does not support batch signing');
+      }
+    } else {
+      throw new Error('No signing method available');
+    }
     console.log(`[Add Liquidity] All ${signedTransactions.length} transactions signed!`);
 
     // Execute signed transactions sequentially
@@ -2015,70 +1839,8 @@ export class CloakCraftClient {
       outputBRandomness,
     };
 
-    // TRY ATOMIC EXECUTION FIRST (Versioned Transaction)
-    console.log('[Remove Liquidity] Attempting atomic execution with versioned transaction...');
-    try {
-      const { buildRemoveLiquidityInstructionsForVersionedTx } = await import('./instructions/swap');
-      const { instructions, operationId } = await buildRemoveLiquidityInstructionsForVersionedTx(
-        this.program,
-        instructionParams,
-        heliusRpcUrl
-      );
-
-      console.log(`[Remove Liquidity] Built ${instructions.length} instructions for atomic execution`);
-
-      // Get ALTs for address compression
-      const lookupTables = await this.getAddressLookupTables();
-      if (lookupTables.length > 0) {
-        console.log(`[Remove Liquidity] Using ${lookupTables.length} Address Lookup Tables for compression`);
-      }
-
-      // Build versioned transaction
-      const { buildVersionedTransaction, estimateTransactionSize, executeVersionedTransaction, MAX_TRANSACTION_SIZE } = await import('./versioned-transaction');
-      const versionedTx = await buildVersionedTransaction(
-        this.connection,
-        instructions,
-        relayerPubkey,
-        {
-          computeUnits: 1_400_000,
-          computeUnitPrice: 50000,
-          lookupTables,
-        }
-      );
-
-      const size = estimateTransactionSize(versionedTx);
-
-      if (size === -1) {
-        console.log('[Remove Liquidity] Transaction serialization failed, falling back to sequential execution');
-      } else {
-        console.log(`[Remove Liquidity] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE} bytes`);
-      }
-
-      if (size > 0 && size <= MAX_TRANSACTION_SIZE) {
-        // Sign transaction
-        if (relayer) {
-          versionedTx.sign([relayer]);
-        } else {
-          throw new Error('Relayer keypair required for signing versioned transaction');
-        }
-
-        // Execute atomically
-        console.log('[Remove Liquidity] Executing atomic transaction...');
-        const signature = await executeVersionedTransaction(this.connection, versionedTx, {
-          skipPreflight: false,
-        });
-
-        console.log('[Remove Liquidity] Atomic execution successful!');
-        return { signature, slot: 0 };
-      }
-
-      console.log('[Remove Liquidity] Transaction too large, falling back to sequential execution');
-    } catch (err) {
-      console.error('[Remove Liquidity] Atomic execution failed, falling back to sequential:', err);
-    }
-
-    // FALLBACK: Sequential execution with batch signing
-    console.log('[Remove Liquidity] Using sequential multi-phase execution with batch signing...');
+    // Multi-phase execution with ALT compression
+    console.log('[Remove Liquidity] Using multi-phase execution with batch signing...');
 
     const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildRemoveLiquidityWithProgram(
       this.program,
@@ -2145,25 +1907,49 @@ export class CloakCraftClient {
 
     console.log(`[Remove Liquidity] Built ${transactionBuilders.length} transactions`);
 
-    // Convert Anchor transaction builders to raw Transaction objects
-    const { Transaction } = await import('@solana/web3.js');
+    // Get ALTs for address compression
+    const lookupTables = await this.getAddressLookupTables();
+    if (lookupTables.length === 0) {
+      console.warn('[Remove Liquidity] No Address Lookup Tables configured! Phase 1 may exceed size limit.');
+    } else {
+      console.log(`[Remove Liquidity] Using ${lookupTables.length} Address Lookup Tables for compression`);
+    }
+
+    // Build transactions with ALT compression
+    const { VersionedTransaction, TransactionMessage } = await import('@solana/web3.js');
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ builder }) => {
-        const tx = await builder.transaction();
-        return tx;
+        const ix = await builder.instruction();
+        return new VersionedTransaction(
+          new TransactionMessage({
+            payerKey: relayerPubkey,
+            recentBlockhash: blockhash,
+            instructions: [ix],
+          }).compileToV0Message(lookupTables) // V0 = ALT-enabled format
+        );
       })
     );
 
-    // Set recent blockhash on all transactions
-    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
-    transactions.forEach(tx => {
-      tx.recentBlockhash = blockhash;
-      tx.feePayer = relayerPubkey;
-    });
-
     // Sign all transactions at once (ONE wallet popup)
     console.log('[Remove Liquidity] Requesting signature for all transactions...');
-    const signedTransactions = await this.signAllTransactions(transactions, relayer);
+    let signedTransactions;
+    if (relayer) {
+      signedTransactions = transactions.map(tx => {
+        tx.sign([relayer]);
+        return tx;
+      });
+    } else if (this.program?.provider?.wallet) {
+      const wallet = this.program.provider.wallet;
+      if (typeof wallet.signAllTransactions === 'function') {
+        signedTransactions = await wallet.signAllTransactions(transactions);
+      } else {
+        throw new Error('Wallet does not support batch signing');
+      }
+    } else {
+      throw new Error('No signing method available');
+    }
     console.log(`[Remove Liquidity] All ${signedTransactions.length} transactions signed!`);
 
     // Execute signed transactions sequentially

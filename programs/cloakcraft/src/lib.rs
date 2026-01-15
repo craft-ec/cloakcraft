@@ -59,14 +59,61 @@ pub mod cloakcraft {
         pool::initialize_commitment_counter(ctx)
     }
 
-    /// Transact Phase 1 - private transfer with optional unshield
+    /// Create Pending with Proof Phase 0 - verify ZK proof and create PendingOperation (Transfer-specific)
     ///
-    /// Multi-phase operation:
-    /// Phase 1 (this): Verify proof + Verify commitment + Create nullifier + Store pending + Unshield
-    /// Phase 2+: Create output commitments via generic instruction
-    /// Final: Close pending operation via generic instruction
+    /// Append Pattern multi-phase operation flow:
+    /// Phase 0 (this): Verify ZK proof + Create PendingOperation (binds all phases)
+    /// Phase 1: Verify commitment exists (GENERIC, binds to Phase 0)
+    /// Phase 2: Create nullifier (GENERIC, binds to Phase 0)
+    /// Phase 3: Process unshield (operation-specific)
+    /// Phase 4+: Create commitments (GENERIC)
+    /// Final: Close pending operation (GENERIC)
     ///
-    /// SECURITY: Atomically verifies input commitment exists and creates nullifier.
+    /// SECURITY: ZK proof verified, binding fields stored in PendingOperation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProof<'info>>,
+        operation_id: [u8; 32],
+        proof: Vec<u8>,
+        merkle_root: [u8; 32],
+        input_commitment: [u8; 32],
+        nullifier: [u8; 32],
+        out_commitments: Vec<[u8; 32]>,
+        output_recipients: Vec<[u8; 32]>,
+        output_amounts: Vec<u64>,
+        output_randomness: Vec<[u8; 32]>,
+        stealth_ephemeral_pubkeys: Vec<[u8; 64]>,
+        unshield_amount: u64,
+    ) -> Result<()> {
+        pool::create_pending_with_proof(ctx, operation_id, proof, merkle_root, input_commitment, nullifier, out_commitments, output_recipients, output_amounts, output_randomness, stealth_ephemeral_pubkeys, unshield_amount)
+    }
+
+    /// Process Unshield Phase 3 - process unshield only (Transfer-specific)
+    ///
+    /// Must be called after create_nullifier_and_pending (Phase 2) and before create_commitment (Phase 4+).
+    /// This phase has NO Light Protocol CPI calls.
+    ///
+    /// NOTE: Encrypted notes are NOT stored in PDA (saves ~1680 bytes).
+    /// SDK must regenerate encrypted notes in Phase 4 from randomness stored in PendingOperation.
+    pub fn process_unshield<'info>(
+        ctx: Context<'_, '_, '_, 'info, ProcessUnshield<'info>>,
+        operation_id: [u8; 32],
+        unshield_amount: u64,
+    ) -> Result<()> {
+        pool::process_unshield(ctx, operation_id, unshield_amount)
+    }
+
+    /// Transact Phase 1 (DEPRECATED) - private transfer with optional unshield
+    ///
+    /// DEPRECATED: Use the new multi-phase flow instead:
+    /// 1. verify_proof_for_transact (Phase 0)
+    /// 2. verify_commitment_for_transact (Phase 1)
+    /// 3. create_nullifier (Phase 2)
+    /// 4. process_unshield (Phase 3)
+    /// 5. create_commitment (Phase 4+)
+    /// 6. close_pending_operation (Final)
+    ///
+    /// This old instruction exceeds transaction size limits and should not be used.
     pub fn transact<'info>(
         ctx: Context<'_, '_, '_, 'info, Transact<'info>>,
         operation_id: [u8; 32],
@@ -169,20 +216,105 @@ pub mod cloakcraft {
         swap::initialize_amm_pool(ctx, token_a_mint, token_b_mint, fee_bps)
     }
 
-    /// Add liquidity Phase 1: Verify proof + Update AMM state + Store pending operation
+    // ============ Append Pattern Swap Operations ============
+
+    /// Create Pending with Proof Phase 0 - Swap (Append Pattern)
     ///
-    /// Multi-phase transaction. After this, call:
-    /// 1. create_nullifier (index 0) for nullifier A
-    /// 2. create_nullifier (index 1) for nullifier B
-    /// 3. create_commitment (index 0) for LP commitment
-    /// 4. create_commitment (index 1) for change A commitment
-    /// 5. create_commitment (index 2) for change B commitment
-    /// 6. close_pending_operation to reclaim rent
+    /// Flow:
+    /// Phase 0 (this): Verify ZK proof + Create PendingOperation
+    /// Phase 1: verify_commitment_exists for input
+    /// Phase 2: create_nullifier_and_pending for input
+    /// Phase 3: execute_swap to update AMM state
+    /// Phase 4+: create_commitment for outputs
+    /// Final: close_pending_operation
     #[allow(clippy::too_many_arguments)]
-    pub fn add_liquidity<'info>(
-        ctx: Context<'_, '_, '_, 'info, AddLiquidity<'info>>,
+    pub fn create_pending_with_proof_swap<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofSwap<'info>>,
         operation_id: [u8; 32],
         proof: Vec<u8>,
+        merkle_root: [u8; 32],
+        input_commitment: [u8; 32],
+        nullifier: [u8; 32],
+        out_commitment: [u8; 32],
+        change_commitment: [u8; 32],
+        min_output: u64,
+        swap_amount: u64,
+        output_amount: u64,
+        swap_a_to_b: bool,
+        num_commitments: u8,
+    ) -> Result<()> {
+        swap::create_pending_with_proof_swap(ctx, operation_id, proof, merkle_root, input_commitment, nullifier, out_commitment, change_commitment, min_output, swap_amount, output_amount, swap_a_to_b, num_commitments)
+    }
+
+    /// Execute Swap Phase 3 - Update AMM state (Append Pattern)
+    ///
+    /// Must be called after verify_commitment_exists and create_nullifier_and_pending.
+    /// Updates AMM pool reserves based on verified swap.
+    pub fn execute_swap<'info>(
+        ctx: Context<'_, '_, '_, 'info, ExecuteSwap<'info>>,
+        operation_id: [u8; 32],
+    ) -> Result<()> {
+        swap::execute_swap(ctx, operation_id)
+    }
+
+    /// Create Pending with Proof Phase 0 - Remove Liquidity (Append Pattern)
+    ///
+    /// Flow:
+    /// Phase 0 (this): Verify ZK proof + Create PendingOperation
+    /// Phase 1: verify_commitment_exists for LP input
+    /// Phase 2: create_nullifier_and_pending for LP input
+    /// Phase 3: execute_remove_liquidity to update AMM state
+    /// Phase 4+: create_commitment for token outputs
+    /// Final: close_pending_operation
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_remove_liquidity<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofRemoveLiquidity<'info>>,
+        operation_id: [u8; 32],
+        proof: Vec<u8>,
+        lp_input_commitment: [u8; 32],
+        lp_nullifier: [u8; 32],
+        out_a_commitment: [u8; 32],
+        out_b_commitment: [u8; 32],
+        old_state_hash: [u8; 32],
+        new_state_hash: [u8; 32],
+        lp_amount_burned: u64,
+        withdraw_a_amount: u64,
+        withdraw_b_amount: u64,
+        num_commitments: u8,
+    ) -> Result<()> {
+        swap::create_pending_with_proof_remove_liquidity(ctx, operation_id, proof, lp_input_commitment, lp_nullifier, out_a_commitment, out_b_commitment, old_state_hash, new_state_hash, lp_amount_burned, withdraw_a_amount, withdraw_b_amount, num_commitments)
+    }
+
+    /// Execute Remove Liquidity Phase 3 - Update AMM state (Append Pattern)
+    ///
+    /// Must be called after verify_commitment_exists and create_nullifier_and_pending.
+    /// Updates AMM pool reserves and LP supply based on verified liquidity removal.
+    pub fn execute_remove_liquidity<'info>(
+        ctx: Context<'_, '_, '_, 'info, ExecuteRemoveLiquidity<'info>>,
+        operation_id: [u8; 32],
+        new_state_hash: [u8; 32],
+    ) -> Result<()> {
+        swap::execute_remove_liquidity(ctx, operation_id, new_state_hash)
+    }
+
+    /// Create Pending with Proof Phase 0 - Add Liquidity (Append Pattern)
+    ///
+    /// Flow:
+    /// Phase 0 (this): Verify ZK proof + Create PendingOperation
+    /// Phase 1a: verify_commitment_exists(index=0) for deposit A
+    /// Phase 1b: verify_commitment_exists(index=1) for deposit B
+    /// Phase 2a: create_nullifier_and_pending(index=0) for deposit A
+    /// Phase 2b: create_nullifier_and_pending(index=1) for deposit B
+    /// Phase 3: execute_add_liquidity to update AMM state
+    /// Phase 4+: create_commitment for LP token and change outputs
+    /// Final: close_pending_operation
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_add_liquidity<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofAddLiquidity<'info>>,
+        operation_id: [u8; 32],
+        proof: Vec<u8>,
+        input_commitment_a: [u8; 32],
+        input_commitment_b: [u8; 32],
         nullifier_a: [u8; 32],
         nullifier_b: [u8; 32],
         lp_commitment: [u8; 32],
@@ -193,59 +325,64 @@ pub mod cloakcraft {
         lp_amount: u64,
         min_lp_amount: u64,
         num_commitments: u8,
-        light_params: swap::LightAddLiquidityParams,
     ) -> Result<()> {
-        swap::add_liquidity(ctx, operation_id, proof, nullifier_a, nullifier_b, lp_commitment, change_a_commitment, change_b_commitment, deposit_a, deposit_b, lp_amount, min_lp_amount, num_commitments, light_params)
+        swap::create_pending_with_proof_add_liquidity(ctx, operation_id, proof, input_commitment_a, input_commitment_b, nullifier_a, nullifier_b, lp_commitment, change_a_commitment, change_b_commitment, deposit_a, deposit_b, lp_amount, min_lp_amount, num_commitments)
     }
 
-
-    /// Remove liquidity Phase 1: Verify proof + Create nullifier + Store pending operation
+    /// Execute Add Liquidity Phase 3 - Update AMM state (Append Pattern)
     ///
-    /// Use two-phase for large transactions. Follow with remove_liquidity_phase2 for each commitment.
-    #[allow(clippy::too_many_arguments)]
-    pub fn remove_liquidity<'info>(
-        ctx: Context<'_, '_, '_, 'info, RemoveLiquidity<'info>>,
+    /// Must be called after verify_commitment_exists and create_nullifier_and_pending for both deposits.
+    /// Updates AMM pool reserves and LP supply based on verified liquidity addition.
+    pub fn execute_add_liquidity<'info>(
+        ctx: Context<'_, '_, '_, 'info, ExecuteAddLiquidity<'info>>,
         operation_id: [u8; 32],
-        proof: Vec<u8>,
-        lp_nullifier: [u8; 32],
-        out_a_commitment: [u8; 32],
-        out_b_commitment: [u8; 32],
-        old_state_hash: [u8; 32],
-        new_state_hash: [u8; 32],
-        lp_amount_burned: u64,
-        withdraw_a_amount: u64,
-        withdraw_b_amount: u64,
-        num_commitments: u8,
-        light_params: swap::LightRemoveLiquidityParams,
+        min_lp_amount: u64,
     ) -> Result<()> {
-        swap::remove_liquidity(ctx, operation_id, proof, lp_nullifier, out_a_commitment, out_b_commitment, old_state_hash, new_state_hash, lp_amount_burned, withdraw_a_amount, withdraw_b_amount, num_commitments, light_params)
+        swap::execute_add_liquidity(ctx, operation_id, min_lp_amount)
     }
 
+    // ============ Generic Light Protocol Operations ============
 
-    /// Swap Phase 1: Verify proof + Update AMM state + Store pending operation
+    /// Verify Commitment Exists Phase 1 - verify commitment in Light Protocol state tree (GENERIC)
     ///
-    /// Multi-phase transaction. After this, call:
-    /// 1. create_nullifier (index 0) for input nullifier
-    /// 2. create_commitment (index 0) for output commitment
-    /// 3. create_commitment (index 1) for change commitment
-    /// 4. close_pending_operation to reclaim rent
-    #[allow(clippy::too_many_arguments)]
-    pub fn swap<'info>(
-        ctx: Context<'_, '_, '_, 'info, Swap<'info>>,
+    /// SECURITY CRITICAL: This prevents spending non-existent commitments.
+    /// Works for ALL spend operations: transfer, swap, remove liquidity, market operations.
+    ///
+    /// This phase uses Light Protocol CPI with inclusion proof (~8 Light accounts).
+    /// NO state changes - if fails, no cleanup needed.
+    ///
+    /// For multi-input operations (add_liquidity), call this instruction multiple times:
+    /// - First call with commitment_index=0 for input A
+    /// - Second call with commitment_index=1 for input B
+    pub fn verify_commitment_exists<'info>(
+        ctx: Context<'_, '_, '_, 'info, VerifyCommitmentExists<'info>>,
         operation_id: [u8; 32],
-        proof: Vec<u8>,
-        merkle_root: [u8; 32],
-        nullifier: [u8; 32],
-        out_commitment: [u8; 32],
-        change_commitment: [u8; 32],
-        swap_amount: u64,
-        output_amount: u64,
-        min_output: u64,
-        swap_a_to_b: bool,
-        num_commitments: u8,
-        light_params: swap::LightSwapParams,
+        commitment_index: u8,
+        light_params: generic::LightVerifyCommitmentParams,
     ) -> Result<()> {
-        swap::swap(ctx, operation_id, proof, merkle_root, nullifier, out_commitment, change_commitment, swap_amount, output_amount, min_output, swap_a_to_b, num_commitments, light_params)
+        generic::verify_commitment_exists(ctx, operation_id, commitment_index, light_params)
+    }
+
+    /// Create Nullifier and Pending Operation Phase 2 (GENERIC)
+    ///
+    /// CRITICAL POINT: After this, nullifier exists and outputs MUST be created.
+    /// Works for ALL operations: transfer, swap, add/remove liquidity, market.
+    ///
+    /// Phase 2: Create nullifier from pending operation (APPEND PATTERN)
+    ///
+    /// SECURITY: Reads nullifier from PendingOperation (created in Phase 0).
+    /// This prevents nullifier swap attacks - attacker cannot substitute a different nullifier.
+    ///
+    /// For multi-input operations (add_liquidity), call this instruction multiple times:
+    /// - First call with nullifier_index=0 for input A
+    /// - Second call with nullifier_index=1 for input B
+    pub fn create_nullifier_and_pending<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreateNullifierAndPending<'info>>,
+        operation_id: [u8; 32],
+        nullifier_index: u8,
+        light_params: generic::LightCreateNullifierAndPendingParams,
+    ) -> Result<()> {
+        generic::create_nullifier_and_pending(ctx, operation_id, nullifier_index, light_params)
     }
 
     /// Close pending operation after all nullifiers and commitments created or expired

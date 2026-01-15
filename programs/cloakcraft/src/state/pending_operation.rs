@@ -18,12 +18,37 @@ use anchor_lang::prelude::*;
 use super::commitment::MAX_ENCRYPTED_NOTE_SIZE;
 
 /// Maximum number of pending commitments per operation
-pub const MAX_PENDING_COMMITMENTS: usize = 5;
+/// Supports up to 10 outputs (e.g., multi-recipient transfers, complex swaps with fees)
+pub const MAX_PENDING_COMMITMENTS: usize = 10;
 
 /// Maximum number of pending nullifiers per operation
-pub const MAX_PENDING_NULLIFIERS: usize = 3;
+/// Supports up to 8 inputs (e.g., batched operations, multi-token swaps)
+pub const MAX_PENDING_NULLIFIERS: usize = 8;
 
-/// Pending operation for multi-phase commit
+/// Maximum number of input commitments per operation (for append pattern multi-input support)
+/// Supports up to 8 inputs (e.g., batched operations, complex multi-token swaps)
+/// Most operations use 1-2 inputs, but this allows future flexibility
+pub const MAX_INPUT_COMMITMENTS: usize = 8;
+
+/// Pending operation for multi-phase commit with append pattern
+///
+/// SECURITY: Append pattern binds all phases together
+/// Phase 0: Verify ZK proof → stores input_commitment, nullifier, outputs
+/// Phase 1: Verify commitment exists → must match input_commitment from Phase 0
+/// Phase 2: Create nullifier → must match nullifier from Phase 0
+/// Phase 3+: Execute operation → requires all verifications complete
+///
+/// This prevents commitment/nullifier swap attacks.
+///
+/// DESIGN CHOICE: Store randomness instead of encrypted notes
+/// - Encrypted notes = ~200 bytes per output (10 outputs = 2000 bytes!)
+/// - Randomness = 32 bytes per output (10 outputs = 320 bytes)
+/// - Savings: 1680 bytes (~0.012 SOL temporary rent reduction)
+///
+/// Trade-off: Must regenerate encrypted notes if Phase 4 fails
+/// - Normal case: Generate once in Phase 4, no regeneration needed
+/// - Failure case: SDK reads randomness from PDA, regenerates encrypted notes
+/// - Compute is cheap, storage is expensive on Solana
 #[account]
 pub struct PendingOperation {
     /// Bump seed for PDA derivation
@@ -35,9 +60,40 @@ pub struct PendingOperation {
     /// Relayer who initiated the operation
     pub relayer: Pubkey,
 
-    /// Operation type (for validation in subsequent phases)
-    /// 0 = Transact, 1 = Swap, 2 = AddLiquidity, 3 = RemoveLiquidity
+    /// Operation type (not used for logic, only for logging/debugging)
     pub operation_type: u8,
+
+    /// SECURITY: State machine flags (prevent phase skipping)
+    /// Phase 0 sets proof_verified
+    pub proof_verified: bool,
+
+    /// SECURITY: Input commitment from ZK proof (binds Phase 0 to Phase 1)
+    /// Phase 0 extracts from proof public inputs
+    /// Phase 1 must verify THIS exact commitment
+    /// For single-input operations (swap, remove_liquidity): Uses index 0
+    /// For multi-input operations (add_liquidity): Uses indices 0 and 1
+    pub input_commitments: [[u8; 32]; MAX_INPUT_COMMITMENTS],
+
+    /// SECURITY: Expected nullifiers from ZK proof (binds Phase 0 to Phase 2)
+    /// Phase 0 extracts from proof public inputs
+    /// Phase 2 must create THIS exact nullifier
+    /// Matches input_commitments indices
+    pub expected_nullifiers: [[u8; 32]; MAX_INPUT_COMMITMENTS],
+
+    /// SECURITY: Input pools for each input commitment (binds Phase 1/2 to correct pool)
+    /// Phase 0 stores which pool each input commitment belongs to
+    /// Phase 1 must verify commitment EXISTS in THIS exact pool
+    /// Phase 2 must create nullifier in THIS exact pool
+    /// This prevents pool confusion attacks in multi-pool operations (e.g., swap)
+    /// Matches input_commitments and expected_nullifiers indices
+    pub input_pools: [[u8; 32]; MAX_INPUT_COMMITMENTS],
+
+    /// Number of input commitments to verify (1 for swap/remove, 2 for add_liquidity)
+    pub num_inputs: u8,
+
+    /// Bitmask tracking which input commitments have been verified
+    /// Bit i = 1 means input_commitments[i] was verified
+    pub inputs_verified_mask: u8,
 
     /// Number of pending nullifiers
     pub num_nullifiers: u8,
@@ -63,14 +119,22 @@ pub struct PendingOperation {
     /// Leaf indices for each commitment
     pub leaf_indices: [u64; MAX_PENDING_COMMITMENTS],
 
-    /// Stealth ephemeral pubkeys (64 bytes each)
+    /// Stealth ephemeral pubkeys (64 bytes each: X + Y coordinates)
+    /// Used by scanner to derive stealth private key for decryption
     pub stealth_ephemeral_pubkeys: [[u8; 64]; MAX_PENDING_COMMITMENTS],
 
-    /// Encrypted notes (variable length, stored with length prefix)
-    pub encrypted_notes: [[u8; MAX_ENCRYPTED_NOTE_SIZE]; MAX_PENDING_COMMITMENTS],
+    /// Output recipients (stealth public key X coordinate)
+    /// Used to regenerate encrypted notes
+    pub output_recipients: [[u8; 32]; MAX_PENDING_COMMITMENTS],
 
-    /// Actual lengths of encrypted notes
-    pub encrypted_note_lens: [u16; MAX_PENDING_COMMITMENTS],
+    /// Output amounts
+    /// Used to regenerate encrypted notes
+    pub output_amounts: [u64; MAX_PENDING_COMMITMENTS],
+
+    /// Output randomness (from ZK proof)
+    /// CRITICAL: Used to regenerate encrypted notes
+    /// Must match what was used in commitment computation
+    pub output_randomness: [[u8; 32]; MAX_PENDING_COMMITMENTS],
 
     /// Which commitments have been created (bitmask)
     pub completed_mask: u8,
@@ -80,6 +144,31 @@ pub struct PendingOperation {
 
     /// Creation timestamp
     pub created_at: i64,
+
+    // =============================================================================
+    // Operation-specific fields (used by Phase 3 execute instructions)
+    // These fields store operation-specific data from Phase 0 for use in Phase 3
+    // =============================================================================
+
+    /// Swap: Input amount being swapped
+    /// Add Liquidity: Token A deposit amount
+    /// Remove Liquidity: LP tokens burned
+    pub swap_amount: u64,
+
+    /// Swap: Output amount received
+    /// Add Liquidity: Token B deposit amount
+    /// Remove Liquidity: Token A withdrawn
+    pub output_amount: u64,
+
+    /// Swap: unused
+    /// Add Liquidity: LP tokens minted
+    /// Remove Liquidity: Token B withdrawn
+    pub extra_amount: u64,
+
+    /// Swap: Direction (1 = A->B, 0 = B->A)
+    /// Add Liquidity: unused
+    /// Remove Liquidity: unused
+    pub swap_a_to_b: bool,
 }
 
 impl PendingOperation {
@@ -87,27 +176,58 @@ impl PendingOperation {
     pub const SEEDS_PREFIX: &'static [u8] = b"pending_op";
 
     /// Space required for account (with padding)
+    /// Using Option A: Store randomness instead of encrypted notes
+    /// Saves ~1680 bytes compared to storing encrypted notes
     pub const SPACE: usize = 8 + // discriminator
         1 + // bump
         32 + // operation_id
         32 + // relayer
         1 + // operation_type
+        1 + // proof_verified
+        (32 * MAX_INPUT_COMMITMENTS) + // input_commitments (8 × 32 = 256) (SECURITY: binds Phase 0 to Phase 1)
+        (32 * MAX_INPUT_COMMITMENTS) + // expected_nullifiers (8 × 32 = 256) (SECURITY: binds Phase 0 to Phase 2)
+        (32 * MAX_INPUT_COMMITMENTS) + // input_pools (8 × 32 = 256) (SECURITY: binds Phase 1/2 to correct pool)
+        1 + // num_inputs
+        1 + // inputs_verified_mask
         1 + // num_nullifiers
-        (32 * MAX_PENDING_NULLIFIERS) + // nullifier_pools
-        (32 * MAX_PENDING_NULLIFIERS) + // nullifiers
+        (32 * MAX_PENDING_NULLIFIERS) + // nullifier_pools (8 × 32 = 256)
+        (32 * MAX_PENDING_NULLIFIERS) + // nullifiers (8 × 32 = 256)
         1 + // nullifier_completed_mask
         1 + // num_commitments
-        (32 * MAX_PENDING_COMMITMENTS) + // pools
-        (32 * MAX_PENDING_COMMITMENTS) + // commitments
-        (8 * MAX_PENDING_COMMITMENTS) + // leaf_indices
-        (64 * MAX_PENDING_COMMITMENTS) + // stealth_ephemeral_pubkeys
-        (MAX_ENCRYPTED_NOTE_SIZE * MAX_PENDING_COMMITMENTS) + // encrypted_notes
-        (2 * MAX_PENDING_COMMITMENTS) + // encrypted_note_lens
+        (32 * MAX_PENDING_COMMITMENTS) + // pools (10 × 32 = 320)
+        (32 * MAX_PENDING_COMMITMENTS) + // commitments (10 × 32 = 320)
+        (8 * MAX_PENDING_COMMITMENTS) + // leaf_indices (10 × 8 = 80)
+        (64 * MAX_PENDING_COMMITMENTS) + // stealth_ephemeral_pubkeys (10 × 64 = 640)
+        (32 * MAX_PENDING_COMMITMENTS) + // output_recipients (10 × 32 = 320)
+        (8 * MAX_PENDING_COMMITMENTS) + // output_amounts (10 × 8 = 80)
+        (32 * MAX_PENDING_COMMITMENTS) + // output_randomness (10 × 32 = 320)
         1 + // completed_mask
         8 + // expires_at
-        8; // created_at
+        8 + // created_at
+        8 + // swap_amount (operation-specific)
+        8 + // output_amount (operation-specific)
+        8 + // extra_amount (operation-specific)
+        1; // swap_a_to_b (operation-specific)
+        // Total: ~3,034 bytes with 8 max inputs (vs 5,034 with encrypted notes)
 
-    /// Check if all nullifiers have been created
+    /// Check if all input commitments have been verified
+    pub fn all_inputs_verified(&self) -> bool {
+        let mask = (1u8 << self.num_inputs) - 1;
+        self.inputs_verified_mask == mask
+    }
+
+    /// Check if all expected nullifiers have been created
+    /// For multi-input operations, this checks nullifier_completed_mask
+    /// For operations using expected_nullifiers array, check if num_inputs nullifiers are created
+    pub fn all_expected_nullifiers_created(&self) -> bool {
+        if self.num_inputs == 0 {
+            return true;
+        }
+        let mask = (1u8 << self.num_inputs) - 1;
+        (self.nullifier_completed_mask & mask) == mask
+    }
+
+    /// Check if all nullifiers have been created (legacy nullifier array)
     pub fn all_nullifiers_created(&self) -> bool {
         if self.num_nullifiers == 0 {
             return true;

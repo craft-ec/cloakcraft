@@ -17,7 +17,8 @@ use crate::state::{
 };
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::helpers::{verify_groth16_proof, field::pubkey_to_field, commitment::verify_and_spend_commitment};
+use crate::helpers::{verify_groth16_proof, field::pubkey_to_field};
+// Removed: verify_and_spend_commitment (deprecated collapsed pattern)
 use crate::light_cpi::{create_spend_nullifier_account, create_commitment_account, vec_to_fixed_note};
 use crate::instructions::pool::CommitmentMerkleContext;
 
@@ -45,6 +46,10 @@ pub struct LightRemoveLiquidityParams {
     pub commitment_account_hash: [u8; 32],
     /// Merkle context proving commitment exists in state tree
     pub commitment_merkle_context: CommitmentMerkleContext,
+    /// Commitment inclusion proof (SECURITY: proves commitment EXISTS)
+    pub commitment_inclusion_proof: LightValidityProof,
+    /// Address tree info for commitment verification
+    pub commitment_address_tree_info: LightAddressTreeInfo,
     /// Nullifier non-inclusion proof (proves nullifier doesn't exist yet)
     pub nullifier_non_inclusion_proof: LightValidityProof,
     /// Address tree info for nullifier creation
@@ -119,6 +124,7 @@ pub fn remove_liquidity<'info>(
     ctx: Context<'_, '_, '_, 'info, RemoveLiquidity<'info>>,
     operation_id: [u8; 32],
     proof: Vec<u8>,
+    lp_input_commitment: [u8; 32],
     lp_nullifier: [u8; 32],
     out_a_commitment: [u8; 32],
     out_b_commitment: [u8; 32],
@@ -152,20 +158,14 @@ pub fn remove_liquidity<'info>(
 
     verify_groth16_proof(&proof, &ctx.accounts.verification_key.vk_data, &public_inputs, "RemoveLiquidity")?;
 
-    // 3. SECURITY: Verify LP commitment exists + create spend nullifier
-    msg!("=== SECURITY CHECK: Verifying LP commitment + creating nullifier ===");
-    verify_and_spend_commitment(
-        &ctx.accounts.relayer.to_account_info(),
-        ctx.remaining_accounts,
-        light_params.commitment_account_hash,
-        light_params.commitment_merkle_context.clone(),
-        light_params.nullifier_non_inclusion_proof.clone(),
-        light_params.nullifier_address_tree_info.clone(),
-        light_params.output_tree_index,
-        lp_pool.key(),
-        lp_nullifier,
-    )?;
-    msg!("=== SECURITY CHECK PASSED ===");
+    // 3. DEPRECATED: This collapsed version is no longer used. Use append pattern instead:
+    // - create_pending_with_proof_remove_liquidity (Phase 0)
+    // - verify_commitment_exists for LP input (Phase 1)
+    // - create_nullifier_and_pending for LP input (Phase 2)
+    // - execute_remove_liquidity (Phase 3)
+    // - create_commitment (Phase 4+)
+    msg!("=== DEPRECATED: Use append pattern instead ===");
+    return Err(CloakCraftError::Deprecated.into());
 
     // 4. Initialize pending operation PDA
     // NOTE: Nullifier already created in Phase 1; commitments will be created in subsequent phases

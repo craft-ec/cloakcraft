@@ -49,8 +49,9 @@ pub struct CreateCommitment<'info> {
         seeds = [PendingOperation::SEEDS_PREFIX, operation_id.as_ref()],
         bump = pending_operation.bump,
         constraint = !pending_operation.is_expired(Clock::get()?.unix_timestamp) @ CloakCraftError::PendingOperationExpired,
-        // Ensure all nullifiers are created before creating commitments
-        constraint = pending_operation.all_nullifiers_created() @ CloakCraftError::NullifiersNotComplete,
+        // SECURITY FIX: Check expected nullifiers (from append pattern), not legacy nullifiers
+        // This ensures ALL nullifiers are created before commitments in multi-input operations
+        constraint = pending_operation.all_expected_nullifiers_created() @ CloakCraftError::NullifierNotCreated,
     )]
     pub pending_operation: Box<Account<'info, PendingOperation>>,
 

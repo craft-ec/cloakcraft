@@ -20,7 +20,8 @@ use crate::errors::CloakCraftError;
 use crate::helpers::verify_groth16_proof;
 use crate::helpers::field::{pubkey_to_field, u64_to_field};
 use crate::helpers::vault::{transfer_from_vault, update_pool_balance};
-use crate::helpers::commitment::verify_and_spend_commitment;
+// Removed: verify_and_spend_commitment (deprecated collapsed pattern)
+// use crate::helpers::commitment::verify_and_spend_commitment;
 
 #[derive(Accounts)]
 #[instruction(operation_id: [u8; 32])]
@@ -95,6 +96,10 @@ pub struct LightTransactParams {
     pub commitment_account_hash: [u8; 32],
     /// Merkle context proving commitment exists in state tree
     pub commitment_merkle_context: CommitmentMerkleContext,
+    /// Commitment inclusion proof (SECURITY: proves commitment EXISTS)
+    pub commitment_inclusion_proof: LightValidityProof,
+    /// Address tree info for commitment verification
+    pub commitment_address_tree_info: LightAddressTreeInfo,
     /// Nullifier non-inclusion proof (proves nullifier doesn't exist yet)
     pub nullifier_non_inclusion_proof: LightValidityProof,
     /// Address tree info for nullifier creation
@@ -180,19 +185,14 @@ pub fn transact<'info>(
     }
 
     // 2. SECURITY: Verify input commitment exists + create spend nullifier
-    msg!("=== SECURITY CHECK: Verifying commitment + creating nullifier ===");
-    verify_and_spend_commitment(
-        &ctx.accounts.relayer.to_account_info(),
-        ctx.remaining_accounts,
-        light_params.commitment_account_hash,
-        light_params.commitment_merkle_context.clone(),
-        light_params.nullifier_non_inclusion_proof.clone(),
-        light_params.nullifier_address_tree_info.clone(),
-        light_params.output_tree_index,
-        pool.key(),
-        nullifier,
-    )?;
-    msg!("=== SECURITY CHECK PASSED ===");
+    // DEPRECATED: This collapsed version is no longer used. Use append pattern instead:
+    // - create_pending_with_proof (Phase 0)
+    // - verify_commitment_exists (Phase 1)
+    // - create_nullifier_and_pending (Phase 2)
+    // - process_unshield (Phase 3)
+    // - create_commitment (Phase 4+)
+    msg!("=== DEPRECATED: Use append pattern instead ===");
+    return Err(CloakCraftError::Deprecated.into());
 
     // 3. Initialize pending operation PDA
     pending_op.bump = ctx.bumps.pending_operation;
