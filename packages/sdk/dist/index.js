@@ -5339,20 +5339,20 @@ var CloakCraftClient = class {
         if (relayer) {
           versionedTx.sign([relayer]);
           console.log("[Transfer] Executing atomic transaction (relayer signed)...");
-          const signature2 = await executeVersionedTransaction(this.connection, versionedTx, {
+          const signature = await executeVersionedTransaction(this.connection, versionedTx, {
             skipPreflight: false
           });
           console.log("[Transfer] Atomic execution successful!");
-          return { signature: signature2, slot: 0 };
+          return { signature, slot: 0 };
         } else if (this.program?.provider?.wallet) {
           console.log("[Transfer] Signing versioned transaction with wallet adapter...");
           const signedTx = await this.program.provider.wallet.signTransaction(versionedTx);
           console.log("[Transfer] Executing atomic transaction (wallet signed)...");
-          const signature2 = await executeVersionedTransaction(this.connection, signedTx, {
+          const signature = await executeVersionedTransaction(this.connection, signedTx, {
             skipPreflight: false
           });
           console.log("[Transfer] Atomic execution successful!");
-          return { signature: signature2, slot: 0 };
+          return { signature, slot: 0 };
         } else {
           console.log("[Transfer] No signing method available, falling back to sequential");
         }
@@ -5361,32 +5361,67 @@ var CloakCraftClient = class {
     } catch (err) {
       console.error("[Transfer] Atomic execution failed, falling back to sequential:", err);
     }
-    console.log("[Transfer] Using sequential execution...");
-    const { tx, result } = await buildTransactWithProgram(
+    console.log("[Transfer] Using sequential multi-phase execution with batch signing...");
+    const { tx: phase1Tx, result, operationId, pendingCommitments } = await buildTransactWithProgram(
       this.program,
       instructionParams,
       heliusRpcUrl,
       circuitId
     );
-    const signature = await tx.rpc();
-    const realOutputs = result.outputCommitments.map((c, i) => ({
-      commitment: c,
-      leafIndex: baseLeafIndex + BigInt(i),
-      stealthEphemeralPubkey: result.stealthEphemeralPubkeys[i],
-      encryptedNote: result.encryptedNotes[i],
-      amount: result.outputAmounts[i]
-    })).filter((o) => o.encryptedNote.length > 0 && o.amount > 0n);
-    if (realOutputs.length > 0) {
-      await storeCommitments(
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await Promise.resolve().then(() => (init_swap(), swap_exports));
+    console.log("[Transfer] Building all transactions for batch signing...");
+    const transactionBuilders = [];
+    transactionBuilders.push({ name: "Phase 1 (Transact)", builder: phase1Tx });
+    for (let i = 0; i < pendingCommitments.length; i++) {
+      const pc = pendingCommitments[i];
+      const { tx: commitmentTx } = await buildCreateCommitmentWithProgram2(
         this.program,
-        tokenMint,
-        realOutputs,
-        relayerPubkey,
+        {
+          operationId,
+          commitmentIndex: i,
+          pool: pc.pool,
+          relayer: relayerPubkey,
+          stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+          encryptedNote: pc.encryptedNote,
+          commitment: pc.commitment
+        },
         heliusRpcUrl
       );
+      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
+    }
+    const { tx: closeTx } = await buildClosePendingOperationWithProgram2(
+      this.program,
+      operationId,
+      relayerPubkey
+    );
+    transactionBuilders.push({ name: "Close Operation", builder: closeTx });
+    console.log(`[Transfer] Built ${transactionBuilders.length} transactions for batch signing`);
+    const { Transaction: Transaction3 } = await import("@solana/web3.js");
+    const transactions = await Promise.all(
+      transactionBuilders.map(async ({ builder }) => await builder.transaction())
+    );
+    const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
+    transactions.forEach((tx) => {
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = relayerPubkey;
+    });
+    console.log("[Transfer] Requesting signature for all transactions...");
+    const signedTransactions = await this.signAllTransactions(transactions, relayer);
+    console.log(`[Transfer] All ${signedTransactions.length} transactions signed!`);
+    let phase1Signature = "";
+    for (let i = 0; i < signedTransactions.length; i++) {
+      const tx = signedTransactions[i];
+      const name = transactionBuilders[i].name;
+      const signature = await this.connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: "confirmed"
+      });
+      await this.connection.confirmTransaction(signature, "confirmed");
+      console.log(`[Transfer] ${name} confirmed: ${signature}`);
+      if (i === 0) phase1Signature = signature;
     }
     return {
-      signature,
+      signature: phase1Signature,
       slot: 0
     };
   }

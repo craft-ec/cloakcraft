@@ -923,42 +923,89 @@ export class CloakCraftClient {
       console.error('[Transfer] Atomic execution failed, falling back to sequential:', err);
     }
 
-    // FALLBACK: Sequential execution
-    console.log('[Transfer] Using sequential execution...');
-    const { tx, result } = await buildTransactWithProgram(
+    // FALLBACK: Sequential execution with batch signing
+    console.log('[Transfer] Using sequential multi-phase execution with batch signing...');
+
+    const { tx: phase1Tx, result, operationId, pendingCommitments } = await buildTransactWithProgram(
       this.program,
       instructionParams,
       heliusRpcUrl,
       circuitId
     );
 
-    // Execute transaction
-    const signature = await tx.rpc();
+    // Import generic builders
+    const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
 
-    // Store output commitments with correct leaf indices
-    // Filter out dummy outputs (empty encrypted notes) and 0-amount outputs
-    const realOutputs = result.outputCommitments
-      .map((c, i) => ({
-        commitment: c,
-        leafIndex: baseLeafIndex + BigInt(i),
-        stealthEphemeralPubkey: result.stealthEphemeralPubkeys[i],
-        encryptedNote: result.encryptedNotes[i],
-        amount: result.outputAmounts[i],
-      }))
-      .filter(o => o.encryptedNote.length > 0 && o.amount > 0n);
+    // Build all transactions upfront for batch signing
+    console.log('[Transfer] Building all transactions for batch signing...');
+    const transactionBuilders = [];
 
-    if (realOutputs.length > 0) {
-      await storeCommitments(
+    // Phase 1: Transact (verify proof + verify commitment + create nullifier + store pending + unshield)
+    transactionBuilders.push({ name: 'Phase 1 (Transact)', builder: phase1Tx });
+
+    // Phase 2+: Create commitments
+    for (let i = 0; i < pendingCommitments.length; i++) {
+      const pc = pendingCommitments[i];
+      const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
         this.program,
-        tokenMint,
-        realOutputs,
-        relayerPubkey,
+        {
+          operationId,
+          commitmentIndex: i,
+          pool: pc.pool,
+          relayer: relayerPubkey,
+          stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+          encryptedNote: pc.encryptedNote,
+          commitment: pc.commitment,
+        },
         heliusRpcUrl
       );
+      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
+    }
+
+    // Phase 3: Close pending operation
+    const { tx: closeTx } = await buildClosePendingOperationWithProgram(
+      this.program,
+      operationId,
+      relayerPubkey
+    );
+    transactionBuilders.push({ name: 'Close Operation', builder: closeTx });
+
+    console.log(`[Transfer] Built ${transactionBuilders.length} transactions for batch signing`);
+
+    // Convert to raw transactions and batch sign
+    const { Transaction } = await import('@solana/web3.js');
+    const transactions = await Promise.all(
+      transactionBuilders.map(async ({ builder }) => await builder.transaction())
+    );
+
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+    transactions.forEach(tx => {
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = relayerPubkey;
+    });
+
+    console.log('[Transfer] Requesting signature for all transactions...');
+    const signedTransactions = await this.signAllTransactions(transactions, relayer);
+    console.log(`[Transfer] All ${signedTransactions.length} transactions signed!`);
+
+    // Execute sequentially
+    let phase1Signature = '';
+    for (let i = 0; i < signedTransactions.length; i++) {
+      const tx = signedTransactions[i];
+      const name = transactionBuilders[i].name;
+
+      const signature = await this.connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
+      await this.connection.confirmTransaction(signature, 'confirmed');
+      console.log(`[Transfer] ${name} confirmed: ${signature}`);
+
+      if (i === 0) phase1Signature = signature;
     }
 
     return {
-      signature,
+      signature: phase1Signature,
       slot: 0,
     };
   }
