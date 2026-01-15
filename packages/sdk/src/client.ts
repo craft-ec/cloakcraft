@@ -1412,6 +1412,9 @@ export class CloakCraftClient {
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
 
+    // Compute input commitment for verification
+    const inputCommitment = computeCommitment(params.input);
+
     const instructionParams = {
       inputPool: inputPoolPda,
       outputPool: outputPoolPda,
@@ -1422,6 +1425,9 @@ export class CloakCraftClient {
       proof,
       merkleRoot: params.merkleRoot,
       nullifier,
+      inputCommitment,
+      accountHash,
+      leafIndex: params.input.leafIndex,
       outputCommitment: outCommitment,
       changeCommitment,
       minOutput: params.minOutput,
@@ -1646,6 +1652,15 @@ export class CloakCraftClient {
     const { proof, nullifierA, nullifierB, lpCommitment, changeACommitment, changeBCommitment,
             lpRandomness, changeARandomness, changeBRandomness } = proofResult;
 
+    // Compute input commitments for verification
+    const inputCommitmentA = computeCommitment(params.inputA);
+    const inputCommitmentB = computeCommitment(params.inputB);
+
+    // Validate required fields
+    if (!params.inputA.accountHash || !params.inputB.accountHash) {
+      throw new Error('Input notes must have accountHash for commitment verification');
+    }
+
     // Build instruction parameters
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
@@ -1662,6 +1677,12 @@ export class CloakCraftClient {
       proof,
       nullifierA,
       nullifierB,
+      inputCommitmentA,
+      inputCommitmentB,
+      accountHashA: params.inputA.accountHash,
+      accountHashB: params.inputB.accountHash,
+      leafIndexA: params.inputA.leafIndex,
+      leafIndexB: params.inputB.leafIndex,
       lpCommitment,
       changeACommitment,
       changeBCommitment,
@@ -1901,6 +1922,14 @@ export class CloakCraftClient {
       this.wallet.keypair
     );
 
+    // Compute LP input commitment for verification
+    const lpInputCommitment = computeCommitment(params.lpInput);
+
+    // Validate required fields
+    if (!params.lpInput.accountHash) {
+      throw new Error('LP input note must have accountHash for commitment verification');
+    }
+
     // Build instruction parameters
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
@@ -1915,6 +1944,9 @@ export class CloakCraftClient {
       relayer: relayerPubkey,
       proof,
       lpNullifier,
+      lpInputCommitment,
+      accountHash: params.lpInput.accountHash,
+      leafIndex: params.lpInput.leafIndex,
       outputACommitment,
       outputBCommitment,
       oldPoolStateHash: params.oldPoolStateHash,

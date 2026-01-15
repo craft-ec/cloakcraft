@@ -2,26 +2,7 @@ import {
   buildShieldInstructions,
   buildShieldInstructionsForVersionedTx,
   buildShieldWithProgram
-} from "./chunk-HAB2PB7P.mjs";
-import {
-  buildStoreCommitmentWithProgram,
-  storeCommitments
-} from "./chunk-2ILP6GSF.mjs";
-import {
-  buildTransactInstructionsForVersionedTx,
-  buildTransactWithProgram,
-  checkNullifierSpent,
-  computeCircuitInputs,
-  deriveActionNullifier,
-  deriveNullifierKey,
-  deriveSpendingNullifier
-} from "./chunk-3ISVB6DR.mjs";
-import {
-  computeCommitment,
-  createNote,
-  generateRandomness,
-  verifyCommitment
-} from "./chunk-2JHP2ED6.mjs";
+} from "./chunk-RXYJCEK6.mjs";
 import {
   buildAddLiquidityInstructionsForVersionedTx,
   buildAddLiquidityWithProgram,
@@ -36,8 +17,25 @@ import {
   deriveAmmPoolPda,
   derivePendingOperationPda,
   generateOperationId
-} from "./chunk-LADW2CSL.mjs";
+} from "./chunk-IL53KQP6.mjs";
 import {
+  buildTransactInstructionsForVersionedTx,
+  buildTransactWithProgram,
+  checkNullifierSpent,
+  computeCircuitInputs,
+  deriveActionNullifier,
+  deriveNullifierKey,
+  deriveSpendingNullifier
+} from "./chunk-244O22BQ.mjs";
+import {
+  computeCommitment,
+  createNote,
+  generateRandomness,
+  verifyCommitment
+} from "./chunk-TPPRC4TZ.mjs";
+import {
+  CIRCUIT_IDS,
+  DEVNET_V2_TREES,
   DOMAIN_ACTION_NULLIFIER,
   DOMAIN_COMMITMENT,
   DOMAIN_EMPTY_LEAF,
@@ -49,15 +47,23 @@ import {
   FIELD_MODULUS_FR,
   GENERATOR,
   IDENTITY,
+  LightProtocol,
+  PROGRAM_ID,
+  SEEDS,
   bytesToField,
   decryptNote,
+  deriveCommitmentCounterPda,
+  derivePoolPda,
   derivePublicKey,
+  deriveVaultPda,
+  deriveVerificationKeyPda,
   deserializeEncryptedNote,
   encryptNote,
   fieldToBytes,
   initPoseidon,
   isInSubgroup,
   isOnCurve,
+  padCircuitId,
   pointAdd,
   poseidonHash,
   poseidonHash2,
@@ -67,19 +73,7 @@ import {
   scalarMul,
   serializeEncryptedNote,
   tryDecryptNote
-} from "./chunk-NSYBEMKY.mjs";
-import {
-  CIRCUIT_IDS,
-  DEVNET_V2_TREES,
-  LightProtocol,
-  PROGRAM_ID,
-  SEEDS,
-  deriveCommitmentCounterPda,
-  derivePoolPda,
-  deriveVaultPda,
-  deriveVerificationKeyPda,
-  padCircuitId
-} from "./chunk-FGB5KECC.mjs";
+} from "./chunk-CYX2MFTV.mjs";
 import {
   MAX_TRANSACTION_SIZE,
   buildAtomicMultiPhaseTransaction,
@@ -99,7 +93,7 @@ export * from "@cloakcraft/types";
 // src/client.ts
 import {
   Connection as Connection2,
-  PublicKey as PublicKey7,
+  PublicKey as PublicKey8,
   Transaction as Transaction2
 } from "@solana/web3.js";
 
@@ -2276,6 +2270,63 @@ var LightCommitmentClient = class extends LightClient {
   }
 };
 
+// src/instructions/store-commitment.ts
+import {
+  ComputeBudgetProgram
+} from "@solana/web3.js";
+import { BN } from "@coral-xyz/anchor";
+async function buildStoreCommitmentWithProgram(program, params, rpcUrl) {
+  const programId = program.programId;
+  const lightProtocol = new LightProtocol(rpcUrl, programId);
+  const [poolPda] = derivePoolPda(params.tokenMint, programId);
+  const commitmentAddress = lightProtocol.deriveCommitmentAddress(poolPda, params.commitment);
+  const validityProof = await lightProtocol.getValidityProof([commitmentAddress]);
+  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
+  const convertedProof = LightProtocol.convertCompressedProof(validityProof);
+  const addressTreeInfo = {
+    addressMerkleTreePubkeyIndex: addressTreeIndex,
+    addressQueuePubkeyIndex: addressTreeIndex,
+    rootIndex: validityProof.rootIndices[0] ?? 0
+  };
+  const tx = await program.methods.storeCommitment({
+    commitment: Array.from(params.commitment),
+    leafIndex: new BN(params.leafIndex.toString()),
+    stealthEphemeralPubkey: Array.from(params.stealthEphemeralPubkey),
+    encryptedNote: Buffer.from(params.encryptedNote),
+    // Buffer, not number[]
+    validityProof: convertedProof,
+    addressTreeInfo,
+    outputTreeIndex
+  }).accountsStrict({
+    pool: poolPda,
+    relayer: params.relayer
+  }).remainingAccounts(remainingAccounts).preInstructions([
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 6e5 }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  return tx;
+}
+async function storeCommitments(program, tokenMint, commitments, relayer, rpcUrl) {
+  const signatures = [];
+  for (const commitment of commitments) {
+    const tx = await buildStoreCommitmentWithProgram(
+      program,
+      {
+        tokenMint,
+        commitment: commitment.commitment,
+        leafIndex: commitment.leafIndex,
+        stealthEphemeralPubkey: commitment.stealthEphemeralPubkey,
+        encryptedNote: commitment.encryptedNote,
+        relayer
+      },
+      rpcUrl
+    );
+    const sig = await tx.rpc();
+    signatures.push(sig);
+  }
+  return signatures;
+}
+
 // src/instructions/initialize.ts
 import {
   SystemProgram
@@ -2345,11 +2396,11 @@ async function initializePool(program, tokenMint, authority, payer) {
 
 // src/instructions/market.ts
 import {
-  PublicKey as PublicKey4,
-  ComputeBudgetProgram
+  PublicKey as PublicKey5,
+  ComputeBudgetProgram as ComputeBudgetProgram2
 } from "@solana/web3.js";
 function deriveOrderPda(orderId, programId) {
-  return PublicKey4.findProgramAddressSync(
+  return PublicKey5.findProgramAddressSync(
     [Buffer.from("order"), Buffer.from(orderId)],
     programId
   );
@@ -2426,8 +2477,8 @@ async function buildFillOrderWithProgram(program, params, rpcUrl) {
     verificationKey: vkPda,
     relayer: params.relayer
   }).remainingAccounts(remainingAccounts).preInstructions([
-    ComputeBudgetProgram.setComputeUnitLimit({ units: 1e6 }),
-    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+    ComputeBudgetProgram2.setComputeUnitLimit({ units: 1e6 }),
+    ComputeBudgetProgram2.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   return {
     tx,
@@ -2495,8 +2546,8 @@ async function buildCancelOrderWithProgram(program, params, rpcUrl) {
     verificationKey: vkPda,
     relayer: params.relayer
   }).remainingAccounts(remainingAccounts).preInstructions([
-    ComputeBudgetProgram.setComputeUnitLimit({ units: 8e5 }),
-    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+    ComputeBudgetProgram2.setComputeUnitLimit({ units: 8e5 }),
+    ComputeBudgetProgram2.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   return {
     tx,
@@ -2512,12 +2563,12 @@ async function buildCancelOrderWithProgram(program, params, rpcUrl) {
 
 // src/instructions/governance.ts
 import {
-  PublicKey as PublicKey5,
-  ComputeBudgetProgram as ComputeBudgetProgram2
+  PublicKey as PublicKey6,
+  ComputeBudgetProgram as ComputeBudgetProgram3
 } from "@solana/web3.js";
-import { BN } from "@coral-xyz/anchor";
+import { BN as BN2 } from "@coral-xyz/anchor";
 function deriveAggregationPda(id, programId) {
-  return PublicKey5.findProgramAddressSync(
+  return PublicKey6.findProgramAddressSync(
     [Buffer.from("aggregation"), Buffer.from(id)],
     programId
   );
@@ -2531,16 +2582,16 @@ async function buildCreateAggregationWithProgram(program, params) {
     Array.from(params.thresholdPubkey),
     params.threshold,
     params.numOptions,
-    new BN(params.deadline),
+    new BN2(params.deadline),
     Array.from(params.actionDomain)
   ).accountsStrict({
     aggregation: aggregationPda,
     tokenPool: tokenPoolPda,
     authority: params.authority,
     payer: params.payer,
-    systemProgram: PublicKey5.default
+    systemProgram: PublicKey6.default
   }).preInstructions([
-    ComputeBudgetProgram2.setComputeUnitLimit({ units: 2e5 })
+    ComputeBudgetProgram3.setComputeUnitLimit({ units: 2e5 })
   ]);
   return tx;
 }
@@ -2580,8 +2631,8 @@ async function buildSubmitVoteWithProgram(program, params, rpcUrl) {
     verificationKey: vkPda,
     relayer: params.relayer
   }).remainingAccounts(remainingAccounts).preInstructions([
-    ComputeBudgetProgram2.setComputeUnitLimit({ units: 8e5 }),
-    ComputeBudgetProgram2.setComputeUnitPrice({ microLamports: 5e4 })
+    ComputeBudgetProgram3.setComputeUnitLimit({ units: 8e5 }),
+    ComputeBudgetProgram3.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   return tx;
 }
@@ -2598,26 +2649,26 @@ async function buildSubmitDecryptionShareWithProgram(program, params) {
     aggregation: aggregationPda,
     member: params.member
   }).preInstructions([
-    ComputeBudgetProgram2.setComputeUnitLimit({ units: 4e5 })
+    ComputeBudgetProgram3.setComputeUnitLimit({ units: 4e5 })
   ]);
   return tx;
 }
 async function buildFinalizeDecryptionWithProgram(program, params) {
   const programId = program.programId;
   const [aggregationPda] = deriveAggregationPda(params.aggregationId, programId);
-  const totalsArray = params.totals.map((t) => new BN(t.toString()));
+  const totalsArray = params.totals.map((t) => new BN2(t.toString()));
   const tx = await program.methods.finalizeDecryption(totalsArray).accountsStrict({
     aggregation: aggregationPda,
     authority: params.authority
   }).preInstructions([
-    ComputeBudgetProgram2.setComputeUnitLimit({ units: 2e5 })
+    ComputeBudgetProgram3.setComputeUnitLimit({ units: 2e5 })
   ]);
   return tx;
 }
 
 // src/address-lookup-table.ts
 import {
-  PublicKey as PublicKey6,
+  PublicKey as PublicKey7,
   AddressLookupTableProgram,
   Transaction,
   sendAndConfirmTransaction
@@ -2692,50 +2743,50 @@ function getLightProtocolCommonAccounts(network) {
   if (network === "devnet") {
     return {
       stateTrees: [
-        new PublicKey6("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
+        new PublicKey7("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
         // State tree 0
       ],
       addressTrees: [
-        new PublicKey6("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
+        new PublicKey7("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
         // Address tree 0
       ],
       nullifierQueues: [
-        new PublicKey6("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
+        new PublicKey7("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
         // Nullifier queue 0
       ],
       // Additional Light Protocol system accounts (from PackedAccounts)
       systemAccounts: [
-        new PublicKey6("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
-        new PublicKey6("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
-        new PublicKey6("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
-        new PublicKey6("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
-        new PublicKey6("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
+        new PublicKey7("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
+        new PublicKey7("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
+        new PublicKey7("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
+        new PublicKey7("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
+        new PublicKey7("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
       ]
     };
   } else {
     return {
       stateTrees: [
-        new PublicKey6("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
+        new PublicKey7("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
         // Placeholder
       ],
       addressTrees: [
-        new PublicKey6("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
+        new PublicKey7("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
         // Placeholder
       ],
       nullifierQueues: [
-        new PublicKey6("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
+        new PublicKey7("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
         // Placeholder
       ],
       systemAccounts: [
-        new PublicKey6("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
+        new PublicKey7("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
         // Placeholder
-        new PublicKey6("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
+        new PublicKey7("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
         // Placeholder
-        new PublicKey6("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
+        new PublicKey7("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
         // Placeholder
-        new PublicKey6("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
+        new PublicKey7("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
         // Placeholder
-        new PublicKey6("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
+        new PublicKey7("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
         // Placeholder
       ]
     };
@@ -2970,7 +3021,7 @@ var CloakCraftClient = class {
    * Get pool state
    */
   async getPool(tokenMint) {
-    const [poolPda] = PublicKey7.findProgramAddressSync(
+    const [poolPda] = PublicKey8.findProgramAddressSync(
       [Buffer.from("pool"), tokenMint.toBuffer()],
       this.programId
     );
@@ -2998,10 +3049,10 @@ var CloakCraftClient = class {
     const data = accountInfo.data;
     if (data.length < 114) return null;
     return {
-      tokenMint: new PublicKey7(data.subarray(8, 40)),
-      tokenVault: new PublicKey7(data.subarray(40, 72)),
+      tokenMint: new PublicKey8(data.subarray(8, 40)),
+      tokenVault: new PublicKey8(data.subarray(40, 72)),
       totalShielded: data.readBigUInt64LE(72),
-      authority: new PublicKey7(data.subarray(80, 112)),
+      authority: new PublicKey8(data.subarray(80, 112)),
       bump: data[112],
       vaultBump: data[113]
     };
@@ -3115,7 +3166,7 @@ var CloakCraftClient = class {
     };
     console.log("[Shield] Attempting atomic execution with versioned transaction...");
     try {
-      const { buildShieldInstructionsForVersionedTx: buildShieldInstructionsForVersionedTx2 } = await import("./shield-MFS7APVA.mjs");
+      const { buildShieldInstructionsForVersionedTx: buildShieldInstructionsForVersionedTx2 } = await import("./shield-EXZVZRPV.mjs");
       const { instructions, commitment: commitment2, randomness: randomness2 } = await buildShieldInstructionsForVersionedTx2(
         this.program,
         instructionParams,
@@ -3192,7 +3243,7 @@ var CloakCraftClient = class {
     };
     console.log("[Shield] Attempting atomic execution with versioned transaction (wallet)...");
     try {
-      const { buildShieldInstructionsForVersionedTx: buildShieldInstructionsForVersionedTx2 } = await import("./shield-MFS7APVA.mjs");
+      const { buildShieldInstructionsForVersionedTx: buildShieldInstructionsForVersionedTx2 } = await import("./shield-EXZVZRPV.mjs");
       const { instructions, commitment: commitment2, randomness: randomness2 } = await buildShieldInstructionsForVersionedTx2(
         this.program,
         instructionParams,
@@ -3270,12 +3321,12 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit(circuitName)) {
       throw new Error(`Prover not initialized. Call initializeProver(['${circuitName}']) first.`);
     }
-    const tokenMint = params.inputs[0].tokenMint instanceof Uint8Array ? new PublicKey7(params.inputs[0].tokenMint) : params.inputs[0].tokenMint;
-    const [poolPda] = PublicKey7.findProgramAddressSync(
+    const tokenMint = params.inputs[0].tokenMint instanceof Uint8Array ? new PublicKey8(params.inputs[0].tokenMint) : params.inputs[0].tokenMint;
+    const [poolPda] = PublicKey8.findProgramAddressSync(
       [Buffer.from("pool"), tokenMint.toBuffer()],
       this.programId
     );
-    const [counterPda] = PublicKey7.findProgramAddressSync(
+    const [counterPda] = PublicKey8.findProgramAddressSync(
       [Buffer.from("commitment_counter"), poolPda.toBuffer()],
       this.programId
     );
@@ -3350,7 +3401,7 @@ var CloakCraftClient = class {
     const circuitId = circuitName === "transfer/1x2" ? "transfer_1x2" : "transfer_1x3";
     console.log("[Transfer] Attempting atomic execution with versioned transaction...");
     try {
-      const { buildTransactInstructionsForVersionedTx: buildTransactInstructionsForVersionedTx2 } = await import("./transact-CP6R3KUD.mjs");
+      const { buildTransactInstructionsForVersionedTx: buildTransactInstructionsForVersionedTx2 } = await import("./transact-N3CMGT3A.mjs");
       const { instructions, result: result2 } = await buildTransactInstructionsForVersionedTx2(
         this.program,
         instructionParams,
@@ -3714,7 +3765,7 @@ var CloakCraftClient = class {
       params,
       this.wallet.keypair
     );
-    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey7(params.input.tokenMint) : params.input.tokenMint;
+    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey8(params.input.tokenMint) : params.input.tokenMint;
     const ammPoolAccount = await this.program.account.ammPool.fetch(params.poolId);
     const outputTokenMint = params.swapDirection === "aToB" ? ammPoolAccount.tokenBMint : ammPoolAccount.tokenAMint;
     const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
@@ -3726,6 +3777,7 @@ var CloakCraftClient = class {
     const { proof, nullifier, outCommitment, changeCommitment, outRandomness, changeRandomness } = proofResult;
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
+    const inputCommitment = computeCommitment(params.input);
     const instructionParams = {
       inputPool: inputPoolPda,
       outputPool: outputPoolPda,
@@ -3736,6 +3788,9 @@ var CloakCraftClient = class {
       proof,
       merkleRoot: params.merkleRoot,
       nullifier,
+      inputCommitment,
+      accountHash,
+      leafIndex: params.input.leafIndex,
       outputCommitment: outCommitment,
       changeCommitment,
       minOutput: params.minOutput,
@@ -3799,7 +3854,7 @@ var CloakCraftClient = class {
       instructionParams,
       heliusRpcUrl
     );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-7WRTFDCG.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-KUQ6ZM4B.mjs");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
     for (let i = 0; i < pendingNullifiers.length; i++) {
@@ -3894,8 +3949,8 @@ var CloakCraftClient = class {
       params,
       this.wallet.keypair
     );
-    const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new PublicKey7(params.inputA.tokenMint) : params.inputA.tokenMint;
-    const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new PublicKey7(params.inputB.tokenMint) : params.inputB.tokenMint;
+    const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new PublicKey8(params.inputA.tokenMint) : params.inputA.tokenMint;
+    const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new PublicKey8(params.inputB.tokenMint) : params.inputB.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
     const [lpPool] = derivePoolPda(params.lpMint, this.programId);
@@ -3910,6 +3965,11 @@ var CloakCraftClient = class {
       changeARandomness,
       changeBRandomness
     } = proofResult;
+    const inputCommitmentA = computeCommitment(params.inputA);
+    const inputCommitmentB = computeCommitment(params.inputB);
+    if (!params.inputA.accountHash || !params.inputB.accountHash) {
+      throw new Error("Input notes must have accountHash for commitment verification");
+    }
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
     const instructionParams = {
@@ -3924,6 +3984,12 @@ var CloakCraftClient = class {
       proof,
       nullifierA,
       nullifierB,
+      inputCommitmentA,
+      inputCommitmentB,
+      accountHashA: params.inputA.accountHash,
+      accountHashB: params.inputB.accountHash,
+      leafIndexA: params.inputA.leafIndex,
+      leafIndexB: params.inputB.leafIndex,
       lpCommitment,
       changeACommitment,
       changeBCommitment,
@@ -3991,7 +4057,7 @@ var CloakCraftClient = class {
       instructionParams,
       heliusRpcUrl
     );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-7WRTFDCG.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-KUQ6ZM4B.mjs");
     console.log("[Add Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
@@ -4092,7 +4158,7 @@ var CloakCraftClient = class {
     }
     const tokenAMint = params.tokenAMint;
     const tokenBMint = params.tokenBMint;
-    const lpMint = params.lpInput.tokenMint instanceof Uint8Array ? new PublicKey7(params.lpInput.tokenMint) : params.lpInput.tokenMint;
+    const lpMint = params.lpInput.tokenMint instanceof Uint8Array ? new PublicKey8(params.lpInput.tokenMint) : params.lpInput.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
     const [lpPool] = derivePoolPda(lpMint, this.programId);
@@ -4104,6 +4170,10 @@ var CloakCraftClient = class {
       params,
       this.wallet.keypair
     );
+    const lpInputCommitment = computeCommitment(params.lpInput);
+    if (!params.lpInput.accountHash) {
+      throw new Error("LP input note must have accountHash for commitment verification");
+    }
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
     const instructionParams = {
@@ -4118,6 +4188,9 @@ var CloakCraftClient = class {
       relayer: relayerPubkey,
       proof,
       lpNullifier,
+      lpInputCommitment,
+      accountHash: params.lpInput.accountHash,
+      leafIndex: params.lpInput.leafIndex,
       outputACommitment,
       outputBCommitment,
       oldPoolStateHash: params.oldPoolStateHash,
@@ -4132,7 +4205,7 @@ var CloakCraftClient = class {
     };
     console.log("[Remove Liquidity] Attempting atomic execution with versioned transaction...");
     try {
-      const { buildRemoveLiquidityInstructionsForVersionedTx: buildRemoveLiquidityInstructionsForVersionedTx3 } = await import("./swap-7WRTFDCG.mjs");
+      const { buildRemoveLiquidityInstructionsForVersionedTx: buildRemoveLiquidityInstructionsForVersionedTx3 } = await import("./swap-KUQ6ZM4B.mjs");
       const { instructions, operationId: operationId2 } = await buildRemoveLiquidityInstructionsForVersionedTx3(
         this.program,
         instructionParams,
@@ -4183,7 +4256,7 @@ var CloakCraftClient = class {
       instructionParams,
       heliusRpcUrl
     );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-7WRTFDCG.mjs");
+    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-KUQ6ZM4B.mjs");
     console.log("[Remove Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
@@ -4294,8 +4367,8 @@ var CloakCraftClient = class {
     );
     const [orderPda] = deriveOrderPda(params.orderId, this.programId);
     const orderAccount = await this.program.account.order.fetch(orderPda);
-    const makerPool = new PublicKey7(orderAccount.makerPool || params.order.escrowCommitment);
-    const takerInputMint = params.takerInput.tokenMint instanceof Uint8Array ? new PublicKey7(params.takerInput.tokenMint) : params.takerInput.tokenMint;
+    const makerPool = new PublicKey8(orderAccount.makerPool || params.order.escrowCommitment);
+    const takerInputMint = params.takerInput.tokenMint instanceof Uint8Array ? new PublicKey8(params.takerInput.tokenMint) : params.takerInput.tokenMint;
     const [takerPool] = derivePoolPda(takerInputMint, this.programId);
     const escrowNullifier = new Uint8Array(32);
     const takerNullifier = this.computeInputNullifier(params.takerInput);
@@ -4379,7 +4452,7 @@ var CloakCraftClient = class {
     );
     const [orderPda] = deriveOrderPda(params.orderId, this.programId);
     const orderAccount = await this.program.account.order.fetch(orderPda);
-    const pool = new PublicKey7(orderAccount.pool || orderAccount.makerPool);
+    const pool = new PublicKey8(orderAccount.pool || orderAccount.makerPool);
     const escrowNullifier = new Uint8Array(32);
     const refundCommitment = computeCommitment({
       stealthPubX: params.refundRecipient.stealthPubkey.x,
@@ -4463,7 +4536,7 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("governance/encrypted_submit")) {
       throw new Error("Prover not initialized. Call initializeProver(['governance/encrypted_submit']) first.");
     }
-    const tokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey7(params.input.tokenMint) : params.input.tokenMint;
+    const tokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey8(params.input.tokenMint) : params.input.tokenMint;
     const [tokenPool] = derivePoolPda(tokenMint, this.programId);
     const randomness = generateVoteRandomness();
     const voteOption = params.voteChoice === 0 ? 0 /* Yes */ : params.voteChoice === 1 ? 1 /* No */ : 2 /* Abstain */;
@@ -4639,7 +4712,7 @@ var CloakCraftClient = class {
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     let poolPda;
     if (tokenMint) {
-      [poolPda] = PublicKey7.findProgramAddressSync(
+      [poolPda] = PublicKey8.findProgramAddressSync(
         [Buffer.from("pool"), tokenMint.toBuffer()],
         this.programId
       );
@@ -4664,7 +4737,7 @@ var CloakCraftClient = class {
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     let poolPda;
     if (tokenMint) {
-      [poolPda] = PublicKey7.findProgramAddressSync(
+      [poolPda] = PublicKey8.findProgramAddressSync(
         [Buffer.from("pool"), tokenMint.toBuffer()],
         this.programId
       );
@@ -4769,7 +4842,7 @@ var CloakCraftClient = class {
 };
 
 // src/amm/pool.ts
-import { PublicKey as PublicKey8 } from "@solana/web3.js";
+import { PublicKey as PublicKey9 } from "@solana/web3.js";
 import { keccak_256 } from "@noble/hashes/sha3";
 async function fetchAmmPool(connection, ammPoolPda) {
   const accountInfo = await connection.getAccountInfo(ammPoolPda);
@@ -4781,13 +4854,13 @@ async function fetchAmmPool(connection, ammPoolPda) {
 }
 function deserializeAmmPool(data) {
   let offset = 8;
-  const poolId = new PublicKey8(data.slice(offset, offset + 32));
+  const poolId = new PublicKey9(data.slice(offset, offset + 32));
   offset += 32;
-  const tokenAMint = new PublicKey8(data.slice(offset, offset + 32));
+  const tokenAMint = new PublicKey9(data.slice(offset, offset + 32));
   offset += 32;
-  const tokenBMint = new PublicKey8(data.slice(offset, offset + 32));
+  const tokenBMint = new PublicKey9(data.slice(offset, offset + 32));
   offset += 32;
-  const lpMint = new PublicKey8(data.slice(offset, offset + 32));
+  const lpMint = new PublicKey9(data.slice(offset, offset + 32));
   offset += 32;
   const stateHash = new Uint8Array(data.slice(offset, offset + 32));
   offset += 32;
@@ -4797,7 +4870,7 @@ function deserializeAmmPool(data) {
   const lpSupply = view.getBigUint64(16, true);
   const feeBps = view.getUint16(24, true);
   offset += 26;
-  const authority = new PublicKey8(data.slice(offset, offset + 32));
+  const authority = new PublicKey9(data.slice(offset, offset + 32));
   offset += 32;
   const isActive = data[offset] === 1;
   offset += 1;

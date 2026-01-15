@@ -1747,7 +1747,7 @@ interface TransactOutput {
     randomness?: Uint8Array;
 }
 /**
- * Transact parameters
+ * Transact parameters (Multi-Phase)
  */
 interface TransactInstructionParams {
     /** Token mint */
@@ -1774,6 +1774,8 @@ interface TransactInstructionParams {
     nullifier?: Uint8Array;
     /** Pre-computed input commitment (must match ZK proof) */
     inputCommitment?: Uint8Array;
+    /** Pre-computed output commitments (must match ZK proof) */
+    outputCommitments?: Uint8Array[];
 }
 /**
  * Transact result
@@ -1793,26 +1795,40 @@ interface TransactResult {
     outputAmounts: bigint[];
 }
 /**
- * Build transact transaction using Anchor program
+ * Build transact Phase 1 transaction (Multi-Phase)
+ *
+ * Multi-phase approach to stay under transaction size limits:
+ * - Phase 1 (transact): Verify proof + Verify commitment + Create nullifier + Store pending + Unshield
+ * - Phase 2+ (create_commitment): Create each output commitment via generic instruction
+ * - Final (close_pending_operation): Close pending operation to reclaim rent
  */
 declare function buildTransactWithProgram(program: Program, params: TransactInstructionParams, rpcUrl: string, circuitId?: string): Promise<{
     tx: any;
     result: TransactResult;
+    operationId: Uint8Array;
+    pendingCommitments: Array<{
+        pool: PublicKey;
+        commitment: Uint8Array;
+        stealthEphemeralPubkey: Uint8Array;
+        encryptedNote: Uint8Array;
+    }>;
 }>;
 /**
- * Build transact instructions for versioned transaction
+ * Build transact instructions for versioned transaction (Multi-Phase)
  *
  * Transact is a multi-phase operation:
- * - Phase 1: Create nullifier and emit commitment events
- * - Phase 2: Store each output commitment on-chain via store_commitment
+ * - Phase 1 (transact): Verify proof + Verify commitment + Create nullifier + Store pending + Unshield
+ * - Phase 2+ (create_commitment): Create each output commitment via generic instruction
+ * - Final (close_pending_operation): Close pending operation to reclaim rent
  *
  * This function returns all instructions for atomic execution.
  *
- * @returns Array of instructions in execution order + result data
+ * @returns Array of instructions in execution order + result data + operation ID
  */
 declare function buildTransactInstructionsForVersionedTx(program: Program, params: TransactInstructionParams, rpcUrl: string, circuitId?: string): Promise<{
     instructions: _solana_web3_js.TransactionInstruction[];
     result: TransactResult;
+    operationId: Uint8Array;
 }>;
 /**
  * Helper to compute derived values for circuit inputs
@@ -1973,6 +1989,12 @@ interface SwapInstructionParams {
     merkleRoot: Uint8Array;
     /** Pre-computed nullifier */
     nullifier: Uint8Array;
+    /** Pre-computed input commitment (for verification) */
+    inputCommitment: Uint8Array;
+    /** Input commitment account hash (from scanning) */
+    accountHash: string;
+    /** Input commitment leaf index */
+    leafIndex: number;
     /** Pre-computed output commitment */
     outputCommitment: Uint8Array;
     /** Pre-computed change commitment */
@@ -2046,6 +2068,15 @@ interface AddLiquidityInstructionParams {
     /** Pre-computed values */
     nullifierA: Uint8Array;
     nullifierB: Uint8Array;
+    /** Pre-computed input commitments (for verification) */
+    inputCommitmentA: Uint8Array;
+    inputCommitmentB: Uint8Array;
+    /** Input commitment account hashes (from scanning) */
+    accountHashA: string;
+    accountHashB: string;
+    /** Input commitment leaf indices */
+    leafIndexA: number;
+    leafIndexB: number;
     lpCommitment: Uint8Array;
     changeACommitment: Uint8Array;
     changeBCommitment: Uint8Array;
@@ -2085,7 +2116,7 @@ interface AddLiquidityPhase2Params {
 /**
  * Build Add Liquidity Phase 1 transaction
  */
-declare function buildAddLiquidityWithProgram(program: Program, params: AddLiquidityInstructionParams, _rpcUrl: string): Promise<{
+declare function buildAddLiquidityWithProgram(program: Program, params: AddLiquidityInstructionParams, rpcUrl: string): Promise<{
     tx: any;
     operationId: Uint8Array;
     pendingNullifiers: PendingNullifierData[];
@@ -2169,6 +2200,12 @@ interface RemoveLiquidityInstructionParams {
     proof: Uint8Array;
     /** Pre-computed values */
     lpNullifier: Uint8Array;
+    /** Pre-computed LP input commitment (for verification) */
+    lpInputCommitment: Uint8Array;
+    /** LP input commitment account hash (from scanning) */
+    accountHash: string;
+    /** LP input commitment leaf index */
+    leafIndex: number;
     outputACommitment: Uint8Array;
     outputBCommitment: Uint8Array;
     oldPoolStateHash: Uint8Array;

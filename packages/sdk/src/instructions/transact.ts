@@ -61,7 +61,7 @@ export interface TransactOutput {
 }
 
 /**
- * Transact parameters
+ * Transact parameters (Multi-Phase)
  */
 export interface TransactInstructionParams {
   /** Token mint */
@@ -88,6 +88,8 @@ export interface TransactInstructionParams {
   nullifier?: Uint8Array;
   /** Pre-computed input commitment (must match ZK proof) */
   inputCommitment?: Uint8Array;
+  /** Pre-computed output commitments (must match ZK proof) */
+  outputCommitments?: Uint8Array[];
 }
 
 /**
@@ -109,7 +111,12 @@ export interface TransactResult {
 }
 
 /**
- * Build transact transaction using Anchor program
+ * Build transact Phase 1 transaction (Multi-Phase)
+ *
+ * Multi-phase approach to stay under transaction size limits:
+ * - Phase 1 (transact): Verify proof + Verify commitment + Create nullifier + Store pending + Unshield
+ * - Phase 2+ (create_commitment): Create each output commitment via generic instruction
+ * - Final (close_pending_operation): Close pending operation to reclaim rent
  */
 export async function buildTransactWithProgram(
   program: Program,
@@ -119,6 +126,13 @@ export async function buildTransactWithProgram(
 ): Promise<{
   tx: any;
   result: TransactResult;
+  operationId: Uint8Array;
+  pendingCommitments: Array<{
+    pool: PublicKey;
+    commitment: Uint8Array;
+    stealthEphemeralPubkey: Uint8Array;
+    encryptedNote: Uint8Array;
+  }>;
 }> {
   const programId = program.programId;
   const lightProtocol = new LightProtocol(rpcUrl, programId);
@@ -126,7 +140,6 @@ export async function buildTransactWithProgram(
   // Derive PDAs
   const [poolPda] = derivePoolPda(params.tokenMint, programId);
   const [vaultPda] = deriveVaultPda(params.tokenMint, programId);
-  const [counterPda] = deriveCommitmentCounterPda(poolPda, programId);
   const [vkPda] = deriveVerificationKeyPda(circuitId, programId);
 
   // Use pre-computed nullifier and commitment if provided (must match ZK proof)
@@ -152,14 +165,21 @@ export async function buildTransactWithProgram(
   }
 
   // Create output notes and commitments
-  const outputCommitments: Uint8Array[] = [];
+  let outputCommitments: Uint8Array[] = [];
   const encryptedNotes: Buffer[] = [];
   const outputRandomness: Uint8Array[] = [];
   const stealthEphemeralPubkeys: Uint8Array[] = [];
   const outputAmounts: bigint[] = [];
 
-  for (const output of params.outputs) {
+  // Use pre-computed commitments if provided, otherwise compute them
+  if (params.outputCommitments && params.outputCommitments.length === params.outputs.length) {
+    outputCommitments = params.outputCommitments;
+  }
+
+  for (let i = 0; i < params.outputs.length; i++) {
+    const output = params.outputs[i];
     outputAmounts.push(output.amount);
+
     // Use pre-computed randomness if provided (must match ZK proof), otherwise generate new
     const randomness = output.randomness ?? generateRandomness();
     outputRandomness.push(randomness);
@@ -171,9 +191,10 @@ export async function buildTransactWithProgram(
       randomness,
     };
 
-    // Use pre-computed commitment if provided (must match ZK proof), otherwise compute
-    const commitment = output.commitment ?? computeCommitment(note);
-    outputCommitments.push(commitment);
+    // Use pre-computed commitment if available, otherwise compute
+    if (!outputCommitments[i]) {
+      outputCommitments[i] = output.commitment ?? computeCommitment(note);
+    }
 
     const encrypted = encryptNote(note, output.recipientPubkey);
     encryptedNotes.push(Buffer.from(serializeEncryptedNote(encrypted)));
@@ -209,23 +230,50 @@ export async function buildTransactWithProgram(
     outputAmounts.push(0n); // dummy has 0 amount
   }
 
-  // SECURITY: Fetch merkle proof for commitment (proves it exists in state tree)
-  const merkleProof = await lightProtocol.getInclusionProofByHash(params.input.accountHash);
+  // Generate operation ID
+  const { generateOperationId, derivePendingOperationPda } = await import('./swap');
+  const operationId = generateOperationId(
+    nullifier,
+    outputCommitments[0],
+    Date.now()
+  );
+  const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
 
-  // Fetch nullifier non-inclusion proof (prevents double-spend)
+  console.log(`[Transact Phase 1] Generated operation ID: ${Buffer.from(operationId).toString('hex').slice(0, 16)}...`);
+  console.log(`[Transact Phase 1] Nullifier: ${Buffer.from(nullifier).toString('hex').slice(0, 16)}...`);
+
+  // Build pending commitments data (for Phase 2+)
+  const pendingCommitments = [];
+  for (let i = 0; i < outputCommitments.length; i++) {
+    // Skip zero-amount outputs (dummy commitments)
+    if (outputAmounts[i] === 0n) continue;
+
+    pendingCommitments.push({
+      pool: poolPda,
+      commitment: outputCommitments[i],
+      stealthEphemeralPubkey: stealthEphemeralPubkeys[i],
+      encryptedNote: encryptedNotes[i],
+    });
+  }
+
+  // SECURITY: Fetch commitment inclusion proof and nullifier non-inclusion proof
+  console.log('[Transact] Fetching commitment inclusion proof...');
+  const commitmentProof = await lightProtocol.getInclusionProofByHash(params.input.accountHash);
+
+  console.log('[Transact] Fetching nullifier non-inclusion proof...');
   const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, nullifier);
   const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
 
-  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex} = lightProtocol.buildRemainingAccounts();
+  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } =
+    lightProtocol.buildRemainingAccounts();
 
-  // Build lightParams with merkle context for commitment verification
-  const accountHashBytes = new PublicKey(params.input.accountHash).toBytes();
+  // Build complete LightTransactParams with all security proofs
   const lightParams: LightTransactParams = {
-    commitmentAccountHash: Array.from(accountHashBytes),
+    commitmentAccountHash: Array.from(new PublicKey(params.input.accountHash).toBytes()),
     commitmentMerkleContext: {
-      merkleTreePubkeyIndex: addressTreeIndex, // Use same tree index for state tree
-      leafIndex: merkleProof.leafIndex,
-      rootIndex: merkleProof.rootIndex || 0,
+      merkleTreePubkeyIndex: addressTreeIndex,
+      leafIndex: commitmentProof.leafIndex,
+      rootIndex: commitmentProof.rootIndex,
     },
     nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
     nullifierAddressTreeInfo: {
@@ -244,30 +292,34 @@ export async function buildTransactWithProgram(
     unshieldRecipientAta = params.unshieldRecipient;
   }
 
-  // Build transaction using Anchor
+  // Build Phase 1 transaction using new multi-phase signature
+  const numCommitments = pendingCommitments.length;
   const tx = await program.methods
     .transact(
+      Array.from(operationId),
       Buffer.from(params.proof),
       Array.from(params.merkleRoot),
       Array.from(nullifier),
       Array.from(inputCommitment), // Input commitment for inclusion verification
       outputCommitments.map(c => Array.from(c)),
-      [], // Encrypted notes passed to store_commitment separately
+      encryptedNotes.map(e => Buffer.from(e)), // Still passed for events but not stored
       new BN((params.unshieldAmount ?? 0n).toString()),
+      numCommitments,
       lightParams
     )
     .accountsStrict({
       pool: poolPda,
-      commitmentCounter: counterPda,
+      pendingOperation: pendingOpPda,
       tokenVault: vaultPda,
       verificationKey: vkPda,
       unshieldRecipient: unshieldRecipientAta ?? (null as any),
       relayer: params.relayer,
       tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: new PublicKey('11111111111111111111111111111111'),
     })
     .remainingAccounts(remainingAccounts)
     .preInstructions([
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
     ]);
 
@@ -281,19 +333,22 @@ export async function buildTransactWithProgram(
       stealthEphemeralPubkeys,
       outputAmounts,
     },
+    operationId,
+    pendingCommitments,
   };
 }
 
 /**
- * Build transact instructions for versioned transaction
+ * Build transact instructions for versioned transaction (Multi-Phase)
  *
  * Transact is a multi-phase operation:
- * - Phase 1: Create nullifier and emit commitment events
- * - Phase 2: Store each output commitment on-chain via store_commitment
+ * - Phase 1 (transact): Verify proof + Verify commitment + Create nullifier + Store pending + Unshield
+ * - Phase 2+ (create_commitment): Create each output commitment via generic instruction
+ * - Final (close_pending_operation): Close pending operation to reclaim rent
  *
  * This function returns all instructions for atomic execution.
  *
- * @returns Array of instructions in execution order + result data
+ * @returns Array of instructions in execution order + result data + operation ID
  */
 export async function buildTransactInstructionsForVersionedTx(
   program: Program,
@@ -303,12 +358,13 @@ export async function buildTransactInstructionsForVersionedTx(
 ): Promise<{
   instructions: import('@solana/web3.js').TransactionInstruction[];
   result: TransactResult;
+  operationId: Uint8Array;
 }> {
-  // Import store commitment builder
-  const { buildStoreCommitmentWithProgram } = await import('./store-commitment');
+  // Import generic instruction builders
+  const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./swap');
 
   // Build Phase 1 transaction
-  const { tx: phase1Tx, result } = await buildTransactWithProgram(
+  const { tx: phase1Tx, result, operationId, pendingCommitments } = await buildTransactWithProgram(
     program,
     params,
     rpcUrl,
@@ -317,54 +373,43 @@ export async function buildTransactInstructionsForVersionedTx(
 
   const instructions: import('@solana/web3.js').TransactionInstruction[] = [];
 
-  // Add Phase 1 instruction (transact - creates nullifier)
+  // Add Phase 1 instruction (transact - creates nullifier and stores pending operation)
   const transactIx = await phase1Tx.instruction();
   instructions.push(transactIx);
 
-  // Derive pool PDA for commitment counter
-  const [poolPda] = derivePoolPda(params.tokenMint, program.programId);
-  const [counterPda] = deriveCommitmentCounterPda(poolPda, program.programId);
+  // Add Phase 2+ instructions (create commitments)
+  for (let i = 0; i < pendingCommitments.length; i++) {
+    const pc = pendingCommitments[i];
 
-  // Fetch current commitment counter to get starting leaf index
-  // Use connection directly to avoid type issues
-  const connection = program.provider.connection;
-  const counterAccount = await connection.getAccountInfo(counterPda);
-  if (!counterAccount) {
-    throw new Error('PoolCommitmentCounter not found. Initialize pool first.');
-  }
-  // Decode: 8 (discriminator) + 32 (pool) + 8 (next_leaf_index)
-  const baseLeafIndex = counterAccount.data.readBigUInt64LE(40);
-  let leafIndex = Number(baseLeafIndex);
-
-  // Add Phase 2 instructions (store commitments)
-  for (let i = 0; i < result.outputCommitments.length; i++) {
-    // Skip zero-amount outputs (dummy commitments)
-    if (result.outputAmounts[i] === 0n) continue;
-
-    const commitment = result.outputCommitments[i];
-    const stealthEphemeral = result.stealthEphemeralPubkeys[i];
-    const encryptedNote = result.encryptedNotes[i];
-
-    const storeCommitmentTx = await buildStoreCommitmentWithProgram(
+    const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
       program,
       {
-        tokenMint: params.tokenMint,
-        commitment,
-        leafIndex: BigInt(leafIndex),
-        stealthEphemeralPubkey: stealthEphemeral,
-        encryptedNote,
+        operationId,
+        commitmentIndex: i,
+        pool: pc.pool,
         relayer: params.relayer,
+        stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+        encryptedNote: pc.encryptedNote,
+        commitment: pc.commitment,
       },
       rpcUrl
     );
 
-    const storeCommitmentIx = await storeCommitmentTx.instruction();
-    instructions.push(storeCommitmentIx);
-
-    leafIndex++; // Increment for next commitment
+    const commitmentIx = await commitmentTx.instruction();
+    instructions.push(commitmentIx);
   }
 
-  return { instructions, result };
+  // Add final instruction (close pending operation)
+  const { tx: closeTx } = await buildClosePendingOperationWithProgram(
+    program,
+    operationId,
+    params.relayer
+  );
+
+  const closeIx = await closeTx.instruction();
+  instructions.push(closeIx);
+
+  return { instructions, result, operationId };
 }
 
 /**

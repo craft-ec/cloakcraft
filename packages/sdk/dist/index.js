@@ -762,288 +762,6 @@ var init_shield = __esm({
   }
 });
 
-// src/instructions/store-commitment.ts
-var store_commitment_exports = {};
-__export(store_commitment_exports, {
-  buildStoreCommitmentWithProgram: () => buildStoreCommitmentWithProgram,
-  storeCommitments: () => storeCommitments
-});
-async function buildStoreCommitmentWithProgram(program, params, rpcUrl) {
-  const programId = program.programId;
-  const lightProtocol = new LightProtocol(rpcUrl, programId);
-  const [poolPda] = derivePoolPda(params.tokenMint, programId);
-  const commitmentAddress = lightProtocol.deriveCommitmentAddress(poolPda, params.commitment);
-  const validityProof = await lightProtocol.getValidityProof([commitmentAddress]);
-  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
-  const convertedProof = LightProtocol.convertCompressedProof(validityProof);
-  const addressTreeInfo = {
-    addressMerkleTreePubkeyIndex: addressTreeIndex,
-    addressQueuePubkeyIndex: addressTreeIndex,
-    rootIndex: validityProof.rootIndices[0] ?? 0
-  };
-  const tx = await program.methods.storeCommitment({
-    commitment: Array.from(params.commitment),
-    leafIndex: new import_anchor2.BN(params.leafIndex.toString()),
-    stealthEphemeralPubkey: Array.from(params.stealthEphemeralPubkey),
-    encryptedNote: Buffer.from(params.encryptedNote),
-    // Buffer, not number[]
-    validityProof: convertedProof,
-    addressTreeInfo,
-    outputTreeIndex
-  }).accountsStrict({
-    pool: poolPda,
-    relayer: params.relayer
-  }).remainingAccounts(remainingAccounts).preInstructions([
-    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 6e5 }),
-    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
-  ]);
-  return tx;
-}
-async function storeCommitments(program, tokenMint, commitments, relayer, rpcUrl) {
-  const signatures = [];
-  for (const commitment of commitments) {
-    const tx = await buildStoreCommitmentWithProgram(
-      program,
-      {
-        tokenMint,
-        commitment: commitment.commitment,
-        leafIndex: commitment.leafIndex,
-        stealthEphemeralPubkey: commitment.stealthEphemeralPubkey,
-        encryptedNote: commitment.encryptedNote,
-        relayer
-      },
-      rpcUrl
-    );
-    const sig = await tx.rpc();
-    signatures.push(sig);
-  }
-  return signatures;
-}
-var import_web37, import_anchor2;
-var init_store_commitment = __esm({
-  "src/instructions/store-commitment.ts"() {
-    "use strict";
-    import_web37 = require("@solana/web3.js");
-    import_anchor2 = require("@coral-xyz/anchor");
-    init_constants();
-    init_light_helpers();
-  }
-});
-
-// src/instructions/transact.ts
-var transact_exports = {};
-__export(transact_exports, {
-  buildTransactInstructionsForVersionedTx: () => buildTransactInstructionsForVersionedTx,
-  buildTransactWithProgram: () => buildTransactWithProgram,
-  computeCircuitInputs: () => computeCircuitInputs
-});
-async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIRCUIT_IDS.TRANSFER_1X2) {
-  const programId = program.programId;
-  const lightProtocol = new LightProtocol(rpcUrl, programId);
-  const [poolPda] = derivePoolPda(params.tokenMint, programId);
-  const [vaultPda] = deriveVaultPda(params.tokenMint, programId);
-  const [counterPda] = deriveCommitmentCounterPda(poolPda, programId);
-  const [vkPda] = deriveVerificationKeyPda(circuitId, programId);
-  let nullifier;
-  let inputCommitment;
-  if (params.nullifier && params.inputCommitment) {
-    nullifier = params.nullifier;
-    inputCommitment = params.inputCommitment;
-  } else {
-    const nullifierKey = deriveNullifierKey(
-      new Uint8Array(new BigUint64Array([params.input.spendingKey]).buffer)
-    );
-    inputCommitment = computeCommitment({
-      stealthPubX: params.input.stealthPubX,
-      tokenMint: params.tokenMint,
-      amount: params.input.amount,
-      randomness: params.input.randomness
-    });
-    nullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, params.input.leafIndex);
-  }
-  const outputCommitments = [];
-  const encryptedNotes = [];
-  const outputRandomness = [];
-  const stealthEphemeralPubkeys = [];
-  const outputAmounts = [];
-  for (const output of params.outputs) {
-    outputAmounts.push(output.amount);
-    const randomness = output.randomness ?? generateRandomness();
-    outputRandomness.push(randomness);
-    const note = {
-      stealthPubX: output.recipientPubkey.x,
-      tokenMint: params.tokenMint,
-      amount: output.amount,
-      randomness
-    };
-    const commitment = output.commitment ?? computeCommitment(note);
-    outputCommitments.push(commitment);
-    const encrypted = encryptNote(note, output.recipientPubkey);
-    encryptedNotes.push(Buffer.from(serializeEncryptedNote(encrypted)));
-    if (output.ephemeralPubkey) {
-      const ephemeralBytes = new Uint8Array(64);
-      ephemeralBytes.set(output.ephemeralPubkey.x, 0);
-      ephemeralBytes.set(output.ephemeralPubkey.y, 32);
-      stealthEphemeralPubkeys.push(ephemeralBytes);
-    } else {
-      stealthEphemeralPubkeys.push(new Uint8Array(64));
-    }
-  }
-  if (circuitId === CIRCUIT_IDS.TRANSFER_1X2 && outputCommitments.length === 1) {
-    const dummyCommitment = computeCommitment({
-      stealthPubX: new Uint8Array(32),
-      // zeros
-      tokenMint: params.tokenMint,
-      amount: 0n,
-      randomness: new Uint8Array(32)
-      // zeros
-    });
-    outputCommitments.push(dummyCommitment);
-    outputRandomness.push(new Uint8Array(32));
-    stealthEphemeralPubkeys.push(new Uint8Array(64));
-    encryptedNotes.push(Buffer.alloc(0));
-    outputAmounts.push(0n);
-  }
-  const merkleProof = await lightProtocol.getInclusionProofByHash(params.input.accountHash);
-  const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, nullifier);
-  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
-  const accountHashBytes = new import_web38.PublicKey(params.input.accountHash).toBytes();
-  const lightParams = {
-    commitmentAccountHash: Array.from(accountHashBytes),
-    commitmentMerkleContext: {
-      merkleTreePubkeyIndex: addressTreeIndex,
-      // Use same tree index for state tree
-      leafIndex: merkleProof.leafIndex,
-      rootIndex: merkleProof.rootIndex || 0
-    },
-    nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
-    nullifierAddressTreeInfo: {
-      addressMerkleTreePubkeyIndex: addressTreeIndex,
-      addressQueuePubkeyIndex: addressTreeIndex,
-      rootIndex: nullifierProof.rootIndices[0] ?? 0
-    },
-    outputTreeIndex
-  };
-  let unshieldRecipientAta = null;
-  if (params.unshieldRecipient && params.unshieldAmount && params.unshieldAmount > 0n) {
-    unshieldRecipientAta = params.unshieldRecipient;
-  }
-  const tx = await program.methods.transact(
-    Buffer.from(params.proof),
-    Array.from(params.merkleRoot),
-    Array.from(nullifier),
-    Array.from(inputCommitment),
-    // Input commitment for inclusion verification
-    outputCommitments.map((c) => Array.from(c)),
-    [],
-    // Encrypted notes passed to store_commitment separately
-    new import_anchor3.BN((params.unshieldAmount ?? 0n).toString()),
-    lightParams
-  ).accountsStrict({
-    pool: poolPda,
-    commitmentCounter: counterPda,
-    tokenVault: vaultPda,
-    verificationKey: vkPda,
-    unshieldRecipient: unshieldRecipientAta ?? null,
-    relayer: params.relayer,
-    tokenProgram: import_spl_token2.TOKEN_PROGRAM_ID
-  }).remainingAccounts(remainingAccounts).preInstructions([
-    import_web38.ComputeBudgetProgram.setComputeUnitLimit({ units: 14e5 }),
-    import_web38.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
-  ]);
-  return {
-    tx,
-    result: {
-      nullifier,
-      outputCommitments,
-      encryptedNotes,
-      outputRandomness,
-      stealthEphemeralPubkeys,
-      outputAmounts
-    }
-  };
-}
-async function buildTransactInstructionsForVersionedTx(program, params, rpcUrl, circuitId = CIRCUIT_IDS.TRANSFER_1X2) {
-  const { buildStoreCommitmentWithProgram: buildStoreCommitmentWithProgram2 } = await Promise.resolve().then(() => (init_store_commitment(), store_commitment_exports));
-  const { tx: phase1Tx, result } = await buildTransactWithProgram(
-    program,
-    params,
-    rpcUrl,
-    circuitId
-  );
-  const instructions = [];
-  const transactIx = await phase1Tx.instruction();
-  instructions.push(transactIx);
-  const [poolPda] = derivePoolPda(params.tokenMint, program.programId);
-  const [counterPda] = deriveCommitmentCounterPda(poolPda, program.programId);
-  const connection = program.provider.connection;
-  const counterAccount = await connection.getAccountInfo(counterPda);
-  if (!counterAccount) {
-    throw new Error("PoolCommitmentCounter not found. Initialize pool first.");
-  }
-  const baseLeafIndex = counterAccount.data.readBigUInt64LE(40);
-  let leafIndex = Number(baseLeafIndex);
-  for (let i = 0; i < result.outputCommitments.length; i++) {
-    if (result.outputAmounts[i] === 0n) continue;
-    const commitment = result.outputCommitments[i];
-    const stealthEphemeral = result.stealthEphemeralPubkeys[i];
-    const encryptedNote = result.encryptedNotes[i];
-    const storeCommitmentTx = await buildStoreCommitmentWithProgram2(
-      program,
-      {
-        tokenMint: params.tokenMint,
-        commitment,
-        leafIndex: BigInt(leafIndex),
-        stealthEphemeralPubkey: stealthEphemeral,
-        encryptedNote,
-        relayer: params.relayer
-      },
-      rpcUrl
-    );
-    const storeCommitmentIx = await storeCommitmentTx.instruction();
-    instructions.push(storeCommitmentIx);
-    leafIndex++;
-  }
-  return { instructions, result };
-}
-function computeCircuitInputs(input, outputs, tokenMint, unshieldAmount = 0n) {
-  const inputCommitment = computeCommitment({
-    stealthPubX: input.stealthPubX,
-    tokenMint,
-    amount: input.amount,
-    randomness: input.randomness
-  });
-  const nullifierKey = deriveNullifierKey(
-    new Uint8Array(new BigUint64Array([input.spendingKey]).buffer)
-  );
-  const nullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, input.leafIndex);
-  const outputCommitments = outputs.map((output) => {
-    const randomness = generateRandomness();
-    return computeCommitment({
-      stealthPubX: output.recipientPubkey.x,
-      tokenMint,
-      amount: output.amount,
-      randomness
-    });
-  });
-  return { inputCommitment, nullifier, outputCommitments };
-}
-var import_web38, import_spl_token2, import_anchor3;
-var init_transact = __esm({
-  "src/instructions/transact.ts"() {
-    "use strict";
-    import_web38 = require("@solana/web3.js");
-    import_spl_token2 = require("@solana/spl-token");
-    import_anchor3 = require("@coral-xyz/anchor");
-    init_constants();
-    init_light_helpers();
-    init_commitment();
-    init_encryption();
-    init_nullifier();
-  }
-});
-
 // src/instructions/swap.ts
 var swap_exports = {};
 __export(swap_exports, {
@@ -1063,13 +781,13 @@ __export(swap_exports, {
 });
 function deriveAmmPoolPda(tokenAMint, tokenBMint, programId) {
   const [first, second] = tokenAMint.toBuffer().compare(tokenBMint.toBuffer()) < 0 ? [tokenAMint, tokenBMint] : [tokenBMint, tokenAMint];
-  return import_web310.PublicKey.findProgramAddressSync(
+  return import_web37.PublicKey.findProgramAddressSync(
     [Buffer.from("amm_pool"), first.toBuffer(), second.toBuffer()],
     programId
   );
 }
 function derivePendingOperationPda(operationId, programId) {
-  return import_web310.PublicKey.findProgramAddressSync(
+  return import_web37.PublicKey.findProgramAddressSync(
     [Buffer.from("pending_op"), Buffer.from(operationId)],
     programId
   );
@@ -1099,11 +817,11 @@ async function buildInitializeAmmPoolWithProgram(program, params) {
     tokenBMintAccount: params.tokenBMint,
     authority: params.authority,
     payer: params.payer,
-    systemProgram: import_web310.SystemProgram.programId,
-    tokenProgram: new import_web310.PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
-    rent: import_web310.SYSVAR_RENT_PUBKEY
+    systemProgram: import_web37.SystemProgram.programId,
+    tokenProgram: new import_web37.PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+    rent: import_web37.SYSVAR_RENT_PUBKEY
   }).preInstructions([
-    import_web310.ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 })
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 })
   ]);
   return tx;
 }
@@ -1170,8 +888,25 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
       encryptedNote: serializeEncryptedNote(encryptedChangeNote)
     }
   ];
-  const outputTreeIndex = 0;
+  console.log("[Swap] Fetching commitment inclusion proof...");
+  const commitmentProof = await lightProtocol.getInclusionProofByHash(params.accountHash);
+  console.log("[Swap] Fetching nullifier non-inclusion proof...");
+  const nullifierAddress = lightProtocol.deriveNullifierAddress(params.inputPool, params.nullifier);
+  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
+  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
   const lightParams = {
+    commitmentAccountHash: Array.from(new import_web37.PublicKey(params.accountHash).toBytes()),
+    commitmentMerkleContext: {
+      merkleTreePubkeyIndex: addressTreeIndex,
+      leafIndex: commitmentProof.leafIndex,
+      rootIndex: commitmentProof.rootIndex
+    },
+    nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
+    nullifierAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierProof.rootIndices[0] ?? 0
+    },
     outputTreeIndex
   };
   const numCommitments = 2;
@@ -1182,9 +917,9 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
     Array.from(params.nullifier),
     Array.from(params.outputCommitment),
     Array.from(params.changeCommitment),
-    new import_anchor4.BN(params.swapAmount.toString()),
-    new import_anchor4.BN(params.outputAmount.toString()),
-    new import_anchor4.BN(params.minOutput.toString()),
+    new import_anchor2.BN(params.swapAmount.toString()),
+    new import_anchor2.BN(params.outputAmount.toString()),
+    new import_anchor2.BN(params.minOutput.toString()),
     params.swapDirection === "aToB",
     numCommitments,
     lightParams
@@ -1195,10 +930,10 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: import_web310.PublicKey.default
-  }).preInstructions([
-    import_web310.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
-    import_web310.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+    systemProgram: import_web37.PublicKey.default
+  }).remainingAccounts(remainingAccounts).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   return {
     tx,
@@ -1207,16 +942,17 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
     pendingCommitments
   };
 }
-async function buildAddLiquidityWithProgram(program, params, _rpcUrl) {
+async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
   const programId = program.programId;
+  const lightProtocol = new LightProtocol(rpcUrl, programId);
   const operationId = generateOperationId(
     params.nullifierA,
     params.lpCommitment,
     Date.now()
   );
-  console.log(`[Phase 1] Generated operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
-  console.log(`[Phase 1] Nullifier A: ${Buffer.from(params.nullifierA).toString("hex").slice(0, 16)}...`);
-  console.log(`[Phase 1] Nullifier B: ${Buffer.from(params.nullifierB).toString("hex").slice(0, 16)}...`);
+  console.log(`[AddLiquidity Phase 1] Generated operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
+  console.log(`[AddLiquidity Phase 1] Nullifier A: ${Buffer.from(params.nullifierA).toString("hex").slice(0, 16)}...`);
+  console.log(`[AddLiquidity Phase 1] Nullifier B: ${Buffer.from(params.nullifierB).toString("hex").slice(0, 16)}...`);
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(CIRCUIT_IDS.ADD_LIQUIDITY, programId);
   const lpRandomness = params.lpRandomness;
@@ -1273,9 +1009,45 @@ async function buildAddLiquidityWithProgram(program, params, _rpcUrl) {
       encryptedNote: serializeEncryptedNote(encryptedChangeB)
     }
   ];
+  console.log("[AddLiquidity] Fetching commitment A inclusion proof...");
+  const commitmentAProof = await lightProtocol.getInclusionProofByHash(params.accountHashA);
+  console.log("[AddLiquidity] Fetching nullifier A non-inclusion proof...");
+  const nullifierAAddress = lightProtocol.deriveNullifierAddress(params.poolA, params.nullifierA);
+  const nullifierAProof = await lightProtocol.getValidityProof([nullifierAAddress]);
+  console.log("[AddLiquidity] Fetching commitment B inclusion proof...");
+  const commitmentBProof = await lightProtocol.getInclusionProofByHash(params.accountHashB);
+  console.log("[AddLiquidity] Fetching nullifier B non-inclusion proof...");
+  const nullifierBAddress = lightProtocol.deriveNullifierAddress(params.poolB, params.nullifierB);
+  const nullifierBProof = await lightProtocol.getValidityProof([nullifierBAddress]);
+  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
   const lightParams = {
-    outputTreeIndex: 0
-    // Not used in Phase 1
+    // Input A verification
+    commitmentAAccountHash: Array.from(new import_web37.PublicKey(params.accountHashA).toBytes()),
+    commitmentAMerkleContext: {
+      merkleTreePubkeyIndex: addressTreeIndex,
+      leafIndex: commitmentAProof.leafIndex,
+      rootIndex: commitmentAProof.rootIndex
+    },
+    nullifierANonInclusionProof: LightProtocol.convertCompressedProof(nullifierAProof),
+    nullifierAAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierAProof.rootIndices[0] ?? 0
+    },
+    // Input B verification
+    commitmentBAccountHash: Array.from(new import_web37.PublicKey(params.accountHashB).toBytes()),
+    commitmentBMerkleContext: {
+      merkleTreePubkeyIndex: addressTreeIndex,
+      leafIndex: commitmentBProof.leafIndex,
+      rootIndex: commitmentBProof.rootIndex
+    },
+    nullifierBNonInclusionProof: LightProtocol.convertCompressedProof(nullifierBProof),
+    nullifierBAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierBProof.rootIndices[0] ?? 0
+    },
+    outputTreeIndex
   };
   const numCommitments = 3;
   const tx = await program.methods.addLiquidity(
@@ -1286,10 +1058,10 @@ async function buildAddLiquidityWithProgram(program, params, _rpcUrl) {
     Array.from(params.lpCommitment),
     Array.from(params.changeACommitment),
     Array.from(params.changeBCommitment),
-    new import_anchor4.BN(params.depositA.toString()),
-    new import_anchor4.BN(params.depositB.toString()),
-    new import_anchor4.BN(params.lpAmount.toString()),
-    new import_anchor4.BN(params.minLpAmount.toString()),
+    new import_anchor2.BN(params.depositA.toString()),
+    new import_anchor2.BN(params.depositB.toString()),
+    new import_anchor2.BN(params.lpAmount.toString()),
+    new import_anchor2.BN(params.minLpAmount.toString()),
     numCommitments,
     lightParams
   ).accountsStrict({
@@ -1300,15 +1072,12 @@ async function buildAddLiquidityWithProgram(program, params, _rpcUrl) {
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: import_web310.PublicKey.default
-  }).preInstructions([
-    import_web310.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
-    import_web310.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+    systemProgram: import_web37.PublicKey.default
+  }).remainingAccounts(remainingAccounts).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
-  const pendingNullifiers = [
-    { pool: params.poolA, nullifier: params.nullifierA },
-    { pool: params.poolB, nullifier: params.nullifierB }
-  ];
+  const pendingNullifiers = [];
   return {
     tx,
     operationId,
@@ -1355,8 +1124,8 @@ async function buildCreateNullifierWithProgram(program, params, rpcUrl) {
     pendingOperation: pendingOpPda,
     relayer: params.relayer
   }).remainingAccounts(remainingAccounts).preInstructions([
-    import_web310.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
-    import_web310.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   return { tx };
 }
@@ -1398,8 +1167,8 @@ async function buildCreateCommitmentWithProgram(program, params, rpcUrl) {
     pendingOperation: pendingOpPda,
     relayer: params.relayer
   }).remainingAccounts(remainingAccounts).preInstructions([
-    import_web310.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
-    import_web310.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   return { tx };
 }
@@ -1410,18 +1179,21 @@ async function buildClosePendingOperationWithProgram(program, operationId, relay
     pendingOperation: pendingOpPda,
     relayer
   }).preInstructions([
-    import_web310.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
-    import_web310.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   return { tx };
 }
 async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
   const programId = program.programId;
+  const lightProtocol = new LightProtocol(rpcUrl, programId);
   const operationId = generateOperationId(
     params.lpNullifier,
     params.outputACommitment,
     Date.now()
   );
+  console.log(`[RemoveLiquidity Phase 1] Generated operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
+  console.log(`[RemoveLiquidity Phase 1] LP Nullifier: ${Buffer.from(params.lpNullifier).toString("hex").slice(0, 16)}...`);
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(CIRCUIT_IDS.REMOVE_LIQUIDITY, programId);
   const outputARandomness = params.outputARandomness;
@@ -1448,12 +1220,6 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
   const outputBEphemeral = new Uint8Array(64);
   outputBEphemeral.set(params.outputBRecipient.ephemeralPubkey.x, 0);
   outputBEphemeral.set(params.outputBRecipient.ephemeralPubkey.y, 32);
-  const pendingNullifiers = [
-    {
-      pool: params.lpPool,
-      nullifier: params.lpNullifier
-    }
-  ];
   const pendingCommitments = [
     {
       pool: params.poolA,
@@ -1468,8 +1234,25 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
       encryptedNote: serializeEncryptedNote(encryptedOutputB)
     }
   ];
-  const outputTreeIndex = 0;
+  console.log("[RemoveLiquidity] Fetching LP commitment inclusion proof...");
+  const commitmentProof = await lightProtocol.getInclusionProofByHash(params.accountHash);
+  console.log("[RemoveLiquidity] Fetching LP nullifier non-inclusion proof...");
+  const nullifierAddress = lightProtocol.deriveNullifierAddress(params.lpPool, params.lpNullifier);
+  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
+  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
   const lightParams = {
+    commitmentAccountHash: Array.from(new import_web37.PublicKey(params.accountHash).toBytes()),
+    commitmentMerkleContext: {
+      merkleTreePubkeyIndex: addressTreeIndex,
+      leafIndex: commitmentProof.leafIndex,
+      rootIndex: commitmentProof.rootIndex
+    },
+    nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
+    nullifierAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierProof.rootIndices[0] ?? 0
+    },
     outputTreeIndex
   };
   const numCommitments = 2;
@@ -1481,9 +1264,9 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
     Array.from(params.outputBCommitment),
     Array.from(params.oldPoolStateHash),
     Array.from(params.newPoolStateHash),
-    new import_anchor4.BN(params.lpAmount.toString()),
-    new import_anchor4.BN(params.outputAAmount.toString()),
-    new import_anchor4.BN(params.outputBAmount.toString()),
+    new import_anchor2.BN(params.lpAmount.toString()),
+    new import_anchor2.BN(params.outputAAmount.toString()),
+    new import_anchor2.BN(params.outputBAmount.toString()),
     numCommitments,
     lightParams
   ).accountsStrict({
@@ -1494,11 +1277,12 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: import_web310.PublicKey.default
-  }).preInstructions([
-    import_web310.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
-    import_web310.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+    systemProgram: import_web37.PublicKey.default
+  }).remainingAccounts(remainingAccounts).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
+  const pendingNullifiers = [];
   return {
     tx,
     operationId,
@@ -1659,15 +1443,253 @@ async function buildRemoveLiquidityInstructionsForVersionedTx(program, params, r
   instructions.push(closeIx);
   return { instructions, operationId };
 }
-var import_web310, import_anchor4;
+var import_web37, import_anchor2;
 var init_swap = __esm({
   "src/instructions/swap.ts"() {
     "use strict";
-    import_web310 = require("@solana/web3.js");
-    import_anchor4 = require("@coral-xyz/anchor");
+    import_web37 = require("@solana/web3.js");
+    import_anchor2 = require("@coral-xyz/anchor");
     init_constants();
     init_light_helpers();
     init_encryption();
+  }
+});
+
+// src/instructions/transact.ts
+var transact_exports = {};
+__export(transact_exports, {
+  buildTransactInstructionsForVersionedTx: () => buildTransactInstructionsForVersionedTx,
+  buildTransactWithProgram: () => buildTransactWithProgram,
+  computeCircuitInputs: () => computeCircuitInputs
+});
+async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIRCUIT_IDS.TRANSFER_1X2) {
+  const programId = program.programId;
+  const lightProtocol = new LightProtocol(rpcUrl, programId);
+  const [poolPda] = derivePoolPda(params.tokenMint, programId);
+  const [vaultPda] = deriveVaultPda(params.tokenMint, programId);
+  const [vkPda] = deriveVerificationKeyPda(circuitId, programId);
+  let nullifier;
+  let inputCommitment;
+  if (params.nullifier && params.inputCommitment) {
+    nullifier = params.nullifier;
+    inputCommitment = params.inputCommitment;
+  } else {
+    const nullifierKey = deriveNullifierKey(
+      new Uint8Array(new BigUint64Array([params.input.spendingKey]).buffer)
+    );
+    inputCommitment = computeCommitment({
+      stealthPubX: params.input.stealthPubX,
+      tokenMint: params.tokenMint,
+      amount: params.input.amount,
+      randomness: params.input.randomness
+    });
+    nullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, params.input.leafIndex);
+  }
+  let outputCommitments = [];
+  const encryptedNotes = [];
+  const outputRandomness = [];
+  const stealthEphemeralPubkeys = [];
+  const outputAmounts = [];
+  if (params.outputCommitments && params.outputCommitments.length === params.outputs.length) {
+    outputCommitments = params.outputCommitments;
+  }
+  for (let i = 0; i < params.outputs.length; i++) {
+    const output = params.outputs[i];
+    outputAmounts.push(output.amount);
+    const randomness = output.randomness ?? generateRandomness();
+    outputRandomness.push(randomness);
+    const note = {
+      stealthPubX: output.recipientPubkey.x,
+      tokenMint: params.tokenMint,
+      amount: output.amount,
+      randomness
+    };
+    if (!outputCommitments[i]) {
+      outputCommitments[i] = output.commitment ?? computeCommitment(note);
+    }
+    const encrypted = encryptNote(note, output.recipientPubkey);
+    encryptedNotes.push(Buffer.from(serializeEncryptedNote(encrypted)));
+    if (output.ephemeralPubkey) {
+      const ephemeralBytes = new Uint8Array(64);
+      ephemeralBytes.set(output.ephemeralPubkey.x, 0);
+      ephemeralBytes.set(output.ephemeralPubkey.y, 32);
+      stealthEphemeralPubkeys.push(ephemeralBytes);
+    } else {
+      stealthEphemeralPubkeys.push(new Uint8Array(64));
+    }
+  }
+  if (circuitId === CIRCUIT_IDS.TRANSFER_1X2 && outputCommitments.length === 1) {
+    const dummyCommitment = computeCommitment({
+      stealthPubX: new Uint8Array(32),
+      // zeros
+      tokenMint: params.tokenMint,
+      amount: 0n,
+      randomness: new Uint8Array(32)
+      // zeros
+    });
+    outputCommitments.push(dummyCommitment);
+    outputRandomness.push(new Uint8Array(32));
+    stealthEphemeralPubkeys.push(new Uint8Array(64));
+    encryptedNotes.push(Buffer.alloc(0));
+    outputAmounts.push(0n);
+  }
+  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await Promise.resolve().then(() => (init_swap(), swap_exports));
+  const operationId = generateOperationId2(
+    nullifier,
+    outputCommitments[0],
+    Date.now()
+  );
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  console.log(`[Transact Phase 1] Generated operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
+  console.log(`[Transact Phase 1] Nullifier: ${Buffer.from(nullifier).toString("hex").slice(0, 16)}...`);
+  const pendingCommitments = [];
+  for (let i = 0; i < outputCommitments.length; i++) {
+    if (outputAmounts[i] === 0n) continue;
+    pendingCommitments.push({
+      pool: poolPda,
+      commitment: outputCommitments[i],
+      stealthEphemeralPubkey: stealthEphemeralPubkeys[i],
+      encryptedNote: encryptedNotes[i]
+    });
+  }
+  console.log("[Transact] Fetching commitment inclusion proof...");
+  const commitmentProof = await lightProtocol.getInclusionProofByHash(params.input.accountHash);
+  console.log("[Transact] Fetching nullifier non-inclusion proof...");
+  const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, nullifier);
+  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
+  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
+  const lightParams = {
+    commitmentAccountHash: Array.from(new import_web38.PublicKey(params.input.accountHash).toBytes()),
+    commitmentMerkleContext: {
+      merkleTreePubkeyIndex: addressTreeIndex,
+      leafIndex: commitmentProof.leafIndex,
+      rootIndex: commitmentProof.rootIndex
+    },
+    nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
+    nullifierAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierProof.rootIndices[0] ?? 0
+    },
+    outputTreeIndex
+  };
+  let unshieldRecipientAta = null;
+  if (params.unshieldRecipient && params.unshieldAmount && params.unshieldAmount > 0n) {
+    unshieldRecipientAta = params.unshieldRecipient;
+  }
+  const numCommitments = pendingCommitments.length;
+  const tx = await program.methods.transact(
+    Array.from(operationId),
+    Buffer.from(params.proof),
+    Array.from(params.merkleRoot),
+    Array.from(nullifier),
+    Array.from(inputCommitment),
+    // Input commitment for inclusion verification
+    outputCommitments.map((c) => Array.from(c)),
+    encryptedNotes.map((e) => Buffer.from(e)),
+    // Still passed for events but not stored
+    new import_anchor3.BN((params.unshieldAmount ?? 0n).toString()),
+    numCommitments,
+    lightParams
+  ).accountsStrict({
+    pool: poolPda,
+    pendingOperation: pendingOpPda,
+    tokenVault: vaultPda,
+    verificationKey: vkPda,
+    unshieldRecipient: unshieldRecipientAta ?? null,
+    relayer: params.relayer,
+    tokenProgram: import_spl_token2.TOKEN_PROGRAM_ID,
+    systemProgram: new import_web38.PublicKey("11111111111111111111111111111111")
+  }).remainingAccounts(remainingAccounts).preInstructions([
+    import_web38.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
+    import_web38.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  return {
+    tx,
+    result: {
+      nullifier,
+      outputCommitments,
+      encryptedNotes,
+      outputRandomness,
+      stealthEphemeralPubkeys,
+      outputAmounts
+    },
+    operationId,
+    pendingCommitments
+  };
+}
+async function buildTransactInstructionsForVersionedTx(program, params, rpcUrl, circuitId = CIRCUIT_IDS.TRANSFER_1X2) {
+  const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await Promise.resolve().then(() => (init_swap(), swap_exports));
+  const { tx: phase1Tx, result, operationId, pendingCommitments } = await buildTransactWithProgram(
+    program,
+    params,
+    rpcUrl,
+    circuitId
+  );
+  const instructions = [];
+  const transactIx = await phase1Tx.instruction();
+  instructions.push(transactIx);
+  for (let i = 0; i < pendingCommitments.length; i++) {
+    const pc = pendingCommitments[i];
+    const { tx: commitmentTx } = await buildCreateCommitmentWithProgram2(
+      program,
+      {
+        operationId,
+        commitmentIndex: i,
+        pool: pc.pool,
+        relayer: params.relayer,
+        stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+        encryptedNote: pc.encryptedNote,
+        commitment: pc.commitment
+      },
+      rpcUrl
+    );
+    const commitmentIx = await commitmentTx.instruction();
+    instructions.push(commitmentIx);
+  }
+  const { tx: closeTx } = await buildClosePendingOperationWithProgram2(
+    program,
+    operationId,
+    params.relayer
+  );
+  const closeIx = await closeTx.instruction();
+  instructions.push(closeIx);
+  return { instructions, result, operationId };
+}
+function computeCircuitInputs(input, outputs, tokenMint, unshieldAmount = 0n) {
+  const inputCommitment = computeCommitment({
+    stealthPubX: input.stealthPubX,
+    tokenMint,
+    amount: input.amount,
+    randomness: input.randomness
+  });
+  const nullifierKey = deriveNullifierKey(
+    new Uint8Array(new BigUint64Array([input.spendingKey]).buffer)
+  );
+  const nullifier = deriveSpendingNullifier(nullifierKey, inputCommitment, input.leafIndex);
+  const outputCommitments = outputs.map((output) => {
+    const randomness = generateRandomness();
+    return computeCommitment({
+      stealthPubX: output.recipientPubkey.x,
+      tokenMint,
+      amount: output.amount,
+      randomness
+    });
+  });
+  return { inputCommitment, nullifier, outputCommitments };
+}
+var import_web38, import_spl_token2, import_anchor3;
+var init_transact = __esm({
+  "src/instructions/transact.ts"() {
+    "use strict";
+    import_web38 = require("@solana/web3.js");
+    import_spl_token2 = require("@solana/spl-token");
+    import_anchor3 = require("@coral-xyz/anchor");
+    init_constants();
+    init_light_helpers();
+    init_commitment();
+    init_encryption();
+    init_nullifier();
   }
 });
 
@@ -4153,10 +4175,66 @@ init_constants();
 init_light_helpers();
 init_shield();
 init_transact();
-init_store_commitment();
+
+// src/instructions/store-commitment.ts
+var import_web39 = require("@solana/web3.js");
+var import_anchor4 = require("@coral-xyz/anchor");
+init_constants();
+init_light_helpers();
+async function buildStoreCommitmentWithProgram(program, params, rpcUrl) {
+  const programId = program.programId;
+  const lightProtocol = new LightProtocol(rpcUrl, programId);
+  const [poolPda] = derivePoolPda(params.tokenMint, programId);
+  const commitmentAddress = lightProtocol.deriveCommitmentAddress(poolPda, params.commitment);
+  const validityProof = await lightProtocol.getValidityProof([commitmentAddress]);
+  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
+  const convertedProof = LightProtocol.convertCompressedProof(validityProof);
+  const addressTreeInfo = {
+    addressMerkleTreePubkeyIndex: addressTreeIndex,
+    addressQueuePubkeyIndex: addressTreeIndex,
+    rootIndex: validityProof.rootIndices[0] ?? 0
+  };
+  const tx = await program.methods.storeCommitment({
+    commitment: Array.from(params.commitment),
+    leafIndex: new import_anchor4.BN(params.leafIndex.toString()),
+    stealthEphemeralPubkey: Array.from(params.stealthEphemeralPubkey),
+    encryptedNote: Buffer.from(params.encryptedNote),
+    // Buffer, not number[]
+    validityProof: convertedProof,
+    addressTreeInfo,
+    outputTreeIndex
+  }).accountsStrict({
+    pool: poolPda,
+    relayer: params.relayer
+  }).remainingAccounts(remainingAccounts).preInstructions([
+    import_web39.ComputeBudgetProgram.setComputeUnitLimit({ units: 6e5 }),
+    import_web39.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  return tx;
+}
+async function storeCommitments(program, tokenMint, commitments, relayer, rpcUrl) {
+  const signatures = [];
+  for (const commitment of commitments) {
+    const tx = await buildStoreCommitmentWithProgram(
+      program,
+      {
+        tokenMint,
+        commitment: commitment.commitment,
+        leafIndex: commitment.leafIndex,
+        stealthEphemeralPubkey: commitment.stealthEphemeralPubkey,
+        encryptedNote: commitment.encryptedNote,
+        relayer
+      },
+      rpcUrl
+    );
+    const sig = await tx.rpc();
+    signatures.push(sig);
+  }
+  return signatures;
+}
 
 // src/instructions/initialize.ts
-var import_web39 = require("@solana/web3.js");
+var import_web310 = require("@solana/web3.js");
 var import_spl_token3 = require("@solana/spl-token");
 init_constants();
 async function buildInitializePoolWithProgram(program, params) {
@@ -4170,7 +4248,7 @@ async function buildInitializePoolWithProgram(program, params) {
     authority: params.authority,
     payer: params.payer,
     tokenProgram: import_spl_token3.TOKEN_PROGRAM_ID,
-    systemProgram: import_web39.SystemProgram.programId
+    systemProgram: import_web310.SystemProgram.programId
   });
   return tx;
 }
@@ -4183,7 +4261,7 @@ async function buildInitializeCommitmentCounterWithProgram(program, params) {
     commitmentCounter: counterPda,
     authority: params.authority,
     payer: params.payer,
-    systemProgram: import_web39.SystemProgram.programId
+    systemProgram: import_web310.SystemProgram.programId
   });
   return tx;
 }
@@ -5605,6 +5683,7 @@ var CloakCraftClient = class {
     const { proof, nullifier, outCommitment, changeCommitment, outRandomness, changeRandomness } = proofResult;
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
+    const inputCommitment = computeCommitment(params.input);
     const instructionParams = {
       inputPool: inputPoolPda,
       outputPool: outputPoolPda,
@@ -5615,6 +5694,9 @@ var CloakCraftClient = class {
       proof,
       merkleRoot: params.merkleRoot,
       nullifier,
+      inputCommitment,
+      accountHash,
+      leafIndex: params.input.leafIndex,
       outputCommitment: outCommitment,
       changeCommitment,
       minOutput: params.minOutput,
@@ -5789,6 +5871,11 @@ var CloakCraftClient = class {
       changeARandomness,
       changeBRandomness
     } = proofResult;
+    const inputCommitmentA = computeCommitment(params.inputA);
+    const inputCommitmentB = computeCommitment(params.inputB);
+    if (!params.inputA.accountHash || !params.inputB.accountHash) {
+      throw new Error("Input notes must have accountHash for commitment verification");
+    }
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
     const instructionParams = {
@@ -5803,6 +5890,12 @@ var CloakCraftClient = class {
       proof,
       nullifierA,
       nullifierB,
+      inputCommitmentA,
+      inputCommitmentB,
+      accountHashA: params.inputA.accountHash,
+      accountHashB: params.inputB.accountHash,
+      leafIndexA: params.inputA.leafIndex,
+      leafIndexB: params.inputB.leafIndex,
       lpCommitment,
       changeACommitment,
       changeBCommitment,
@@ -5983,6 +6076,10 @@ var CloakCraftClient = class {
       params,
       this.wallet.keypair
     );
+    const lpInputCommitment = computeCommitment(params.lpInput);
+    if (!params.lpInput.accountHash) {
+      throw new Error("LP input note must have accountHash for commitment verification");
+    }
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
     const instructionParams = {
@@ -5997,6 +6094,9 @@ var CloakCraftClient = class {
       relayer: relayerPubkey,
       proof,
       lpNullifier,
+      lpInputCommitment,
+      accountHash: params.lpInput.accountHash,
+      leafIndex: params.lpInput.leafIndex,
       outputACommitment,
       outputBCommitment,
       oldPoolStateHash: params.oldPoolStateHash,
