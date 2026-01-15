@@ -17,7 +17,7 @@ use crate::state::{
 };
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::crypto::verify_proof;
+use crate::helpers::verify_groth16_proof;
 use crate::light_cpi::vec_to_fixed_note;
 
 // =============================================================================
@@ -142,10 +142,11 @@ pub fn add_liquidity<'info>(
         &change_b_commitment,
     );
 
-    verify_proof(
+    verify_groth16_proof(
         &proof,
         &ctx.accounts.verification_key.vk_data,
         &public_inputs,
+        "AddLiquidity",
     )?;
 
     // 2. CRITICAL SECURITY CHECK: Validate LP amount calculation

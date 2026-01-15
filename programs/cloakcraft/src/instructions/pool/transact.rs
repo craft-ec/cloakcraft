@@ -8,7 +8,7 @@ use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use crate::state::{Pool, VerificationKey, PoolCommitmentCounter, LightValidityProof, LightAddressTreeInfo};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::crypto::verify_proof;
+use crate::helpers::verify_groth16_proof;
 use crate::light_cpi::create_spend_nullifier_account;
 
 #[derive(Accounts)]
@@ -132,10 +132,11 @@ pub fn transact<'info>(
 
         msg!("Total public inputs: {}", public_inputs.len());
 
-        verify_proof(
+        verify_groth16_proof(
             &proof,
             &ctx.accounts.verification_key.vk_data,
             &public_inputs,
+            "Transfer",
         )?;
     }
 

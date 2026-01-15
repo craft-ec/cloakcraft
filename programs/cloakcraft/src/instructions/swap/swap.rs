@@ -17,7 +17,7 @@ use crate::state::{
 };
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::crypto::verify_proof_swap;
+use crate::helpers::verify_groth16_proof;
 
 // =============================================================================
 // Phase 1: Verify Proof + Store Pending Operation (NO Light Protocol calls)
@@ -131,7 +131,7 @@ pub fn swap<'info>(
         min_output_bytes,
     ];
 
-    verify_proof_swap(&proof, &ctx.accounts.verification_key.vk_data, &public_inputs)?;
+    verify_groth16_proof(&proof, &ctx.accounts.verification_key.vk_data, &public_inputs, "Swap")?;
 
     // 2. Update AMM pool reserves based on swap direction
     // Apply constant product formula: k = reserve_a * reserve_b
