@@ -1,11 +1,12 @@
 //! Remove liquidity from internal AMM pool (Multi-Phase)
 //!
-//! Phase 1 (remove_liquidity): Verify proof + Update AMM state + Store pending operation
-//! Phase 2 (create_nullifier): Create LP nullifier via generic instruction
-//! Phase 3 (create_commitment): Create each output commitment via generic instruction
+//! Phase 1 (remove_liquidity): Verify proof + Verify commitment + Create nullifier + Update AMM + Store pending
+//! Phase 2 (create_commitment): Create output A commitment via generic instruction
+//! Phase 3 (create_commitment): Create output B commitment via generic instruction
 //! Phase 4 (close_pending_operation): Close pending operation to reclaim rent
 //!
-//! Uses Light Protocol for nullifier and commitment storage.
+//! SECURITY: Phase 1 atomically verifies LP commitment exists and creates nullifier.
+//! Uses Light Protocol for output commitment storage.
 
 use anchor_lang::prelude::*;
 
@@ -16,8 +17,9 @@ use crate::state::{
 };
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::helpers::{verify_groth16_proof, field::pubkey_to_field};
+use crate::helpers::{verify_groth16_proof, field::pubkey_to_field, commitment::verify_and_spend_commitment};
 use crate::light_cpi::{create_spend_nullifier_account, create_commitment_account, vec_to_fixed_note};
+use crate::instructions::pool::CommitmentMerkleContext;
 
 // =============================================================================
 // Field Element Conversion Helpers
@@ -35,10 +37,19 @@ fn to_field_element(hash: &[u8; 32]) -> [u8; 32] {
 // Phase 1: Verify + Update AMM State + Store Pending
 // =============================================================================
 
-/// Parameters for remove liquidity Phase 1 (no Light Protocol params needed)
+/// Parameters for remove liquidity Phase 1
+/// SECURITY CRITICAL: Verifies LP commitment exists + creates nullifier
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct LightRemoveLiquidityParams {
-    /// Output state tree index (stored for Phase 2/3)
+    /// Account hash of LP input commitment (for verification)
+    pub commitment_account_hash: [u8; 32],
+    /// Merkle context proving commitment exists in state tree
+    pub commitment_merkle_context: CommitmentMerkleContext,
+    /// Nullifier non-inclusion proof (proves nullifier doesn't exist yet)
+    pub nullifier_non_inclusion_proof: LightValidityProof,
+    /// Address tree info for nullifier creation
+    pub nullifier_address_tree_info: LightAddressTreeInfo,
+    /// Output state tree index for new nullifier account
     pub output_tree_index: u8,
 }
 
@@ -89,14 +100,19 @@ pub struct RemoveLiquidity<'info> {
     // Light Protocol accounts are passed via remaining_accounts
 }
 
-/// Phase 1: Verify proof + Update AMM state + Store pending operation
+/// Phase 1: Verify proof + Verify commitment + Create nullifier + Update AMM + Store pending
 ///
-/// This instruction verifies the ZK proof, updates AMM reserves, and stores data for subsequent phases.
-/// NO Light Protocol calls are made here to stay within transaction size limits.
+/// SECURITY CRITICAL: This instruction atomically:
+/// 1. Verifies AMM state matches old state hash
+/// 2. Verifies the ZK proof is valid
+/// 3. Verifies LP commitment exists in Light Protocol state tree
+/// 4. Creates spend nullifier (prevents double-spend)
+/// 5. Updates AMM reserves
+/// 6. Stores pending commitments for subsequent phases
 ///
 /// Subsequent phases:
-/// - Phase 2: create_nullifier (generic) to create LP spend nullifier
-/// - Phase 3: create_commitment (generic) for each output commitment
+/// - Phase 2: create_commitment (generic) for output A commitment
+/// - Phase 3: create_commitment (generic) for output B commitment
 /// - Phase 4: close_pending_operation (generic) to reclaim rent
 #[allow(clippy::too_many_arguments)]
 pub fn remove_liquidity<'info>(
@@ -112,7 +128,7 @@ pub fn remove_liquidity<'info>(
     withdraw_a_amount: u64,
     withdraw_b_amount: u64,
     num_commitments: u8,
-    _light_params: LightRemoveLiquidityParams,
+    light_params: LightRemoveLiquidityParams,
 ) -> Result<()> {
     let lp_pool = &ctx.accounts.lp_pool;
     let pool_a = &ctx.accounts.pool_a;
@@ -136,8 +152,23 @@ pub fn remove_liquidity<'info>(
 
     verify_groth16_proof(&proof, &ctx.accounts.verification_key.vk_data, &public_inputs, "RemoveLiquidity")?;
 
-    // 3. Initialize pending operation PDA
-    // NOTE: Nullifier and commitments will be created in subsequent phases
+    // 3. SECURITY: Verify LP commitment exists + create spend nullifier
+    msg!("=== SECURITY CHECK: Verifying LP commitment + creating nullifier ===");
+    verify_and_spend_commitment(
+        &ctx.accounts.relayer.to_account_info(),
+        ctx.remaining_accounts,
+        light_params.commitment_account_hash,
+        light_params.commitment_merkle_context.clone(),
+        light_params.nullifier_non_inclusion_proof.clone(),
+        light_params.nullifier_address_tree_info.clone(),
+        light_params.output_tree_index,
+        lp_pool.key(),
+        lp_nullifier,
+    )?;
+    msg!("=== SECURITY CHECK PASSED ===");
+
+    // 4. Initialize pending operation PDA
+    // NOTE: Nullifier already created in Phase 1; commitments will be created in subsequent phases
     pending_op.bump = ctx.bumps.pending_operation;
     pending_op.operation_id = operation_id;
     pending_op.relayer = ctx.accounts.relayer.key();
@@ -145,13 +176,11 @@ pub fn remove_liquidity<'info>(
     pending_op.created_at = clock.unix_timestamp;
     pending_op.expires_at = clock.unix_timestamp + PENDING_OPERATION_EXPIRY_SECONDS;
 
-    // Store nullifier data for Phase 2 (create_nullifier call)
-    pending_op.num_nullifiers = 1;
-    pending_op.nullifier_pools[0] = lp_pool.key().to_bytes();
-    pending_op.nullifiers[0] = lp_nullifier;
-    pending_op.nullifier_completed_mask = 0; // Not yet created
+    // Nullifier already created in Phase 1 (no Phase 2 needed)
+    pending_op.num_nullifiers = 0;
+    pending_op.nullifier_completed_mask = 0;
 
-    // Store commitment data for Phase 3 (create_commitment calls)
+    // Store commitment data for Phase 2/3 (create_commitment calls)
     pending_op.num_commitments = num_commitments;
     // Index 0: Output A commitment (goes to pool A)
     pending_op.pools[0] = pool_a.key().to_bytes();
@@ -161,7 +190,7 @@ pub fn remove_liquidity<'info>(
     pending_op.commitments[1] = out_b_commitment;
     pending_op.completed_mask = 0;
 
-    // 4. Update AMM reserves (FIX: Actually apply the state transition)
+    // 5. Update AMM reserves (apply the state transition)
     let new_reserve_a = amm_pool.reserve_a.checked_sub(withdraw_a_amount)
         .ok_or(CloakCraftError::InvalidAmount)?;
     let new_reserve_b = amm_pool.reserve_b.checked_sub(withdraw_b_amount)

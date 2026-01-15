@@ -59,17 +59,17 @@ pub mod cloakcraft {
         pool::initialize_commitment_counter(ctx)
     }
 
-    /// Transact - private transfer with optional unshield
+    /// Transact Phase 1 - private transfer with optional unshield
     ///
-    /// SECURITY: Requires Light Protocol dual proofs to prevent fake commitment attacks:
-    /// - Commitment inclusion proof: Verifies input commitment exists
-    /// - Nullifier non-inclusion proof: Prevents double-spending
+    /// Multi-phase operation:
+    /// Phase 1 (this): Verify proof + Verify commitment + Create nullifier + Store pending + Unshield
+    /// Phase 2+: Create output commitments via generic instruction
+    /// Final: Close pending operation via generic instruction
     ///
-    /// If light_params is None, operates in legacy mode (INSECURE - testing only).
-    ///
-    /// Commitments are emitted as events and can be stored separately via store_commitment.
+    /// SECURITY: Atomically verifies input commitment exists and creates nullifier.
     pub fn transact<'info>(
         ctx: Context<'_, '_, '_, 'info, Transact<'info>>,
+        operation_id: [u8; 32],
         proof: Vec<u8>,
         merkle_root: [u8; 32],
         nullifier: [u8; 32],
@@ -77,9 +77,10 @@ pub mod cloakcraft {
         out_commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         unshield_amount: u64,
-        light_params: Option<pool::LightTransactParams>,
+        num_commitments: u8,
+        light_params: pool::LightTransactParams,
     ) -> Result<()> {
-        pool::transact(ctx, proof, merkle_root, nullifier, input_commitment, out_commitments, encrypted_notes, unshield_amount, light_params)
+        pool::transact(ctx, operation_id, proof, merkle_root, nullifier, input_commitment, out_commitments, encrypted_notes, unshield_amount, num_commitments, light_params)
     }
 
     /// Store a commitment as a Light Protocol compressed account

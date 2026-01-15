@@ -1,19 +1,29 @@
-//! Transact - private transfer with optional unshield
+//! Transact - private transfer with optional unshield (Multi-Phase)
 //!
-//! Uses Light Protocol for both nullifier and commitment storage.
+//! Phase 1 (transact): Verify proof + Verify commitment + Create nullifier + Store pending + Unshield
+//! Phase 2+ (create_commitment): Create each output commitment via generic instruction
+//! Phase 3 (close_pending_operation): Close pending operation to reclaim rent
+//!
+//! SECURITY: Phase 1 atomically verifies input commitment exists and creates nullifier.
+//! Uses generic Light Protocol instructions for output commitment storage.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-use crate::state::{Pool, VerificationKey, PoolCommitmentCounter, LightValidityProof, LightAddressTreeInfo};
+use crate::state::{
+    Pool, VerificationKey, PoolCommitmentCounter,
+    LightValidityProof, LightAddressTreeInfo, PendingOperation,
+    PENDING_OPERATION_EXPIRY_SECONDS,
+};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
 use crate::helpers::verify_groth16_proof;
 use crate::helpers::field::{pubkey_to_field, u64_to_field};
 use crate::helpers::vault::{transfer_from_vault, update_pool_balance};
-use crate::helpers::verify_and_spend_commitment;
+use crate::helpers::commitment::verify_and_spend_commitment;
 
 #[derive(Accounts)]
+#[instruction(operation_id: [u8; 32])]
 pub struct Transact<'info> {
     /// Pool (boxed to reduce stack usage)
     #[account(
@@ -23,13 +33,15 @@ pub struct Transact<'info> {
     )]
     pub pool: Box<Account<'info, Pool>>,
 
-    /// Commitment counter for this pool
+    /// Pending operation PDA (created in this instruction)
     #[account(
-        mut,
-        seeds = [PoolCommitmentCounter::SEEDS_PREFIX, pool.key().as_ref()],
-        bump = commitment_counter.bump,
+        init,
+        payer = relayer,
+        space = PendingOperation::SPACE,
+        seeds = [PendingOperation::SEEDS_PREFIX, operation_id.as_ref()],
+        bump,
     )]
-    pub commitment_counter: Account<'info, PoolCommitmentCounter>,
+    pub pending_operation: Box<Account<'info, PendingOperation>>,
 
     /// Token vault
     #[account(
@@ -58,8 +70,14 @@ pub struct Transact<'info> {
     /// Token program
     pub token_program: Program<'info, Token>,
 
+    /// System program
+    pub system_program: Program<'info, System>,
+
     // Light Protocol accounts are passed via remaining_accounts
 }
+
+/// Operation type constant for transact
+pub const OP_TYPE_TRANSACT: u8 = 0;
 
 /// Merkle context for verifying commitment exists in state tree
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -69,8 +87,7 @@ pub struct CommitmentMerkleContext {
     pub root_index: u16,
 }
 
-/// Parameters for Light Protocol commitment verification
-///
+/// Parameters for transact Phase 1
 /// SECURITY CRITICAL: Verifies commitment exists + creates nullifier
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct LightTransactParams {
@@ -86,19 +103,34 @@ pub struct LightTransactParams {
     pub output_tree_index: u8,
 }
 
+/// Phase 1: Verify proof + Verify commitment + Create nullifier + Store pending + Unshield
+///
+/// SECURITY CRITICAL: This instruction atomically:
+/// 1. Verifies the ZK proof is valid
+/// 2. Verifies input commitment exists in Light Protocol state tree
+/// 3. Creates spend nullifier (prevents double-spend)
+/// 4. Processes unshield if requested
+/// 5. Stores pending commitments for subsequent phases
+///
+/// After this, call:
+/// 1. create_commitment (generic) for each output commitment
+/// 2. close_pending_operation (generic) to reclaim rent
+#[allow(clippy::too_many_arguments)]
 pub fn transact<'info>(
     ctx: Context<'_, '_, '_, 'info, Transact<'info>>,
+    operation_id: [u8; 32],
     proof: Vec<u8>,
     merkle_root: [u8; 32],
     nullifier: [u8; 32],
-    input_commitment: [u8; 32], // Input commitment hash (for inclusion verification)
+    _input_commitment: [u8; 32], // For debugging only, not used in logic
     out_commitments: Vec<[u8; 32]>,
-    _encrypted_notes: Vec<Vec<u8>>, // Passed to store_commitment separately
+    _encrypted_notes: Vec<Vec<u8>>, // Stored in pending operation
     unshield_amount: u64,
-    light_params: Option<LightTransactParams>,
+    num_commitments: u8,
+    light_params: LightTransactParams,
 ) -> Result<()> {
     let pool = &mut ctx.accounts.pool;
-    let commitment_counter = &mut ctx.accounts.commitment_counter;
+    let pending_op = &mut ctx.accounts.pending_operation;
     let clock = Clock::get()?;
 
     // 1. Verify ZK proof (SECURITY CRITICAL)
@@ -147,33 +179,45 @@ pub fn transact<'info>(
         let _ = &proof; // Suppress unused warning
     }
 
-    // 2. SECURITY: Create spend nullifier (prevents double-spend)
-    if let Some(params) = &light_params {
-        msg!("=== SECURITY CHECK: Verifying commitment + creating nullifier ===");
-        verify_and_spend_commitment(
-            &ctx.accounts.relayer.to_account_info(),
-            ctx.remaining_accounts,
-            params.commitment_account_hash,
-            params.commitment_merkle_context.clone(),
-            params.nullifier_non_inclusion_proof.clone(),
-            params.nullifier_address_tree_info.clone(),
-            params.output_tree_index,
-            pool.key(),
-            nullifier,
-        )?;
-        msg!("=== SECURITY CHECK PASSED ===");
-    } else {
-        // Legacy mode: Skip Light Protocol verification
-        msg!("WARNING: Light Protocol verification skipped - operating in legacy mode");
-    }
+    // 2. SECURITY: Verify input commitment exists + create spend nullifier
+    msg!("=== SECURITY CHECK: Verifying commitment + creating nullifier ===");
+    verify_and_spend_commitment(
+        &ctx.accounts.relayer.to_account_info(),
+        ctx.remaining_accounts,
+        light_params.commitment_account_hash,
+        light_params.commitment_merkle_context.clone(),
+        light_params.nullifier_non_inclusion_proof.clone(),
+        light_params.nullifier_address_tree_info.clone(),
+        light_params.output_tree_index,
+        pool.key(),
+        nullifier,
+    )?;
+    msg!("=== SECURITY CHECK PASSED ===");
 
-    // Emit nullifier event
-    // 3. Update commitment counter for leaf index assignment
-    // Commitments are stored via separate store_commitment transactions
-    // Caller reads counter before transact to know starting leaf index
-    let commitment_count = out_commitments.len() as u64;
-    commitment_counter.next_leaf_index += commitment_count;
-    commitment_counter.total_commitments += commitment_count;
+    // 3. Initialize pending operation PDA
+    pending_op.bump = ctx.bumps.pending_operation;
+    pending_op.operation_id = operation_id;
+    pending_op.relayer = ctx.accounts.relayer.key();
+    pending_op.operation_type = OP_TYPE_TRANSACT;
+    pending_op.created_at = clock.unix_timestamp;
+    pending_op.expires_at = clock.unix_timestamp + PENDING_OPERATION_EXPIRY_SECONDS;
+
+    // Nullifier already created in Phase 1 (no Phase 2 nullifier creation needed)
+    pending_op.num_nullifiers = 0;
+    pending_op.nullifier_completed_mask = 0;
+
+    // Store commitment data for Phase 2+ (create_commitment calls)
+    pending_op.num_commitments = num_commitments;
+    for (i, commitment) in out_commitments.iter().enumerate() {
+        if i >= pending_op.commitments.len() {
+            break;
+        }
+        pending_op.pools[i] = pool.key().to_bytes();
+        pending_op.commitments[i] = *commitment;
+    }
+    pending_op.completed_mask = 0;
+
+    msg!("Transact Phase 1 complete: proof verified, nullifier created, {} commitments pending", num_commitments);
 
     // 4. Process unshield if amount > 0
     if unshield_amount > 0 {

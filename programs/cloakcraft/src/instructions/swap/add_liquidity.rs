@@ -1,12 +1,13 @@
 //! Add liquidity to internal AMM pool (Multi-Phase)
 //!
-//! Phase 1 (add_liquidity): Verify proof + Store pending operation
-//! Phase 2 (create_nullifier): Create each nullifier via generic instruction
-//! Phase 3 (create_commitment): Create each commitment via generic instruction
-//! Phase 4 (close_pending_operation): Close pending operation, reclaim rent
+//! Phase 1 (add_liquidity): Verify proof + Verify commitments + Create nullifiers + Update AMM + Store pending
+//! Phase 2 (create_commitment): Create LP commitment via generic instruction
+//! Phase 3 (create_commitment): Create change A commitment via generic instruction
+//! Phase 4 (create_commitment): Create change B commitment via generic instruction
+//! Phase 5 (close_pending_operation): Close pending operation, reclaim rent
 //!
-//! Uses generic Light Protocol instructions for nullifier and commitment storage.
-//! This allows each Light Protocol operation to fit in a single transaction.
+//! SECURITY: Phase 1 atomically verifies both input commitments exist and creates nullifiers.
+//! Uses generic Light Protocol instructions for output commitment storage.
 
 use anchor_lang::prelude::*;
 
@@ -17,19 +18,33 @@ use crate::state::{
 };
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::helpers::verify_groth16_proof;
+use crate::helpers::{verify_groth16_proof, commitment::verify_and_spend_commitment};
 use crate::helpers::field::pubkey_to_field;
 use crate::helpers::amm_math::{calculate_initial_lp, calculate_proportional_lp, validate_lp_amount};
 use crate::light_cpi::vec_to_fixed_note;
+use crate::instructions::pool::CommitmentMerkleContext;
 
 // =============================================================================
 // Phase 1: Verify Proof + Store Pending Operation (NO Light Protocol calls)
 // =============================================================================
 
-/// Parameters for add liquidity Phase 1 (no Light Protocol params needed)
+/// Parameters for add liquidity Phase 1
+/// SECURITY CRITICAL: Verifies both input commitments exist + creates nullifiers
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct LightAddLiquidityParams {
-    /// Output state tree index (stored for Phase 2/3)
+    // Input A commitment verification
+    pub commitment_a_account_hash: [u8; 32],
+    pub commitment_a_merkle_context: CommitmentMerkleContext,
+    pub nullifier_a_non_inclusion_proof: LightValidityProof,
+    pub nullifier_a_address_tree_info: LightAddressTreeInfo,
+
+    // Input B commitment verification
+    pub commitment_b_account_hash: [u8; 32],
+    pub commitment_b_merkle_context: CommitmentMerkleContext,
+    pub nullifier_b_non_inclusion_proof: LightValidityProof,
+    pub nullifier_b_address_tree_info: LightAddressTreeInfo,
+
+    /// Output state tree index for new nullifier accounts
     pub output_tree_index: u8,
 }
 
@@ -98,18 +113,23 @@ pub struct AddLiquidity<'info> {
 /// Operation type constant for add_liquidity
 pub const OP_TYPE_ADD_LIQUIDITY: u8 = 2;
 
-/// Phase 1: Verify proof + Update AMM state + Store pending operation
+/// Phase 1: Verify proof + Verify commitments + Create nullifiers + Update AMM + Store pending
 ///
-/// This instruction verifies the ZK proof, updates AMM reserves, and stores data for subsequent phases.
-/// NO Light Protocol calls are made here to stay within transaction size limits.
+/// SECURITY CRITICAL: This instruction atomically:
+/// 1. Verifies the ZK proof is valid
+/// 2. Verifies input A commitment exists in Light Protocol state tree
+/// 3. Creates spend nullifier A (prevents double-spend)
+/// 4. Verifies input B commitment exists in Light Protocol state tree
+/// 5. Creates spend nullifier B (prevents double-spend)
+/// 6. Validates LP amount calculation
+/// 7. Updates AMM reserves
+/// 8. Stores pending commitments for subsequent phases
 ///
 /// After this, call:
-/// 1. create_nullifier (index 0) for nullifier A
-/// 2. create_nullifier (index 1) for nullifier B
-/// 3. create_commitment (index 0) for LP commitment
-/// 4. create_commitment (index 1) for change A commitment
-/// 5. create_commitment (index 2) for change B commitment
-/// 6. close_pending_operation to reclaim rent
+/// 1. create_commitment (index 0) for LP commitment
+/// 2. create_commitment (index 1) for change A commitment
+/// 3. create_commitment (index 2) for change B commitment
+/// 4. close_pending_operation to reclaim rent
 #[allow(clippy::too_many_arguments)]
 pub fn add_liquidity<'info>(
     ctx: Context<'_, '_, '_, 'info, AddLiquidity<'info>>,
@@ -125,7 +145,7 @@ pub fn add_liquidity<'info>(
     lp_amount: u64,
     min_lp_amount: u64,
     num_commitments: u8,
-    _light_params: LightAddLiquidityParams,
+    light_params: LightAddLiquidityParams,
 ) -> Result<()> {
     let pool_a = &ctx.accounts.pool_a;
     let pool_b = &ctx.accounts.pool_b;
@@ -151,7 +171,37 @@ pub fn add_liquidity<'info>(
         "AddLiquidity",
     )?;
 
-    // 2. CRITICAL SECURITY CHECK: Validate LP amount calculation
+    // 2. SECURITY: Verify input A commitment exists + create nullifier A
+    msg!("=== SECURITY CHECK: Verifying commitment A + creating nullifier A ===");
+    verify_and_spend_commitment(
+        &ctx.accounts.relayer.to_account_info(),
+        ctx.remaining_accounts,
+        light_params.commitment_a_account_hash,
+        light_params.commitment_a_merkle_context.clone(),
+        light_params.nullifier_a_non_inclusion_proof.clone(),
+        light_params.nullifier_a_address_tree_info.clone(),
+        light_params.output_tree_index,
+        pool_a.key(),
+        nullifier_a,
+    )?;
+    msg!("=== SECURITY CHECK A PASSED ===");
+
+    // 3. SECURITY: Verify input B commitment exists + create nullifier B
+    msg!("=== SECURITY CHECK: Verifying commitment B + creating nullifier B ===");
+    verify_and_spend_commitment(
+        &ctx.accounts.relayer.to_account_info(),
+        ctx.remaining_accounts,
+        light_params.commitment_b_account_hash,
+        light_params.commitment_b_merkle_context.clone(),
+        light_params.nullifier_b_non_inclusion_proof.clone(),
+        light_params.nullifier_b_address_tree_info.clone(),
+        light_params.output_tree_index,
+        pool_b.key(),
+        nullifier_b,
+    )?;
+    msg!("=== SECURITY CHECK B PASSED ===");
+
+    // 4. CRITICAL SECURITY CHECK: Validate LP amount calculation
     // This prevents attackers from minting arbitrary LP tokens
     let calculated_lp = if amm_pool.lp_supply == 0 {
         calculate_initial_lp(deposit_a, deposit_b)?
@@ -168,7 +218,7 @@ pub fn add_liquidity<'info>(
     // Validate LP amount and check slippage
     validate_lp_amount(lp_amount, calculated_lp, min_lp_amount)?;
 
-    // 3. Update AMM pool state
+    // 5. Update AMM pool state
     amm_pool.reserve_a = amm_pool.reserve_a.checked_add(deposit_a).ok_or(CloakCraftError::AmountOverflow)?;
     amm_pool.reserve_b = amm_pool.reserve_b.checked_add(deposit_b).ok_or(CloakCraftError::AmountOverflow)?;
     amm_pool.lp_supply = amm_pool.lp_supply.checked_add(lp_amount).ok_or(CloakCraftError::AmountOverflow)?;
@@ -177,7 +227,7 @@ pub fn add_liquidity<'info>(
     msg!("Updated AMM state: reserve_a={}, reserve_b={}, lp_supply={}",
          amm_pool.reserve_a, amm_pool.reserve_b, amm_pool.lp_supply);
 
-    // 4. Initialize pending operation PDA
+    // 6. Initialize pending operation PDA
     pending_op.bump = ctx.bumps.pending_operation;
     pending_op.operation_id = operation_id;
     pending_op.relayer = ctx.accounts.relayer.key();
@@ -185,15 +235,11 @@ pub fn add_liquidity<'info>(
     pending_op.created_at = clock.unix_timestamp;
     pending_op.expires_at = clock.unix_timestamp + PENDING_OPERATION_EXPIRY_SECONDS;
 
-    // 5. Store nullifier data for Phase 2 (create_nullifier calls)
-    pending_op.num_nullifiers = 2;
-    pending_op.nullifier_pools[0] = pool_a.key().to_bytes();
-    pending_op.nullifier_pools[1] = pool_b.key().to_bytes();
-    pending_op.nullifiers[0] = nullifier_a;
-    pending_op.nullifiers[1] = nullifier_b;
+    // 7. Nullifiers already created in Phase 1 (no Phase 2 needed)
+    pending_op.num_nullifiers = 0;
     pending_op.nullifier_completed_mask = 0;
 
-    // 6. Store commitment data for Phase 3 (create_commitment calls)
+    // 8. Store commitment data for Phase 2/3 (create_commitment calls)
     pending_op.num_commitments = num_commitments;
     // Index 0: LP commitment (goes to LP pool)
     pending_op.pools[0] = lp_pool.key().to_bytes();

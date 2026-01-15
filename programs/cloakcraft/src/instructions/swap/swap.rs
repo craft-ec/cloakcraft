@@ -1,12 +1,12 @@
 //! Swap via internal AMM (Multi-Phase)
 //!
-//! Phase 1 (swap): Verify proof + Store pending operation
-//! Phase 2 (create_nullifier): Create nullifier via generic instruction
-//! Phase 3 (create_commitment): Create each commitment via generic instruction
+//! Phase 1 (swap): Verify proof + Verify commitment + Create nullifier + Update AMM + Store pending
+//! Phase 2 (create_commitment): Create output commitment via generic instruction
+//! Phase 3 (create_commitment): Create change commitment via generic instruction
 //! Phase 4 (close_pending_operation): Close pending operation, reclaim rent
 //!
-//! Uses generic Light Protocol instructions for nullifier and commitment storage.
-//! This allows each Light Protocol operation to fit in a single transaction.
+//! SECURITY: Phase 1 atomically verifies input commitment exists and creates nullifier.
+//! Uses generic Light Protocol instructions for output commitment storage.
 
 use anchor_lang::prelude::*;
 
@@ -17,8 +17,9 @@ use crate::state::{
 };
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::helpers::verify_groth16_proof;
+use crate::helpers::{verify_groth16_proof, commitment::verify_and_spend_commitment};
 use crate::helpers::field::pubkey_to_field;
+use crate::instructions::pool::CommitmentMerkleContext;
 
 // =============================================================================
 // Phase 1: Verify Proof + Store Pending Operation (NO Light Protocol calls)
@@ -27,10 +28,19 @@ use crate::helpers::field::pubkey_to_field;
 /// Operation type constant for swap
 pub const OP_TYPE_SWAP: u8 = 1;
 
-/// Parameters for swap Phase 1 (no Light Protocol params needed)
+/// Parameters for swap Phase 1
+/// SECURITY CRITICAL: Verifies input commitment exists + creates nullifier
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct LightSwapParams {
-    /// Output state tree index (stored for Phase 2/3)
+    /// Account hash of input commitment (for verification)
+    pub commitment_account_hash: [u8; 32],
+    /// Merkle context proving commitment exists in state tree
+    pub commitment_merkle_context: CommitmentMerkleContext,
+    /// Nullifier non-inclusion proof (proves nullifier doesn't exist yet)
+    pub nullifier_non_inclusion_proof: LightValidityProof,
+    /// Address tree info for nullifier creation
+    pub nullifier_address_tree_info: LightAddressTreeInfo,
+    /// Output state tree index for new nullifier account
     pub output_tree_index: u8,
 }
 
@@ -78,16 +88,19 @@ pub struct Swap<'info> {
     // Light Protocol accounts are passed via remaining_accounts
 }
 
-/// Phase 1: Verify proof + Update AMM state + Store pending operation
+/// Phase 1: Verify proof + Verify commitment + Create nullifier + Update AMM + Store pending
 ///
-/// This instruction verifies the ZK proof, updates AMM reserves, and stores data for subsequent phases.
-/// NO Light Protocol calls are made here to stay within transaction size limits.
+/// SECURITY CRITICAL: This instruction atomically:
+/// 1. Verifies the ZK proof is valid
+/// 2. Verifies input commitment exists in Light Protocol state tree
+/// 3. Creates spend nullifier (prevents double-spend)
+/// 4. Updates AMM reserves
+/// 5. Stores pending commitments for subsequent phases
 ///
 /// After this, call:
-/// 1. create_nullifier (index 0) for input nullifier
-/// 2. create_commitment (index 0) for output commitment
-/// 3. create_commitment (index 1) for change commitment
-/// 4. close_pending_operation to reclaim rent
+/// 1. create_commitment (index 0) for output commitment
+/// 2. create_commitment (index 1) for change commitment
+/// 3. close_pending_operation to reclaim rent
 #[allow(clippy::too_many_arguments)]
 pub fn swap<'info>(
     ctx: Context<'_, '_, '_, 'info, Swap<'info>>,
@@ -126,7 +139,22 @@ pub fn swap<'info>(
 
     verify_groth16_proof(&proof, &ctx.accounts.verification_key.vk_data, &public_inputs, "Swap")?;
 
-    // 2. Update AMM pool reserves based on swap direction
+    // 2. SECURITY: Verify input commitment exists + create spend nullifier
+    msg!("=== SECURITY CHECK: Verifying commitment + creating nullifier ===");
+    verify_and_spend_commitment(
+        &ctx.accounts.relayer.to_account_info(),
+        ctx.remaining_accounts,
+        light_params.commitment_account_hash,
+        light_params.commitment_merkle_context.clone(),
+        light_params.nullifier_non_inclusion_proof.clone(),
+        light_params.nullifier_address_tree_info.clone(),
+        light_params.output_tree_index,
+        input_pool.key(),
+        nullifier,
+    )?;
+    msg!("=== SECURITY CHECK PASSED ===");
+
+    // 3. Update AMM pool reserves based on swap direction
     // Apply constant product formula: k = reserve_a * reserve_b
     if swap_a_to_b {
         // Swapping A for B: increase reserve_a, decrease reserve_b
@@ -143,7 +171,7 @@ pub fn swap<'info>(
          if swap_a_to_b { "A->B" } else { "B->A" }, swap_amount, output_amount);
     msg!("New reserves: reserve_a={}, reserve_b={}", amm_pool.reserve_a, amm_pool.reserve_b);
 
-    // 3. Initialize pending operation PDA
+    // 4. Initialize pending operation PDA
     pending_op.bump = ctx.bumps.pending_operation;
     pending_op.operation_id = operation_id;
     pending_op.relayer = ctx.accounts.relayer.key();
@@ -151,13 +179,11 @@ pub fn swap<'info>(
     pending_op.created_at = clock.unix_timestamp;
     pending_op.expires_at = clock.unix_timestamp + PENDING_OPERATION_EXPIRY_SECONDS;
 
-    // 4. Store nullifier data for Phase 2 (create_nullifier call)
-    pending_op.num_nullifiers = 1;
-    pending_op.nullifier_pools[0] = input_pool.key().to_bytes();
-    pending_op.nullifiers[0] = nullifier;
-    pending_op.nullifier_completed_mask = 0; // Not yet created
+    // 5. Nullifier already created in Phase 1 (no Phase 2 needed)
+    pending_op.num_nullifiers = 0;
+    pending_op.nullifier_completed_mask = 0;
 
-    // 5. Store commitment data for Phase 3 (create_commitment calls)
+    // 6. Store commitment data for Phase 2/3 (create_commitment calls)
     pending_op.num_commitments = num_commitments;
     // Index 0: Output commitment (goes to output pool - the swapped tokens)
     pending_op.pools[0] = output_pool.key().to_bytes();
