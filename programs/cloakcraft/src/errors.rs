@@ -38,6 +38,12 @@ pub enum CloakCraftError {
     #[msg("Commitment already exists")]
     CommitmentExists,
 
+    #[msg("Commitment not found in Light Protocol state tree")]
+    CommitmentNotFound,
+
+    #[msg("Commitment inclusion proof verification failed")]
+    CommitmentInclusionFailed,
+
     // ============ Balance Errors ============
     #[msg("Insufficient balance")]
     InsufficientBalance,

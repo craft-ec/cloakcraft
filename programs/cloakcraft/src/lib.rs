@@ -14,6 +14,7 @@ pub mod merkle;
 pub mod crypto;
 pub mod cpi;
 pub mod light_cpi;
+pub mod helpers;
 
 use instructions::*;
 
