@@ -970,38 +970,46 @@ export class CloakCraftClient {
     );
     transactionBuilders.push({ name: 'Close Operation', builder: closeTx });
 
-    console.log(`[Transfer] Built ${transactionBuilders.length} transactions for batch signing`);
+    console.log(`[Transfer] Built ${transactionBuilders.length} transactions`);
 
-    // Convert to raw transactions and batch sign
-    const { Transaction } = await import('@solana/web3.js');
-    const transactions = await Promise.all(
-      transactionBuilders.map(async ({ builder }) => await builder.transaction())
-    );
+    // Phase 1 is too large for batch signing (1543 bytes > 1232)
+    // Execute it separately, then batch sign the rest
+    console.log('[Transfer] Executing Phase 1 separately (too large for batch signing)...');
+    const phase1Signature = await phase1Tx.rpc();
+    console.log(`[Transfer] Phase 1 confirmed: ${phase1Signature}`);
 
-    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
-    transactions.forEach(tx => {
-      tx.recentBlockhash = blockhash;
-      tx.feePayer = relayerPubkey;
-    });
+    // Batch sign remaining phases (commitments + close)
+    if (transactionBuilders.length > 1) {
+      const remainingBuilders = transactionBuilders.slice(1);
+      console.log(`[Transfer] Batch signing ${remainingBuilders.length} remaining transactions...`);
 
-    console.log('[Transfer] Requesting signature for all transactions...');
-    const signedTransactions = await this.signAllTransactions(transactions, relayer);
-    console.log(`[Transfer] All ${signedTransactions.length} transactions signed!`);
+      const { Transaction } = await import('@solana/web3.js');
+      const transactions = await Promise.all(
+        remainingBuilders.map(async ({ builder }) => await builder.transaction())
+      );
 
-    // Execute sequentially
-    let phase1Signature = '';
-    for (let i = 0; i < signedTransactions.length; i++) {
-      const tx = signedTransactions[i];
-      const name = transactionBuilders[i].name;
-
-      const signature = await this.connection.sendRawTransaction(tx.serialize(), {
-        skipPreflight: false,
-        preflightCommitment: 'confirmed',
+      const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+      transactions.forEach(tx => {
+        tx.recentBlockhash = blockhash;
+        tx.feePayer = relayerPubkey;
       });
-      await this.connection.confirmTransaction(signature, 'confirmed');
-      console.log(`[Transfer] ${name} confirmed: ${signature}`);
 
-      if (i === 0) phase1Signature = signature;
+      console.log('[Transfer] Requesting signature for remaining transactions...');
+      const signedTransactions = await this.signAllTransactions(transactions, relayer);
+      console.log(`[Transfer] All ${signedTransactions.length} transactions signed!`);
+
+      // Execute sequentially
+      for (let i = 0; i < signedTransactions.length; i++) {
+        const tx = signedTransactions[i];
+        const name = remainingBuilders[i].name;
+
+        const signature = await this.connection.sendRawTransaction(tx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+        });
+        await this.connection.confirmTransaction(signature, 'confirmed');
+        console.log(`[Transfer] ${name} confirmed: ${signature}`);
+      }
     }
 
     return {
