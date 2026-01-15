@@ -80,6 +80,18 @@ export class LightProtocol {
   }
 
   /**
+   * Get inclusion proof for existing compressed account
+   *
+   * Uses Light SDK's getCompressedAccountProof which properly proves
+   * the account hash exists in the state tree.
+   */
+  async getInclusionProofByHash(accountHash: string) {
+    const hashBytes = new PublicKey(accountHash).toBytes();
+    const hashBn = bn(hashBytes);
+    return this.rpc.getCompressedAccountProof(hashBn);
+  }
+
+  /**
    * Build remaining accounts for Light Protocol CPI
    */
   buildRemainingAccounts(): { accounts: AccountMeta[]; outputTreeIndex: number; addressTreeIndex: number } {
@@ -136,19 +148,30 @@ export interface LightShieldParams {
 /**
  * Light params for transact instruction
  *
- * Combined validity proof verifies:
- * - Commitment exists (inclusion) - prevents fake commitment attacks
- * - Nullifier doesn't exist (non-inclusion) - prevents double-spend
+ * SECURITY CRITICAL: Requires TWO separate proofs to prevent fake commitment attacks
+ * - Commitment inclusion proof: Verifies input commitment EXISTS in Light Protocol tree
+ * - Nullifier non-inclusion proof: Verifies nullifier DOESN'T exist (prevents double-spend)
+ *
+ * Light Protocol validates both proofs automatically via CPI.
  */
 export interface LightTransactParams {
-  /** Combined validity proof (commitment inclusion + nullifier non-inclusion) */
-  validityProof: { a: number[]; b: number[]; c: number[] };
+  /** Account hash of input commitment (for state tree verification) */
+  commitmentAccountHash: number[];
+  /** Commitment merkle context (proves commitment exists in state tree) */
+  commitmentMerkleContext: {
+    merkleTreePubkeyIndex: number;
+    leafIndex: number;
+    rootIndex: number;
+  };
+  /** Nullifier non-inclusion proof (prevents double-spend) */
+  nullifierNonInclusionProof: { a: number[]; b: number[]; c: number[] };
   /** Address tree info for nullifier creation */
   nullifierAddressTreeInfo: {
     addressMerkleTreePubkeyIndex: number;
     addressQueuePubkeyIndex: number;
     rootIndex: number;
   };
+  /** Output state tree index for new nullifier account */
   outputTreeIndex: number;
 }
 

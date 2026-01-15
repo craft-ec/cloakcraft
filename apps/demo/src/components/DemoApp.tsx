@@ -118,7 +118,7 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
             fontSize: '2rem',
             fontWeight: 700,
             marginBottom: '6px',
-            fontFamily: "'Playfair Display', Georgia, serif",
+            fontFamily: "'IBM Plex Serif', Georgia, serif",
             letterSpacing: '-0.02em',
           }}>
             CloakCraft
@@ -589,7 +589,7 @@ function WalletTab({
           <h3 style={{
             marginBottom: '20px',
             fontSize: '1.25rem',
-            fontFamily: "'Playfair Display', Georgia, serif",
+            fontFamily: "'IBM Plex Serif', Georgia, serif",
             fontWeight: 700,
             letterSpacing: '-0.02em',
           }}>
@@ -607,7 +607,7 @@ function WalletTab({
             <h3 style={{
               marginBottom: '20px',
               fontSize: '1.25rem',
-              fontFamily: "'Playfair Display', Georgia, serif",
+              fontFamily: "'IBM Plex Serif', Georgia, serif",
               fontWeight: 700,
               letterSpacing: '-0.02em',
             }}>
@@ -631,7 +631,7 @@ function WalletTab({
             <h3 style={{
               marginBottom: '20px',
               fontSize: '1.25rem',
-              fontFamily: "'Playfair Display', Georgia, serif",
+              fontFamily: "'IBM Plex Serif', Georgia, serif",
               fontWeight: 700,
               letterSpacing: '-0.02em',
             }}>

@@ -2459,6 +2459,18 @@
           }
         },
         {
+          "name": "lp_amount_burned",
+          "type": "u64"
+        },
+        {
+          "name": "withdraw_a_amount",
+          "type": "u64"
+        },
+        {
+          "name": "withdraw_b_amount",
+          "type": "u64"
+        },
+        {
           "name": "num_commitments",
           "type": "u8"
         },
@@ -3352,9 +3364,11 @@
       "docs": [
         "Transact - private transfer with optional unshield",
         "",
-        "The light_params parameter enables Light Protocol compressed account",
-        "storage for nullifiers. If provided, a compressed account is created",
-        "to prevent double-spending. If None, legacy event-only tracking is used.",
+        "SECURITY: Requires Light Protocol dual proofs to prevent fake commitment attacks:",
+        "- Commitment inclusion proof: Verifies input commitment exists",
+        "- Nullifier non-inclusion proof: Prevents double-spending",
+        "",
+        "If light_params is None, operates in legacy mode (INSECURE - testing only).",
         "",
         "Commitments are emitted as events and can be stored separately via store_commitment."
       ],
@@ -3520,6 +3534,15 @@
         },
         {
           "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "input_commitment",
           "type": {
             "array": [
               "u8",
@@ -4636,6 +4659,29 @@
       }
     },
     {
+      "name": "CommitmentMerkleContext",
+      "docs": [
+        "Merkle context for verifying commitment exists in state tree"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "merkle_tree_pubkey_index",
+            "type": "u8"
+          },
+          {
+            "name": "leaf_index",
+            "type": "u32"
+          },
+          {
+            "name": "root_index",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
       "name": "DecryptionShare",
       "docs": [
         "Decryption share from a committee member"
@@ -5214,19 +5260,40 @@
     {
       "name": "LightTransactParams",
       "docs": [
-        "Parameters for Light Protocol combined validity proof",
+        "Parameters for Light Protocol commitment verification",
         "",
-        "The combined proof verifies:",
-        "- Commitment exists (inclusion) - prevents fake commitment attacks",
-        "- Nullifier doesn't exist (non-inclusion) - prevents double-spend"
+        "SECURITY CRITICAL: Verifies commitment exists + creates nullifier"
       ],
       "type": {
         "kind": "struct",
         "fields": [
           {
-            "name": "validity_proof",
+            "name": "commitment_account_hash",
             "docs": [
-              "Combined validity proof (commitment inclusion + nullifier non-inclusion)"
+              "Account hash of input commitment (for verification)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "commitment_merkle_context",
+            "docs": [
+              "Merkle context proving commitment exists in state tree"
+            ],
+            "type": {
+              "defined": {
+                "name": "CommitmentMerkleContext"
+              }
+            }
+          },
+          {
+            "name": "nullifier_non_inclusion_proof",
+            "docs": [
+              "Nullifier non-inclusion proof (proves nullifier doesn't exist yet)"
             ],
             "type": {
               "defined": {
@@ -5248,7 +5315,7 @@
           {
             "name": "output_tree_index",
             "docs": [
-              "Output state tree index"
+              "Output state tree index for new nullifier account"
             ],
             "type": "u8"
           }

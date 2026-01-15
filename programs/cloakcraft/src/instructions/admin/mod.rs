@@ -7,6 +7,7 @@ mod set_verification_key_data;
 mod append_verification_key_data;
 mod register_threshold_committee;
 mod test_verify_proof;
+mod reset_amm_pool;
 
 pub use register_adapt_module::*;
 pub use disable_adapt_module::*;
@@ -15,3 +16,4 @@ pub use set_verification_key_data::*;
 pub use append_verification_key_data::*;
 pub use register_threshold_committee::*;
 pub use test_verify_proof::*;
+pub use reset_amm_pool::*;

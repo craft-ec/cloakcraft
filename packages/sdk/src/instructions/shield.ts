@@ -223,3 +223,33 @@ export async function buildShieldWithProgram(
 
   return { tx, commitment, randomness };
 }
+
+/**
+ * Build shield instruction for versioned transaction
+ *
+ * Shield is a single-phase operation - it creates the commitment on-chain directly.
+ * This function returns the instruction for atomic execution with other operations.
+ *
+ * @returns Shield instruction ready for versioned transaction
+ */
+export async function buildShieldInstructionsForVersionedTx(
+  program: Program,
+  params: ShieldInstructionParams,
+  rpcUrl: string
+): Promise<{
+  instructions: import('@solana/web3.js').TransactionInstruction[];
+  commitment: Uint8Array;
+  randomness: Uint8Array;
+}> {
+  // Build shield transaction
+  const { tx, commitment, randomness } = await buildShieldWithProgram(program, params, rpcUrl);
+
+  // Extract instruction from transaction
+  const shieldIx = await tx.instruction();
+
+  return {
+    instructions: [shieldIx],
+    commitment,
+    randomness,
+  };
+}

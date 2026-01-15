@@ -761,7 +761,7 @@ declare class CloakCraftClient {
     /**
      * Shield tokens into the pool
      *
-     * Uses the new instruction builder for full Light Protocol integration
+     * Uses versioned transactions for atomic execution with Address Lookup Tables
      */
     shield(params: ShieldParams, payer: Keypair$1): Promise<TransactionResult & {
         commitment: Uint8Array;
@@ -770,7 +770,7 @@ declare class CloakCraftClient {
     /**
      * Shield tokens into the pool using wallet adapter
      *
-     * Uses the program's provider wallet for signing
+     * Uses versioned transactions for atomic execution with Address Lookup Tables
      */
     shieldWithWallet(params: ShieldParams, walletPublicKey: PublicKey): Promise<TransactionResult & {
         commitment: Uint8Array;
@@ -1385,6 +1385,20 @@ declare function generateDleqProof(secretKey: bigint, publicKey: Point, c1: Poin
 declare function verifyDleqProof(proof: DleqProof, publicKey: Point, c1: Point, decryptionShare: Point): boolean;
 
 /**
+ * BN254 field element conversion utilities
+ *
+ * Ensures values are properly reduced modulo the BN254 field prime.
+ */
+
+/**
+ * Convert a PublicKey to a BN254 field element
+ *
+ * Since PublicKey is 256 bits and BN254 field is ~254 bits, we reduce modulo the field prime.
+ * This matches the on-chain implementation in helpers/field.rs
+ */
+declare function pubkeyToField(pubkey: PublicKey): Uint8Array;
+
+/**
  * Note management - syncing, scanning, and tracking notes
  */
 
@@ -1551,6 +1565,13 @@ declare class LightProtocol {
      */
     getValidityProof(addresses: PublicKey[]): Promise<_lightprotocol_stateless_js.ValidityProofWithContext>;
     /**
+     * Get inclusion proof for existing compressed account
+     *
+     * Uses Light SDK's getCompressedAccountProof which properly proves
+     * the account hash exists in the state tree.
+     */
+    getInclusionProofByHash(accountHash: string): Promise<_lightprotocol_stateless_js.MerkleContextWithMerkleProof>;
+    /**
      * Build remaining accounts for Light Protocol CPI
      */
     buildRemainingAccounts(): {
@@ -1586,13 +1607,23 @@ interface LightShieldParams {
 /**
  * Light params for transact instruction
  *
- * Combined validity proof verifies:
- * - Commitment exists (inclusion) - prevents fake commitment attacks
- * - Nullifier doesn't exist (non-inclusion) - prevents double-spend
+ * SECURITY CRITICAL: Requires TWO separate proofs to prevent fake commitment attacks
+ * - Commitment inclusion proof: Verifies input commitment EXISTS in Light Protocol tree
+ * - Nullifier non-inclusion proof: Verifies nullifier DOESN'T exist (prevents double-spend)
+ *
+ * Light Protocol validates both proofs automatically via CPI.
  */
 interface LightTransactParams {
-    /** Combined validity proof (commitment inclusion + nullifier non-inclusion) */
-    validityProof: {
+    /** Account hash of input commitment (for state tree verification) */
+    commitmentAccountHash: number[];
+    /** Commitment merkle context (proves commitment exists in state tree) */
+    commitmentMerkleContext: {
+        merkleTreePubkeyIndex: number;
+        leafIndex: number;
+        rootIndex: number;
+    };
+    /** Nullifier non-inclusion proof (prevents double-spend) */
+    nullifierNonInclusionProof: {
         a: number[];
         b: number[];
         c: number[];
@@ -1603,6 +1634,7 @@ interface LightTransactParams {
         addressQueuePubkeyIndex: number;
         rootIndex: number;
     };
+    /** Output state tree index for new nullifier account */
     outputTreeIndex: number;
 }
 /**
@@ -1625,12 +1657,6 @@ interface LightStoreCommitmentParams {
     };
     outputTreeIndex: number;
 }
-
-/**
- * Shield Instruction Builder
- *
- * Deposits tokens into the privacy pool and creates a commitment
- */
 
 /**
  * Shield parameters
@@ -1674,12 +1700,19 @@ declare function buildShieldWithProgram(program: Program, params: ShieldInstruct
     commitment: Uint8Array;
     randomness: Uint8Array;
 }>;
-
 /**
- * Transact Instruction Builder
+ * Build shield instruction for versioned transaction
  *
- * Private transfer with optional unshield
+ * Shield is a single-phase operation - it creates the commitment on-chain directly.
+ * This function returns the instruction for atomic execution with other operations.
+ *
+ * @returns Shield instruction ready for versioned transaction
  */
+declare function buildShieldInstructionsForVersionedTx(program: Program, params: ShieldInstructionParams, rpcUrl: string): Promise<{
+    instructions: _solana_web3_js.TransactionInstruction[];
+    commitment: Uint8Array;
+    randomness: Uint8Array;
+}>;
 
 /**
  * Input note for spending
@@ -1764,6 +1797,21 @@ interface TransactResult {
  */
 declare function buildTransactWithProgram(program: Program, params: TransactInstructionParams, rpcUrl: string, circuitId?: string): Promise<{
     tx: any;
+    result: TransactResult;
+}>;
+/**
+ * Build transact instructions for versioned transaction
+ *
+ * Transact is a multi-phase operation:
+ * - Phase 1: Create nullifier and emit commitment events
+ * - Phase 2: Store each output commitment on-chain via store_commitment
+ *
+ * This function returns all instructions for atomic execution.
+ *
+ * @returns Array of instructions in execution order + result data
+ */
+declare function buildTransactInstructionsForVersionedTx(program: Program, params: TransactInstructionParams, rpcUrl: string, circuitId?: string): Promise<{
+    instructions: _solana_web3_js.TransactionInstruction[];
     result: TransactResult;
 }>;
 /**
@@ -2841,4 +2889,4 @@ declare class ALTManager {
     clear(): void;
 }
 
-export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, MAINNET_LIGHT_TREES, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, ProofGenerator, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, SEEDS, type ScannedNote, type ShieldInstructionParams, type ShieldResult, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityInstructionsForVersionedTx, buildAddLiquidityWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePoolWithProgram, buildRemoveLiquidityInstructionsForVersionedTx, buildRemoveLiquidityWithProgram, buildShieldInstructions, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapInstructionsForVersionedTx, buildSwapWithProgram, buildTransactWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateMinOutput, calculatePriceImpact, calculatePriceRatio, calculateRemoveLiquidityOutput, calculateSlippage, calculateSwapOutput, calculateTotalLiquidity, canFitInSingleTransaction, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, createAddressLookupTable, createCloakCraftALT, createNote, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePoolPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, elgamalEncrypt, encryptNote, encryptVote, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fieldToBytes, formatAmmPool, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isInSubgroup, isOnCurve, lagrangeCoefficient, loadCircomArtifacts, loadWallet, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof };
+export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, MAINNET_LIGHT_TREES, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, ProofGenerator, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, SEEDS, type ScannedNote, type ShieldInstructionParams, type ShieldResult, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityInstructionsForVersionedTx, buildAddLiquidityWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePoolWithProgram, buildRemoveLiquidityInstructionsForVersionedTx, buildRemoveLiquidityWithProgram, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapInstructionsForVersionedTx, buildSwapWithProgram, buildTransactInstructionsForVersionedTx, buildTransactWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateMinOutput, calculatePriceImpact, calculatePriceRatio, calculateRemoveLiquidityOutput, calculateSlippage, calculateSwapOutput, calculateTotalLiquidity, canFitInSingleTransaction, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, createAddressLookupTable, createCloakCraftALT, createNote, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePoolPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, elgamalEncrypt, encryptNote, encryptVote, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fieldToBytes, formatAmmPool, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isInSubgroup, isOnCurve, lagrangeCoefficient, loadCircomArtifacts, loadWallet, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof };

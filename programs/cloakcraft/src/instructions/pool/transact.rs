@@ -11,7 +11,7 @@ use crate::errors::CloakCraftError;
 use crate::helpers::verify_groth16_proof;
 use crate::helpers::field::{pubkey_to_field, u64_to_field};
 use crate::helpers::vault::{transfer_from_vault, update_pool_balance};
-use crate::light_cpi::create_spend_nullifier_account;
+use crate::helpers::verify_and_spend_commitment;
 
 #[derive(Accounts)]
 pub struct Transact<'info> {
@@ -61,29 +61,28 @@ pub struct Transact<'info> {
     // Light Protocol accounts are passed via remaining_accounts
 }
 
-/// Parameters for Light Protocol combined validity proof
-///
-/// The combined proof verifies:
-/// - Commitment exists (inclusion) - prevents fake commitment attacks
-/// - Nullifier doesn't exist (non-inclusion) - prevents double-spend
+/// Merkle context for verifying commitment exists in state tree
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct LightTransactParams {
-    /// Combined validity proof (commitment inclusion + nullifier non-inclusion)
-    pub validity_proof: LightValidityProof,
-    /// Address tree info for nullifier creation
-    pub nullifier_address_tree_info: LightAddressTreeInfo,
-    /// Output state tree index
-    pub output_tree_index: u8,
+pub struct CommitmentMerkleContext {
+    pub merkle_tree_pubkey_index: u8,
+    pub leaf_index: u32,
+    pub root_index: u16,
 }
 
-/// Legacy params for backwards compatibility
+/// Parameters for Light Protocol commitment verification
+///
+/// SECURITY CRITICAL: Verifies commitment exists + creates nullifier
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct LightNullifierParams {
-    /// Validity proof from Helius indexer (proves nullifier doesn't exist)
-    pub validity_proof: LightValidityProof,
-    /// Address tree info for compressed account address derivation
-    pub address_tree_info: LightAddressTreeInfo,
-    /// Output state tree index for the new compressed account
+pub struct LightTransactParams {
+    /// Account hash of input commitment (for verification)
+    pub commitment_account_hash: [u8; 32],
+    /// Merkle context proving commitment exists in state tree
+    pub commitment_merkle_context: CommitmentMerkleContext,
+    /// Nullifier non-inclusion proof (proves nullifier doesn't exist yet)
+    pub nullifier_non_inclusion_proof: LightValidityProof,
+    /// Address tree info for nullifier creation
+    pub nullifier_address_tree_info: LightAddressTreeInfo,
+    /// Output state tree index for new nullifier account
     pub output_tree_index: u8,
 }
 
@@ -92,6 +91,7 @@ pub fn transact<'info>(
     proof: Vec<u8>,
     merkle_root: [u8; 32],
     nullifier: [u8; 32],
+    input_commitment: [u8; 32], // Input commitment hash (for inclusion verification)
     out_commitments: Vec<[u8; 32]>,
     _encrypted_notes: Vec<Vec<u8>>, // Passed to store_commitment separately
     unshield_amount: u64,
@@ -101,14 +101,12 @@ pub fn transact<'info>(
     let commitment_counter = &mut ctx.accounts.commitment_counter;
     let clock = Clock::get()?;
 
-    // 1. Verify ZK proof
-    // Note: The merkle root is now part of the validity proof from Light Protocol
-    // The ZK circuit proves: commitment exists in tree AND nullifier is correctly derived
-    //
-    // TODO: Enable verification once sunspot/gnark supports Noir public inputs.
-    // Currently sunspot extracts nbPublic=0 from Noir circuits because Noir uses
-    // return values for public inputs while gnark expects them in the constraint system.
-    // See: https://github.com/reilabs/sunspot/issues/XX
+    // 1. Verify ZK proof (SECURITY CRITICAL)
+    // The ZK circuit proves:
+    // - Input commitment exists in merkle tree with given root
+    // - Nullifier is correctly derived from commitment
+    // - Output commitments are correctly computed
+    // - Token mint and amounts are correct
     #[cfg(not(feature = "skip-zk-verify"))]
     {
         let token_mint_field = pubkey_to_field(&pool.token_mint);
@@ -149,18 +147,24 @@ pub fn transact<'info>(
         let _ = &proof; // Suppress unused warning
     }
 
-    // 2. Create spend nullifier via Light Protocol
-    // The validity_proof verifies both commitment existence and nullifier non-existence
+    // 2. SECURITY: Create spend nullifier (prevents double-spend)
     if let Some(params) = &light_params {
-        create_spend_nullifier_account(
+        msg!("=== SECURITY CHECK: Verifying commitment + creating nullifier ===");
+        verify_and_spend_commitment(
             &ctx.accounts.relayer.to_account_info(),
             ctx.remaining_accounts,
-            params.validity_proof.clone(),
+            params.commitment_account_hash,
+            params.commitment_merkle_context.clone(),
+            params.nullifier_non_inclusion_proof.clone(),
             params.nullifier_address_tree_info.clone(),
             params.output_tree_index,
             pool.key(),
             nullifier,
         )?;
+        msg!("=== SECURITY CHECK PASSED ===");
+    } else {
+        // Legacy mode: Skip Light Protocol verification
+        msg!("WARNING: Light Protocol verification skipped - operating in legacy mode");
     }
 
     // Emit nullifier event

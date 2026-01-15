@@ -518,7 +518,7 @@ export class CloakCraftClient {
   /**
    * Shield tokens into the pool
    *
-   * Uses the new instruction builder for full Light Protocol integration
+   * Uses versioned transactions for atomic execution with Address Lookup Tables
    */
   async shield(
     params: ShieldParams,
@@ -531,20 +531,79 @@ export class CloakCraftClient {
       throw new Error('No program set. Call setProgram() first.');
     }
 
-    // Build shield using instruction builder
-    // Note encrypts to stealthPubkey; ephemeralPubkey stored on-chain for decryption key derivation
-    // Use Helius RPC URL for Light Protocol operations
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const instructionParams = {
+      tokenMint: params.pool,
+      amount: params.amount,
+      stealthPubkey: params.recipient.stealthPubkey,
+      stealthEphemeralPubkey: params.recipient.ephemeralPubkey,
+      userTokenAccount: params.userTokenAccount!,
+      user: payer.publicKey,
+    };
+
+    // TRY ATOMIC EXECUTION FIRST (Versioned Transaction)
+    console.log('[Shield] Attempting atomic execution with versioned transaction...');
+    try {
+      const { buildShieldInstructionsForVersionedTx } = await import('./instructions/shield');
+      const { instructions, commitment, randomness } = await buildShieldInstructionsForVersionedTx(
+        this.program,
+        instructionParams,
+        heliusRpcUrl
+      );
+
+      console.log(`[Shield] Built ${instructions.length} instruction(s) for atomic execution`);
+
+      // Get ALTs for address compression
+      const lookupTables = await this.getAddressLookupTables();
+      if (lookupTables.length > 0) {
+        console.log(`[Shield] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      }
+
+      // Build versioned transaction
+      const versionedTx = await buildVersionedTransaction(
+        this.connection,
+        instructions,
+        payer.publicKey,
+        {
+          computeUnits: 600_000,
+          computeUnitPrice: 50000,
+          lookupTables,
+        }
+      );
+
+      const size = estimateTransactionSize(versionedTx);
+
+      if (size === -1) {
+        console.log('[Shield] Transaction serialization failed, falling back to regular execution');
+      } else {
+        console.log(`[Shield] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE} bytes`);
+      }
+
+      if (size > 0 && size <= MAX_TRANSACTION_SIZE) {
+        // Sign transaction
+        versionedTx.sign([payer]);
+
+        // Execute atomically
+        console.log('[Shield] Executing atomic transaction...');
+        const signature = await executeVersionedTransaction(this.connection, versionedTx, {
+          skipPreflight: false,
+        });
+
+        console.log('[Shield] Atomic execution successful!');
+        return { signature, slot: 0, commitment, randomness };
+      }
+
+      console.log('[Shield] Transaction too large, falling back to regular execution');
+    } catch (err) {
+      console.error('[Shield] Atomic execution failed, falling back to regular:', err);
+    }
+
+    // FALLBACK: Regular execution
+    console.log('[Shield] Using regular execution...');
     const { tx, commitment, randomness } = await buildShieldWithProgram(
       this.program,
-      {
-        tokenMint: params.pool,
-        amount: params.amount,
-        stealthPubkey: params.recipient.stealthPubkey,
-        stealthEphemeralPubkey: params.recipient.ephemeralPubkey,
-        userTokenAccount: params.userTokenAccount!,
-        user: payer.publicKey,
-      },
-      this.getHeliusRpcUrl()
+      instructionParams,
+      heliusRpcUrl
     );
 
     // Execute transaction
@@ -552,7 +611,7 @@ export class CloakCraftClient {
 
     return {
       signature,
-      slot: 0, // Slot is not available from rpc()
+      slot: 0,
       commitment,
       randomness,
     };
@@ -561,7 +620,7 @@ export class CloakCraftClient {
   /**
    * Shield tokens into the pool using wallet adapter
    *
-   * Uses the program's provider wallet for signing
+   * Uses versioned transactions for atomic execution with Address Lookup Tables
    */
   async shieldWithWallet(
     params: ShieldParams,
@@ -574,20 +633,85 @@ export class CloakCraftClient {
       throw new Error('No program set. Call setProgram() first.');
     }
 
-    // Build shield using instruction builder
-    // Note encrypts to stealthPubkey; ephemeralPubkey stored on-chain for decryption key derivation
-    // Use Helius RPC URL for Light Protocol operations
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const instructionParams = {
+      tokenMint: params.pool,
+      amount: params.amount,
+      stealthPubkey: params.recipient.stealthPubkey,
+      stealthEphemeralPubkey: params.recipient.ephemeralPubkey,
+      userTokenAccount: params.userTokenAccount!,
+      user: walletPublicKey,
+    };
+
+    // TRY ATOMIC EXECUTION FIRST (Versioned Transaction)
+    console.log('[Shield] Attempting atomic execution with versioned transaction (wallet)...');
+    try {
+      const { buildShieldInstructionsForVersionedTx } = await import('./instructions/shield');
+      const { instructions, commitment, randomness } = await buildShieldInstructionsForVersionedTx(
+        this.program,
+        instructionParams,
+        heliusRpcUrl
+      );
+
+      console.log(`[Shield] Built ${instructions.length} instruction(s) for atomic execution`);
+
+      // Get ALTs for address compression
+      const lookupTables = await this.getAddressLookupTables();
+      if (lookupTables.length > 0) {
+        console.log(`[Shield] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      }
+
+      // Build versioned transaction
+      const versionedTx = await buildVersionedTransaction(
+        this.connection,
+        instructions,
+        walletPublicKey,
+        {
+          computeUnits: 600_000,
+          computeUnitPrice: 50000,
+          lookupTables,
+        }
+      );
+
+      const size = estimateTransactionSize(versionedTx);
+
+      if (size === -1) {
+        console.log('[Shield] Transaction serialization failed, falling back to regular execution');
+      } else {
+        console.log(`[Shield] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE} bytes`);
+      }
+
+      if (size > 0 && size <= MAX_TRANSACTION_SIZE) {
+        // Get wallet from provider
+        const wallet = this.program.provider.wallet;
+        if (!wallet || !wallet.signTransaction) {
+          throw new Error('Wallet does not support transaction signing');
+        }
+
+        // Have wallet sign the transaction
+        const signedTx = await wallet.signTransaction(versionedTx);
+
+        // Execute atomically
+        console.log('[Shield] Executing atomic transaction (wallet)...');
+        const signature = await executeVersionedTransaction(this.connection, signedTx, {
+          skipPreflight: false,
+        });
+
+        console.log('[Shield] Atomic execution successful!');
+        return { signature, slot: 0, commitment, randomness };
+      }
+
+      console.log('[Shield] Transaction too large, falling back to regular execution');
+    } catch (err) {
+      console.error('[Shield] Atomic execution failed, falling back to regular:', err);
+    }
+
+    // FALLBACK: Regular execution
+    console.log('[Shield] Using regular execution (wallet)...');
     const { tx, commitment, randomness } = await buildShieldWithProgram(
       this.program,
-      {
-        tokenMint: params.pool,
-        amount: params.amount,
-        stealthPubkey: params.recipient.stealthPubkey,
-        stealthEphemeralPubkey: params.recipient.ephemeralPubkey,
-        userTokenAccount: params.userTokenAccount!,
-        user: walletPublicKey,
-      },
-      this.getHeliusRpcUrl()
+      instructionParams,
+      heliusRpcUrl
     );
 
     // Execute transaction using wallet adapter
@@ -695,40 +819,117 @@ export class CloakCraftClient {
     const tokenMintField = toFieldBigInt(tokenMintBytes);
 
 
-    // Build transaction using instruction builder
-    // Use Helius RPC URL for Light Protocol operations
+    // Build instruction parameters
     const heliusRpcUrl = this.getHeliusRpcUrl();
+    const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
+
+    const instructionParams = {
+      tokenMint,
+      input: {
+        stealthPubX: params.inputs[0].stealthPubX,
+        amount: params.inputs[0].amount,
+        randomness: params.inputs[0].randomness,
+        leafIndex: params.inputs[0].leafIndex,
+        spendingKey: BigInt('0x' + Buffer.from(this.wallet.keypair.spending.sk).toString('hex')),
+        accountHash,
+      },
+      outputs: params.outputs.map(o => ({
+        recipientPubkey: o.recipient.stealthPubkey,
+        ephemeralPubkey: o.recipient.ephemeralPubkey,
+        amount: o.amount,
+        commitment: o.commitment,
+        randomness: o.randomness,
+      })),
+      merkleRoot: params.merkleRoot,
+      merklePath: params.merklePath,
+      merklePathIndices: params.merkleIndices,
+      unshieldAmount: params.unshield?.amount,
+      unshieldRecipient: params.unshield?.recipient,
+      relayer: relayerPubkey,
+      proof,
+      nullifier,
+      inputCommitment,
+    };
+
+    const circuitId = circuitName === 'transfer/1x2' ? 'transfer_1x2' : 'transfer_1x3';
+
+    // TRY ATOMIC EXECUTION FIRST (Versioned Transaction)
+    console.log('[Transfer] Attempting atomic execution with versioned transaction...');
+    try {
+      const { buildTransactInstructionsForVersionedTx } = await import('./instructions/transact');
+      const { instructions, result } = await buildTransactInstructionsForVersionedTx(
+        this.program,
+        instructionParams,
+        heliusRpcUrl,
+        circuitId
+      );
+
+      console.log(`[Transfer] Built ${instructions.length} instructions for atomic execution`);
+
+      // Get ALTs for address compression
+      const lookupTables = await this.getAddressLookupTables();
+      if (lookupTables.length > 0) {
+        console.log(`[Transfer] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      }
+
+      // Build versioned transaction
+      const versionedTx = await buildVersionedTransaction(
+        this.connection,
+        instructions,
+        relayerPubkey,
+        {
+          computeUnits: 1_400_000,
+          computeUnitPrice: 50000,
+          lookupTables,
+        }
+      );
+
+      const size = estimateTransactionSize(versionedTx);
+
+      if (size === -1) {
+        console.log('[Transfer] Transaction serialization failed, falling back to sequential execution');
+      } else {
+        console.log(`[Transfer] Versioned transaction size: ${size}/${MAX_TRANSACTION_SIZE} bytes`);
+      }
+
+      if (size > 0 && size <= MAX_TRANSACTION_SIZE) {
+        // Sign transaction
+        if (relayer) {
+          // Sign with relayer keypair if provided
+          versionedTx.sign([relayer]);
+          console.log('[Transfer] Executing atomic transaction (relayer signed)...');
+          const signature = await executeVersionedTransaction(this.connection, versionedTx, {
+            skipPreflight: false,
+          });
+          console.log('[Transfer] Atomic execution successful!');
+          return { signature, slot: 0 };
+        } else if (this.program?.provider?.wallet) {
+          // Sign with wallet adapter if no relayer
+          console.log('[Transfer] Signing versioned transaction with wallet adapter...');
+          const signedTx = await this.program.provider.wallet.signTransaction(versionedTx);
+          console.log('[Transfer] Executing atomic transaction (wallet signed)...');
+          const signature = await executeVersionedTransaction(this.connection, signedTx, {
+            skipPreflight: false,
+          });
+          console.log('[Transfer] Atomic execution successful!');
+          return { signature, slot: 0 };
+        } else {
+          console.log('[Transfer] No signing method available, falling back to sequential');
+        }
+      }
+
+      console.log('[Transfer] Transaction too large, falling back to sequential execution');
+    } catch (err) {
+      console.error('[Transfer] Atomic execution failed, falling back to sequential:', err);
+    }
+
+    // FALLBACK: Sequential execution
+    console.log('[Transfer] Using sequential execution...');
     const { tx, result } = await buildTransactWithProgram(
       this.program,
-      {
-        tokenMint,
-        input: {
-          stealthPubX: params.inputs[0].stealthPubX,
-          amount: params.inputs[0].amount,
-          randomness: params.inputs[0].randomness,
-          leafIndex: params.inputs[0].leafIndex,
-          spendingKey: BigInt('0x' + Buffer.from(this.wallet.keypair.spending.sk).toString('hex')),
-          accountHash,
-        },
-        outputs: params.outputs.map(o => ({
-          recipientPubkey: o.recipient.stealthPubkey,
-          ephemeralPubkey: o.recipient.ephemeralPubkey,
-          amount: o.amount,
-          commitment: o.commitment,
-          randomness: o.randomness,
-        })),
-        merkleRoot: params.merkleRoot,
-        merklePath: params.merklePath,
-        merklePathIndices: params.merkleIndices,
-        unshieldAmount: params.unshield?.amount,
-        unshieldRecipient: params.unshield?.recipient,
-        relayer: relayer?.publicKey ?? (await this.getRelayerPubkey()),
-        proof,
-        nullifier,
-        inputCommitment,
-      },
+      instructionParams,
       heliusRpcUrl,
-      circuitName === 'transfer/1x2' ? 'transfer_1x2' : 'transfer_1x3'
+      circuitId
     );
 
     // Execute transaction
@@ -751,7 +952,7 @@ export class CloakCraftClient {
         this.program,
         tokenMint,
         realOutputs,
-        relayer?.publicKey ?? (await this.getRelayerPubkey()),
+        relayerPubkey,
         heliusRpcUrl
       );
     }
@@ -1320,6 +1521,7 @@ export class CloakCraftClient {
           nullifierIndex: i,
           pool: pn.pool,
           relayer: relayerPubkey,
+          nullifier: pn.nullifier, // Pass nullifier directly for batch signing
         },
         heliusRpcUrl
       );
@@ -1340,6 +1542,7 @@ export class CloakCraftClient {
           relayer: relayerPubkey,
           stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
           encryptedNote: pc.encryptedNote,
+          commitment: pc.commitment, // Pass commitment directly for batch signing
         },
         heliusRpcUrl
       );

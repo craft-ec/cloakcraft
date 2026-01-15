@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
 * {
   box-sizing: border-box;
@@ -7,20 +7,20 @@
 }
 
 :root {
-  --color-bg-primary: #faf8f5;
+  --color-bg-primary: #f8fafb;
   --color-bg-secondary: #ffffff;
-  --color-bg-tertiary: #f5f3f0;
-  --color-text-primary: #2c2416;
-  --color-text-secondary: #6b5d4f;
-  --color-accent: #4f46e5;
-  --color-accent-hover: #4338ca;
-  --shadow-sm: 0 1px 2px rgba(44, 36, 22, 0.06);
-  --shadow-md: 0 4px 6px rgba(44, 36, 22, 0.08);
-  --shadow-lg: 0 10px 15px rgba(44, 36, 22, 0.1);
+  --color-bg-tertiary: #f0f4f7;
+  --color-text-primary: #0f1419;
+  --color-text-secondary: #4a5568;
+  --color-accent: #0066ff;
+  --color-accent-hover: #0052cc;
+  --shadow-sm: 0 1px 3px rgba(15, 20, 25, 0.08);
+  --shadow-md: 0 4px 8px rgba(15, 20, 25, 0.12);
+  --shadow-lg: 0 12px 24px rgba(15, 20, 25, 0.15);
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
   min-height: 100vh;
@@ -29,7 +29,7 @@ body {
   overflow-x: hidden;
 }
 
-/* Subtle geometric background pattern */
+/* Hexagonal cryptographic pattern */
 body::before {
   content: '';
   position: fixed;
@@ -37,11 +37,10 @@ body::before {
   left: 0;
   right: 0;
   bottom: 0;
-  opacity: 0.03;
+  opacity: 0.025;
   background-image:
-    linear-gradient(var(--color-text-primary) 1px, transparent 1px),
-    linear-gradient(90deg, var(--color-text-primary) 1px, transparent 1px);
-  background-size: 60px 60px;
+    radial-gradient(circle at 50% 50%, var(--color-text-primary) 1px, transparent 1px);
+  background-size: 40px 40px;
   pointer-events: none;
   z-index: 0;
 }
@@ -64,9 +63,9 @@ a:hover {
 
 /* Headings use serif font */
 h1, h2, h3, h4, h5, h6 {
-  font-family: 'Playfair Display', Georgia, serif;
+  font-family: 'IBM Plex Serif', Georgia, serif;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   color: var(--color-text-primary);
 }
 
@@ -74,7 +73,7 @@ h1, h2, h3, h4, h5, h6 {
 .wallet-adapter-button {
   background: var(--color-accent) !important;
   border-radius: 8px !important;
-  font-family: 'Inter', sans-serif !important;
+  font-family: 'IBM Plex Sans', sans-serif !important;
   font-weight: 500 !important;
   transition: all 0.2s ease !important;
   box-shadow: var(--shadow-sm) !important;
@@ -98,7 +97,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .wallet-adapter-modal-title {
-  font-family: 'Playfair Display', Georgia, serif !important;
+  font-family: 'IBM Plex Serif', Georgia, serif !important;
   color: var(--color-text-primary) !important;
 }
 

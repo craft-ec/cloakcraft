@@ -16,19 +16,12 @@ use crate::state::{
 };
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::helpers::verify_groth16_proof;
+use crate::helpers::{verify_groth16_proof, field::pubkey_to_field};
 use crate::light_cpi::{create_spend_nullifier_account, create_commitment_account, vec_to_fixed_note};
 
 // =============================================================================
 // Field Element Conversion Helpers
 // =============================================================================
-
-/// Convert Pubkey to field element by zeroing MSB to ensure value < BN254 field modulus
-fn pubkey_to_field_element(pubkey: &Pubkey) -> [u8; 32] {
-    let mut bytes = pubkey.to_bytes();
-    bytes[0] = 0;
-    bytes
-}
 
 /// Convert [u8; 32] to field element by zeroing MSB
 /// Used for state hashes (keccak256) which can exceed BN254 field modulus
@@ -115,6 +108,9 @@ pub fn remove_liquidity<'info>(
     out_b_commitment: [u8; 32],
     old_state_hash: [u8; 32],
     new_state_hash: [u8; 32],
+    lp_amount_burned: u64,
+    withdraw_a_amount: u64,
+    withdraw_b_amount: u64,
     num_commitments: u8,
     _light_params: LightRemoveLiquidityParams,
 ) -> Result<()> {
@@ -131,7 +127,7 @@ pub fn remove_liquidity<'info>(
     // 2. Verify ZK proof (6 public inputs for remove_liquidity circuit)
     let public_inputs = vec![
         lp_nullifier,
-        pubkey_to_field_element(&amm_pool.pool_id),
+        pubkey_to_field(&amm_pool.pool_id),
         out_a_commitment,
         out_b_commitment,
         to_field_element(&old_state_hash),
@@ -165,10 +161,33 @@ pub fn remove_liquidity<'info>(
     pending_op.commitments[1] = out_b_commitment;
     pending_op.completed_mask = 0;
 
-    // 4. Update AMM state
+    // 4. Update AMM reserves (FIX: Actually apply the state transition)
+    let new_reserve_a = amm_pool.reserve_a.checked_sub(withdraw_a_amount)
+        .ok_or(CloakCraftError::InvalidAmount)?;
+    let new_reserve_b = amm_pool.reserve_b.checked_sub(withdraw_b_amount)
+        .ok_or(CloakCraftError::InvalidAmount)?;
+    let new_lp_supply = amm_pool.lp_supply.checked_sub(lp_amount_burned)
+        .ok_or(CloakCraftError::InvalidAmount)?;
+
+    // Verify the new state hash matches computed values
+    let mut data = Vec::with_capacity(32);
+    data.extend_from_slice(&new_reserve_a.to_le_bytes());
+    data.extend_from_slice(&new_reserve_b.to_le_bytes());
+    data.extend_from_slice(&new_lp_supply.to_le_bytes());
+    data.extend_from_slice(amm_pool.pool_id.as_ref());
+    let computed_hash = solana_keccak_hasher::hash(&data).to_bytes();
+    require!(computed_hash == new_state_hash, CloakCraftError::InvalidPoolState);
+
+    // Apply new state
+    amm_pool.reserve_a = new_reserve_a;
+    amm_pool.reserve_b = new_reserve_b;
+    amm_pool.lp_supply = new_lp_supply;
     amm_pool.state_hash = new_state_hash;
 
-    msg!("Remove liquidity Phase 1 complete: operation_id stored");
+    msg!("Remove liquidity Phase 1 complete: reserves updated");
+    msg!("  New Reserve A: {}", new_reserve_a);
+    msg!("  New Reserve B: {}", new_reserve_b);
+    msg!("  New LP Supply: {}", new_lp_supply);
 
     Ok(())
 }

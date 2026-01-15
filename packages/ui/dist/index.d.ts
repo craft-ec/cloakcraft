@@ -362,7 +362,7 @@ declare function AmmPoolDetails({ tokenA, tokenB, pool, className, }: AmmPoolDet
 
 /**
  * Shared styles for CloakCraft UI components
- * Theme: Cryptographic Elegance - Refined light theme with sophisticated details
+ * Theme: Technical Precision - Clean light theme emphasizing cryptographic clarity
  */
 
 declare const colors: {

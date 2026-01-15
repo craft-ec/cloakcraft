@@ -7,23 +7,23 @@ import { useWallet, WALLET_DERIVATION_MESSAGE } from "@cloakcraft/hooks";
 
 // src/styles.ts
 var colors = {
-  primary: "#4f46e5",
-  primaryHover: "#4338ca",
-  primaryLight: "#eef2ff",
-  success: "#059669",
-  successLight: "#d1fae5",
-  error: "#dc2626",
-  errorLight: "#fee2e2",
-  warning: "#d97706",
-  warningLight: "#fef3c7",
-  text: "#2c2416",
-  textMuted: "#6b5d4f",
-  textLight: "#9c8b7a",
-  border: "#e7e0d8",
-  borderHover: "#d4c8bc",
+  primary: "#0066ff",
+  primaryHover: "#0052cc",
+  primaryLight: "#e6f2ff",
+  success: "#00875a",
+  successLight: "#e3fcef",
+  error: "#de350b",
+  errorLight: "#ffebe6",
+  warning: "#ff8b00",
+  warningLight: "#fff4e6",
+  text: "#0f1419",
+  textMuted: "#4a5568",
+  textLight: "#8993a4",
+  border: "#dfe4e8",
+  borderHover: "#c1c9d0",
   background: "#ffffff",
-  backgroundMuted: "#faf8f5",
-  backgroundDark: "#f5f3f0"
+  backgroundMuted: "#f8fafb",
+  backgroundDark: "#f0f4f7"
 };
 var styles = {
   // Card container
@@ -32,19 +32,19 @@ var styles = {
     borderRadius: "16px",
     border: `1px solid ${colors.border}`,
     backgroundColor: colors.background,
-    boxShadow: "0 1px 3px rgba(44, 36, 22, 0.06)",
+    boxShadow: "0 1px 3px rgba(15, 20, 25, 0.08)",
     transition: "box-shadow 0.3s ease, transform 0.3s ease"
   },
   cardHover: {
-    boxShadow: "0 4px 12px rgba(44, 36, 22, 0.08)",
+    boxShadow: "0 4px 8px rgba(15, 20, 25, 0.12)",
     transform: "translateY(-2px)"
   },
   cardTitle: {
     margin: "0 0 10px 0",
     fontSize: "1.375rem",
     fontWeight: 700,
-    fontFamily: "'Playfair Display', Georgia, serif",
-    letterSpacing: "-0.02em",
+    fontFamily: "'IBM Plex Serif', Georgia, serif",
+    letterSpacing: "-0.01em",
     color: colors.text
   },
   cardDescription: {
@@ -91,7 +91,7 @@ var styles = {
     borderRadius: "10px",
     border: `1px solid ${colors.border}`,
     fontSize: "0.9375rem",
-    fontFamily: "'SF Mono', 'Monaco', 'Inconsolata', monospace",
+    fontFamily: "'IBM Plex Mono', 'SF Mono', 'Monaco', monospace",
     outline: "none",
     resize: "vertical",
     minHeight: "100px",
@@ -111,12 +111,12 @@ var styles = {
     fontWeight: 600,
     cursor: "pointer",
     transition: "all 0.2s ease",
-    boxShadow: "0 2px 4px rgba(79, 70, 229, 0.2)",
+    boxShadow: "0 2px 4px rgba(0, 102, 255, 0.2)",
     letterSpacing: "0.01em"
   },
   buttonPrimaryHover: {
     backgroundColor: colors.primaryHover,
-    boxShadow: "0 4px 8px rgba(79, 70, 229, 0.3)",
+    boxShadow: "0 4px 8px rgba(0, 102, 255, 0.3)",
     transform: "translateY(-1px)"
   },
   buttonSecondary: {
@@ -262,8 +262,8 @@ var styles = {
     margin: "0 0 20px 0",
     fontSize: "1.75rem",
     fontWeight: 700,
-    fontFamily: "'Playfair Display', Georgia, serif",
-    letterSpacing: "-0.02em",
+    fontFamily: "'IBM Plex Serif', Georgia, serif",
+    letterSpacing: "-0.01em",
     color: colors.text
   },
   subheading: {
@@ -273,7 +273,7 @@ var styles = {
     lineHeight: 1.6
   },
   mono: {
-    fontFamily: "'SF Mono', 'Monaco', 'Inconsolata', monospace",
+    fontFamily: "'IBM Plex Mono', 'SF Mono', 'Monaco', monospace",
     fontSize: "0.8125rem",
     backgroundColor: colors.backgroundDark,
     padding: "2px 6px",
@@ -289,7 +289,7 @@ var styles = {
     display: "inline-block",
     width: "18px",
     height: "18px",
-    border: "2px solid rgba(79, 70, 229, 0.2)",
+    border: "2px solid rgba(0, 102, 255, 0.2)",
     borderTopColor: colors.primary,
     borderRadius: "50%",
     animation: "spin 0.8s linear infinite"
@@ -334,9 +334,9 @@ var styles = {
   statValue: {
     fontSize: "1.5rem",
     fontWeight: 700,
-    fontFamily: "'Playfair Display', Georgia, serif",
+    fontFamily: "'IBM Plex Serif', Georgia, serif",
     color: colors.text,
-    letterSpacing: "-0.02em"
+    letterSpacing: "-0.01em"
   }
 };
 

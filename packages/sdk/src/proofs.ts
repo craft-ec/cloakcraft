@@ -25,6 +25,7 @@ import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier'
 import { computeCommitment, generateRandomness } from './crypto/commitment';
 import { deriveStealthPrivateKey } from './crypto/stealth';
 import { bytesToField, fieldToBytes, poseidonHash, poseidonHashDomain, DOMAIN_COMMITMENT } from './crypto/poseidon';
+import { pubkeyToField } from './crypto/field';
 import {
   loadCircomArtifacts,
   generateSnarkjsProof,
@@ -399,9 +400,8 @@ export class ProofGenerator {
       ? params.input.tokenMint
       : params.input.tokenMint.toBytes();
     const outputTokenMint = params.outputTokenMint.toBytes();
-    const poolIdBytes = params.poolId.toBytes();
-    // Reduce pool_id to field element by zeroing top byte (ensures < BN254 field modulus)
-    poolIdBytes[0] = 0;
+    // Reduce pool_id to field element using modular reduction (matches on-chain helpers/field.rs)
+    const poolIdBytes = pubkeyToField(params.poolId);
 
     // Use provided randomness or generate new values
     // IMPORTANT: Caller must use the same randomness for computing commitments!
@@ -554,9 +554,8 @@ export class ProofGenerator {
     const nullifierB = deriveSpendingNullifier(nullifierKeyB, commitmentB, params.inputB.leafIndex);
     console.log(`[Proof Gen] Computed nullifier A: ${Buffer.from(nullifierA).toString('hex').slice(0, 16)}...`);
 
-    const poolIdBytes = params.poolId.toBytes();
-    // Reduce pool_id to field element by zeroing top byte (ensures < BN254 field modulus)
-    poolIdBytes[0] = 0;
+    // Reduce pool_id to field element using modular reduction (matches on-chain helpers/field.rs)
+    const poolIdBytes = pubkeyToField(params.poolId);
 
     // Use provided randomness or generate new values
     // IMPORTANT: Caller must use the same randomness for computing commitments!
@@ -718,9 +717,8 @@ export class ProofGenerator {
     const lpCommitment = computeCommitment(params.lpInput);
     const lpNullifier = deriveSpendingNullifier(effectiveNullifierKey, lpCommitment, params.lpInput.leafIndex);
 
-    const poolIdBytes = params.poolId.toBytes();
-    // Reduce pool_id to field element by zeroing top byte
-    poolIdBytes[0] = 0;
+    // Reduce pool_id to field element using modular reduction (matches on-chain helpers/field.rs)
+    const poolIdBytes = pubkeyToField(params.poolId);
 
     // Reduce state hashes to field elements (keccak256 can produce values >= BN254 modulus)
     const oldStateHash = new Uint8Array(params.oldPoolStateHash);
@@ -1036,8 +1034,10 @@ export class ProofGenerator {
   ): Promise<Uint8Array> {
     // Map circuit name to circom file names
     const circomFileName = this.getCircomFileName(circuitName);
-    const wasmUrl = `${this.circomBaseUrl}/${circomFileName}.wasm`;
-    const zkeyUrl = `${this.circomBaseUrl}/${circomFileName}_final.zkey`;
+    // Add cache-busting timestamp (v2 = circuit update on Jan 15, 2026)
+    const cacheBuster = 'v2';
+    const wasmUrl = `${this.circomBaseUrl}/${circomFileName}.wasm?${cacheBuster}`;
+    const zkeyUrl = `${this.circomBaseUrl}/${circomFileName}_final.zkey?${cacheBuster}`;
 
 
     // Load or get cached artifacts

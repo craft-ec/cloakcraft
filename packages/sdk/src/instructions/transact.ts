@@ -209,20 +209,25 @@ export async function buildTransactWithProgram(
     outputAmounts.push(0n); // dummy has 0 amount
   }
 
-  // TODO: Fix transact to send TWO separate proofs:
-  // 1. Commitment inclusion proof (verify commitment exists on-chain)
-  // 2. Nullifier non-inclusion proof (verify nullifier doesn't exist)
-  //
-  // Currently transact is BROKEN - it does not verify commitment existence,
-  // allowing fake commitment attacks where someone can spend non-existent tokens.
-  //
-  // For now, only create the nullifier (same as create_nullifier instruction)
+  // SECURITY: Fetch merkle proof for commitment (proves it exists in state tree)
+  const merkleProof = await lightProtocol.getInclusionProofByHash(params.input.accountHash);
+
+  // Fetch nullifier non-inclusion proof (prevents double-spend)
   const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, nullifier);
   const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
 
+  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex} = lightProtocol.buildRemainingAccounts();
+
+  // Build lightParams with merkle context for commitment verification
+  const accountHashBytes = new PublicKey(params.input.accountHash).toBytes();
   const lightParams: LightTransactParams = {
-    validityProof: LightProtocol.convertCompressedProof(nullifierProof),
+    commitmentAccountHash: Array.from(accountHashBytes),
+    commitmentMerkleContext: {
+      merkleTreePubkeyIndex: addressTreeIndex, // Use same tree index for state tree
+      leafIndex: merkleProof.leafIndex,
+      rootIndex: merkleProof.rootIndex || 0,
+    },
+    nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
     nullifierAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
@@ -245,6 +250,7 @@ export async function buildTransactWithProgram(
       Buffer.from(params.proof),
       Array.from(params.merkleRoot),
       Array.from(nullifier),
+      Array.from(inputCommitment), // Input commitment for inclusion verification
       outputCommitments.map(c => Array.from(c)),
       [], // Encrypted notes passed to store_commitment separately
       new BN((params.unshieldAmount ?? 0n).toString()),
@@ -276,6 +282,89 @@ export async function buildTransactWithProgram(
       outputAmounts,
     },
   };
+}
+
+/**
+ * Build transact instructions for versioned transaction
+ *
+ * Transact is a multi-phase operation:
+ * - Phase 1: Create nullifier and emit commitment events
+ * - Phase 2: Store each output commitment on-chain via store_commitment
+ *
+ * This function returns all instructions for atomic execution.
+ *
+ * @returns Array of instructions in execution order + result data
+ */
+export async function buildTransactInstructionsForVersionedTx(
+  program: Program,
+  params: TransactInstructionParams,
+  rpcUrl: string,
+  circuitId: string = CIRCUIT_IDS.TRANSFER_1X2
+): Promise<{
+  instructions: import('@solana/web3.js').TransactionInstruction[];
+  result: TransactResult;
+}> {
+  // Import store commitment builder
+  const { buildStoreCommitmentWithProgram } = await import('./store-commitment');
+
+  // Build Phase 1 transaction
+  const { tx: phase1Tx, result } = await buildTransactWithProgram(
+    program,
+    params,
+    rpcUrl,
+    circuitId
+  );
+
+  const instructions: import('@solana/web3.js').TransactionInstruction[] = [];
+
+  // Add Phase 1 instruction (transact - creates nullifier)
+  const transactIx = await phase1Tx.instruction();
+  instructions.push(transactIx);
+
+  // Derive pool PDA for commitment counter
+  const [poolPda] = derivePoolPda(params.tokenMint, program.programId);
+  const [counterPda] = deriveCommitmentCounterPda(poolPda, program.programId);
+
+  // Fetch current commitment counter to get starting leaf index
+  // Use connection directly to avoid type issues
+  const connection = program.provider.connection;
+  const counterAccount = await connection.getAccountInfo(counterPda);
+  if (!counterAccount) {
+    throw new Error('PoolCommitmentCounter not found. Initialize pool first.');
+  }
+  // Decode: 8 (discriminator) + 32 (pool) + 8 (next_leaf_index)
+  const baseLeafIndex = counterAccount.data.readBigUInt64LE(40);
+  let leafIndex = Number(baseLeafIndex);
+
+  // Add Phase 2 instructions (store commitments)
+  for (let i = 0; i < result.outputCommitments.length; i++) {
+    // Skip zero-amount outputs (dummy commitments)
+    if (result.outputAmounts[i] === 0n) continue;
+
+    const commitment = result.outputCommitments[i];
+    const stealthEphemeral = result.stealthEphemeralPubkeys[i];
+    const encryptedNote = result.encryptedNotes[i];
+
+    const storeCommitmentTx = await buildStoreCommitmentWithProgram(
+      program,
+      {
+        tokenMint: params.tokenMint,
+        commitment,
+        leafIndex: BigInt(leafIndex),
+        stealthEphemeralPubkey: stealthEphemeral,
+        encryptedNote,
+        relayer: params.relayer,
+      },
+      rpcUrl
+    );
+
+    const storeCommitmentIx = await storeCommitmentTx.instruction();
+    instructions.push(storeCommitmentIx);
+
+    leafIndex++; // Increment for next commitment
+  }
+
+  return { instructions, result };
 }
 
 /**

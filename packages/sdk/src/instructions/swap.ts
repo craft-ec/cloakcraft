@@ -951,6 +951,9 @@ export async function buildRemoveLiquidityWithProgram(
       Array.from(params.outputBCommitment),
       Array.from(params.oldPoolStateHash),
       Array.from(params.newPoolStateHash),
+      new BN(params.lpAmount.toString()),
+      new BN(params.outputAAmount.toString()),
+      new BN(params.outputBAmount.toString()),
       numCommitments,
       lightParams
     )

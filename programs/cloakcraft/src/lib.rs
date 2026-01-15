@@ -61,9 +61,11 @@ pub mod cloakcraft {
 
     /// Transact - private transfer with optional unshield
     ///
-    /// The light_params parameter enables Light Protocol compressed account
-    /// storage for nullifiers. If provided, a compressed account is created
-    /// to prevent double-spending. If None, legacy event-only tracking is used.
+    /// SECURITY: Requires Light Protocol dual proofs to prevent fake commitment attacks:
+    /// - Commitment inclusion proof: Verifies input commitment exists
+    /// - Nullifier non-inclusion proof: Prevents double-spending
+    ///
+    /// If light_params is None, operates in legacy mode (INSECURE - testing only).
     ///
     /// Commitments are emitted as events and can be stored separately via store_commitment.
     pub fn transact<'info>(
@@ -71,12 +73,13 @@ pub mod cloakcraft {
         proof: Vec<u8>,
         merkle_root: [u8; 32],
         nullifier: [u8; 32],
+        input_commitment: [u8; 32],
         out_commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         unshield_amount: u64,
         light_params: Option<pool::LightTransactParams>,
     ) -> Result<()> {
-        pool::transact(ctx, proof, merkle_root, nullifier, out_commitments, encrypted_notes, unshield_amount, light_params)
+        pool::transact(ctx, proof, merkle_root, nullifier, input_commitment, out_commitments, encrypted_notes, unshield_amount, light_params)
     }
 
     /// Store a commitment as a Light Protocol compressed account
@@ -208,10 +211,13 @@ pub mod cloakcraft {
         out_b_commitment: [u8; 32],
         old_state_hash: [u8; 32],
         new_state_hash: [u8; 32],
+        lp_amount_burned: u64,
+        withdraw_a_amount: u64,
+        withdraw_b_amount: u64,
         num_commitments: u8,
         light_params: swap::LightRemoveLiquidityParams,
     ) -> Result<()> {
-        swap::remove_liquidity(ctx, operation_id, proof, lp_nullifier, out_a_commitment, out_b_commitment, old_state_hash, new_state_hash, num_commitments, light_params)
+        swap::remove_liquidity(ctx, operation_id, proof, lp_nullifier, out_a_commitment, out_b_commitment, old_state_hash, new_state_hash, lp_amount_burned, withdraw_a_amount, withdraw_b_amount, num_commitments, light_params)
     }
 
 
@@ -395,5 +401,11 @@ pub mod cloakcraft {
         public_inputs: Vec<[u8; 32]>,
     ) -> Result<()> {
         admin::test_verify_groth16_proof(ctx, proof, public_inputs)
+    }
+
+    /// Reset AMM pool state (admin only)
+    /// Used to fix corrupted pool state
+    pub fn reset_amm_pool(ctx: Context<ResetAmmPool>) -> Result<()> {
+        admin::reset_amm_pool(ctx)
     }
 }
