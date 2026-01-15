@@ -2485,6 +2485,70 @@
       ]
     },
     {
+      "name": "reset_amm_pool",
+      "docs": [
+        "Reset AMM pool state (admin only)",
+        "Used to fix corrupted pool state"
+      ],
+      "discriminator": [
+        67,
+        206,
+        131,
+        179,
+        253,
+        87,
+        240,
+        165
+      ],
+      "accounts": [
+        {
+          "name": "amm_pool",
+          "docs": [
+            "AMM pool to reset"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "amm_pool.token_a_mint",
+                "account": "AmmPool"
+              },
+              {
+                "kind": "account",
+                "path": "amm_pool.token_b_mint",
+                "account": "AmmPool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Pool authority (must match)"
+          ],
+          "signer": true,
+          "relations": [
+            "amm_pool"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "set_verification_key_data",
       "docs": [
         "Set verification key data on an existing account",
@@ -3362,15 +3426,14 @@
     {
       "name": "transact",
       "docs": [
-        "Transact - private transfer with optional unshield",
+        "Transact Phase 1 - private transfer with optional unshield",
         "",
-        "SECURITY: Requires Light Protocol dual proofs to prevent fake commitment attacks:",
-        "- Commitment inclusion proof: Verifies input commitment exists",
-        "- Nullifier non-inclusion proof: Prevents double-spending",
+        "Multi-phase operation:",
+        "Phase 1 (this): Verify proof + Verify commitment + Create nullifier + Store pending + Unshield",
+        "Phase 2+: Create output commitments via generic instruction",
+        "Final: Close pending operation via generic instruction",
         "",
-        "If light_params is None, operates in legacy mode (INSECURE - testing only).",
-        "",
-        "Commitments are emitted as events and can be stored separately via store_commitment."
+        "SECURITY: Atomically verifies input commitment exists and creates nullifier."
       ],
       "discriminator": [
         217,
@@ -3409,9 +3472,9 @@
           }
         },
         {
-          "name": "commitment_counter",
+          "name": "pending_operation",
           "docs": [
-            "Commitment counter for this pool"
+            "Pending operation PDA (created in this instruction)"
           ],
           "writable": true,
           "pda": {
@@ -3419,29 +3482,21 @@
               {
                 "kind": "const",
                 "value": [
-                  99,
-                  111,
-                  109,
-                  109,
+                  112,
+                  101,
+                  110,
+                  100,
                   105,
-                  116,
-                  109,
-                  101,
                   110,
-                  116,
+                  103,
                   95,
-                  99,
                   111,
-                  117,
-                  110,
-                  116,
-                  101,
-                  114
+                  112
                 ]
               },
               {
-                "kind": "account",
-                "path": "pool"
+                "kind": "arg",
+                "path": "operation_id"
               }
             ]
           }
@@ -3516,9 +3571,25 @@
             "Token program"
           ],
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": [
+        {
+          "name": "operation_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
         {
           "name": "proof",
           "type": "bytes"
@@ -3572,12 +3643,14 @@
           "type": "u64"
         },
         {
+          "name": "num_commitments",
+          "type": "u8"
+        },
+        {
           "name": "light_params",
           "type": {
-            "option": {
-              "defined": {
-                "name": "LightTransactParams"
-              }
+            "defined": {
+              "name": "LightTransactParams"
             }
           }
         }
@@ -4822,15 +4895,82 @@
     {
       "name": "LightAddLiquidityParams",
       "docs": [
-        "Parameters for add liquidity Phase 1 (no Light Protocol params needed)"
+        "Parameters for add liquidity Phase 1",
+        "SECURITY CRITICAL: Verifies both input commitments exist + creates nullifiers"
       ],
       "type": {
         "kind": "struct",
         "fields": [
           {
+            "name": "commitment_a_account_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "commitment_a_merkle_context",
+            "type": {
+              "defined": {
+                "name": "CommitmentMerkleContext"
+              }
+            }
+          },
+          {
+            "name": "nullifier_a_non_inclusion_proof",
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_a_address_tree_info",
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "commitment_b_account_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "commitment_b_merkle_context",
+            "type": {
+              "defined": {
+                "name": "CommitmentMerkleContext"
+              }
+            }
+          },
+          {
+            "name": "nullifier_b_non_inclusion_proof",
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_b_address_tree_info",
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
             "name": "output_tree_index",
             "docs": [
-              "Output state tree index (stored for Phase 2/3)"
+              "Output state tree index for new nullifier accounts"
             ],
             "type": "u8"
           }
@@ -5224,15 +5364,61 @@
     {
       "name": "LightRemoveLiquidityParams",
       "docs": [
-        "Parameters for remove liquidity Phase 1 (no Light Protocol params needed)"
+        "Parameters for remove liquidity Phase 1",
+        "SECURITY CRITICAL: Verifies LP commitment exists + creates nullifier"
       ],
       "type": {
         "kind": "struct",
         "fields": [
           {
+            "name": "commitment_account_hash",
+            "docs": [
+              "Account hash of LP input commitment (for verification)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "commitment_merkle_context",
+            "docs": [
+              "Merkle context proving commitment exists in state tree"
+            ],
+            "type": {
+              "defined": {
+                "name": "CommitmentMerkleContext"
+              }
+            }
+          },
+          {
+            "name": "nullifier_non_inclusion_proof",
+            "docs": [
+              "Nullifier non-inclusion proof (proves nullifier doesn't exist yet)"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_address_tree_info",
+            "docs": [
+              "Address tree info for nullifier creation"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
             "name": "output_tree_index",
             "docs": [
-              "Output state tree index (stored for Phase 2/3)"
+              "Output state tree index for new nullifier account"
             ],
             "type": "u8"
           }
@@ -5242,15 +5428,61 @@
     {
       "name": "LightSwapParams",
       "docs": [
-        "Parameters for swap Phase 1 (no Light Protocol params needed)"
+        "Parameters for swap Phase 1",
+        "SECURITY CRITICAL: Verifies input commitment exists + creates nullifier"
       ],
       "type": {
         "kind": "struct",
         "fields": [
           {
+            "name": "commitment_account_hash",
+            "docs": [
+              "Account hash of input commitment (for verification)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "commitment_merkle_context",
+            "docs": [
+              "Merkle context proving commitment exists in state tree"
+            ],
+            "type": {
+              "defined": {
+                "name": "CommitmentMerkleContext"
+              }
+            }
+          },
+          {
+            "name": "nullifier_non_inclusion_proof",
+            "docs": [
+              "Nullifier non-inclusion proof (proves nullifier doesn't exist yet)"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "nullifier_address_tree_info",
+            "docs": [
+              "Address tree info for nullifier creation"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
             "name": "output_tree_index",
             "docs": [
-              "Output state tree index (stored for Phase 2/3)"
+              "Output state tree index for new nullifier account"
             ],
             "type": "u8"
           }
@@ -5260,8 +5492,7 @@
     {
       "name": "LightTransactParams",
       "docs": [
-        "Parameters for Light Protocol commitment verification",
-        "",
+        "Parameters for transact Phase 1",
         "SECURITY CRITICAL: Verifies commitment exists + creates nullifier"
       ],
       "type": {
