@@ -394,6 +394,6 @@ pub mod cloakcraft {
         proof: Vec<u8>,
         public_inputs: Vec<[u8; 32]>,
     ) -> Result<()> {
-        admin::test_verify_proof(ctx, proof, public_inputs)
+        admin::test_verify_groth16_proof(ctx, proof, public_inputs)
     }
 }

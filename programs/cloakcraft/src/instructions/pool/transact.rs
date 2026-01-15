@@ -9,6 +9,8 @@ use crate::state::{Pool, VerificationKey, PoolCommitmentCounter, LightValidityPr
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
 use crate::helpers::verify_groth16_proof;
+use crate::helpers::field::{pubkey_to_field, u64_to_field};
+use crate::helpers::vault::{transfer_from_vault, update_pool_balance};
 use crate::light_cpi::create_spend_nullifier_account;
 
 #[derive(Accounts)]
@@ -182,20 +184,17 @@ pub fn transact<'info>(
         ];
         let signer_seeds = &[&pool_seeds[..]];
 
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.token_vault.to_account_info(),
-            to: recipient.to_account_info(),
-            authority: pool.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            cpi_accounts,
+        transfer_from_vault(
+            &ctx.accounts.token_program,
+            &ctx.accounts.token_vault,
+            recipient,
+            &pool.to_account_info(),
             signer_seeds,
-        );
-        token::transfer(cpi_ctx, unshield_amount)?;
+            unshield_amount,
+        )?;
 
-        pool.total_shielded = pool.total_shielded.checked_sub(unshield_amount)
-            .ok_or(CloakCraftError::InsufficientBalance)?;    }
+        update_pool_balance(pool, unshield_amount, false)?;
+    }
 
     Ok(())
 }
@@ -218,66 +217,4 @@ fn build_transact_public_inputs(
     inputs.push(pubkey_to_field(token_mint));
     inputs.push(u64_to_field(unshield_amount));
     inputs
-}
-
-/// BN254 field modulus as bytes (big-endian)
-const BN254_FIELD_MODULUS: [u8; 32] = [
-    0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29,
-    0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d,
-    0x97, 0x81, 0x6a, 0x91, 0x68, 0x71, 0xca, 0x8d,
-    0x3c, 0x20, 0x8c, 0x16, 0xd8, 0x7c, 0xfd, 0x47,
-];
-
-/// Subtract modulus from value: result = value - modulus
-fn subtract_modulus(value: &[u8; 32]) -> [u8; 32] {
-    let mut result = [0u8; 32];
-    let mut borrow: i16 = 0;
-
-    for i in (0..32).rev() {
-        let diff = value[i] as i16 - BN254_FIELD_MODULUS[i] as i16 - borrow;
-        if diff < 0 {
-            result[i] = (diff + 256) as u8;
-            borrow = 1;
-        } else {
-            result[i] = diff as u8;
-            borrow = 0;
-        }
-    }
-    result
-}
-
-/// Compare two 32-byte big-endian numbers: returns true if a >= b
-fn ge_modulus(a: &[u8; 32]) -> bool {
-    for i in 0..32 {
-        if a[i] > BN254_FIELD_MODULUS[i] {
-            return true;
-        } else if a[i] < BN254_FIELD_MODULUS[i] {
-            return false;
-        }
-    }
-    true // equal
-}
-
-/// Convert a pubkey to a field element by taking modulo the BN254 field prime
-fn pubkey_to_field(pubkey: &Pubkey) -> [u8; 32] {
-    let mut value = pubkey.to_bytes();
-
-    // Subtract modulus while value >= modulus
-    // Max 4 subtractions needed since pubkey is 256 bits and modulus is ~254 bits
-    for _ in 0..4 {
-        if ge_modulus(&value) {
-            value = subtract_modulus(&value);
-        } else {
-            break;
-        }
-    }
-
-    value
-}
-
-fn u64_to_field(value: u64) -> [u8; 32] {
-    // Convert u64 to 32-byte big-endian field element
-    let mut result = [0u8; 32];
-    result[24..32].copy_from_slice(&value.to_be_bytes());
-    result
 }

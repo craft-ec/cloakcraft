@@ -8,6 +8,7 @@ use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use crate::state::{Pool, PoolCommitmentCounter, LightValidityProof, LightAddressTreeInfo};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
+use crate::helpers::vault::{transfer_to_vault, update_pool_balance};
 use crate::light_cpi::{create_commitment_account, vec_to_fixed_note};
 
 #[derive(Accounts)]
@@ -74,13 +75,13 @@ pub fn shield<'info>(
     let clock = Clock::get()?;
 
     // Transfer tokens to vault
-    let cpi_accounts = Transfer {
-        from: ctx.accounts.user_token_account.to_account_info(),
-        to: ctx.accounts.token_vault.to_account_info(),
-        authority: ctx.accounts.user.to_account_info(),
-    };
-    let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-    token::transfer(cpi_ctx, amount)?;
+    transfer_to_vault(
+        &ctx.accounts.token_program,
+        &ctx.accounts.user_token_account,
+        &ctx.accounts.token_vault,
+        &ctx.accounts.user,
+        amount,
+    )?;
 
     // Get leaf index and increment counter
     let leaf_index = commitment_counter.next_leaf_index;
@@ -108,8 +109,7 @@ pub fn shield<'info>(
     }
 
     // Update pool totals (merkle tree is now in Light Protocol)
-    pool.total_shielded = pool.total_shielded.checked_add(amount)
-        .ok_or(CloakCraftError::AmountOverflow)?;
+    update_pool_balance(pool, amount, true)?;
 
     // Emit shielded event (for public tracking)
     Ok(())

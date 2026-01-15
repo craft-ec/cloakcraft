@@ -18,6 +18,7 @@ use crate::state::{
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
 use crate::helpers::verify_groth16_proof;
+use crate::helpers::field::pubkey_to_field;
 
 // =============================================================================
 // Phase 1: Verify Proof + Store Pending Operation (NO Light Protocol calls)
@@ -77,14 +78,6 @@ pub struct Swap<'info> {
     // Light Protocol accounts are passed via remaining_accounts
 }
 
-/// Reduce a PublicKey to a field element by zeroing the top byte
-/// This ensures the value is always less than the BN254 field modulus
-fn pubkey_to_field_element(pubkey: &Pubkey) -> [u8; 32] {
-    let mut bytes = pubkey.to_bytes();
-    bytes[0] = 0;
-    bytes
-}
-
 /// Phase 1: Verify proof + Update AMM state + Store pending operation
 ///
 /// This instruction verifies the ZK proof, updates AMM reserves, and stores data for subsequent phases.
@@ -125,7 +118,7 @@ pub fn swap<'info>(
     let public_inputs = vec![
         merkle_root,
         nullifier,
-        pubkey_to_field_element(&amm_pool.pool_id), // Reduce to field element
+        pubkey_to_field(&amm_pool.pool_id),
         out_commitment,
         change_commitment,
         min_output_bytes,

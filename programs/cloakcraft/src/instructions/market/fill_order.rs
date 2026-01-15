@@ -7,7 +7,7 @@ use anchor_lang::prelude::*;
 use crate::state::{Pool, Order, OrderStatus, VerificationKey, PoolCommitmentCounter, LightValidityProof, LightAddressTreeInfo};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::crypto::verify_proof;
+use crate::helpers::verify_groth16_proof;
 use crate::light_cpi::{create_spend_nullifier_account, create_commitment_account, vec_to_fixed_note};
 
 /// Parameters for Light Protocol operations in fill order
@@ -133,16 +133,18 @@ pub fn fill_order<'info>(
     );
 
     // Verify both proofs
-    verify_proof(
+    verify_groth16_proof(
         &maker_proof,
         &ctx.accounts.verification_key.vk_data,
         &public_inputs,
+        "FillOrder",
     )?;
 
-    verify_proof(
+    verify_groth16_proof(
         &taker_proof,
         &ctx.accounts.verification_key.vk_data,
         &public_inputs,
+        "FillOrder",
     )?;
 
     // 3. Create nullifier compressed accounts via Light Protocol

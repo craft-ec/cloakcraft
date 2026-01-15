@@ -18,6 +18,8 @@ use crate::state::{
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
 use crate::helpers::verify_groth16_proof;
+use crate::helpers::field::pubkey_to_field;
+use crate::helpers::amm_math::{calculate_initial_lp, calculate_proportional_lp, validate_lp_amount};
 use crate::light_cpi::vec_to_fixed_note;
 
 // =============================================================================
@@ -152,41 +154,19 @@ pub fn add_liquidity<'info>(
     // 2. CRITICAL SECURITY CHECK: Validate LP amount calculation
     // This prevents attackers from minting arbitrary LP tokens
     let calculated_lp = if amm_pool.lp_supply == 0 {
-        // Initial liquidity: LP = sqrt(depositA * depositB)
-        integer_sqrt((deposit_a as u128).checked_mul(deposit_b as u128)
-            .ok_or(CloakCraftError::AmountOverflow)?) as u64
+        calculate_initial_lp(deposit_a, deposit_b)?
     } else {
-        // Subsequent deposits: LP = min(depositA * lpSupply / reserveA, depositB * lpSupply / reserveB)
-        let lp_from_a = ((deposit_a as u128)
-            .checked_mul(amm_pool.lp_supply as u128)
-            .ok_or(CloakCraftError::AmountOverflow)?
-            .checked_div(amm_pool.reserve_a as u128)
-            .ok_or(CloakCraftError::InsufficientLiquidity)?) as u64;
-
-        let lp_from_b = ((deposit_b as u128)
-            .checked_mul(amm_pool.lp_supply as u128)
-            .ok_or(CloakCraftError::AmountOverflow)?
-            .checked_div(amm_pool.reserve_b as u128)
-            .ok_or(CloakCraftError::InsufficientLiquidity)?) as u64;
-
-        lp_from_a.min(lp_from_b)
+        calculate_proportional_lp(
+            deposit_a,
+            deposit_b,
+            amm_pool.reserve_a,
+            amm_pool.reserve_b,
+            amm_pool.lp_supply,
+        )?
     };
 
-    // CRITICAL: Require exact match to prevent LP token inflation attacks
-    require!(
-        lp_amount == calculated_lp,
-        CloakCraftError::InvalidLpAmount
-    );
-
-    msg!("LP amount validated: provided={}, calculated={}", lp_amount, calculated_lp);
-
-    // SLIPPAGE PROTECTION: Ensure user gets at least min_lp_amount (front-running protection)
-    require!(
-        lp_amount >= min_lp_amount,
-        CloakCraftError::SlippageExceeded
-    );
-
-    msg!("Slippage check passed: lp_amount={}, min_lp_amount={}", lp_amount, min_lp_amount);
+    // Validate LP amount and check slippage
+    validate_lp_amount(lp_amount, calculated_lp, min_lp_amount)?;
 
     // 3. Update AMM pool state
     amm_pool.reserve_a = amm_pool.reserve_a.checked_add(deposit_a).ok_or(CloakCraftError::AmountOverflow)?;
@@ -229,38 +209,6 @@ pub fn add_liquidity<'info>(
     Ok(())
 }
 
-/// Integer square root using Newton's method (Babylonian method)
-/// Returns floor(sqrt(n))
-fn integer_sqrt(n: u128) -> u128 {
-    if n == 0 {
-        return 0;
-    }
-    if n <= 3 {
-        return 1;
-    }
-
-    // Initial guess: use bit length / 2
-    let mut x = n;
-    let mut y = (x + 1) / 2;
-
-    // Newton iteration: y = (x + n/x) / 2
-    while y < x {
-        x = y;
-        y = (x + n / x) / 2;
-    }
-
-    x
-}
-
-/// Reduce a PublicKey to a field element by zeroing the top byte
-/// This ensures the value is always less than the BN254 field modulus
-fn pubkey_to_field_element(pubkey: &Pubkey) -> [u8; 32] {
-    let mut bytes = pubkey.to_bytes();
-    // Zero the most significant byte to ensure value < field modulus
-    bytes[0] = 0;
-    bytes
-}
-
 fn build_add_liquidity_inputs(
     nullifier_a: &[u8; 32],
     nullifier_b: &[u8; 32],
@@ -272,7 +220,7 @@ fn build_add_liquidity_inputs(
     vec![
         *nullifier_a,
         *nullifier_b,
-        pubkey_to_field_element(pool_id),
+        pubkey_to_field(pool_id),
         *lp_commitment,
         *change_a_commitment,
         *change_b_commitment,

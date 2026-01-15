@@ -7,7 +7,8 @@ use anchor_lang::prelude::*;
 use crate::state::{Pool, Aggregation, ElGamalCiphertext, VerificationKey, LightValidityProof, LightAddressTreeInfo};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::crypto::{verify_proof, add_elgamal_ciphertexts};
+use crate::crypto::add_elgamal_ciphertexts;
+use crate::helpers::verify_groth16_proof;
 use crate::light_cpi::create_action_nullifier_account;
 
 /// Parameters for Light Protocol nullifier storage
@@ -80,7 +81,7 @@ pub fn submit_encrypted<'info>(
         &encrypted_votes,
     );
 
-    verify_proof(&proof, &ctx.accounts.verification_key.vk_data, &public_inputs)?;
+    verify_groth16_proof(&proof, &ctx.accounts.verification_key.vk_data, &public_inputs, "SubmitEncryptedVote")?;
 
     // 4. Create action nullifier compressed account via Light Protocol
     // This prevents double-voting - if the nullifier already exists, the CPI will fail

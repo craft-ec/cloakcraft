@@ -2,7 +2,7 @@
 //! This is for testing the ZK verification pipeline only
 
 use anchor_lang::prelude::*;
-use crate::crypto::verify_proof;
+use crate::helpers::verify_groth16_proof;
 use crate::state::VerificationKey;
 use crate::constants::GROTH16_PROOF_SIZE;
 
@@ -20,7 +20,7 @@ pub struct TestVerifyProof<'info> {
 
 /// Test proof verification without pool state checks
 /// This is for development/testing only
-pub fn test_verify_proof(
+pub fn test_verify_groth16_proof(
     ctx: Context<TestVerifyProof>,
     proof: Vec<u8>,
     public_inputs: Vec<[u8; 32]>,
@@ -40,7 +40,7 @@ pub fn test_verify_proof(
     msg!("VK data length: {}", vk_data.len());
 
     // Verify the proof
-    verify_proof(&proof, vk_data, &public_inputs)?;
+    verify_groth16_proof(&proof, vk_data, &public_inputs, "Test")?;
 
     msg!("=== Proof Verification PASSED ===");
     Ok(())

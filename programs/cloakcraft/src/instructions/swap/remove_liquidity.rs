@@ -16,7 +16,7 @@ use crate::state::{
 };
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::crypto::verify_proof;
+use crate::helpers::verify_groth16_proof;
 use crate::light_cpi::{create_spend_nullifier_account, create_commitment_account, vec_to_fixed_note};
 
 // =============================================================================
@@ -138,7 +138,7 @@ pub fn remove_liquidity<'info>(
         to_field_element(&new_state_hash),
     ];
 
-    verify_proof(&proof, &ctx.accounts.verification_key.vk_data, &public_inputs)?;
+    verify_groth16_proof(&proof, &ctx.accounts.verification_key.vk_data, &public_inputs, "RemoveLiquidity")?;
 
     // 3. Initialize pending operation PDA
     // NOTE: Nullifier and commitments will be created in subsequent phases

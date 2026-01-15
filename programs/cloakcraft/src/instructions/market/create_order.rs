@@ -7,7 +7,7 @@ use anchor_lang::prelude::*;
 use crate::state::{Pool, Order, OrderStatus, VerificationKey, PoolCommitmentCounter, LightValidityProof, LightAddressTreeInfo};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
-use crate::crypto::verify_proof;
+use crate::helpers::verify_groth16_proof;
 use crate::light_cpi::{create_spend_nullifier_account, create_commitment_account, vec_to_fixed_note};
 
 /// Parameters for Light Protocol operations
@@ -101,10 +101,11 @@ pub fn create_order<'info>(
         expiry,
     );
 
-    verify_proof(
+    verify_groth16_proof(
         &proof,
         &ctx.accounts.verification_key.vk_data,
         &public_inputs,
+        "CreateOrder",
     )?;
 
     // 2. Create nullifier compressed account via Light Protocol
