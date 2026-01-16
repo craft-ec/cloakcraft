@@ -2073,12 +2073,22 @@ interface SwapPhase2Params {
     encryptedNote: Uint8Array;
 }
 /**
- * Build Swap Phase 1 transaction
+ * Build Swap Multi-Phase Transactions
+ *
+ * Returns all phase transactions for the multi-phase swap operation:
+ * - Phase 0: createPendingWithProofSwap (verify proof + create pending)
+ * - Phase 1: verifyCommitmentExists (verify input commitment)
+ * - Phase 2: createNullifierAndPending (create nullifier)
+ * - Phase 3: executeSwap (execute AMM swap logic)
+ * - Phase 4+: createCommitment (handled by caller)
+ * - Final: closePendingOperation (handled by caller)
  */
 declare function buildSwapWithProgram(program: Program, params: SwapInstructionParams, rpcUrl: string): Promise<{
     tx: any;
+    phase1Tx: any;
+    phase2Tx: any;
+    phase3Tx: any;
     operationId: Uint8Array;
-    pendingNullifiers: PendingNullifierData[];
     pendingCommitments: PendingCommitmentData[];
 }>;
 /**
@@ -2152,12 +2162,26 @@ interface AddLiquidityPhase2Params {
     encryptedNote: Uint8Array;
 }
 /**
- * Build Add Liquidity Phase 1 transaction
+ * Build Add Liquidity Multi-Phase Transactions
+ *
+ * Returns all phase transactions for the multi-phase add liquidity operation:
+ * - Phase 0: createPendingWithProofAddLiquidity (verify proof + create pending)
+ * - Phase 1a: verifyCommitmentExists (verify deposit A commitment)
+ * - Phase 1b: verifyCommitmentExists (verify deposit B commitment)
+ * - Phase 2a: createNullifierAndPending (create nullifier A)
+ * - Phase 2b: createNullifierAndPending (create nullifier B)
+ * - Phase 3: executeAddLiquidity (update AMM state)
+ * - Phase 4+: createCommitment (handled by caller)
+ * - Final: closePendingOperation (handled by caller)
  */
 declare function buildAddLiquidityWithProgram(program: Program, params: AddLiquidityInstructionParams, rpcUrl: string): Promise<{
     tx: any;
+    phase1aTx: any;
+    phase1bTx: any;
+    phase2aTx: any;
+    phase2bTx: any;
+    phase3Tx: any;
     operationId: Uint8Array;
-    pendingNullifiers: PendingNullifierData[];
     pendingCommitments: PendingCommitmentData[];
 }>;
 /**
@@ -2278,12 +2302,22 @@ interface RemoveLiquidityPhase2Params {
     encryptedNote: Uint8Array;
 }
 /**
- * Build Remove Liquidity Phase 1 transaction
+ * Build Remove Liquidity Multi-Phase Transactions
+ *
+ * Returns all phase transactions for the multi-phase remove liquidity operation:
+ * - Phase 0: createPendingWithProofRemoveLiquidity (verify proof + create pending)
+ * - Phase 1: verifyCommitmentExists (verify LP commitment)
+ * - Phase 2: createNullifierAndPending (create LP nullifier)
+ * - Phase 3: executeRemoveLiquidity (update AMM state)
+ * - Phase 4+: createCommitment (handled by caller)
+ * - Final: closePendingOperation (handled by caller)
  */
 declare function buildRemoveLiquidityWithProgram(program: Program, params: RemoveLiquidityInstructionParams, rpcUrl: string): Promise<{
     tx: any;
+    phase1Tx: any;
+    phase2Tx: any;
+    phase3Tx: any;
     operationId: Uint8Array;
-    pendingNullifiers: PendingNullifierData[];
     pendingCommitments: PendingCommitmentData[];
 }>;
 

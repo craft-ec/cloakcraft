@@ -234,26 +234,29 @@ export interface SwapPhase2Params {
 }
 
 /**
- * Build Swap Phase 1 transaction
+ * Build Swap Multi-Phase Transactions
+ *
+ * Returns all phase transactions for the multi-phase swap operation:
+ * - Phase 0: createPendingWithProofSwap (verify proof + create pending)
+ * - Phase 1: verifyCommitmentExists (verify input commitment)
+ * - Phase 2: createNullifierAndPending (create nullifier)
+ * - Phase 3: executeSwap (execute AMM swap logic)
+ * - Phase 4+: createCommitment (handled by caller)
+ * - Final: closePendingOperation (handled by caller)
  */
 export async function buildSwapWithProgram(
   program: Program,
   params: SwapInstructionParams,
   rpcUrl: string
 ): Promise<{
-  tx: any;
+  tx: any;           // Phase 0: createPendingWithProofSwap
+  phase1Tx: any;     // Phase 1: verifyCommitmentExists
+  phase2Tx: any;     // Phase 2: createNullifierAndPending
+  phase3Tx: any;     // Phase 3: executeSwap
   operationId: Uint8Array;
-  pendingNullifiers: PendingNullifierData[];
   pendingCommitments: PendingCommitmentData[];
 }> {
-  console.log('[DEBUG] buildSwapWithProgram params:', {
-    inputPool: params.inputPool?.toBase58(),
-    outputPool: params.outputPool?.toBase58(),
-    inputTokenMint: params.inputTokenMint?.toBase58(),
-    outputTokenMint: params.outputTokenMint?.toBase58(),
-    ammPool: params.ammPool?.toBase58(),
-    relayer: params.relayer?.toBase58(),
-  });
+  console.log('[Swap] Building multi-phase transactions...');
   const programId = program.programId;
   const lightProtocol = new LightProtocol(rpcUrl, programId);
 
@@ -269,15 +272,14 @@ export async function buildSwapWithProgram(
   const [vkPda] = deriveVerificationKeyPda(CIRCUIT_IDS.SWAP, programId);
 
   // Use the SAME randomness that was used in proof generation
-  // This is critical so encrypted notes can be decrypted correctly
   const outputRandomness = params.outRandomness;
   const changeRandomness = params.changeRandomness;
 
-  // Create output notes for encryption (use token mints, not pool addresses)
+  // Create output notes for encryption
   const outputNote = {
     stealthPubX: params.outputRecipient.stealthPubkey.x,
     tokenMint: params.outputTokenMint,
-    amount: params.outputAmount, // Use actual output amount, not minOutput
+    amount: params.outputAmount,
     randomness: outputRandomness,
   };
 
@@ -288,14 +290,14 @@ export async function buildSwapWithProgram(
     randomness: changeRandomness,
   };
 
-  console.log('[Swap] Encrypting output note: tokenMint:', params.outputTokenMint.toBase58(), 'amount:', params.outputAmount.toString());
-  console.log('[Swap] Encrypting change note: tokenMint:', params.inputTokenMint.toBase58(), 'amount:', (params.inputAmount - params.swapAmount).toString());
+  console.log('[Swap] Output note: tokenMint:', params.outputTokenMint.toBase58(), 'amount:', params.outputAmount.toString());
+  console.log('[Swap] Change note: tokenMint:', params.inputTokenMint.toBase58(), 'amount:', (params.inputAmount - params.swapAmount).toString());
 
   // Encrypt notes
   const encryptedOutputNote = encryptNote(outputNote, params.outputRecipient.stealthPubkey);
   const encryptedChangeNote = encryptNote(changeNote, params.changeRecipient.stealthPubkey);
 
-  // Serialize stealth ephemeral pubkeys (for stealth key derivation, NOT for ECIES)
+  // Serialize stealth ephemeral pubkeys
   const outputEphemeralBytes = new Uint8Array(64);
   outputEphemeralBytes.set(params.outputRecipient.ephemeralPubkey.x, 0);
   outputEphemeralBytes.set(params.outputRecipient.ephemeralPubkey.y, 32);
@@ -304,15 +306,7 @@ export async function buildSwapWithProgram(
   changeEphemeralBytes.set(params.changeRecipient.ephemeralPubkey.x, 0);
   changeEphemeralBytes.set(params.changeRecipient.ephemeralPubkey.y, 32);
 
-  // Build pending nullifiers data (for Phase 2)
-  const pendingNullifiers: PendingNullifierData[] = [
-    {
-      pool: params.inputPool,
-      nullifier: params.nullifier,
-    },
-  ];
-
-  // Build pending commitments data (for Phase 3)
+  // Build pending commitments data (for Phase 4+)
   const pendingCommitments: PendingCommitmentData[] = [
     {
       pool: params.outputPool,
@@ -336,16 +330,46 @@ export async function buildSwapWithProgram(
   const nullifierAddress = lightProtocol.deriveNullifierAddress(params.inputPool, params.nullifier);
   const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
 
-  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } =
-    lightProtocol.buildRemainingAccounts();
+  // Extract tree info from commitment proof
+  const commitmentTree = new PublicKey(commitmentProof.treeInfo.tree);
+  const commitmentQueue = new PublicKey(commitmentProof.treeInfo.queue);
+  const commitmentCpiContext = commitmentProof.treeInfo.cpiContext
+    ? new PublicKey(commitmentProof.treeInfo.cpiContext)
+    : null;
 
-  // Build complete LightSwapParams with all security proofs
+  // Build packed accounts
+  const { SystemAccountMetaConfig, PackedAccounts } = await import('@lightprotocol/stateless.js');
+  const { DEVNET_V2_TREES } = await import('./constants');
+  const systemConfig = SystemAccountMetaConfig.new(lightProtocol.programId);
+  const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
+
+  // Add trees
+  const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES.OUTPUT_QUEUE);
+  const addressTree = DEVNET_V2_TREES.ADDRESS_TREE;
+  const addressTreeIndex = packedAccounts.insertOrGet(addressTree);
+  const commitmentStateTreeIndex = packedAccounts.insertOrGet(commitmentTree);
+  const commitmentQueueIndex = packedAccounts.insertOrGet(commitmentQueue);
+
+  if (commitmentCpiContext) {
+    packedAccounts.insertOrGet(commitmentCpiContext);
+  }
+
+  const { remainingAccounts: finalRemainingAccounts } = packedAccounts.toAccountMetas();
+
+  // Build Light params for multi-phase
   const lightParams = {
     commitmentAccountHash: Array.from(new PublicKey(params.accountHash).toBytes()),
     commitmentMerkleContext: {
-      merkleTreePubkeyIndex: addressTreeIndex,
+      merkleTreePubkeyIndex: commitmentStateTreeIndex,
+      queuePubkeyIndex: commitmentQueueIndex,
       leafIndex: commitmentProof.leafIndex,
       rootIndex: commitmentProof.rootIndex,
+    },
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    commitmentAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierProof.rootIndices[0] ?? 0,
     },
     nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
     nullifierAddressTreeInfo: {
@@ -357,20 +381,35 @@ export async function buildSwapWithProgram(
   };
 
   const numCommitments = 2; // Output + Change
-  const tx = await program.methods
-    .swap(
+
+  // ====================================================================
+  // MULTI-PHASE APPEND PATTERN (same as transfer)
+  // ====================================================================
+  // Phase 0: Create pending operation with ZK proof verification
+  // Phase 1: Verify commitment exists
+  // Phase 2: Create nullifier (point of no return)
+  // Phase 3: Execute swap (AMM state update)
+  // Phase 4+: Create output commitments
+  // Final: Close pending operation
+  // ====================================================================
+
+  console.log('[Swap Phase 0] Building createPendingWithProofSwap...');
+
+  // Phase 0: Create Pending with Proof (Swap-specific)
+  const phase0Tx = await program.methods
+    .createPendingWithProofSwap(
       Array.from(operationId),
       Buffer.from(params.proof),
       Array.from(params.merkleRoot),
+      Array.from(params.inputCommitment),
       Array.from(params.nullifier),
       Array.from(params.outputCommitment),
       Array.from(params.changeCommitment),
+      new BN(params.minOutput.toString()),
       new BN(params.swapAmount.toString()),
       new BN(params.outputAmount.toString()),
-      new BN(params.minOutput.toString()),
       params.swapDirection === 'aToB',
-      numCommitments,
-      lightParams
+      numCommitments
     )
     .accountsStrict({
       inputPool: params.inputPool,
@@ -379,18 +418,97 @@ export async function buildSwapWithProgram(
       verificationKey: vkPda,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
-      systemProgram: PublicKey.default,
+      systemProgram: new PublicKey('11111111111111111111111111111111'),
     })
-    .remainingAccounts(remainingAccounts)
     .preInstructions([
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 450_000 }),
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
     ]);
 
+  console.log('[Swap Phase 1] Building verifyCommitmentExists...');
+
+  // Phase 1: Verify Commitment Exists
+  const phase1Tx = await program.methods
+    .verifyCommitmentExists(
+      Array.from(operationId),
+      0, // commitment_index (single input for swap)
+      {
+        commitmentAccountHash: lightParams.commitmentAccountHash,
+        commitmentMerkleContext: lightParams.commitmentMerkleContext,
+        commitmentInclusionProof: lightParams.commitmentInclusionProof,
+        commitmentAddressTreeInfo: lightParams.commitmentAddressTreeInfo,
+      }
+    )
+    .accountsStrict({
+      pool: params.inputPool,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isSigner: acc.isSigner,
+      isWritable: acc.isWritable,
+    })))
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  console.log('[Swap Phase 2] Building createNullifierAndPending...');
+
+  // Phase 2: Create Nullifier
+  const phase2Tx = await program.methods
+    .createNullifierAndPending(
+      Array.from(operationId),
+      0, // nullifier_index (single nullifier for swap)
+      {
+        proof: lightParams.nullifierNonInclusionProof,
+        addressTreeInfo: lightParams.nullifierAddressTreeInfo,
+        outputTreeIndex: lightParams.outputTreeIndex,
+      }
+    )
+    .accountsStrict({
+      pool: params.inputPool,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isSigner: acc.isSigner,
+      isWritable: acc.isWritable,
+    })))
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  console.log('[Swap Phase 3] Building executeSwap...');
+
+  // Phase 3: Execute Swap (AMM state update)
+  const phase3Tx = await program.methods
+    .executeSwap(
+      Array.from(operationId)
+    )
+    .accountsStrict({
+      inputPool: params.inputPool,
+      outputPool: params.outputPool,
+      ammPool: params.ammPool,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 100_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  console.log('[Swap] All phase transactions built successfully');
+
   return {
-    tx,
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
     operationId,
-    pendingNullifiers,
     pendingCommitments,
   };
 }
@@ -473,18 +591,33 @@ export interface AddLiquidityPhase2Params {
 }
 
 /**
- * Build Add Liquidity Phase 1 transaction
+ * Build Add Liquidity Multi-Phase Transactions
+ *
+ * Returns all phase transactions for the multi-phase add liquidity operation:
+ * - Phase 0: createPendingWithProofAddLiquidity (verify proof + create pending)
+ * - Phase 1a: verifyCommitmentExists (verify deposit A commitment)
+ * - Phase 1b: verifyCommitmentExists (verify deposit B commitment)
+ * - Phase 2a: createNullifierAndPending (create nullifier A)
+ * - Phase 2b: createNullifierAndPending (create nullifier B)
+ * - Phase 3: executeAddLiquidity (update AMM state)
+ * - Phase 4+: createCommitment (handled by caller)
+ * - Final: closePendingOperation (handled by caller)
  */
 export async function buildAddLiquidityWithProgram(
   program: Program,
   params: AddLiquidityInstructionParams,
   rpcUrl: string
 ): Promise<{
-  tx: any;
+  tx: any;           // Phase 0: createPendingWithProofAddLiquidity
+  phase1aTx: any;    // Phase 1a: verifyCommitmentExists (deposit A)
+  phase1bTx: any;    // Phase 1b: verifyCommitmentExists (deposit B)
+  phase2aTx: any;    // Phase 2a: createNullifierAndPending (nullifier A)
+  phase2bTx: any;    // Phase 2b: createNullifierAndPending (nullifier B)
+  phase3Tx: any;     // Phase 3: executeAddLiquidity
   operationId: Uint8Array;
-  pendingNullifiers: PendingNullifierData[];
   pendingCommitments: PendingCommitmentData[];
 }> {
+  console.log('[AddLiquidity] Building multi-phase transactions...');
   const programId = program.programId;
   const lightProtocol = new LightProtocol(rpcUrl, programId);
 
@@ -494,25 +627,21 @@ export async function buildAddLiquidityWithProgram(
     params.lpCommitment,
     Date.now()
   );
-  console.log(`[AddLiquidity Phase 1] Generated operation ID: ${Buffer.from(operationId).toString('hex').slice(0, 16)}...`);
-  console.log(`[AddLiquidity Phase 1] Nullifier A: ${Buffer.from(params.nullifierA).toString('hex').slice(0, 16)}...`);
-  console.log(`[AddLiquidity Phase 1] Nullifier B: ${Buffer.from(params.nullifierB).toString('hex').slice(0, 16)}...`);
 
   // Derive PDAs
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(CIRCUIT_IDS.ADD_LIQUIDITY, programId);
 
   // Use the SAME randomness that was used in proof generation
-  // This is critical so encrypted notes can be decrypted correctly
   const lpRandomness = params.lpRandomness;
   const changeARandomness = params.changeARandomness;
   const changeBRandomness = params.changeBRandomness;
 
-  // Create and encrypt notes using the SAME randomness from proof
+  // Create output notes for encryption
   const lpNote = {
     stealthPubX: params.lpRecipient.stealthPubkey.x,
     tokenMint: params.lpMint,
-    amount: params.lpAmount, // Use the actual LP amount, not 0
+    amount: params.lpAmount,
     randomness: lpRandomness,
   };
   const changeANote = {
@@ -528,12 +657,16 @@ export async function buildAddLiquidityWithProgram(
     randomness: changeBRandomness,
   };
 
+  console.log('[AddLiquidity] LP note: amount:', params.lpAmount.toString());
+  console.log('[AddLiquidity] Change A note: amount:', (params.inputAAmount - params.depositA).toString());
+  console.log('[AddLiquidity] Change B note: amount:', (params.inputBAmount - params.depositB).toString());
+
+  // Encrypt notes
   const encryptedLp = encryptNote(lpNote, params.lpRecipient.stealthPubkey);
   const encryptedChangeA = encryptNote(changeANote, params.changeARecipient.stealthPubkey);
   const encryptedChangeB = encryptNote(changeBNote, params.changeBRecipient.stealthPubkey);
 
-  // Serialize stealth ephemeral pubkeys (for stealth key derivation, NOT for ECIES)
-  // The ECIES ephemeral is stored inside the encrypted note itself
+  // Serialize stealth ephemeral pubkeys
   const lpEphemeral = new Uint8Array(64);
   lpEphemeral.set(params.lpRecipient.ephemeralPubkey.x, 0);
   lpEphemeral.set(params.lpRecipient.ephemeralPubkey.y, 32);
@@ -546,7 +679,7 @@ export async function buildAddLiquidityWithProgram(
   changeBEphemeral.set(params.changeBRecipient.ephemeralPubkey.x, 0);
   changeBEphemeral.set(params.changeBRecipient.ephemeralPubkey.y, 32);
 
-  // Build pending commitments data (for Phase 3)
+  // Build pending commitments data (for Phase 4+)
   const pendingCommitments: PendingCommitmentData[] = [
     {
       pool: params.lpPool,
@@ -572,44 +705,95 @@ export async function buildAddLiquidityWithProgram(
   console.log('[AddLiquidity] Fetching commitment A inclusion proof...');
   const commitmentAProof = await lightProtocol.getInclusionProofByHash(params.accountHashA);
 
+  console.log('[AddLiquidity] Fetching commitment B inclusion proof...');
+  const commitmentBProof = await lightProtocol.getInclusionProofByHash(params.accountHashB);
+
   console.log('[AddLiquidity] Fetching nullifier A non-inclusion proof...');
   const nullifierAAddress = lightProtocol.deriveNullifierAddress(params.poolA, params.nullifierA);
   const nullifierAProof = await lightProtocol.getValidityProof([nullifierAAddress]);
-
-  console.log('[AddLiquidity] Fetching commitment B inclusion proof...');
-  const commitmentBProof = await lightProtocol.getInclusionProofByHash(params.accountHashB);
 
   console.log('[AddLiquidity] Fetching nullifier B non-inclusion proof...');
   const nullifierBAddress = lightProtocol.deriveNullifierAddress(params.poolB, params.nullifierB);
   const nullifierBProof = await lightProtocol.getValidityProof([nullifierBAddress]);
 
-  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } =
-    lightProtocol.buildRemainingAccounts();
+  // Extract tree info from commitment proofs
+  const commitmentATree = new PublicKey(commitmentAProof.treeInfo.tree);
+  const commitmentAQueue = new PublicKey(commitmentAProof.treeInfo.queue);
+  const commitmentACpiContext = commitmentAProof.treeInfo.cpiContext
+    ? new PublicKey(commitmentAProof.treeInfo.cpiContext)
+    : null;
 
-  // Build complete LightAddLiquidityParams with all security proofs
-  const lightParams = {
-    // Input A verification
-    commitmentAAccountHash: Array.from(new PublicKey(params.accountHashA).toBytes()),
-    commitmentAMerkleContext: {
-      merkleTreePubkeyIndex: addressTreeIndex,
+  const commitmentBTree = new PublicKey(commitmentBProof.treeInfo.tree);
+  const commitmentBQueue = new PublicKey(commitmentBProof.treeInfo.queue);
+  const commitmentBCpiContext = commitmentBProof.treeInfo.cpiContext
+    ? new PublicKey(commitmentBProof.treeInfo.cpiContext)
+    : null;
+
+  // Build packed accounts
+  const { SystemAccountMetaConfig, PackedAccounts } = await import('@lightprotocol/stateless.js');
+  const { DEVNET_V2_TREES } = await import('./constants');
+  const systemConfig = SystemAccountMetaConfig.new(lightProtocol.programId);
+  const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
+
+  // Add trees
+  const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES.OUTPUT_QUEUE);
+  const addressTree = DEVNET_V2_TREES.ADDRESS_TREE;
+  const addressTreeIndex = packedAccounts.insertOrGet(addressTree);
+  const commitmentAStateTreeIndex = packedAccounts.insertOrGet(commitmentATree);
+  const commitmentAQueueIndex = packedAccounts.insertOrGet(commitmentAQueue);
+  const commitmentBStateTreeIndex = packedAccounts.insertOrGet(commitmentBTree);
+  const commitmentBQueueIndex = packedAccounts.insertOrGet(commitmentBQueue);
+
+  if (commitmentACpiContext) {
+    packedAccounts.insertOrGet(commitmentACpiContext);
+  }
+  if (commitmentBCpiContext) {
+    packedAccounts.insertOrGet(commitmentBCpiContext);
+  }
+
+  const { remainingAccounts: finalRemainingAccounts } = packedAccounts.toAccountMetas();
+
+  // Build Light params for commitment A verification
+  const lightParamsA = {
+    commitmentAccountHash: Array.from(new PublicKey(params.accountHashA).toBytes()),
+    commitmentMerkleContext: {
+      merkleTreePubkeyIndex: commitmentAStateTreeIndex,
+      queuePubkeyIndex: commitmentAQueueIndex,
       leafIndex: commitmentAProof.leafIndex,
       rootIndex: commitmentAProof.rootIndex,
     },
-    nullifierANonInclusionProof: LightProtocol.convertCompressedProof(nullifierAProof),
-    nullifierAAddressTreeInfo: {
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentAProof),
+    commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
       rootIndex: nullifierAProof.rootIndices[0] ?? 0,
     },
-    // Input B verification
-    commitmentBAccountHash: Array.from(new PublicKey(params.accountHashB).toBytes()),
-    commitmentBMerkleContext: {
-      merkleTreePubkeyIndex: addressTreeIndex,
+    nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierAProof),
+    nullifierAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierAProof.rootIndices[0] ?? 0,
+    },
+    outputTreeIndex,
+  };
+
+  // Build Light params for commitment B verification
+  const lightParamsB = {
+    commitmentAccountHash: Array.from(new PublicKey(params.accountHashB).toBytes()),
+    commitmentMerkleContext: {
+      merkleTreePubkeyIndex: commitmentBStateTreeIndex,
+      queuePubkeyIndex: commitmentBQueueIndex,
       leafIndex: commitmentBProof.leafIndex,
       rootIndex: commitmentBProof.rootIndex,
     },
-    nullifierBNonInclusionProof: LightProtocol.convertCompressedProof(nullifierBProof),
-    nullifierBAddressTreeInfo: {
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentBProof),
+    commitmentAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierBProof.rootIndices[0] ?? 0,
+    },
+    nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierBProof),
+    nullifierAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
       rootIndex: nullifierBProof.rootIndices[0] ?? 0,
@@ -618,10 +802,29 @@ export async function buildAddLiquidityWithProgram(
   };
 
   const numCommitments = 3; // LP + Change A + Change B
-  const tx = await program.methods
-    .addLiquidity(
+
+  // ====================================================================
+  // MULTI-PHASE APPEND PATTERN (same as transfer, but with 2 inputs)
+  // ====================================================================
+  // Phase 0: Create pending operation with ZK proof verification
+  // Phase 1a: Verify deposit A commitment exists
+  // Phase 1b: Verify deposit B commitment exists
+  // Phase 2a: Create nullifier A (point of no return for input A)
+  // Phase 2b: Create nullifier B (point of no return for input B)
+  // Phase 3: Execute add liquidity (AMM state update)
+  // Phase 4+: Create output commitments
+  // Final: Close pending operation
+  // ====================================================================
+
+  console.log('[AddLiquidity Phase 0] Building createPendingWithProofAddLiquidity...');
+
+  // Phase 0: Create Pending with Proof (AddLiquidity-specific)
+  const phase0Tx = await program.methods
+    .createPendingWithProofAddLiquidity(
       Array.from(operationId),
       Buffer.from(params.proof),
+      Array.from(params.inputCommitmentA),
+      Array.from(params.inputCommitmentB),
       Array.from(params.nullifierA),
       Array.from(params.nullifierB),
       Array.from(params.lpCommitment),
@@ -631,8 +834,7 @@ export async function buildAddLiquidityWithProgram(
       new BN(params.depositB.toString()),
       new BN(params.lpAmount.toString()),
       new BN(params.minLpAmount.toString()),
-      numCommitments,
-      lightParams
+      numCommitments
     )
     .accountsStrict({
       poolA: params.poolA,
@@ -642,21 +844,158 @@ export async function buildAddLiquidityWithProgram(
       verificationKey: vkPda,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
-      systemProgram: PublicKey.default,
+      systemProgram: new PublicKey('11111111111111111111111111111111'),
     })
-    .remainingAccounts(remainingAccounts)
     .preInstructions([
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 450_000 }),
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
     ]);
 
-  // Nullifiers already created in Phase 1, no pending nullifiers needed
-  const pendingNullifiers: PendingNullifierData[] = [];
+  console.log('[AddLiquidity Phase 1a] Building verifyCommitmentExists for deposit A...');
+
+  // Phase 1a: Verify Deposit A Commitment Exists
+  const phase1aTx = await program.methods
+    .verifyCommitmentExists(
+      Array.from(operationId),
+      0, // commitment_index for input A
+      {
+        commitmentAccountHash: lightParamsA.commitmentAccountHash,
+        commitmentMerkleContext: lightParamsA.commitmentMerkleContext,
+        commitmentInclusionProof: lightParamsA.commitmentInclusionProof,
+        commitmentAddressTreeInfo: lightParamsA.commitmentAddressTreeInfo,
+      }
+    )
+    .accountsStrict({
+      pool: params.poolA,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isSigner: acc.isSigner,
+      isWritable: acc.isWritable,
+    })))
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  console.log('[AddLiquidity Phase 1b] Building verifyCommitmentExists for deposit B...');
+
+  // Phase 1b: Verify Deposit B Commitment Exists
+  const phase1bTx = await program.methods
+    .verifyCommitmentExists(
+      Array.from(operationId),
+      1, // commitment_index for input B
+      {
+        commitmentAccountHash: lightParamsB.commitmentAccountHash,
+        commitmentMerkleContext: lightParamsB.commitmentMerkleContext,
+        commitmentInclusionProof: lightParamsB.commitmentInclusionProof,
+        commitmentAddressTreeInfo: lightParamsB.commitmentAddressTreeInfo,
+      }
+    )
+    .accountsStrict({
+      pool: params.poolB,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isSigner: acc.isSigner,
+      isWritable: acc.isWritable,
+    })))
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  console.log('[AddLiquidity Phase 2a] Building createNullifierAndPending for deposit A...');
+
+  // Phase 2a: Create Nullifier A
+  const phase2aTx = await program.methods
+    .createNullifierAndPending(
+      Array.from(operationId),
+      0, // nullifier_index for input A
+      {
+        proof: lightParamsA.nullifierNonInclusionProof,
+        addressTreeInfo: lightParamsA.nullifierAddressTreeInfo,
+        outputTreeIndex: lightParamsA.outputTreeIndex,
+      }
+    )
+    .accountsStrict({
+      pool: params.poolA,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isSigner: acc.isSigner,
+      isWritable: acc.isWritable,
+    })))
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  console.log('[AddLiquidity Phase 2b] Building createNullifierAndPending for deposit B...');
+
+  // Phase 2b: Create Nullifier B
+  const phase2bTx = await program.methods
+    .createNullifierAndPending(
+      Array.from(operationId),
+      1, // nullifier_index for input B
+      {
+        proof: lightParamsB.nullifierNonInclusionProof,
+        addressTreeInfo: lightParamsB.nullifierAddressTreeInfo,
+        outputTreeIndex: lightParamsB.outputTreeIndex,
+      }
+    )
+    .accountsStrict({
+      pool: params.poolB,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isSigner: acc.isSigner,
+      isWritable: acc.isWritable,
+    })))
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  console.log('[AddLiquidity Phase 3] Building executeAddLiquidity...');
+
+  // Phase 3: Execute Add Liquidity (AMM state update)
+  const phase3Tx = await program.methods
+    .executeAddLiquidity(
+      Array.from(operationId),
+      new BN(params.minLpAmount.toString())
+    )
+    .accountsStrict({
+      poolA: params.poolA,
+      poolB: params.poolB,
+      lpPool: params.lpPool,
+      ammPool: params.ammPool,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 100_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  console.log('[AddLiquidity] All phase transactions built successfully');
 
   return {
-    tx,
+    tx: phase0Tx,
+    phase1aTx,
+    phase1bTx,
+    phase2aTx,
+    phase2bTx,
+    phase3Tx,
     operationId,
-    pendingNullifiers,
     pendingCommitments,
   };
 }
@@ -942,18 +1281,29 @@ export interface RemoveLiquidityPhase2Params {
 }
 
 /**
- * Build Remove Liquidity Phase 1 transaction
+ * Build Remove Liquidity Multi-Phase Transactions
+ *
+ * Returns all phase transactions for the multi-phase remove liquidity operation:
+ * - Phase 0: createPendingWithProofRemoveLiquidity (verify proof + create pending)
+ * - Phase 1: verifyCommitmentExists (verify LP commitment)
+ * - Phase 2: createNullifierAndPending (create LP nullifier)
+ * - Phase 3: executeRemoveLiquidity (update AMM state)
+ * - Phase 4+: createCommitment (handled by caller)
+ * - Final: closePendingOperation (handled by caller)
  */
 export async function buildRemoveLiquidityWithProgram(
   program: Program,
   params: RemoveLiquidityInstructionParams,
   rpcUrl: string
 ): Promise<{
-  tx: any;
+  tx: any;           // Phase 0: createPendingWithProofRemoveLiquidity
+  phase1Tx: any;     // Phase 1: verifyCommitmentExists
+  phase2Tx: any;     // Phase 2: createNullifierAndPending
+  phase3Tx: any;     // Phase 3: executeRemoveLiquidity
   operationId: Uint8Array;
-  pendingNullifiers: PendingNullifierData[];
   pendingCommitments: PendingCommitmentData[];
 }> {
+  console.log('[RemoveLiquidity] Building multi-phase transactions...');
   const programId = program.programId;
   const lightProtocol = new LightProtocol(rpcUrl, programId);
 
@@ -963,8 +1313,6 @@ export async function buildRemoveLiquidityWithProgram(
     params.outputACommitment,
     Date.now()
   );
-  console.log(`[RemoveLiquidity Phase 1] Generated operation ID: ${Buffer.from(operationId).toString('hex').slice(0, 16)}...`);
-  console.log(`[RemoveLiquidity Phase 1] LP Nullifier: ${Buffer.from(params.lpNullifier).toString('hex').slice(0, 16)}...`);
 
   // Derive PDAs
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
@@ -974,24 +1322,28 @@ export async function buildRemoveLiquidityWithProgram(
   const outputARandomness = params.outputARandomness;
   const outputBRandomness = params.outputBRandomness;
 
-  // Create and encrypt notes with actual amounts (use token mints, not pool addresses)
+  // Create output notes for encryption
   const outputANote = {
     stealthPubX: params.outputARecipient.stealthPubkey.x,
     tokenMint: params.tokenAMint,
-    amount: params.outputAAmount, // Use actual amount from withdrawal
+    amount: params.outputAAmount,
     randomness: outputARandomness,
   };
   const outputBNote = {
     stealthPubX: params.outputBRecipient.stealthPubkey.x,
     tokenMint: params.tokenBMint,
-    amount: params.outputBAmount, // Use actual amount from withdrawal
+    amount: params.outputBAmount,
     randomness: outputBRandomness,
   };
 
+  console.log('[RemoveLiquidity] Output A note: amount:', params.outputAAmount.toString());
+  console.log('[RemoveLiquidity] Output B note: amount:', params.outputBAmount.toString());
+
+  // Encrypt notes
   const encryptedOutputA = encryptNote(outputANote, params.outputARecipient.stealthPubkey);
   const encryptedOutputB = encryptNote(outputBNote, params.outputBRecipient.stealthPubkey);
 
-  // Serialize stealth ephemeral pubkeys (for stealth key derivation, NOT for ECIES)
+  // Serialize stealth ephemeral pubkeys
   const outputAEphemeral = new Uint8Array(64);
   outputAEphemeral.set(params.outputARecipient.ephemeralPubkey.x, 0);
   outputAEphemeral.set(params.outputARecipient.ephemeralPubkey.y, 32);
@@ -1000,7 +1352,7 @@ export async function buildRemoveLiquidityWithProgram(
   outputBEphemeral.set(params.outputBRecipient.ephemeralPubkey.x, 0);
   outputBEphemeral.set(params.outputBRecipient.ephemeralPubkey.y, 32);
 
-  // Build pending commitments data (for Phase 3)
+  // Build pending commitments data (for Phase 4+)
   const pendingCommitments: PendingCommitmentData[] = [
     {
       pool: params.poolA,
@@ -1024,16 +1376,46 @@ export async function buildRemoveLiquidityWithProgram(
   const nullifierAddress = lightProtocol.deriveNullifierAddress(params.lpPool, params.lpNullifier);
   const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
 
-  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } =
-    lightProtocol.buildRemainingAccounts();
+  // Extract tree info from commitment proof
+  const commitmentTree = new PublicKey(commitmentProof.treeInfo.tree);
+  const commitmentQueue = new PublicKey(commitmentProof.treeInfo.queue);
+  const commitmentCpiContext = commitmentProof.treeInfo.cpiContext
+    ? new PublicKey(commitmentProof.treeInfo.cpiContext)
+    : null;
 
-  // Build complete LightRemoveLiquidityParams with all security proofs
+  // Build packed accounts
+  const { SystemAccountMetaConfig, PackedAccounts } = await import('@lightprotocol/stateless.js');
+  const { DEVNET_V2_TREES } = await import('./constants');
+  const systemConfig = SystemAccountMetaConfig.new(lightProtocol.programId);
+  const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
+
+  // Add trees
+  const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES.OUTPUT_QUEUE);
+  const addressTree = DEVNET_V2_TREES.ADDRESS_TREE;
+  const addressTreeIndex = packedAccounts.insertOrGet(addressTree);
+  const commitmentStateTreeIndex = packedAccounts.insertOrGet(commitmentTree);
+  const commitmentQueueIndex = packedAccounts.insertOrGet(commitmentQueue);
+
+  if (commitmentCpiContext) {
+    packedAccounts.insertOrGet(commitmentCpiContext);
+  }
+
+  const { remainingAccounts: finalRemainingAccounts } = packedAccounts.toAccountMetas();
+
+  // Build Light params for multi-phase
   const lightParams = {
     commitmentAccountHash: Array.from(new PublicKey(params.accountHash).toBytes()),
     commitmentMerkleContext: {
-      merkleTreePubkeyIndex: addressTreeIndex,
+      merkleTreePubkeyIndex: commitmentStateTreeIndex,
+      queuePubkeyIndex: commitmentQueueIndex,
       leafIndex: commitmentProof.leafIndex,
       rootIndex: commitmentProof.rootIndex,
+    },
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    commitmentAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierProof.rootIndices[0] ?? 0,
     },
     nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
     nullifierAddressTreeInfo: {
@@ -1045,10 +1427,26 @@ export async function buildRemoveLiquidityWithProgram(
   };
 
   const numCommitments = 2; // Output A + Output B
-  const tx = await program.methods
-    .removeLiquidity(
+
+  // ====================================================================
+  // MULTI-PHASE APPEND PATTERN (same as transfer, with 1 input)
+  // ====================================================================
+  // Phase 0: Create pending operation with ZK proof verification
+  // Phase 1: Verify LP commitment exists
+  // Phase 2: Create LP nullifier (point of no return)
+  // Phase 3: Execute remove liquidity (AMM state update)
+  // Phase 4+: Create output commitments
+  // Final: Close pending operation
+  // ====================================================================
+
+  console.log('[RemoveLiquidity Phase 0] Building createPendingWithProofRemoveLiquidity...');
+
+  // Phase 0: Create Pending with Proof (RemoveLiquidity-specific)
+  const phase0Tx = await program.methods
+    .createPendingWithProofRemoveLiquidity(
       Array.from(operationId),
       Buffer.from(params.proof),
+      Array.from(params.lpInputCommitment),
       Array.from(params.lpNullifier),
       Array.from(params.outputACommitment),
       Array.from(params.outputBCommitment),
@@ -1057,8 +1455,7 @@ export async function buildRemoveLiquidityWithProgram(
       new BN(params.lpAmount.toString()),
       new BN(params.outputAAmount.toString()),
       new BN(params.outputBAmount.toString()),
-      numCommitments,
-      lightParams
+      numCommitments
     )
     .accountsStrict({
       lpPool: params.lpPool,
@@ -1068,21 +1465,99 @@ export async function buildRemoveLiquidityWithProgram(
       verificationKey: vkPda,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
-      systemProgram: PublicKey.default,
+      systemProgram: new PublicKey('11111111111111111111111111111111'),
     })
-    .remainingAccounts(remainingAccounts)
     .preInstructions([
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 450_000 }),
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
     ]);
 
-  // Nullifier already created in Phase 1, no pending nullifiers needed
-  const pendingNullifiers: PendingNullifierData[] = [];
+  console.log('[RemoveLiquidity Phase 1] Building verifyCommitmentExists...');
+
+  // Phase 1: Verify LP Commitment Exists
+  const phase1Tx = await program.methods
+    .verifyCommitmentExists(
+      Array.from(operationId),
+      0, // commitment_index (single LP input)
+      {
+        commitmentAccountHash: lightParams.commitmentAccountHash,
+        commitmentMerkleContext: lightParams.commitmentMerkleContext,
+        commitmentInclusionProof: lightParams.commitmentInclusionProof,
+        commitmentAddressTreeInfo: lightParams.commitmentAddressTreeInfo,
+      }
+    )
+    .accountsStrict({
+      pool: params.lpPool,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isSigner: acc.isSigner,
+      isWritable: acc.isWritable,
+    })))
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  console.log('[RemoveLiquidity Phase 2] Building createNullifierAndPending...');
+
+  // Phase 2: Create LP Nullifier
+  const phase2Tx = await program.methods
+    .createNullifierAndPending(
+      Array.from(operationId),
+      0, // nullifier_index (single LP nullifier)
+      {
+        proof: lightParams.nullifierNonInclusionProof,
+        addressTreeInfo: lightParams.nullifierAddressTreeInfo,
+        outputTreeIndex: lightParams.outputTreeIndex,
+      }
+    )
+    .accountsStrict({
+      pool: params.lpPool,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isSigner: acc.isSigner,
+      isWritable: acc.isWritable,
+    })))
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  console.log('[RemoveLiquidity Phase 3] Building executeRemoveLiquidity...');
+
+  // Phase 3: Execute Remove Liquidity (AMM state update)
+  const phase3Tx = await program.methods
+    .executeRemoveLiquidity(
+      Array.from(operationId),
+      Array.from(params.newPoolStateHash)
+    )
+    .accountsStrict({
+      lpPool: params.lpPool,
+      poolA: params.poolA,
+      poolB: params.poolB,
+      ammPool: params.ammPool,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 100_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  console.log('[RemoveLiquidity] All phase transactions built successfully');
 
   return {
-    tx,
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
     operationId,
-    pendingNullifiers,
     pendingCommitments,
   };
 }

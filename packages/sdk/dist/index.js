@@ -843,14 +843,7 @@ async function buildInitializeAmmPoolWithProgram(program, params) {
   return tx;
 }
 async function buildSwapWithProgram(program, params, rpcUrl) {
-  console.log("[DEBUG] buildSwapWithProgram params:", {
-    inputPool: params.inputPool?.toBase58(),
-    outputPool: params.outputPool?.toBase58(),
-    inputTokenMint: params.inputTokenMint?.toBase58(),
-    outputTokenMint: params.outputTokenMint?.toBase58(),
-    ammPool: params.ammPool?.toBase58(),
-    relayer: params.relayer?.toBase58()
-  });
+  console.log("[Swap] Building multi-phase transactions...");
   const programId = program.programId;
   const lightProtocol = new LightProtocol(rpcUrl, programId);
   const operationId = generateOperationId(
@@ -866,7 +859,6 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
     stealthPubX: params.outputRecipient.stealthPubkey.x,
     tokenMint: params.outputTokenMint,
     amount: params.outputAmount,
-    // Use actual output amount, not minOutput
     randomness: outputRandomness
   };
   const changeNote = {
@@ -875,8 +867,8 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
     amount: params.inputAmount - params.swapAmount,
     randomness: changeRandomness
   };
-  console.log("[Swap] Encrypting output note: tokenMint:", params.outputTokenMint.toBase58(), "amount:", params.outputAmount.toString());
-  console.log("[Swap] Encrypting change note: tokenMint:", params.inputTokenMint.toBase58(), "amount:", (params.inputAmount - params.swapAmount).toString());
+  console.log("[Swap] Output note: tokenMint:", params.outputTokenMint.toBase58(), "amount:", params.outputAmount.toString());
+  console.log("[Swap] Change note: tokenMint:", params.inputTokenMint.toBase58(), "amount:", (params.inputAmount - params.swapAmount).toString());
   const encryptedOutputNote = encryptNote(outputNote, params.outputRecipient.stealthPubkey);
   const encryptedChangeNote = encryptNote(changeNote, params.changeRecipient.stealthPubkey);
   const outputEphemeralBytes = new Uint8Array(64);
@@ -885,12 +877,6 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
   const changeEphemeralBytes = new Uint8Array(64);
   changeEphemeralBytes.set(params.changeRecipient.ephemeralPubkey.x, 0);
   changeEphemeralBytes.set(params.changeRecipient.ephemeralPubkey.y, 32);
-  const pendingNullifiers = [
-    {
-      pool: params.inputPool,
-      nullifier: params.nullifier
-    }
-  ];
   const pendingCommitments = [
     {
       pool: params.outputPool,
@@ -910,13 +896,35 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
   console.log("[Swap] Fetching nullifier non-inclusion proof...");
   const nullifierAddress = lightProtocol.deriveNullifierAddress(params.inputPool, params.nullifier);
   const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
+  const commitmentTree = new import_web37.PublicKey(commitmentProof.treeInfo.tree);
+  const commitmentQueue = new import_web37.PublicKey(commitmentProof.treeInfo.queue);
+  const commitmentCpiContext = commitmentProof.treeInfo.cpiContext ? new import_web37.PublicKey(commitmentProof.treeInfo.cpiContext) : null;
+  const { SystemAccountMetaConfig: SystemAccountMetaConfig2, PackedAccounts: PackedAccounts2 } = await import("@lightprotocol/stateless.js");
+  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await Promise.resolve().then(() => (init_constants(), constants_exports));
+  const systemConfig = SystemAccountMetaConfig2.new(lightProtocol.programId);
+  const packedAccounts = PackedAccounts2.newWithSystemAccountsV2(systemConfig);
+  const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES2.OUTPUT_QUEUE);
+  const addressTree = DEVNET_V2_TREES2.ADDRESS_TREE;
+  const addressTreeIndex = packedAccounts.insertOrGet(addressTree);
+  const commitmentStateTreeIndex = packedAccounts.insertOrGet(commitmentTree);
+  const commitmentQueueIndex = packedAccounts.insertOrGet(commitmentQueue);
+  if (commitmentCpiContext) {
+    packedAccounts.insertOrGet(commitmentCpiContext);
+  }
+  const { remainingAccounts: finalRemainingAccounts } = packedAccounts.toAccountMetas();
   const lightParams = {
     commitmentAccountHash: Array.from(new import_web37.PublicKey(params.accountHash).toBytes()),
     commitmentMerkleContext: {
-      merkleTreePubkeyIndex: addressTreeIndex,
+      merkleTreePubkeyIndex: commitmentStateTreeIndex,
+      queuePubkeyIndex: commitmentQueueIndex,
       leafIndex: commitmentProof.leafIndex,
       rootIndex: commitmentProof.rootIndex
+    },
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    commitmentAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierProof.rootIndices[0] ?? 0
     },
     nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
     nullifierAddressTreeInfo: {
@@ -927,19 +935,20 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
     outputTreeIndex
   };
   const numCommitments = 2;
-  const tx = await program.methods.swap(
+  console.log("[Swap Phase 0] Building createPendingWithProofSwap...");
+  const phase0Tx = await program.methods.createPendingWithProofSwap(
     Array.from(operationId),
     Buffer.from(params.proof),
     Array.from(params.merkleRoot),
+    Array.from(params.inputCommitment),
     Array.from(params.nullifier),
     Array.from(params.outputCommitment),
     Array.from(params.changeCommitment),
+    new import_anchor2.BN(params.minOutput.toString()),
     new import_anchor2.BN(params.swapAmount.toString()),
     new import_anchor2.BN(params.outputAmount.toString()),
-    new import_anchor2.BN(params.minOutput.toString()),
     params.swapDirection === "aToB",
-    numCommitments,
-    lightParams
+    numCommitments
   ).accountsStrict({
     inputPool: params.inputPool,
     outputPool: params.outputPool,
@@ -947,19 +956,81 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: import_web37.PublicKey.default
-  }).remainingAccounts(remainingAccounts).preInstructions([
-    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
+    systemProgram: new import_web37.PublicKey("11111111111111111111111111111111")
+  }).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 45e4 }),
     import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
+  console.log("[Swap Phase 1] Building verifyCommitmentExists...");
+  const phase1Tx = await program.methods.verifyCommitmentExists(
+    Array.from(operationId),
+    0,
+    // commitment_index (single input for swap)
+    {
+      commitmentAccountHash: lightParams.commitmentAccountHash,
+      commitmentMerkleContext: lightParams.commitmentMerkleContext,
+      commitmentInclusionProof: lightParams.commitmentInclusionProof,
+      commitmentAddressTreeInfo: lightParams.commitmentAddressTreeInfo
+    }
+  ).accountsStrict({
+    pool: params.inputPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(finalRemainingAccounts.map((acc) => ({
+    pubkey: acc.pubkey,
+    isSigner: acc.isSigner,
+    isWritable: acc.isWritable
+  }))).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  console.log("[Swap Phase 2] Building createNullifierAndPending...");
+  const phase2Tx = await program.methods.createNullifierAndPending(
+    Array.from(operationId),
+    0,
+    // nullifier_index (single nullifier for swap)
+    {
+      proof: lightParams.nullifierNonInclusionProof,
+      addressTreeInfo: lightParams.nullifierAddressTreeInfo,
+      outputTreeIndex: lightParams.outputTreeIndex
+    }
+  ).accountsStrict({
+    pool: params.inputPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(finalRemainingAccounts.map((acc) => ({
+    pubkey: acc.pubkey,
+    isSigner: acc.isSigner,
+    isWritable: acc.isWritable
+  }))).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  console.log("[Swap Phase 3] Building executeSwap...");
+  const phase3Tx = await program.methods.executeSwap(
+    Array.from(operationId)
+  ).accountsStrict({
+    inputPool: params.inputPool,
+    outputPool: params.outputPool,
+    ammPool: params.ammPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 1e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  console.log("[Swap] All phase transactions built successfully");
   return {
-    tx,
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
     operationId,
-    pendingNullifiers,
     pendingCommitments
   };
 }
 async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
+  console.log("[AddLiquidity] Building multi-phase transactions...");
   const programId = program.programId;
   const lightProtocol = new LightProtocol(rpcUrl, programId);
   const operationId = generateOperationId(
@@ -967,9 +1038,6 @@ async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
     params.lpCommitment,
     Date.now()
   );
-  console.log(`[AddLiquidity Phase 1] Generated operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
-  console.log(`[AddLiquidity Phase 1] Nullifier A: ${Buffer.from(params.nullifierA).toString("hex").slice(0, 16)}...`);
-  console.log(`[AddLiquidity Phase 1] Nullifier B: ${Buffer.from(params.nullifierB).toString("hex").slice(0, 16)}...`);
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(CIRCUIT_IDS.ADD_LIQUIDITY, programId);
   const lpRandomness = params.lpRandomness;
@@ -979,7 +1047,6 @@ async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
     stealthPubX: params.lpRecipient.stealthPubkey.x,
     tokenMint: params.lpMint,
     amount: params.lpAmount,
-    // Use the actual LP amount, not 0
     randomness: lpRandomness
   };
   const changeANote = {
@@ -994,6 +1061,9 @@ async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
     amount: params.inputBAmount - params.depositB,
     randomness: changeBRandomness
   };
+  console.log("[AddLiquidity] LP note: amount:", params.lpAmount.toString());
+  console.log("[AddLiquidity] Change A note: amount:", (params.inputAAmount - params.depositA).toString());
+  console.log("[AddLiquidity] Change B note: amount:", (params.inputBAmount - params.depositB).toString());
   const encryptedLp = encryptNote(lpNote, params.lpRecipient.stealthPubkey);
   const encryptedChangeA = encryptNote(changeANote, params.changeARecipient.stealthPubkey);
   const encryptedChangeB = encryptNote(changeBNote, params.changeBRecipient.stealthPubkey);
@@ -1028,38 +1098,76 @@ async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
   ];
   console.log("[AddLiquidity] Fetching commitment A inclusion proof...");
   const commitmentAProof = await lightProtocol.getInclusionProofByHash(params.accountHashA);
+  console.log("[AddLiquidity] Fetching commitment B inclusion proof...");
+  const commitmentBProof = await lightProtocol.getInclusionProofByHash(params.accountHashB);
   console.log("[AddLiquidity] Fetching nullifier A non-inclusion proof...");
   const nullifierAAddress = lightProtocol.deriveNullifierAddress(params.poolA, params.nullifierA);
   const nullifierAProof = await lightProtocol.getValidityProof([nullifierAAddress]);
-  console.log("[AddLiquidity] Fetching commitment B inclusion proof...");
-  const commitmentBProof = await lightProtocol.getInclusionProofByHash(params.accountHashB);
   console.log("[AddLiquidity] Fetching nullifier B non-inclusion proof...");
   const nullifierBAddress = lightProtocol.deriveNullifierAddress(params.poolB, params.nullifierB);
   const nullifierBProof = await lightProtocol.getValidityProof([nullifierBAddress]);
-  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
-  const lightParams = {
-    // Input A verification
-    commitmentAAccountHash: Array.from(new import_web37.PublicKey(params.accountHashA).toBytes()),
-    commitmentAMerkleContext: {
-      merkleTreePubkeyIndex: addressTreeIndex,
+  const commitmentATree = new import_web37.PublicKey(commitmentAProof.treeInfo.tree);
+  const commitmentAQueue = new import_web37.PublicKey(commitmentAProof.treeInfo.queue);
+  const commitmentACpiContext = commitmentAProof.treeInfo.cpiContext ? new import_web37.PublicKey(commitmentAProof.treeInfo.cpiContext) : null;
+  const commitmentBTree = new import_web37.PublicKey(commitmentBProof.treeInfo.tree);
+  const commitmentBQueue = new import_web37.PublicKey(commitmentBProof.treeInfo.queue);
+  const commitmentBCpiContext = commitmentBProof.treeInfo.cpiContext ? new import_web37.PublicKey(commitmentBProof.treeInfo.cpiContext) : null;
+  const { SystemAccountMetaConfig: SystemAccountMetaConfig2, PackedAccounts: PackedAccounts2 } = await import("@lightprotocol/stateless.js");
+  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await Promise.resolve().then(() => (init_constants(), constants_exports));
+  const systemConfig = SystemAccountMetaConfig2.new(lightProtocol.programId);
+  const packedAccounts = PackedAccounts2.newWithSystemAccountsV2(systemConfig);
+  const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES2.OUTPUT_QUEUE);
+  const addressTree = DEVNET_V2_TREES2.ADDRESS_TREE;
+  const addressTreeIndex = packedAccounts.insertOrGet(addressTree);
+  const commitmentAStateTreeIndex = packedAccounts.insertOrGet(commitmentATree);
+  const commitmentAQueueIndex = packedAccounts.insertOrGet(commitmentAQueue);
+  const commitmentBStateTreeIndex = packedAccounts.insertOrGet(commitmentBTree);
+  const commitmentBQueueIndex = packedAccounts.insertOrGet(commitmentBQueue);
+  if (commitmentACpiContext) {
+    packedAccounts.insertOrGet(commitmentACpiContext);
+  }
+  if (commitmentBCpiContext) {
+    packedAccounts.insertOrGet(commitmentBCpiContext);
+  }
+  const { remainingAccounts: finalRemainingAccounts } = packedAccounts.toAccountMetas();
+  const lightParamsA = {
+    commitmentAccountHash: Array.from(new import_web37.PublicKey(params.accountHashA).toBytes()),
+    commitmentMerkleContext: {
+      merkleTreePubkeyIndex: commitmentAStateTreeIndex,
+      queuePubkeyIndex: commitmentAQueueIndex,
       leafIndex: commitmentAProof.leafIndex,
       rootIndex: commitmentAProof.rootIndex
     },
-    nullifierANonInclusionProof: LightProtocol.convertCompressedProof(nullifierAProof),
-    nullifierAAddressTreeInfo: {
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentAProof),
+    commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
       rootIndex: nullifierAProof.rootIndices[0] ?? 0
     },
-    // Input B verification
-    commitmentBAccountHash: Array.from(new import_web37.PublicKey(params.accountHashB).toBytes()),
-    commitmentBMerkleContext: {
-      merkleTreePubkeyIndex: addressTreeIndex,
+    nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierAProof),
+    nullifierAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierAProof.rootIndices[0] ?? 0
+    },
+    outputTreeIndex
+  };
+  const lightParamsB = {
+    commitmentAccountHash: Array.from(new import_web37.PublicKey(params.accountHashB).toBytes()),
+    commitmentMerkleContext: {
+      merkleTreePubkeyIndex: commitmentBStateTreeIndex,
+      queuePubkeyIndex: commitmentBQueueIndex,
       leafIndex: commitmentBProof.leafIndex,
       rootIndex: commitmentBProof.rootIndex
     },
-    nullifierBNonInclusionProof: LightProtocol.convertCompressedProof(nullifierBProof),
-    nullifierBAddressTreeInfo: {
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentBProof),
+    commitmentAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierBProof.rootIndices[0] ?? 0
+    },
+    nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierBProof),
+    nullifierAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
       rootIndex: nullifierBProof.rootIndices[0] ?? 0
@@ -1067,9 +1175,12 @@ async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
     outputTreeIndex
   };
   const numCommitments = 3;
-  const tx = await program.methods.addLiquidity(
+  console.log("[AddLiquidity Phase 0] Building createPendingWithProofAddLiquidity...");
+  const phase0Tx = await program.methods.createPendingWithProofAddLiquidity(
     Array.from(operationId),
     Buffer.from(params.proof),
+    Array.from(params.inputCommitmentA),
+    Array.from(params.inputCommitmentB),
     Array.from(params.nullifierA),
     Array.from(params.nullifierB),
     Array.from(params.lpCommitment),
@@ -1079,8 +1190,7 @@ async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
     new import_anchor2.BN(params.depositB.toString()),
     new import_anchor2.BN(params.lpAmount.toString()),
     new import_anchor2.BN(params.minLpAmount.toString()),
-    numCommitments,
-    lightParams
+    numCommitments
   ).accountsStrict({
     poolA: params.poolA,
     poolB: params.poolB,
@@ -1089,16 +1199,125 @@ async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: import_web37.PublicKey.default
-  }).remainingAccounts(remainingAccounts).preInstructions([
-    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
+    systemProgram: new import_web37.PublicKey("11111111111111111111111111111111")
+  }).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 45e4 }),
     import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
-  const pendingNullifiers = [];
+  console.log("[AddLiquidity Phase 1a] Building verifyCommitmentExists for deposit A...");
+  const phase1aTx = await program.methods.verifyCommitmentExists(
+    Array.from(operationId),
+    0,
+    // commitment_index for input A
+    {
+      commitmentAccountHash: lightParamsA.commitmentAccountHash,
+      commitmentMerkleContext: lightParamsA.commitmentMerkleContext,
+      commitmentInclusionProof: lightParamsA.commitmentInclusionProof,
+      commitmentAddressTreeInfo: lightParamsA.commitmentAddressTreeInfo
+    }
+  ).accountsStrict({
+    pool: params.poolA,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(finalRemainingAccounts.map((acc) => ({
+    pubkey: acc.pubkey,
+    isSigner: acc.isSigner,
+    isWritable: acc.isWritable
+  }))).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  console.log("[AddLiquidity Phase 1b] Building verifyCommitmentExists for deposit B...");
+  const phase1bTx = await program.methods.verifyCommitmentExists(
+    Array.from(operationId),
+    1,
+    // commitment_index for input B
+    {
+      commitmentAccountHash: lightParamsB.commitmentAccountHash,
+      commitmentMerkleContext: lightParamsB.commitmentMerkleContext,
+      commitmentInclusionProof: lightParamsB.commitmentInclusionProof,
+      commitmentAddressTreeInfo: lightParamsB.commitmentAddressTreeInfo
+    }
+  ).accountsStrict({
+    pool: params.poolB,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(finalRemainingAccounts.map((acc) => ({
+    pubkey: acc.pubkey,
+    isSigner: acc.isSigner,
+    isWritable: acc.isWritable
+  }))).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  console.log("[AddLiquidity Phase 2a] Building createNullifierAndPending for deposit A...");
+  const phase2aTx = await program.methods.createNullifierAndPending(
+    Array.from(operationId),
+    0,
+    // nullifier_index for input A
+    {
+      proof: lightParamsA.nullifierNonInclusionProof,
+      addressTreeInfo: lightParamsA.nullifierAddressTreeInfo,
+      outputTreeIndex: lightParamsA.outputTreeIndex
+    }
+  ).accountsStrict({
+    pool: params.poolA,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(finalRemainingAccounts.map((acc) => ({
+    pubkey: acc.pubkey,
+    isSigner: acc.isSigner,
+    isWritable: acc.isWritable
+  }))).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  console.log("[AddLiquidity Phase 2b] Building createNullifierAndPending for deposit B...");
+  const phase2bTx = await program.methods.createNullifierAndPending(
+    Array.from(operationId),
+    1,
+    // nullifier_index for input B
+    {
+      proof: lightParamsB.nullifierNonInclusionProof,
+      addressTreeInfo: lightParamsB.nullifierAddressTreeInfo,
+      outputTreeIndex: lightParamsB.outputTreeIndex
+    }
+  ).accountsStrict({
+    pool: params.poolB,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(finalRemainingAccounts.map((acc) => ({
+    pubkey: acc.pubkey,
+    isSigner: acc.isSigner,
+    isWritable: acc.isWritable
+  }))).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  console.log("[AddLiquidity Phase 3] Building executeAddLiquidity...");
+  const phase3Tx = await program.methods.executeAddLiquidity(
+    Array.from(operationId),
+    new import_anchor2.BN(params.minLpAmount.toString())
+  ).accountsStrict({
+    poolA: params.poolA,
+    poolB: params.poolB,
+    lpPool: params.lpPool,
+    ammPool: params.ammPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 1e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  console.log("[AddLiquidity] All phase transactions built successfully");
   return {
-    tx,
+    tx: phase0Tx,
+    phase1aTx,
+    phase1bTx,
+    phase2aTx,
+    phase2bTx,
+    phase3Tx,
     operationId,
-    pendingNullifiers,
     pendingCommitments
   };
 }
@@ -1202,6 +1421,7 @@ async function buildClosePendingOperationWithProgram(program, operationId, relay
   return { tx };
 }
 async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
+  console.log("[RemoveLiquidity] Building multi-phase transactions...");
   const programId = program.programId;
   const lightProtocol = new LightProtocol(rpcUrl, programId);
   const operationId = generateOperationId(
@@ -1209,8 +1429,6 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
     params.outputACommitment,
     Date.now()
   );
-  console.log(`[RemoveLiquidity Phase 1] Generated operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
-  console.log(`[RemoveLiquidity Phase 1] LP Nullifier: ${Buffer.from(params.lpNullifier).toString("hex").slice(0, 16)}...`);
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(CIRCUIT_IDS.REMOVE_LIQUIDITY, programId);
   const outputARandomness = params.outputARandomness;
@@ -1219,16 +1437,16 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
     stealthPubX: params.outputARecipient.stealthPubkey.x,
     tokenMint: params.tokenAMint,
     amount: params.outputAAmount,
-    // Use actual amount from withdrawal
     randomness: outputARandomness
   };
   const outputBNote = {
     stealthPubX: params.outputBRecipient.stealthPubkey.x,
     tokenMint: params.tokenBMint,
     amount: params.outputBAmount,
-    // Use actual amount from withdrawal
     randomness: outputBRandomness
   };
+  console.log("[RemoveLiquidity] Output A note: amount:", params.outputAAmount.toString());
+  console.log("[RemoveLiquidity] Output B note: amount:", params.outputBAmount.toString());
   const encryptedOutputA = encryptNote(outputANote, params.outputARecipient.stealthPubkey);
   const encryptedOutputB = encryptNote(outputBNote, params.outputBRecipient.stealthPubkey);
   const outputAEphemeral = new Uint8Array(64);
@@ -1256,13 +1474,35 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
   console.log("[RemoveLiquidity] Fetching LP nullifier non-inclusion proof...");
   const nullifierAddress = lightProtocol.deriveNullifierAddress(params.lpPool, params.lpNullifier);
   const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } = lightProtocol.buildRemainingAccounts();
+  const commitmentTree = new import_web37.PublicKey(commitmentProof.treeInfo.tree);
+  const commitmentQueue = new import_web37.PublicKey(commitmentProof.treeInfo.queue);
+  const commitmentCpiContext = commitmentProof.treeInfo.cpiContext ? new import_web37.PublicKey(commitmentProof.treeInfo.cpiContext) : null;
+  const { SystemAccountMetaConfig: SystemAccountMetaConfig2, PackedAccounts: PackedAccounts2 } = await import("@lightprotocol/stateless.js");
+  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await Promise.resolve().then(() => (init_constants(), constants_exports));
+  const systemConfig = SystemAccountMetaConfig2.new(lightProtocol.programId);
+  const packedAccounts = PackedAccounts2.newWithSystemAccountsV2(systemConfig);
+  const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES2.OUTPUT_QUEUE);
+  const addressTree = DEVNET_V2_TREES2.ADDRESS_TREE;
+  const addressTreeIndex = packedAccounts.insertOrGet(addressTree);
+  const commitmentStateTreeIndex = packedAccounts.insertOrGet(commitmentTree);
+  const commitmentQueueIndex = packedAccounts.insertOrGet(commitmentQueue);
+  if (commitmentCpiContext) {
+    packedAccounts.insertOrGet(commitmentCpiContext);
+  }
+  const { remainingAccounts: finalRemainingAccounts } = packedAccounts.toAccountMetas();
   const lightParams = {
     commitmentAccountHash: Array.from(new import_web37.PublicKey(params.accountHash).toBytes()),
     commitmentMerkleContext: {
-      merkleTreePubkeyIndex: addressTreeIndex,
+      merkleTreePubkeyIndex: commitmentStateTreeIndex,
+      queuePubkeyIndex: commitmentQueueIndex,
       leafIndex: commitmentProof.leafIndex,
       rootIndex: commitmentProof.rootIndex
+    },
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    commitmentAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: addressTreeIndex,
+      addressQueuePubkeyIndex: addressTreeIndex,
+      rootIndex: nullifierProof.rootIndices[0] ?? 0
     },
     nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
     nullifierAddressTreeInfo: {
@@ -1273,9 +1513,11 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
     outputTreeIndex
   };
   const numCommitments = 2;
-  const tx = await program.methods.removeLiquidity(
+  console.log("[RemoveLiquidity Phase 0] Building createPendingWithProofRemoveLiquidity...");
+  const phase0Tx = await program.methods.createPendingWithProofRemoveLiquidity(
     Array.from(operationId),
     Buffer.from(params.proof),
+    Array.from(params.lpInputCommitment),
     Array.from(params.lpNullifier),
     Array.from(params.outputACommitment),
     Array.from(params.outputBCommitment),
@@ -1284,8 +1526,7 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
     new import_anchor2.BN(params.lpAmount.toString()),
     new import_anchor2.BN(params.outputAAmount.toString()),
     new import_anchor2.BN(params.outputBAmount.toString()),
-    numCommitments,
-    lightParams
+    numCommitments
   ).accountsStrict({
     lpPool: params.lpPool,
     poolA: params.poolA,
@@ -1294,16 +1535,78 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: import_web37.PublicKey.default
-  }).remainingAccounts(remainingAccounts).preInstructions([
-    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 }),
+    systemProgram: new import_web37.PublicKey("11111111111111111111111111111111")
+  }).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 45e4 }),
     import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
-  const pendingNullifiers = [];
+  console.log("[RemoveLiquidity Phase 1] Building verifyCommitmentExists...");
+  const phase1Tx = await program.methods.verifyCommitmentExists(
+    Array.from(operationId),
+    0,
+    // commitment_index (single LP input)
+    {
+      commitmentAccountHash: lightParams.commitmentAccountHash,
+      commitmentMerkleContext: lightParams.commitmentMerkleContext,
+      commitmentInclusionProof: lightParams.commitmentInclusionProof,
+      commitmentAddressTreeInfo: lightParams.commitmentAddressTreeInfo
+    }
+  ).accountsStrict({
+    pool: params.lpPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(finalRemainingAccounts.map((acc) => ({
+    pubkey: acc.pubkey,
+    isSigner: acc.isSigner,
+    isWritable: acc.isWritable
+  }))).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  console.log("[RemoveLiquidity Phase 2] Building createNullifierAndPending...");
+  const phase2Tx = await program.methods.createNullifierAndPending(
+    Array.from(operationId),
+    0,
+    // nullifier_index (single LP nullifier)
+    {
+      proof: lightParams.nullifierNonInclusionProof,
+      addressTreeInfo: lightParams.nullifierAddressTreeInfo,
+      outputTreeIndex: lightParams.outputTreeIndex
+    }
+  ).accountsStrict({
+    pool: params.lpPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(finalRemainingAccounts.map((acc) => ({
+    pubkey: acc.pubkey,
+    isSigner: acc.isSigner,
+    isWritable: acc.isWritable
+  }))).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  console.log("[RemoveLiquidity Phase 3] Building executeRemoveLiquidity...");
+  const phase3Tx = await program.methods.executeRemoveLiquidity(
+    Array.from(operationId),
+    Array.from(params.newPoolStateHash)
+  ).accountsStrict({
+    lpPool: params.lpPool,
+    poolA: params.poolA,
+    poolB: params.poolB,
+    ammPool: params.ammPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 1e5 }),
+    import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  console.log("[RemoveLiquidity] All phase transactions built successfully");
   return {
-    tx,
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
     operationId,
-    pendingNullifiers,
     pendingCommitments
   };
 }
@@ -1849,22 +2152,22 @@ var BN254_FIELD_MODULUS = new Uint8Array([
   129,
   88,
   93,
-  151,
-  129,
-  106,
+  40,
+  51,
+  232,
+  72,
+  121,
+  185,
+  112,
   145,
-  104,
-  113,
-  202,
-  141,
-  60,
-  32,
-  140,
-  22,
-  216,
-  124,
-  253,
-  71
+  67,
+  225,
+  245,
+  147,
+  240,
+  0,
+  0,
+  1
 ]);
 function pubkeyToField(pubkey) {
   const pubkeyBytes = pubkey.toBytes();
@@ -5587,31 +5890,37 @@ var CloakCraftClient = class {
       outRandomness,
       changeRandomness
     };
-    console.log("[Swap] Using multi-phase execution with batch signing...");
-    const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildSwapWithProgram(
-      this.program,
-      instructionParams,
-      heliusRpcUrl
-    );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await Promise.resolve().then(() => (init_swap(), swap_exports));
-    const transactionBuilders = [];
-    transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
-    for (let i = 0; i < pendingNullifiers.length; i++) {
-      const pn = pendingNullifiers[i];
-      const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(
+    console.log("[Swap] === Starting Multi-Phase Swap ===");
+    console.log("[Swap] Input token:", inputTokenMint.toBase58());
+    console.log("[Swap] Output token:", outputTokenMint.toBase58());
+    console.log("[Swap] Swap amount:", params.swapAmount.toString());
+    console.log("[Swap] Min output:", params.minOutput.toString());
+    console.log("[Swap] Building phase transactions...");
+    let phase0Tx, phase1Tx, phase2Tx, phase3Tx, operationId, pendingCommitments;
+    try {
+      const buildResult = await buildSwapWithProgram(
         this.program,
-        {
-          operationId,
-          nullifierIndex: i,
-          pool: pn.pool,
-          relayer: relayerPubkey,
-          nullifier: pn.nullifier
-          // Pass nullifier directly for batch signing
-        },
+        instructionParams,
         heliusRpcUrl
       );
-      transactionBuilders.push({ name: `Nullifier ${i}`, builder: nullifierTx });
+      phase0Tx = buildResult.tx;
+      phase1Tx = buildResult.phase1Tx;
+      phase2Tx = buildResult.phase2Tx;
+      phase3Tx = buildResult.phase3Tx;
+      operationId = buildResult.operationId;
+      pendingCommitments = buildResult.pendingCommitments;
+      console.log("[Swap] Phase transactions built successfully");
+    } catch (error) {
+      console.error("[Swap] FAILED to build phase transactions:", error);
+      throw error;
     }
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await Promise.resolve().then(() => (init_swap(), swap_exports));
+    console.log("[Swap] Building all transactions for batch signing...");
+    const transactionBuilders = [];
+    transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
+    transactionBuilders.push({ name: "Phase 1 (Verify Commitment)", builder: phase1Tx });
+    transactionBuilders.push({ name: "Phase 2 (Create Nullifier)", builder: phase2Tx });
+    transactionBuilders.push({ name: "Phase 3 (Execute Swap)", builder: phase3Tx });
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
       if (pc.commitment.every((b) => b === 0)) continue;
@@ -5625,38 +5934,48 @@ var CloakCraftClient = class {
           stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
           encryptedNote: pc.encryptedNote,
           commitment: pc.commitment
-          // Pass commitment directly for batch signing
         },
         heliusRpcUrl
       );
-      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
+      transactionBuilders.push({ name: `Phase ${4 + i} (Commitment ${i})`, builder: commitmentTx });
     }
     const { tx: closeTx } = await buildClosePendingOperationWithProgram2(
       this.program,
       operationId,
       relayerPubkey
     );
-    transactionBuilders.push({ name: "Close", builder: closeTx });
-    console.log(`[Swap] Built ${transactionBuilders.length} transactions for batch signing`);
+    transactionBuilders.push({ name: "Final (Close Pending)", builder: closeTx });
+    console.log(`[Swap] Built ${transactionBuilders.length} transactions`);
     const lookupTables = await this.getAddressLookupTables();
     if (lookupTables.length === 0) {
-      console.warn("[Swap] No Address Lookup Tables configured! Phase 1 may exceed size limit.");
+      console.warn("[Swap] No Address Lookup Tables configured! May exceed size limit.");
+      console.warn("[Swap] Run: pnpm tsx scripts/create-alt.ts to create an ALT");
     } else {
       console.log(`[Swap] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      lookupTables.forEach((alt, i) => {
+        console.log(`[Swap] ALT ${i}: ${alt.state.addresses.length} addresses`);
+      });
     }
     const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
-      transactionBuilders.map(async ({ builder }) => {
-        const ix = await builder.instruction();
-        return new VersionedTransaction2(
-          new TransactionMessage2({
-            payerKey: relayerPubkey,
-            recentBlockhash: blockhash,
-            instructions: [ix]
-          }).compileToV0Message(lookupTables)
-          // V0 = ALT-enabled format
-        );
+      transactionBuilders.map(async ({ name, builder }) => {
+        try {
+          const mainIx = await builder.instruction();
+          const preIxs = builder._preInstructions || [];
+          const allInstructions = [...preIxs, mainIx];
+          console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
+          return new VersionedTransaction2(
+            new TransactionMessage2({
+              payerKey: relayerPubkey,
+              recentBlockhash: blockhash,
+              instructions: allInstructions
+            }).compileToV0Message(lookupTables)
+          );
+        } catch (error) {
+          console.error(`[Swap] Failed to build transaction: ${name}`, error);
+          throw new Error(`Failed to build ${name}: ${error?.message || String(error)}`);
+        }
       })
     );
     console.log("[Swap] Requesting signature for all transactions...");
@@ -5677,20 +5996,24 @@ var CloakCraftClient = class {
       throw new Error("No signing method available");
     }
     console.log(`[Swap] All ${signedTransactions.length} transactions signed!`);
-    let phase1Signature = "";
+    console.log("[Swap] Executing signed transactions sequentially...");
+    let phase0Signature = "";
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
       const name = transactionBuilders[i].name;
+      console.log(`[Swap] Sending ${name}...`);
       const signature = await this.connection.sendRawTransaction(tx.serialize(), {
         skipPreflight: false,
         preflightCommitment: "confirmed"
       });
       await this.connection.confirmTransaction(signature, "confirmed");
       console.log(`[Swap] ${name} confirmed: ${signature}`);
-      if (i === 0) phase1Signature = signature;
+      if (i === 0) {
+        phase0Signature = signature;
+      }
     }
     return {
-      signature: phase1Signature,
+      signature: phase0Signature,
       slot: 0
     };
   }
@@ -5772,32 +6095,42 @@ var CloakCraftClient = class {
       lpAmount,
       minLpAmount: params.minLpAmount
     };
-    console.log("[Add Liquidity] Using multi-phase execution with batch signing...");
-    const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildAddLiquidityWithProgram(
-      this.program,
-      instructionParams,
-      heliusRpcUrl
-    );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await Promise.resolve().then(() => (init_swap(), swap_exports));
-    console.log("[Add Liquidity] Building all transactions for batch signing...");
-    const transactionBuilders = [];
-    transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
-    for (let i = 0; i < pendingNullifiers.length; i++) {
-      const pn = pendingNullifiers[i];
-      const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(
+    console.log("[Add Liquidity] === Starting Multi-Phase Add Liquidity ===");
+    console.log("[Add Liquidity] Token A:", tokenAMint.toBase58());
+    console.log("[Add Liquidity] Token B:", tokenBMint.toBase58());
+    console.log("[Add Liquidity] Deposit A:", params.depositA.toString());
+    console.log("[Add Liquidity] Deposit B:", params.depositB.toString());
+    console.log("[Add Liquidity] LP amount:", lpAmount.toString());
+    console.log("[Add Liquidity] Building phase transactions...");
+    let phase0Tx, phase1aTx, phase1bTx, phase2aTx, phase2bTx, phase3Tx, operationId, pendingCommitments;
+    try {
+      const buildResult = await buildAddLiquidityWithProgram(
         this.program,
-        {
-          operationId,
-          nullifierIndex: i,
-          pool: pn.pool,
-          relayer: relayerPubkey,
-          nullifier: pn.nullifier
-          // Pass nullifier directly for batch signing
-        },
+        instructionParams,
         heliusRpcUrl
       );
-      transactionBuilders.push({ name: `Nullifier ${i}`, builder: nullifierTx });
+      phase0Tx = buildResult.tx;
+      phase1aTx = buildResult.phase1aTx;
+      phase1bTx = buildResult.phase1bTx;
+      phase2aTx = buildResult.phase2aTx;
+      phase2bTx = buildResult.phase2bTx;
+      phase3Tx = buildResult.phase3Tx;
+      operationId = buildResult.operationId;
+      pendingCommitments = buildResult.pendingCommitments;
+      console.log("[Add Liquidity] Phase transactions built successfully");
+    } catch (error) {
+      console.error("[Add Liquidity] FAILED to build phase transactions:", error);
+      throw error;
     }
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await Promise.resolve().then(() => (init_swap(), swap_exports));
+    console.log("[Add Liquidity] Building all transactions for batch signing...");
+    const transactionBuilders = [];
+    transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
+    transactionBuilders.push({ name: "Phase 1a (Verify Commit A)", builder: phase1aTx });
+    transactionBuilders.push({ name: "Phase 1b (Verify Commit B)", builder: phase1bTx });
+    transactionBuilders.push({ name: "Phase 2a (Create Null A)", builder: phase2aTx });
+    transactionBuilders.push({ name: "Phase 2b (Create Null B)", builder: phase2bTx });
+    transactionBuilders.push({ name: "Phase 3 (Execute Add Liq)", builder: phase3Tx });
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
       if (pc.commitment.every((b) => b === 0)) continue;
@@ -5811,38 +6144,48 @@ var CloakCraftClient = class {
           stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
           encryptedNote: pc.encryptedNote,
           commitment: pc.commitment
-          // Pass commitment directly for batch signing
         },
         heliusRpcUrl
       );
-      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
+      transactionBuilders.push({ name: `Phase ${6 + i} (Commitment ${i})`, builder: commitmentTx });
     }
     const { tx: closeTx } = await buildClosePendingOperationWithProgram2(
       this.program,
       operationId,
       relayerPubkey
     );
-    transactionBuilders.push({ name: "Close", builder: closeTx });
+    transactionBuilders.push({ name: "Final (Close Pending)", builder: closeTx });
     console.log(`[Add Liquidity] Built ${transactionBuilders.length} transactions`);
     const lookupTables = await this.getAddressLookupTables();
     if (lookupTables.length === 0) {
-      console.warn("[Add Liquidity] No Address Lookup Tables configured! Phase 1 may exceed size limit.");
+      console.warn("[Add Liquidity] No Address Lookup Tables configured! May exceed size limit.");
+      console.warn("[Add Liquidity] Run: pnpm tsx scripts/create-alt.ts to create an ALT");
     } else {
       console.log(`[Add Liquidity] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      lookupTables.forEach((alt, i) => {
+        console.log(`[Add Liquidity] ALT ${i}: ${alt.state.addresses.length} addresses`);
+      });
     }
     const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
-      transactionBuilders.map(async ({ builder }) => {
-        const ix = await builder.instruction();
-        return new VersionedTransaction2(
-          new TransactionMessage2({
-            payerKey: relayerPubkey,
-            recentBlockhash: blockhash,
-            instructions: [ix]
-          }).compileToV0Message(lookupTables)
-          // V0 = ALT-enabled format
-        );
+      transactionBuilders.map(async ({ name, builder }) => {
+        try {
+          const mainIx = await builder.instruction();
+          const preIxs = builder._preInstructions || [];
+          const allInstructions = [...preIxs, mainIx];
+          console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
+          return new VersionedTransaction2(
+            new TransactionMessage2({
+              payerKey: relayerPubkey,
+              recentBlockhash: blockhash,
+              instructions: allInstructions
+            }).compileToV0Message(lookupTables)
+          );
+        } catch (error) {
+          console.error(`[Add Liquidity] Failed to build transaction: ${name}`, error);
+          throw new Error(`Failed to build ${name}: ${error?.message || String(error)}`);
+        }
       })
     );
     console.log("[Add Liquidity] Requesting signature for all transactions...");
@@ -5864,7 +6207,7 @@ var CloakCraftClient = class {
     }
     console.log(`[Add Liquidity] All ${signedTransactions.length} transactions signed!`);
     console.log("[Add Liquidity] Executing signed transactions sequentially...");
-    let phase1Signature = "";
+    let phase0Signature = "";
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
       const name = transactionBuilders[i].name;
@@ -5876,12 +6219,12 @@ var CloakCraftClient = class {
       await this.connection.confirmTransaction(signature, "confirmed");
       console.log(`[Add Liquidity] ${name} confirmed: ${signature}`);
       if (i === 0) {
-        phase1Signature = signature;
+        phase0Signature = signature;
       }
     }
     console.log("[Add Liquidity] All transactions executed successfully!");
     return {
-      signature: phase1Signature,
+      signature: phase0Signature,
       slot: 0
     };
   }
@@ -5948,32 +6291,37 @@ var CloakCraftClient = class {
       outputARandomness,
       outputBRandomness
     };
-    console.log("[Remove Liquidity] Using multi-phase execution with batch signing...");
-    const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildRemoveLiquidityWithProgram(
-      this.program,
-      instructionParams,
-      heliusRpcUrl
-    );
-    const { buildCreateNullifierWithProgram: buildCreateNullifierWithProgram2, buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await Promise.resolve().then(() => (init_swap(), swap_exports));
-    console.log("[Remove Liquidity] Building all transactions for batch signing...");
-    const transactionBuilders = [];
-    transactionBuilders.push({ name: "Phase 1", builder: phase1Tx });
-    for (let i = 0; i < pendingNullifiers.length; i++) {
-      const pn = pendingNullifiers[i];
-      const { tx: nullifierTx } = await buildCreateNullifierWithProgram2(
+    console.log("[Remove Liquidity] === Starting Multi-Phase Remove Liquidity ===");
+    console.log("[Remove Liquidity] LP mint:", lpMint.toBase58());
+    console.log("[Remove Liquidity] LP amount:", params.lpAmount.toString());
+    console.log("[Remove Liquidity] Output A:", params.outputAAmount.toString());
+    console.log("[Remove Liquidity] Output B:", params.outputBAmount.toString());
+    console.log("[Remove Liquidity] Building phase transactions...");
+    let phase0Tx, phase1Tx, phase2Tx, phase3Tx, operationId, pendingCommitments;
+    try {
+      const buildResult = await buildRemoveLiquidityWithProgram(
         this.program,
-        {
-          operationId,
-          nullifierIndex: i,
-          pool: pn.pool,
-          relayer: relayerPubkey,
-          nullifier: pn.nullifier
-          // Pass nullifier directly for batch signing
-        },
+        instructionParams,
         heliusRpcUrl
       );
-      transactionBuilders.push({ name: `Nullifier ${i}`, builder: nullifierTx });
+      phase0Tx = buildResult.tx;
+      phase1Tx = buildResult.phase1Tx;
+      phase2Tx = buildResult.phase2Tx;
+      phase3Tx = buildResult.phase3Tx;
+      operationId = buildResult.operationId;
+      pendingCommitments = buildResult.pendingCommitments;
+      console.log("[Remove Liquidity] Phase transactions built successfully");
+    } catch (error) {
+      console.error("[Remove Liquidity] FAILED to build phase transactions:", error);
+      throw error;
     }
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await Promise.resolve().then(() => (init_swap(), swap_exports));
+    console.log("[Remove Liquidity] Building all transactions for batch signing...");
+    const transactionBuilders = [];
+    transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
+    transactionBuilders.push({ name: "Phase 1 (Verify LP Commit)", builder: phase1Tx });
+    transactionBuilders.push({ name: "Phase 2 (Create LP Null)", builder: phase2Tx });
+    transactionBuilders.push({ name: "Phase 3 (Execute Remove Liq)", builder: phase3Tx });
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
       if (pc.commitment.every((b) => b === 0)) continue;
@@ -5987,38 +6335,48 @@ var CloakCraftClient = class {
           stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
           encryptedNote: pc.encryptedNote,
           commitment: pc.commitment
-          // Pass commitment directly for batch signing
         },
         heliusRpcUrl
       );
-      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
+      transactionBuilders.push({ name: `Phase ${4 + i} (Commitment ${i})`, builder: commitmentTx });
     }
     const { tx: closeTx } = await buildClosePendingOperationWithProgram2(
       this.program,
       operationId,
       relayerPubkey
     );
-    transactionBuilders.push({ name: "Close", builder: closeTx });
+    transactionBuilders.push({ name: "Final (Close Pending)", builder: closeTx });
     console.log(`[Remove Liquidity] Built ${transactionBuilders.length} transactions`);
     const lookupTables = await this.getAddressLookupTables();
     if (lookupTables.length === 0) {
-      console.warn("[Remove Liquidity] No Address Lookup Tables configured! Phase 1 may exceed size limit.");
+      console.warn("[Remove Liquidity] No Address Lookup Tables configured! May exceed size limit.");
+      console.warn("[Remove Liquidity] Run: pnpm tsx scripts/create-alt.ts to create an ALT");
     } else {
       console.log(`[Remove Liquidity] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      lookupTables.forEach((alt, i) => {
+        console.log(`[Remove Liquidity] ALT ${i}: ${alt.state.addresses.length} addresses`);
+      });
     }
     const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
-      transactionBuilders.map(async ({ builder }) => {
-        const ix = await builder.instruction();
-        return new VersionedTransaction2(
-          new TransactionMessage2({
-            payerKey: relayerPubkey,
-            recentBlockhash: blockhash,
-            instructions: [ix]
-          }).compileToV0Message(lookupTables)
-          // V0 = ALT-enabled format
-        );
+      transactionBuilders.map(async ({ name, builder }) => {
+        try {
+          const mainIx = await builder.instruction();
+          const preIxs = builder._preInstructions || [];
+          const allInstructions = [...preIxs, mainIx];
+          console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
+          return new VersionedTransaction2(
+            new TransactionMessage2({
+              payerKey: relayerPubkey,
+              recentBlockhash: blockhash,
+              instructions: allInstructions
+            }).compileToV0Message(lookupTables)
+          );
+        } catch (error) {
+          console.error(`[Remove Liquidity] Failed to build transaction: ${name}`, error);
+          throw new Error(`Failed to build ${name}: ${error?.message || String(error)}`);
+        }
       })
     );
     console.log("[Remove Liquidity] Requesting signature for all transactions...");
@@ -6040,7 +6398,7 @@ var CloakCraftClient = class {
     }
     console.log(`[Remove Liquidity] All ${signedTransactions.length} transactions signed!`);
     console.log("[Remove Liquidity] Executing signed transactions sequentially...");
-    let phase1Signature = "";
+    let phase0Signature = "";
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
       const name = transactionBuilders[i].name;
@@ -6052,12 +6410,12 @@ var CloakCraftClient = class {
       await this.connection.confirmTransaction(signature, "confirmed");
       console.log(`[Remove Liquidity] ${name} confirmed: ${signature}`);
       if (i === 0) {
-        phase1Signature = signature;
+        phase0Signature = signature;
       }
     }
     console.log("[Remove Liquidity] All transactions executed successfully!");
     return {
-      signature: phase1Signature,
+      signature: phase0Signature,
       slot: 0
     };
   }

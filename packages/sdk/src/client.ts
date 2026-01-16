@@ -1453,42 +1453,57 @@ export class CloakCraftClient {
       changeRandomness,
     };
 
-    // Multi-phase execution with ALT compression
-    console.log('[Swap] Using multi-phase execution with batch signing...');
+    // Multi-phase execution with ALT compression (same pattern as transfer)
+    console.log('[Swap] === Starting Multi-Phase Swap ===');
+    console.log('[Swap] Input token:', inputTokenMint.toBase58());
+    console.log('[Swap] Output token:', outputTokenMint.toBase58());
+    console.log('[Swap] Swap amount:', params.swapAmount.toString());
+    console.log('[Swap] Min output:', params.minOutput.toString());
 
-    const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildSwapWithProgram(
-      this.program,
-      instructionParams,
-      heliusRpcUrl
-    );
-
-    // Import generic builders
-    const { buildCreateNullifierWithProgram, buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
-
-    // Build all transactions upfront
-    const transactionBuilders = [];
-    transactionBuilders.push({ name: 'Phase 1', builder: phase1Tx });
-
-    // Phase 2: Nullifiers
-    for (let i = 0; i < pendingNullifiers.length; i++) {
-      const pn = pendingNullifiers[i];
-      const { tx: nullifierTx } = await buildCreateNullifierWithProgram(
+    // Build all phase transactions
+    console.log('[Swap] Building phase transactions...');
+    let phase0Tx, phase1Tx, phase2Tx, phase3Tx, operationId, pendingCommitments;
+    try {
+      const buildResult = await buildSwapWithProgram(
         this.program,
-        {
-          operationId,
-          nullifierIndex: i,
-          pool: pn.pool,
-          relayer: relayerPubkey,
-          nullifier: pn.nullifier, // Pass nullifier directly for batch signing
-        },
+        instructionParams,
         heliusRpcUrl
       );
-      transactionBuilders.push({ name: `Nullifier ${i}`, builder: nullifierTx });
+      phase0Tx = buildResult.tx;
+      phase1Tx = buildResult.phase1Tx;
+      phase2Tx = buildResult.phase2Tx;
+      phase3Tx = buildResult.phase3Tx;
+      operationId = buildResult.operationId;
+      pendingCommitments = buildResult.pendingCommitments;
+      console.log('[Swap] Phase transactions built successfully');
+    } catch (error: any) {
+      console.error('[Swap] FAILED to build phase transactions:', error);
+      throw error;
     }
 
-    // Phase 3: Commitments
+    // Import generic builders
+    const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
+
+    // Build all transactions upfront for batch signing
+    console.log('[Swap] Building all transactions for batch signing...');
+    const transactionBuilders = [];
+
+    // Phase 0: Create pending with proof (swap-specific)
+    transactionBuilders.push({ name: 'Phase 0 (Create Pending)', builder: phase0Tx });
+
+    // Phase 1: Verify commitment exists
+    transactionBuilders.push({ name: 'Phase 1 (Verify Commitment)', builder: phase1Tx });
+
+    // Phase 2: Create nullifier (point of no return)
+    transactionBuilders.push({ name: 'Phase 2 (Create Nullifier)', builder: phase2Tx });
+
+    // Phase 3: Execute swap (AMM state update)
+    transactionBuilders.push({ name: 'Phase 3 (Execute Swap)', builder: phase3Tx });
+
+    // Phase 4+: Create commitments (output + change)
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
+      // Skip dummy commitments
       if (pc.commitment.every((b: number) => b === 0)) continue;
 
       const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
@@ -1500,29 +1515,33 @@ export class CloakCraftClient {
           relayer: relayerPubkey,
           stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
           encryptedNote: pc.encryptedNote,
-          commitment: pc.commitment, // Pass commitment directly for batch signing
+          commitment: pc.commitment,
         },
         heliusRpcUrl
       );
-      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
+      transactionBuilders.push({ name: `Phase ${4+i} (Commitment ${i})`, builder: commitmentTx });
     }
 
-    // Phase 4: Close
+    // Final: Close pending operation
     const { tx: closeTx } = await buildClosePendingOperationWithProgram(
       this.program,
       operationId,
       relayerPubkey
     );
-    transactionBuilders.push({ name: 'Close', builder: closeTx });
+    transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
 
-    console.log(`[Swap] Built ${transactionBuilders.length} transactions for batch signing`);
+    console.log(`[Swap] Built ${transactionBuilders.length} transactions`);
 
     // Get ALTs for address compression
     const lookupTables = await this.getAddressLookupTables();
     if (lookupTables.length === 0) {
-      console.warn('[Swap] No Address Lookup Tables configured! Phase 1 may exceed size limit.');
+      console.warn('[Swap] No Address Lookup Tables configured! May exceed size limit.');
+      console.warn('[Swap] Run: pnpm tsx scripts/create-alt.ts to create an ALT');
     } else {
       console.log(`[Swap] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      lookupTables.forEach((alt, i) => {
+        console.log(`[Swap] ALT ${i}: ${alt.state.addresses.length} addresses`);
+      });
     }
 
     // Build transactions with ALT compression
@@ -1530,19 +1549,30 @@ export class CloakCraftClient {
     const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
 
     const transactions = await Promise.all(
-      transactionBuilders.map(async ({ builder }) => {
-        const ix = await builder.instruction();
-        return new VersionedTransaction(
-          new TransactionMessage({
-            payerKey: relayerPubkey,
-            recentBlockhash: blockhash,
-            instructions: [ix],
-          }).compileToV0Message(lookupTables) // V0 = ALT-enabled format
-        );
+      transactionBuilders.map(async ({ name, builder }) => {
+        try {
+          // Extract ALL instructions (preInstructions + main instruction)
+          const mainIx = await builder.instruction();
+          const preIxs = builder._preInstructions || [];
+          const allInstructions = [...preIxs, mainIx];
+
+          console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
+
+          return new VersionedTransaction(
+            new TransactionMessage({
+              payerKey: relayerPubkey,
+              recentBlockhash: blockhash,
+              instructions: allInstructions,
+            }).compileToV0Message(lookupTables)
+          );
+        } catch (error: any) {
+          console.error(`[Swap] Failed to build transaction: ${name}`, error);
+          throw new Error(`Failed to build ${name}: ${error?.message || String(error)}`);
+        }
       })
     );
 
-    // Sign all transactions
+    // Sign all transactions at once (ONE wallet popup)
     console.log('[Swap] Requesting signature for all transactions...');
     let signedTransactions;
     if (relayer) {
@@ -1562,24 +1592,30 @@ export class CloakCraftClient {
     }
     console.log(`[Swap] All ${signedTransactions.length} transactions signed!`);
 
-    // Execute sequentially
-    let phase1Signature = '';
+    // Execute signed transactions sequentially
+    console.log('[Swap] Executing signed transactions sequentially...');
+    let phase0Signature = '';
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
       const name = transactionBuilders[i].name;
 
+      console.log(`[Swap] Sending ${name}...`);
       const signature = await this.connection.sendRawTransaction(tx.serialize(), {
         skipPreflight: false,
         preflightCommitment: 'confirmed',
       });
+
+      // Wait for confirmation
       await this.connection.confirmTransaction(signature, 'confirmed');
       console.log(`[Swap] ${name} confirmed: ${signature}`);
 
-      if (i === 0) phase1Signature = signature;
+      if (i === 0) {
+        phase0Signature = signature;
+      }
     }
 
     return {
-      signature: phase1Signature,
+      signature: phase0Signature,
       slot: 0,
     };
   }
@@ -1681,46 +1717,66 @@ export class CloakCraftClient {
       minLpAmount: params.minLpAmount,
     };
 
-    // Multi-phase execution with ALT compression
-    console.log('[Add Liquidity] Using multi-phase execution with batch signing...');
+    // Multi-phase execution with ALT compression (same pattern as transfer)
+    console.log('[Add Liquidity] === Starting Multi-Phase Add Liquidity ===');
+    console.log('[Add Liquidity] Token A:', tokenAMint.toBase58());
+    console.log('[Add Liquidity] Token B:', tokenBMint.toBase58());
+    console.log('[Add Liquidity] Deposit A:', params.depositA.toString());
+    console.log('[Add Liquidity] Deposit B:', params.depositB.toString());
+    console.log('[Add Liquidity] LP amount:', lpAmount.toString());
 
-    const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildAddLiquidityWithProgram(
-      this.program,
-      instructionParams,
-      heliusRpcUrl
-    );
+    // Build all phase transactions
+    console.log('[Add Liquidity] Building phase transactions...');
+    let phase0Tx, phase1aTx, phase1bTx, phase2aTx, phase2bTx, phase3Tx, operationId, pendingCommitments;
+    try {
+      const buildResult = await buildAddLiquidityWithProgram(
+        this.program,
+        instructionParams,
+        heliusRpcUrl
+      );
+      phase0Tx = buildResult.tx;
+      phase1aTx = buildResult.phase1aTx;
+      phase1bTx = buildResult.phase1bTx;
+      phase2aTx = buildResult.phase2aTx;
+      phase2bTx = buildResult.phase2bTx;
+      phase3Tx = buildResult.phase3Tx;
+      operationId = buildResult.operationId;
+      pendingCommitments = buildResult.pendingCommitments;
+      console.log('[Add Liquidity] Phase transactions built successfully');
+    } catch (error: any) {
+      console.error('[Add Liquidity] FAILED to build phase transactions:', error);
+      throw error;
+    }
 
     // Import generic builders
-    const { buildCreateNullifierWithProgram, buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
+    const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
 
-    // Build all transactions upfront
+    // Build all transactions upfront for batch signing
     console.log('[Add Liquidity] Building all transactions for batch signing...');
     const transactionBuilders = [];
 
-    // Phase 1
-    transactionBuilders.push({ name: 'Phase 1', builder: phase1Tx });
+    // Phase 0: Create pending with proof (add liquidity-specific)
+    transactionBuilders.push({ name: 'Phase 0 (Create Pending)', builder: phase0Tx });
 
-    // Phase 2a: Nullifiers
-    for (let i = 0; i < pendingNullifiers.length; i++) {
-      const pn = pendingNullifiers[i];
-      const { tx: nullifierTx } = await buildCreateNullifierWithProgram(
-        this.program,
-        {
-          operationId,
-          nullifierIndex: i,
-          pool: pn.pool,
-          relayer: relayerPubkey,
-          nullifier: pn.nullifier, // Pass nullifier directly for batch signing
-        },
-        heliusRpcUrl
-      );
-      transactionBuilders.push({ name: `Nullifier ${i}`, builder: nullifierTx });
-    }
+    // Phase 1a: Verify deposit A commitment exists
+    transactionBuilders.push({ name: 'Phase 1a (Verify Commit A)', builder: phase1aTx });
 
-    // Phase 2b: Commitments
+    // Phase 1b: Verify deposit B commitment exists
+    transactionBuilders.push({ name: 'Phase 1b (Verify Commit B)', builder: phase1bTx });
+
+    // Phase 2a: Create nullifier A (point of no return for input A)
+    transactionBuilders.push({ name: 'Phase 2a (Create Null A)', builder: phase2aTx });
+
+    // Phase 2b: Create nullifier B (point of no return for input B)
+    transactionBuilders.push({ name: 'Phase 2b (Create Null B)', builder: phase2bTx });
+
+    // Phase 3: Execute add liquidity (AMM state update)
+    transactionBuilders.push({ name: 'Phase 3 (Execute Add Liq)', builder: phase3Tx });
+
+    // Phase 4+: Create commitments (LP, change A, change B)
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
-      // Skip zero commitments
+      // Skip dummy commitments
       if (pc.commitment.every((b: number) => b === 0)) continue;
 
       const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
@@ -1732,29 +1788,33 @@ export class CloakCraftClient {
           relayer: relayerPubkey,
           stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
           encryptedNote: pc.encryptedNote,
-          commitment: pc.commitment, // Pass commitment directly for batch signing
+          commitment: pc.commitment,
         },
         heliusRpcUrl
       );
-      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
+      transactionBuilders.push({ name: `Phase ${6+i} (Commitment ${i})`, builder: commitmentTx });
     }
 
-    // Phase 4: Close
+    // Final: Close pending operation
     const { tx: closeTx } = await buildClosePendingOperationWithProgram(
       this.program,
       operationId,
       relayerPubkey
     );
-    transactionBuilders.push({ name: 'Close', builder: closeTx });
+    transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
 
     console.log(`[Add Liquidity] Built ${transactionBuilders.length} transactions`);
 
     // Get ALTs for address compression
     const lookupTables = await this.getAddressLookupTables();
     if (lookupTables.length === 0) {
-      console.warn('[Add Liquidity] No Address Lookup Tables configured! Phase 1 may exceed size limit.');
+      console.warn('[Add Liquidity] No Address Lookup Tables configured! May exceed size limit.');
+      console.warn('[Add Liquidity] Run: pnpm tsx scripts/create-alt.ts to create an ALT');
     } else {
       console.log(`[Add Liquidity] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      lookupTables.forEach((alt, i) => {
+        console.log(`[Add Liquidity] ALT ${i}: ${alt.state.addresses.length} addresses`);
+      });
     }
 
     // Build transactions with ALT compression
@@ -1762,15 +1822,26 @@ export class CloakCraftClient {
     const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
 
     const transactions = await Promise.all(
-      transactionBuilders.map(async ({ builder }) => {
-        const ix = await builder.instruction();
-        return new VersionedTransaction(
-          new TransactionMessage({
-            payerKey: relayerPubkey,
-            recentBlockhash: blockhash,
-            instructions: [ix],
-          }).compileToV0Message(lookupTables) // V0 = ALT-enabled format
-        );
+      transactionBuilders.map(async ({ name, builder }) => {
+        try {
+          // Extract ALL instructions (preInstructions + main instruction)
+          const mainIx = await builder.instruction();
+          const preIxs = builder._preInstructions || [];
+          const allInstructions = [...preIxs, mainIx];
+
+          console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
+
+          return new VersionedTransaction(
+            new TransactionMessage({
+              payerKey: relayerPubkey,
+              recentBlockhash: blockhash,
+              instructions: allInstructions,
+            }).compileToV0Message(lookupTables)
+          );
+        } catch (error: any) {
+          console.error(`[Add Liquidity] Failed to build transaction: ${name}`, error);
+          throw new Error(`Failed to build ${name}: ${error?.message || String(error)}`);
+        }
       })
     );
 
@@ -1796,7 +1867,7 @@ export class CloakCraftClient {
 
     // Execute signed transactions sequentially
     console.log('[Add Liquidity] Executing signed transactions sequentially...');
-    let phase1Signature = '';
+    let phase0Signature = '';
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
       const name = transactionBuilders[i].name;
@@ -1812,13 +1883,13 @@ export class CloakCraftClient {
       console.log(`[Add Liquidity] ${name} confirmed: ${signature}`);
 
       if (i === 0) {
-        phase1Signature = signature;
+        phase0Signature = signature;
       }
     }
 
     console.log('[Add Liquidity] All transactions executed successfully!');
     return {
-      signature: phase1Signature,
+      signature: phase0Signature,
       slot: 0,
     };
   }
@@ -1905,46 +1976,57 @@ export class CloakCraftClient {
       outputBRandomness,
     };
 
-    // Multi-phase execution with ALT compression
-    console.log('[Remove Liquidity] Using multi-phase execution with batch signing...');
+    // Multi-phase execution with ALT compression (same pattern as transfer)
+    console.log('[Remove Liquidity] === Starting Multi-Phase Remove Liquidity ===');
+    console.log('[Remove Liquidity] LP mint:', lpMint.toBase58());
+    console.log('[Remove Liquidity] LP amount:', params.lpAmount.toString());
+    console.log('[Remove Liquidity] Output A:', params.outputAAmount.toString());
+    console.log('[Remove Liquidity] Output B:', params.outputBAmount.toString());
 
-    const { tx: phase1Tx, operationId, pendingNullifiers, pendingCommitments } = await buildRemoveLiquidityWithProgram(
-      this.program,
-      instructionParams,
-      heliusRpcUrl
-    );
+    // Build all phase transactions
+    console.log('[Remove Liquidity] Building phase transactions...');
+    let phase0Tx, phase1Tx, phase2Tx, phase3Tx, operationId, pendingCommitments;
+    try {
+      const buildResult = await buildRemoveLiquidityWithProgram(
+        this.program,
+        instructionParams,
+        heliusRpcUrl
+      );
+      phase0Tx = buildResult.tx;
+      phase1Tx = buildResult.phase1Tx;
+      phase2Tx = buildResult.phase2Tx;
+      phase3Tx = buildResult.phase3Tx;
+      operationId = buildResult.operationId;
+      pendingCommitments = buildResult.pendingCommitments;
+      console.log('[Remove Liquidity] Phase transactions built successfully');
+    } catch (error: any) {
+      console.error('[Remove Liquidity] FAILED to build phase transactions:', error);
+      throw error;
+    }
 
     // Import generic builders
-    const { buildCreateNullifierWithProgram, buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
+    const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
 
-    // Build all transactions upfront
+    // Build all transactions upfront for batch signing
     console.log('[Remove Liquidity] Building all transactions for batch signing...');
     const transactionBuilders = [];
 
-    // Phase 1
-    transactionBuilders.push({ name: 'Phase 1', builder: phase1Tx });
+    // Phase 0: Create pending with proof (remove liquidity-specific)
+    transactionBuilders.push({ name: 'Phase 0 (Create Pending)', builder: phase0Tx });
 
-    // Phase 2a: Nullifiers
-    for (let i = 0; i < pendingNullifiers.length; i++) {
-      const pn = pendingNullifiers[i];
-      const { tx: nullifierTx } = await buildCreateNullifierWithProgram(
-        this.program,
-        {
-          operationId,
-          nullifierIndex: i,
-          pool: pn.pool,
-          relayer: relayerPubkey,
-          nullifier: pn.nullifier, // Pass nullifier directly for batch signing
-        },
-        heliusRpcUrl
-      );
-      transactionBuilders.push({ name: `Nullifier ${i}`, builder: nullifierTx });
-    }
+    // Phase 1: Verify LP commitment exists
+    transactionBuilders.push({ name: 'Phase 1 (Verify LP Commit)', builder: phase1Tx });
 
-    // Phase 2b: Commitments
+    // Phase 2: Create LP nullifier (point of no return)
+    transactionBuilders.push({ name: 'Phase 2 (Create LP Null)', builder: phase2Tx });
+
+    // Phase 3: Execute remove liquidity (AMM state update)
+    transactionBuilders.push({ name: 'Phase 3 (Execute Remove Liq)', builder: phase3Tx });
+
+    // Phase 4+: Create commitments (output A, output B)
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
-      // Skip zero commitments
+      // Skip dummy commitments
       if (pc.commitment.every((b: number) => b === 0)) continue;
 
       const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
@@ -1956,29 +2038,33 @@ export class CloakCraftClient {
           relayer: relayerPubkey,
           stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
           encryptedNote: pc.encryptedNote,
-          commitment: pc.commitment, // Pass commitment directly for batch signing
+          commitment: pc.commitment,
         },
         heliusRpcUrl
       );
-      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
+      transactionBuilders.push({ name: `Phase ${4+i} (Commitment ${i})`, builder: commitmentTx });
     }
 
-    // Phase 4: Close
+    // Final: Close pending operation
     const { tx: closeTx } = await buildClosePendingOperationWithProgram(
       this.program,
       operationId,
       relayerPubkey
     );
-    transactionBuilders.push({ name: 'Close', builder: closeTx });
+    transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
 
     console.log(`[Remove Liquidity] Built ${transactionBuilders.length} transactions`);
 
     // Get ALTs for address compression
     const lookupTables = await this.getAddressLookupTables();
     if (lookupTables.length === 0) {
-      console.warn('[Remove Liquidity] No Address Lookup Tables configured! Phase 1 may exceed size limit.');
+      console.warn('[Remove Liquidity] No Address Lookup Tables configured! May exceed size limit.');
+      console.warn('[Remove Liquidity] Run: pnpm tsx scripts/create-alt.ts to create an ALT');
     } else {
       console.log(`[Remove Liquidity] Using ${lookupTables.length} Address Lookup Tables for compression`);
+      lookupTables.forEach((alt, i) => {
+        console.log(`[Remove Liquidity] ALT ${i}: ${alt.state.addresses.length} addresses`);
+      });
     }
 
     // Build transactions with ALT compression
@@ -1986,15 +2072,26 @@ export class CloakCraftClient {
     const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
 
     const transactions = await Promise.all(
-      transactionBuilders.map(async ({ builder }) => {
-        const ix = await builder.instruction();
-        return new VersionedTransaction(
-          new TransactionMessage({
-            payerKey: relayerPubkey,
-            recentBlockhash: blockhash,
-            instructions: [ix],
-          }).compileToV0Message(lookupTables) // V0 = ALT-enabled format
-        );
+      transactionBuilders.map(async ({ name, builder }) => {
+        try {
+          // Extract ALL instructions (preInstructions + main instruction)
+          const mainIx = await builder.instruction();
+          const preIxs = builder._preInstructions || [];
+          const allInstructions = [...preIxs, mainIx];
+
+          console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
+
+          return new VersionedTransaction(
+            new TransactionMessage({
+              payerKey: relayerPubkey,
+              recentBlockhash: blockhash,
+              instructions: allInstructions,
+            }).compileToV0Message(lookupTables)
+          );
+        } catch (error: any) {
+          console.error(`[Remove Liquidity] Failed to build transaction: ${name}`, error);
+          throw new Error(`Failed to build ${name}: ${error?.message || String(error)}`);
+        }
       })
     );
 
@@ -2020,7 +2117,7 @@ export class CloakCraftClient {
 
     // Execute signed transactions sequentially
     console.log('[Remove Liquidity] Executing signed transactions sequentially...');
-    let phase1Signature = '';
+    let phase0Signature = '';
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
       const name = transactionBuilders[i].name;
@@ -2036,13 +2133,13 @@ export class CloakCraftClient {
       console.log(`[Remove Liquidity] ${name} confirmed: ${signature}`);
 
       if (i === 0) {
-        phase1Signature = signature;
+        phase0Signature = signature;
       }
     }
 
     console.log('[Remove Liquidity] All transactions executed successfully!');
     return {
-      signature: phase1Signature,
+      signature: phase0Signature,
       slot: 0,
     };
   }

@@ -7,14 +7,20 @@
 import { PublicKey } from '@solana/web3.js';
 
 /**
- * BN254 field modulus (big-endian)
- * p = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+ * BN254 SCALAR field modulus (Fr) - big-endian
+ * r = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+ *
+ * IMPORTANT: Circom/Groth16 circuits use the SCALAR field (Fr), not the base field (Fq).
+ * - Fr = 21888242871839275222246405745257275088548364400416034343698204186575808495617 (circuit field)
+ * - Fq = 21888242871839275222246405745257275088696311157297823662689037894645226208583 (curve coordinates)
+ *
+ * This MUST match the Rust program's helpers/field.rs BN254_SCALAR_FIELD_MODULUS!
  */
 const BN254_FIELD_MODULUS = new Uint8Array([
   0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29,
   0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d,
-  0x97, 0x81, 0x6a, 0x91, 0x68, 0x71, 0xca, 0x8d,
-  0x3c, 0x20, 0x8c, 0x16, 0xd8, 0x7c, 0xfd, 0x47,
+  0x28, 0x33, 0xe8, 0x48, 0x79, 0xb9, 0x70, 0x91,
+  0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
 ]);
 
 /**
