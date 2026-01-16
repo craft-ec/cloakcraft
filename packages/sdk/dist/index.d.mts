@@ -770,7 +770,7 @@ declare class CloakCraftClient {
     /**
      * Shield tokens into the pool using wallet adapter
      *
-     * Uses versioned transactions for atomic execution with Address Lookup Tables
+     * Uses the program's provider wallet for signing
      */
     shieldWithWallet(params: ShieldParams, walletPublicKey: PublicKey): Promise<TransactionResult & {
         commitment: Uint8Array;
@@ -841,6 +841,8 @@ declare class CloakCraftClient {
     }, relayer?: Keypair$1): Promise<TransactionResult>;
     /**
      * Get sync status
+     *
+     * Uses direct RPC scanning via Helius, so sync status is always current
      */
     getSyncStatus(): Promise<SyncStatus>;
     /**
@@ -1432,6 +1434,9 @@ declare class NoteManager {
     }>;
     /**
      * Get sync status
+     *
+     * Note: This method is deprecated. Use direct RPC scanning instead.
+     * @deprecated Use client.getSyncStatus() which queries RPC directly
      */
     getSyncStatus(): Promise<SyncStatus>;
     /**
@@ -1572,12 +1577,30 @@ declare class LightProtocol {
      */
     getInclusionProofByHash(accountHash: string): Promise<_lightprotocol_stateless_js.MerkleContextWithMerkleProof>;
     /**
-     * Build remaining accounts for Light Protocol CPI
+     * Build remaining accounts for Light Protocol CPI (simple version - no commitment)
      */
     buildRemainingAccounts(): {
         accounts: AccountMeta[];
         outputTreeIndex: number;
         addressTreeIndex: number;
+    };
+    /**
+     * Build remaining accounts for spending operations (with commitment verification)
+     *
+     * CENTRALIZED TREE HANDLING - Use this for all spend operations!
+     * Handles tree/queue extraction from commitment proof and builds correct indices.
+     *
+     * @param commitmentProof - Inclusion proof for commitment (from getInclusionProofByHash)
+     * @param nullifierProof - Non-inclusion proof for nullifier (from getValidityProof)
+     * @returns Everything needed for Light Protocol CPI with commitment verification
+     */
+    buildRemainingAccountsWithCommitment(commitmentProof: any, nullifierProof: any): {
+        accounts: AccountMeta[];
+        outputTreeIndex: number;
+        commitmentStateTreeIndex: number;
+        commitmentAddressTreeIndex: number;
+        commitmentQueueIndex: number;
+        nullifierAddressTreeIndex: number;
     };
     /**
      * Convert Light SDK compressed proof to Anchor format
@@ -1619,7 +1642,20 @@ interface LightTransactParams {
     /** Commitment merkle context (proves commitment exists in state tree) */
     commitmentMerkleContext: {
         merkleTreePubkeyIndex: number;
+        queuePubkeyIndex: number;
         leafIndex: number;
+        rootIndex: number;
+    };
+    /** Commitment inclusion proof (SECURITY: proves commitment exists) */
+    commitmentInclusionProof: {
+        a: number[];
+        b: number[];
+        c: number[];
+    };
+    /** Address tree info for commitment verification */
+    commitmentAddressTreeInfo: {
+        addressMerkleTreePubkeyIndex: number;
+        addressQueuePubkeyIndex: number;
         rootIndex: number;
     };
     /** Nullifier non-inclusion proof (prevents double-spend) */
@@ -1734,7 +1770,7 @@ interface TransactInput {
     leafIndex: number;
     /** Spending key for this note */
     spendingKey: bigint;
-    /** Account hash from scanning (for commitment existence proof) */
+    /** Account hash from scanning (REQUIRED - this is where commitment exists in state tree) */
     accountHash: string;
 }
 /**
@@ -1810,6 +1846,9 @@ interface TransactResult {
  */
 declare function buildTransactWithProgram(program: Program, params: TransactInstructionParams, rpcUrl: string, circuitId?: string): Promise<{
     tx: any;
+    phase1Tx: any;
+    phase2Tx: any;
+    phase3Tx: any | null;
     result: TransactResult;
     operationId: Uint8Array;
     pendingCommitments: Array<{

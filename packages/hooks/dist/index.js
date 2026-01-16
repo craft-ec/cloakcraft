@@ -76,6 +76,7 @@ function CloakCraftProvider({
   const [isInitialized, setIsInitialized] = (0, import_react.useState)(false);
   const [isInitializing, setIsInitializing] = (0, import_react.useState)(false);
   const [isProverReady, setIsProverReady] = (0, import_react.useState)(false);
+  const [isProgramReady, setIsProgramReady] = (0, import_react.useState)(false);
   const [isSyncing, setIsSyncing] = (0, import_react.useState)(false);
   const [syncStatus, setSyncStatus] = (0, import_react.useState)(null);
   const [notes, setNotes] = (0, import_react.useState)([]);
@@ -128,6 +129,14 @@ function CloakCraftProvider({
       }
     }
   }, [isInitialized, wallet, client]);
+  (0, import_react.useEffect)(() => {
+    if (wallet && isProgramReady && !isSyncing && notes.length === 0) {
+      console.log("[CloakCraft] Auto-syncing notes on wallet connect...");
+      sync().catch((err) => {
+        console.error("[CloakCraft] Auto-sync failed:", err);
+      });
+    }
+  }, [wallet, isProgramReady]);
   (0, import_react.useEffect)(() => {
     if (wallet && isInitialized && !isInitializing && !isProverReady) {
       console.log("[CloakCraft] Initializing prover...");
@@ -192,6 +201,7 @@ function CloakCraftProvider({
   }, [client]);
   const setProgram = (0, import_react.useCallback)((program) => {
     client.setProgram(program);
+    setIsProgramReady(true);
   }, [client]);
   const initializeProver = (0, import_react.useCallback)(async (circuits) => {
     setIsInitializing(true);
@@ -214,6 +224,7 @@ function CloakCraftProvider({
     isInitialized,
     isInitializing,
     isProverReady,
+    isProgramReady,
     isSyncing,
     syncStatus,
     notes,
@@ -477,8 +488,16 @@ function useShield() {
       }
       setState({ isShielding: true, error: null, result: null });
       try {
+        console.log("[useShield] Starting shield...", {
+          tokenMint: options.tokenMint.toBase58(),
+          amount: options.amount.toString(),
+          walletPublicKey: options.walletPublicKey?.toBase58()
+        });
         const recipientPubkey = options.recipient ?? wallet.publicKey;
+        console.log("[useShield] Generating stealth address for:", recipientPubkey);
         const { stealthAddress } = (0, import_sdk2.generateStealthAddress)(recipientPubkey);
+        console.log("[useShield] Stealth address generated");
+        console.log("[useShield] Calling client.shieldWithWallet...");
         const result = await client.shieldWithWallet(
           {
             pool: options.tokenMint,
@@ -490,13 +509,16 @@ function useShield() {
           },
           options.walletPublicKey
         );
+        console.log("[useShield] shieldWithWallet result:", result);
+        console.log("[useShield] Syncing notes...");
         await sync(options.tokenMint, true);
         setState({ isShielding: false, error: null, result });
         return result;
       } catch (err) {
+        console.error("[useShield] ERROR:", err);
         const error = err instanceof Error ? err.message : "Shield failed";
         setState({ isShielding: false, error, result: null });
-        return null;
+        throw err;
       }
     },
     [client, wallet, sync]
@@ -655,13 +677,17 @@ function useUnshield() {
       let recipientTokenAccount = recipient;
       if (isWalletAddress && inputs[0]?.tokenMint) {
         try {
+          console.log("[Unshield] Deriving ATA from wallet:", recipient.toBase58());
+          console.log("[Unshield] Token mint:", inputs[0].tokenMint.toBase58());
           recipientTokenAccount = (0, import_spl_token.getAssociatedTokenAddressSync)(
             inputs[0].tokenMint,
             recipient,
             true
             // allowOwnerOffCurve - standard practice for flexibility
           );
+          console.log("[Unshield] Derived ATA:", recipientTokenAccount.toBase58());
         } catch (err) {
+          console.error("[Unshield] Failed to derive ATA:", err);
           setState({
             isUnshielding: false,
             error: `Failed to derive token account: ${err instanceof Error ? err.message : "Unknown error"}`,
@@ -669,6 +695,8 @@ function useUnshield() {
           });
           return null;
         }
+      } else {
+        console.log("[Unshield] Skipping ATA derivation - isWalletAddress:", isWalletAddress, "has tokenMint:", !!inputs[0]?.tokenMint);
       }
       let freshNotes;
       try {
@@ -710,12 +738,41 @@ function useUnshield() {
       }
       try {
         const change = totalInput - amount;
+        console.log("[Unshield] Total input:", totalInput.toString());
+        console.log("[Unshield] Amount to unshield:", amount.toString());
+        console.log("[Unshield] Change:", change.toString());
         const { generateStealthAddress: generateStealthAddress2 } = await import("@cloakcraft/sdk");
-        const { stealthAddress } = generateStealthAddress2(wallet.publicKey);
-        const outputs = [{
-          recipient: stealthAddress,
-          amount: change > 0n ? change : 0n
-        }];
+        const outputs = [];
+        if (change > 0n) {
+          const { stealthAddress } = generateStealthAddress2(wallet.publicKey);
+          outputs.push({
+            recipient: stealthAddress,
+            amount: change
+          });
+        } else {
+          const dummyStealthAddress = {
+            stealthPubkey: {
+              x: new Uint8Array(32),
+              // zeros
+              y: new Uint8Array(32)
+              // zeros
+            },
+            ephemeralPubkey: {
+              x: new Uint8Array(32),
+              // zeros
+              y: new Uint8Array(32)
+              // zeros
+            }
+          };
+          outputs.push({
+            recipient: dummyStealthAddress,
+            amount: 0n
+          });
+        }
+        console.log("[Unshield] Matched inputs:", matchedInputs.length);
+        console.log("[Unshield] Outputs:", outputs.length);
+        console.log("[Unshield] Recipient token account:", recipientTokenAccount.toBase58());
+        console.log("[Unshield] Calling prepareAndTransfer...");
         const result = await client.prepareAndTransfer(
           {
             inputs: matchedInputs,
@@ -726,13 +783,16 @@ function useUnshield() {
           void 0
           // relayer - wallet adapter will be used via provider
         );
+        console.log("[Unshield] prepareAndTransfer result:", result);
         if (matchedInputs.length > 0 && matchedInputs[0].tokenMint) {
           await sync(matchedInputs[0].tokenMint, true);
         }
         setState({ isUnshielding: false, error: null, result });
         return result;
       } catch (err) {
+        console.error("[Unshield] Error:", err);
         const error = err instanceof Error ? err.message : "Unshield failed";
+        console.error("[Unshield] Error message:", error);
         setState({ isUnshielding: false, error, result: null });
         return null;
       }

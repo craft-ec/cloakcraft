@@ -364,10 +364,29 @@ export class CloakCraftClient {
       this.programId
     );
 
+    // Derive commitment counter PDA
+    const [counterPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('commitment_counter'), poolPda.toBuffer()],
+      this.programId
+    );
+
     // Use Anchor program if available for automatic decoding
     if (this.program) {
       try {
         const pool = await (this.program.account as any).pool.fetch(poolPda);
+
+        // Try to fetch commitment counter
+        let commitmentCounter: bigint | undefined;
+        try {
+          const counter = await (this.program.account as any).poolCommitmentCounter.fetch(counterPda);
+          // Field is total_commitments in Rust, becomes totalCommitments in JS
+          commitmentCounter = BigInt((counter.totalCommitments || counter.total_commitments || 0).toString());
+        } catch (e) {
+          // Counter might not exist yet
+          console.log('[getPool] Could not fetch commitment counter:', e);
+          commitmentCounter = 0n;
+        }
+
         return {
           tokenMint: pool.tokenMint,
           tokenVault: pool.tokenVault,
@@ -375,6 +394,7 @@ export class CloakCraftClient {
           authority: pool.authority,
           bump: pool.bump,
           vaultBump: pool.vaultBump,
+          commitmentCounter,
         };
       } catch (e: any) {
         // Account doesn't exist - check various error patterns
@@ -401,6 +421,14 @@ export class CloakCraftClient {
     const data = accountInfo.data;
     if (data.length < 114) return null;
 
+    // Try to fetch commitment counter
+    let commitmentCounter: bigint | undefined;
+    const counterInfo = await this.connection.getAccountInfo(counterPda);
+    if (counterInfo && counterInfo.data.length >= 16) {
+      // Counter layout: 8 (discriminator) + 8 (count)
+      commitmentCounter = counterInfo.data.readBigUInt64LE(8);
+    }
+
     return {
       tokenMint: new PublicKey(data.subarray(8, 40)),
       tokenVault: new PublicKey(data.subarray(40, 72)),
@@ -408,6 +436,7 @@ export class CloakCraftClient {
       authority: new PublicKey(data.subarray(80, 112)),
       bump: data[112],
       vaultBump: data[113],
+      commitmentCounter,
     };
   }
 
@@ -538,40 +567,43 @@ export class CloakCraftClient {
       user: payer.publicKey,
     };
 
-    // Build instruction with ALT compression
-    console.log('[Shield] Building transaction with ALT compression...');
-    const { buildShieldInstructionsForVersionedTx } = await import('./instructions/shield');
-    const { instructions, commitment, randomness } = await buildShieldInstructionsForVersionedTx(
+    console.log('[Shield] Building transaction with Anchor...');
+    const { buildShieldWithProgram } = await import('./instructions/shield');
+    const { tx: anchorTx, commitment, randomness } = await buildShieldWithProgram(
       this.program,
       instructionParams,
       heliusRpcUrl
     );
 
-    // Get ALTs for address compression
-    const lookupTables = await this.getAddressLookupTables();
-    if (lookupTables.length === 0) {
-      console.warn('[Shield] No Address Lookup Tables configured!');
-    } else {
-      console.log(`[Shield] Using ${lookupTables.length} Address Lookup Tables for compression`);
+    // Convert to legacy Transaction
+    const { Transaction } = await import('@solana/web3.js');
+    const tx = await anchorTx.transaction();
+
+    // Set fee payer and recent blockhash
+    tx.feePayer = payer.publicKey;
+    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+
+    // Sign and send
+    tx.sign(payer);
+    const rawTransaction = tx.serialize();
+    const signature = await this.connection.sendRawTransaction(rawTransaction, {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+
+    // Wait for confirmation
+    const confirmation = await this.connection.confirmTransaction({
+      signature,
+      blockhash,
+      lastValidBlockHeight,
+    }, 'confirmed');
+
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
     }
 
-    // Build transaction with ALT compression
-    const tx = await buildVersionedTransaction(
-      this.connection,
-      instructions,
-      payer.publicKey,
-      {
-        computeUnits: 600_000,
-        computeUnitPrice: 50000,
-        lookupTables,
-      }
-    );
-
-    // Sign and execute
-    tx.sign([payer]);
-    const signature = await executeVersionedTransaction(this.connection, tx, {
-      skipPreflight: false,
-    });
+    console.log('[Shield] ✅ Transaction confirmed:', signature);
 
     return {
       signature,
@@ -584,7 +616,7 @@ export class CloakCraftClient {
   /**
    * Shield tokens into the pool using wallet adapter
    *
-   * Uses versioned transactions for atomic execution with Address Lookup Tables
+   * Uses the program's provider wallet for signing
    */
   async shieldWithWallet(
     params: ShieldParams,
@@ -597,55 +629,29 @@ export class CloakCraftClient {
       throw new Error('No program set. Call setProgram() first.');
     }
 
-    const heliusRpcUrl = this.getHeliusRpcUrl();
-    const instructionParams = {
-      tokenMint: params.pool,
-      amount: params.amount,
-      stealthPubkey: params.recipient.stealthPubkey,
-      stealthEphemeralPubkey: params.recipient.ephemeralPubkey,
-      userTokenAccount: params.userTokenAccount!,
-      user: walletPublicKey,
-    };
-
-    // Build instruction with ALT compression
-    console.log('[Shield] Building transaction with ALT compression (wallet)...');
-    const { buildShieldInstructionsForVersionedTx } = await import('./instructions/shield');
-    const { instructions, commitment, randomness } = await buildShieldInstructionsForVersionedTx(
+    // Build shield using instruction builder
+    // Note encrypts to stealthPubkey; ephemeralPubkey stored on-chain for decryption key derivation
+    // Use Helius RPC URL for Light Protocol operations
+    const { tx, commitment, randomness } = await buildShieldWithProgram(
       this.program,
-      instructionParams,
-      heliusRpcUrl
-    );
-
-    // Get ALTs for address compression
-    const lookupTables = await this.getAddressLookupTables();
-    if (lookupTables.length === 0) {
-      console.warn('[Shield] No Address Lookup Tables configured!');
-    } else {
-      console.log(`[Shield] Using ${lookupTables.length} Address Lookup Tables for compression`);
-    }
-
-    // Build transaction with ALT compression
-    const tx = await buildVersionedTransaction(
-      this.connection,
-      instructions,
-      walletPublicKey,
       {
-        computeUnits: 600_000,
-        computeUnitPrice: 50000,
-        lookupTables,
-      }
+        tokenMint: params.pool,
+        amount: params.amount,
+        stealthPubkey: params.recipient.stealthPubkey,
+        stealthEphemeralPubkey: params.recipient.ephemeralPubkey,
+        userTokenAccount: params.userTokenAccount!,
+        user: walletPublicKey,
+      },
+      this.getHeliusRpcUrl()
     );
 
-    // Get wallet from provider and sign
-    const wallet = this.program.provider.wallet;
-    if (!wallet || !wallet.signTransaction) {
-      throw new Error('Wallet does not support transaction signing');
-    }
-
-    const signedTx = await wallet.signTransaction(tx);
-    const signature = await executeVersionedTransaction(this.connection, signedTx, {
+    // Execute transaction using Anchor's RPC
+    console.log('[Shield] Sending transaction...');
+    const signature = await tx.rpc({
       skipPreflight: false,
+      commitment: 'confirmed',
     });
+    console.log('[Shield] Transaction sent:', signature);
 
     return {
       signature,
@@ -761,7 +767,7 @@ export class CloakCraftClient {
         randomness: params.inputs[0].randomness,
         leafIndex: params.inputs[0].leafIndex,
         spendingKey: BigInt('0x' + Buffer.from(this.wallet.keypair.spending.sk).toString('hex')),
-        accountHash,
+        accountHash, // Scanner's accountHash - where commitment actually exists
       },
       outputs: params.outputs.map(o => ({
         recipientPubkey: o.recipient.stealthPubkey,
@@ -783,15 +789,39 @@ export class CloakCraftClient {
 
     const circuitId = circuitName === 'transfer/1x2' ? 'transfer_1x2' : 'transfer_1x3';
 
-    // Multi-phase execution with ALT compression
-    console.log('[Transfer] Using multi-phase execution with batch signing...');
+    console.log('[Transfer] === Starting Multi-Phase Transfer ===');
+    console.log('[Transfer] Circuit:', circuitName);
+    console.log('[Transfer] Token:', params.inputs[0].tokenMint.toBase58());
+    console.log('[Transfer] Inputs:', params.inputs.length);
+    console.log('[Transfer] Outputs:', params.outputs.length);
+    console.log('[Transfer] Unshield:', instructionParams.unshieldAmount?.toString() || 'none');
+    if (instructionParams.unshieldRecipient) {
+      console.log('[Transfer] Unshield recipient:', instructionParams.unshieldRecipient.toBase58());
+    }
 
-    const { tx: phase1Tx, result, operationId, pendingCommitments } = await buildTransactWithProgram(
-      this.program,
-      instructionParams,
-      heliusRpcUrl,
-      circuitId
-    );
+    // Multi-phase execution with ALT compression
+    console.log('[Transfer] Building phase transactions...');
+
+    let phase0Tx, phase1Tx, phase2Tx, phase3Tx, result, operationId, pendingCommitments;
+    try {
+      const buildResult = await buildTransactWithProgram(
+        this.program,
+        instructionParams,
+        heliusRpcUrl,
+        circuitId
+      );
+      phase0Tx = buildResult.tx;
+      phase1Tx = buildResult.phase1Tx;
+      phase2Tx = buildResult.phase2Tx;
+      phase3Tx = buildResult.phase3Tx;
+      result = buildResult.result;
+      operationId = buildResult.operationId;
+      pendingCommitments = buildResult.pendingCommitments;
+      console.log('[Transfer] Phase transactions built successfully');
+    } catch (error: any) {
+      console.error('[Transfer] FAILED to build phase transactions:', error);
+      throw error;
+    }
 
     // Import generic builders
     const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
@@ -800,10 +830,21 @@ export class CloakCraftClient {
     console.log('[Transfer] Building all transactions for batch signing...');
     const transactionBuilders = [];
 
-    // Phase 1: Transact (verify proof + verify commitment + create nullifier + store pending + unshield)
-    transactionBuilders.push({ name: 'Phase 1 (Transact)', builder: phase1Tx });
+    // Phase 0: Create pending with proof
+    transactionBuilders.push({ name: 'Phase 0 (Create Pending)', builder: phase0Tx });
 
-    // Phase 2+: Create commitments
+    // Phase 1: Verify commitment exists
+    transactionBuilders.push({ name: 'Phase 1 (Verify Commitment)', builder: phase1Tx });
+
+    // Phase 2: Create nullifier
+    transactionBuilders.push({ name: 'Phase 2 (Create Nullifier)', builder: phase2Tx });
+
+    // Phase 3: Process unshield (optional)
+    if (phase3Tx) {
+      transactionBuilders.push({ name: 'Phase 3 (Unshield)', builder: phase3Tx });
+    }
+
+    // Phase 4+: Create commitments
     for (let i = 0; i < pendingCommitments.length; i++) {
       const pc = pendingCommitments[i];
       const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
@@ -819,16 +860,16 @@ export class CloakCraftClient {
         },
         heliusRpcUrl
       );
-      transactionBuilders.push({ name: `Commitment ${i}`, builder: commitmentTx });
+      transactionBuilders.push({ name: `Phase ${4+i} (Commitment ${i})`, builder: commitmentTx });
     }
 
-    // Phase 3: Close pending operation
+    // Final: Close pending operation
     const { tx: closeTx } = await buildClosePendingOperationWithProgram(
       this.program,
       operationId,
       relayerPubkey
     );
-    transactionBuilders.push({ name: 'Close Operation', builder: closeTx });
+    transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
 
     console.log(`[Transfer] Built ${transactionBuilders.length} transactions`);
 
@@ -849,15 +890,26 @@ export class CloakCraftClient {
     const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
 
     const transactions = await Promise.all(
-      transactionBuilders.map(async ({ builder }) => {
-        const ix = await builder.instruction();
-        return new VersionedTransaction(
-          new TransactionMessage({
-            payerKey: relayerPubkey,
-            recentBlockhash: blockhash,
-            instructions: [ix],
-          }).compileToV0Message(lookupTables) // V0 = ALT-enabled format // V0 = ALT-enabled format
-        );
+      transactionBuilders.map(async ({ name, builder }) => {
+        try {
+          // Extract ALL instructions (preInstructions + main instruction)
+          const mainIx = await builder.instruction();
+          const preIxs = builder._preInstructions || [];
+          const allInstructions = [...preIxs, mainIx];
+
+          console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
+
+          return new VersionedTransaction(
+            new TransactionMessage({
+              payerKey: relayerPubkey,
+              recentBlockhash: blockhash,
+              instructions: allInstructions, // Include compute budget + main instruction
+            }).compileToV0Message(lookupTables) // V0 = ALT-enabled format
+          );
+        } catch (error: any) {
+          console.error(`[Transfer] Failed to build transaction: ${name}`, error);
+          throw new Error(`Failed to build ${name}: ${error?.message || String(error)}`);
+        }
       })
     );
 
@@ -1005,6 +1057,12 @@ export class CloakCraftClient {
 
     // Prepare outputs with commitments (using same tokenMint as inputs)
     const preparedOutputs = await this.prepareOutputs(request.outputs, tokenMint);
+
+    // Debug: Log prepared outputs
+    console.log('[prepareAndTransfer] Prepared outputs:');
+    preparedOutputs.forEach((o, i) => {
+      console.log(`  Output ${i}: amount=${o.amount}, commitment=${Buffer.from(o.commitment).toString('hex').slice(0, 16)}...`);
+    });
 
     // Use commitment as merkle_root with dummy path
     // The circuit doesn't verify merkle path (it's for ABI compatibility only).
@@ -1177,9 +1235,17 @@ export class CloakCraftClient {
 
   /**
    * Get sync status
+   *
+   * Uses direct RPC scanning via Helius, so sync status is always current
    */
   async getSyncStatus(): Promise<SyncStatus> {
-    return this.noteManager.getSyncStatus();
+    // Get current slot from RPC
+    const slot = await this.connection.getSlot();
+    return {
+      latestSlot: slot,
+      indexedSlot: slot,
+      isSynced: true,
+    };
   }
 
   // =============================================================================
@@ -2564,7 +2630,12 @@ export class CloakCraftClient {
   ): Promise<TransferOutput[]> {
 
     return outputs.map(output => {
-      const randomness = generateRandomness();
+      // Check if this is a dummy output (stealthPubX is all zeros)
+      const isDummy = output.recipient.stealthPubkey.x.every(b => b === 0);
+
+      // For dummy outputs, use zero randomness so commitment matches SDK's padding
+      // Commitment = Poseidon(domain, zeros, tokenMint, 0, zeros)
+      const randomness = isDummy ? new Uint8Array(32) : generateRandomness();
 
       // Create note to compute commitment with actual tokenMint
       const note = createNote(
@@ -2575,6 +2646,11 @@ export class CloakCraftClient {
       );
 
       const commitment = computeCommitment(note);
+
+      if (isDummy) {
+        console.log('[prepareOutputs] Dummy output detected - using zero randomness');
+        console.log('[prepareOutputs] Dummy commitment:', Buffer.from(commitment).toString('hex').slice(0, 32) + '...');
+      }
 
       return {
         recipient: output.recipient,

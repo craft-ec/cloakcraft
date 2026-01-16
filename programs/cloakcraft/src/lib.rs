@@ -18,11 +18,11 @@ pub mod helpers;
 
 use instructions::*;
 
-declare_id!("fBh7FvBZpex64Qp7i45yuyxh7sH8YstYyxGLmToLRTP");
+declare_id!("DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha");
 
 /// Light Protocol CPI signer for compressed account operations
 pub const LIGHT_CPI_SIGNER: CpiSigner =
-    derive_light_cpi_signer!("fBh7FvBZpex64Qp7i45yuyxh7sH8YstYyxGLmToLRTP");
+    derive_light_cpi_signer!("DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha");
 
 #[program]
 pub mod cloakcraft {

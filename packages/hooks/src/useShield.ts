@@ -55,12 +55,21 @@ export function useShield() {
       setState({ isShielding: true, error: null, result: null });
 
       try {
+        console.log('[useShield] Starting shield...', {
+          tokenMint: options.tokenMint.toBase58(),
+          amount: options.amount.toString(),
+          walletPublicKey: options.walletPublicKey?.toBase58(),
+        });
+
         // Generate stealth address for recipient (self if not specified)
         const recipientPubkey = options.recipient ?? wallet.publicKey;
+        console.log('[useShield] Generating stealth address for:', recipientPubkey);
         const { stealthAddress } = generateStealthAddress(recipientPubkey);
+        console.log('[useShield] Stealth address generated');
 
         // The stealthAddress includes ephemeralPubkey which is stored on-chain
         // for the recipient to derive their stealthPrivateKey for decryption
+        console.log('[useShield] Calling client.shieldWithWallet...');
         const result = await client.shieldWithWallet(
           {
             pool: options.tokenMint, // This is the token mint, not the pool PDA
@@ -70,16 +79,20 @@ export function useShield() {
           },
           options.walletPublicKey!
         );
+        console.log('[useShield] shieldWithWallet result:', result);
 
         // Sync notes after successful shield (clear cache to pick up new commitment)
+        console.log('[useShield] Syncing notes...');
         await sync(options.tokenMint, true);
 
         setState({ isShielding: false, error: null, result });
         return result;
       } catch (err) {
+        console.error('[useShield] ERROR:', err);
         const error = err instanceof Error ? err.message : 'Shield failed';
         setState({ isShielding: false, error, result: null });
-        return null;
+        // Re-throw so caller can catch it
+        throw err;
       }
     },
     [client, wallet, sync]

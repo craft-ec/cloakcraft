@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { PublicKey } from '@solana/web3.js';
 import { useWallet as useSolanaWallet, useConnection } from '@solana/wallet-adapter-react';
@@ -87,7 +87,9 @@ export default function DemoApp({ initialTab }: DemoAppProps) {
   // Set up Anchor program when wallet connects
   useEffect(() => {
     if (anchorWallet && connection) {
-      const provider = new AnchorProvider(connection, anchorWallet, {});
+      const provider = new AnchorProvider(connection, anchorWallet, {
+        commitment: 'confirmed',
+      });
       const program = new Program(IDL as any, provider);
       setProgram(program);
     }
@@ -709,22 +711,21 @@ interface PoolDisplay {
 }
 
 function PoolInfoCard({ refreshKey }: { refreshKey: number }) {
-  const { client } = useCloakCraft();
+  const { client, isProgramReady } = useCloakCraft();
   const [initializedPools, setInitializedPools] = useState<PoolDisplay[]>([]);
   const [selectedPool, setSelectedPool] = useState<PoolDisplay | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const fetchInitializedPools = async () => {
-      if (!client) return;
+      if (!client || !isProgramReady) return;
 
       setIsLoading(true);
       try {
         const pools = await client.getAllPools();
 
-        // Only show pools with liquidity (totalShielded > 0)
+        // Show all initialized pools
         const poolDisplays = pools
-          .filter((pool) => pool.totalShielded > BigInt(0))
           .map((pool) => {
             const knownToken = DEVNET_TOKENS.find(t => t.mint.equals(pool.tokenMint));
 
@@ -758,7 +759,7 @@ function PoolInfoCard({ refreshKey }: { refreshKey: number }) {
     };
 
     fetchInitializedPools();
-  }, [client, refreshKey]);
+  }, [client, isProgramReady, refreshKey]);
 
   if (isLoading) {
     return (
@@ -835,6 +836,8 @@ function ShieldTab({ solanaPublicKey }: { solanaPublicKey: PublicKey | null }) {
 
 function ShieldFormWithFilter({ solanaPublicKey }: { solanaPublicKey: PublicKey }) {
   const { sync } = useCloakCraft();
+  const solanaWallet = useSolanaWallet();
+  const { connection } = useConnection();
 
   // Use the same hook pattern as Account tab
   const tokenMints = useMemo(() => DEVNET_TOKENS.map((t) => t.mint), []);
@@ -892,26 +895,108 @@ function ShieldFormWithFilter({ solanaPublicKey }: { solanaPublicKey: PublicKey 
     );
   }
 
+  const testSimpleTransaction = async () => {
+    if (!solanaWallet.signTransaction || !solanaPublicKey) {
+      alert('Wallet not ready');
+      return;
+    }
+
+    try {
+      const { Transaction, SystemProgram } = await import('@solana/web3.js');
+
+      console.log('[Test] Using NORMAL transaction method (manual sign + send)');
+
+      // Create simple SOL transfer to self
+      const tx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: solanaPublicKey,
+          toPubkey: solanaPublicKey,
+          lamports: 1000, // 0.000001 SOL
+        })
+      );
+
+      // MANUALLY set feePayer and recentBlockhash (normal way)
+      tx.feePayer = solanaPublicKey;
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
+
+      console.log('[Test] Transaction prepared:', {
+        feePayer: tx.feePayer.toBase58(),
+        recentBlockhash: tx.recentBlockhash.slice(0, 8) + '...',
+        signatures: tx.signatures.length,
+      });
+
+      // Sign with wallet
+      console.log('[Test] Requesting wallet signature...');
+      const signedTx = await solanaWallet.signTransaction(tx);
+      console.log('[Test] ✅ Transaction signed');
+
+      // Send manually
+      console.log('[Test] Sending raw transaction...');
+      const rawTx = signedTx.serialize();
+      const signature = await connection.sendRawTransaction(rawTx, {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
+
+      console.log('[Test] ✅ Transaction sent:', signature);
+      console.log('[Test] Explorer:', `https://explorer.solana.com/tx/${signature}?cluster=devnet`);
+
+      // Wait for confirmation
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight,
+      }, 'confirmed');
+
+      console.log('[Test] ✅ Transaction confirmed!');
+
+      alert(`Test transaction sent!\nSignature: ${signature}\n\nCheck Phantom - SUCCESS or REVERTED?`);
+    } catch (err) {
+      console.error('[Test] ❌ Error:', err);
+      alert(`Test failed: ${err}`);
+    }
+  };
+
   return (
-    <ShieldForm
-      tokenMint={selectedToken.mint}
-      userTokenAccount={userTokenAccount}
-      decimals={selectedToken.decimals}
-      symbol={selectedToken.symbol}
-      walletPublicKey={solanaPublicKey}
-      tokens={availableTokens}
-      onTokenChange={setSelectedToken}
-      onSuccess={async (tx) => {
-        console.log('Shield success:', tx);
-        alert(`Shielded successfully!\nTX: ${tx}`);
-        // Rescan all pools to find new shielded notes
-        await sync(undefined, true);
-      }}
-      onError={(err) => {
-        console.error('Shield error:', err);
-        alert(`Shield error: ${err}`);
-      }}
-    />
+    <>
+      {/* Test button */}
+      <div style={{ ...styles.card, marginBottom: '1rem' }}>
+        <button
+          onClick={testSimpleTransaction}
+          style={{
+            ...styles.button,
+            width: '100%',
+            backgroundColor: colors.warning,
+          }}
+        >
+          🧪 Test Simple Transaction (Self-transfer 0.000001 SOL)
+        </button>
+        <p style={{ fontSize: '0.875rem', color: colors.textMuted, marginTop: '0.5rem', textAlign: 'center' }}>
+          This sends a minimal transaction to test if Phantom tracking works
+        </p>
+      </div>
+
+      <ShieldForm
+        tokenMint={selectedToken.mint}
+        userTokenAccount={userTokenAccount}
+        decimals={selectedToken.decimals}
+        symbol={selectedToken.symbol}
+        walletPublicKey={solanaPublicKey}
+        tokens={availableTokens}
+        onTokenChange={setSelectedToken}
+        onSuccess={async (tx) => {
+          console.log('Shield success:', tx);
+          alert(`Shielded successfully!\nTX: ${tx}`);
+          // Rescan all pools to find new shielded notes
+          await sync(undefined, true);
+        }}
+        onError={(err) => {
+          console.error('Shield error:', err);
+          alert(`Shield error: ${err}`);
+        }}
+      />
+    </>
   );
 }
 

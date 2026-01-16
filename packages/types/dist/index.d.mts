@@ -467,6 +467,8 @@ interface PoolState {
     bump: number;
     /** Vault PDA bump */
     vaultBump: number;
+    /** Commitment counter (number of commitments in this pool) */
+    commitmentCounter?: bigint;
 }
 /** AMM pool state */
 interface AmmPoolState {

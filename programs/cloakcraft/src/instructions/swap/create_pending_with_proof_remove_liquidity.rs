@@ -170,8 +170,6 @@ pub fn create_pending_with_proof_remove_liquidity<'info>(
     pending_op.pools[1] = pool_b.key().to_bytes(); // Output B
     pending_op.commitments[1] = out_b_commitment;
 
-    // DESIGN: Set num_nullifiers = num_inputs for consistency
-    pending_op.num_nullifiers = pending_op.num_inputs; // 1 for remove_liquidity
     pending_op.nullifier_completed_mask = 0;
     pending_op.completed_mask = 0;
 

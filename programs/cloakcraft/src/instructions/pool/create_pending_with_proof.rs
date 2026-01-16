@@ -78,8 +78,8 @@ pub struct CreatePendingWithProof<'info> {
 ///
 /// Transaction size: ~600-800 bytes (NO Light CPI)
 #[allow(clippy::too_many_arguments)]
-pub fn create_pending_with_proof<'info>(
-    ctx: Context<'_, '_, '_, 'info, CreatePendingWithProof<'info>>,
+pub fn create_pending_with_proof(
+    ctx: Context<CreatePendingWithProof>,
     operation_id: [u8; 32],
     proof: Vec<u8>,
     merkle_root: [u8; 32],
@@ -157,9 +157,7 @@ pub fn create_pending_with_proof<'info>(
     msg!("  input_pool: {:?}", pool.key());
 
     // Store nullifier tracking (will be created in Phase 2)
-    // DESIGN: Set num_nullifiers = num_inputs for consistency with legacy code
-    // The append pattern uses expected_nullifiers[] array, but num_nullifiers helps backward compatibility
-    pending_op.num_nullifiers = pending_op.num_inputs; // 1 for transfer
+    // Nullifiers use same indices as inputs (1:1 relationship)
     pending_op.nullifier_completed_mask = 0;
 
     // Store output commitments and regeneration data

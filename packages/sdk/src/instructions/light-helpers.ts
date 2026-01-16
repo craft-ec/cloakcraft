@@ -92,7 +92,7 @@ export class LightProtocol {
   }
 
   /**
-   * Build remaining accounts for Light Protocol CPI
+   * Build remaining accounts for Light Protocol CPI (simple version - no commitment)
    */
   buildRemainingAccounts(): { accounts: AccountMeta[]; outputTreeIndex: number; addressTreeIndex: number } {
     const systemConfig = SystemAccountMetaConfig.new(this.programId);
@@ -110,6 +110,63 @@ export class LightProtocol {
     }));
 
     return { accounts, outputTreeIndex, addressTreeIndex };
+  }
+
+  /**
+   * Build remaining accounts for spending operations (with commitment verification)
+   *
+   * CENTRALIZED TREE HANDLING - Use this for all spend operations!
+   * Handles tree/queue extraction from commitment proof and builds correct indices.
+   *
+   * @param commitmentProof - Inclusion proof for commitment (from getInclusionProofByHash)
+   * @param nullifierProof - Non-inclusion proof for nullifier (from getValidityProof)
+   * @returns Everything needed for Light Protocol CPI with commitment verification
+   */
+  buildRemainingAccountsWithCommitment(commitmentProof: any, nullifierProof: any): {
+    accounts: AccountMeta[];
+    outputTreeIndex: number;
+    commitmentStateTreeIndex: number;
+    commitmentAddressTreeIndex: number;
+    commitmentQueueIndex: number;
+    nullifierAddressTreeIndex: number;
+  } {
+    const systemConfig = SystemAccountMetaConfig.new(this.programId);
+    const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
+
+    // Add output queue (for nullifier creation)
+    const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES.OUTPUT_QUEUE);
+
+    // Add current address tree for nullifier (nullifier uses current tree)
+    const currentAddressTree = this.getAddressTreeInfo().tree;
+    const nullifierAddressTreeIndex = packedAccounts.insertOrGet(currentAddressTree);
+
+    // Extract commitment's tree and queue from proof (where it was created)
+    const commitmentTree = new PublicKey(commitmentProof.treeInfo.tree);
+    const commitmentQueue = new PublicKey(commitmentProof.treeInfo.queue);
+
+    // Add commitment's tree and queue
+    const commitmentStateTreeIndex = packedAccounts.insertOrGet(commitmentTree);
+    const commitmentQueueIndex = packedAccounts.insertOrGet(commitmentQueue);
+
+    // For Light Protocol V2, use SAME tree for both state and address
+    // The proof.treeInfo.tree is the address tree that was active when commitment was created
+    const commitmentAddressTreeIndex = commitmentStateTreeIndex;
+
+    const { remainingAccounts } = packedAccounts.toAccountMetas();
+    const accounts = remainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isWritable: Boolean(acc.isWritable),
+      isSigner: Boolean(acc.isSigner),
+    }));
+
+    return {
+      accounts,
+      outputTreeIndex,
+      commitmentStateTreeIndex,
+      commitmentAddressTreeIndex,
+      commitmentQueueIndex,
+      nullifierAddressTreeIndex,
+    };
   }
 
   /**
@@ -160,6 +217,7 @@ export interface LightTransactParams {
   /** Commitment merkle context (proves commitment exists in state tree) */
   commitmentMerkleContext: {
     merkleTreePubkeyIndex: number;
+    queuePubkeyIndex: number;
     leafIndex: number;
     rootIndex: number;
   };

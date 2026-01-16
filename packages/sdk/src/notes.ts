@@ -142,16 +142,15 @@ export class NoteManager {
 
   /**
    * Get sync status
+   *
+   * Note: This method is deprecated. Use direct RPC scanning instead.
+   * @deprecated Use client.getSyncStatus() which queries RPC directly
    */
   async getSyncStatus(): Promise<SyncStatus> {
-    const response = await fetch(`${this.indexerUrl}/sync-status`);
-    if (!response.ok) {
-      throw new Error('Failed to get sync status');
-    }
-    const data = await response.json() as { latest_slot: number };
+    // Return a dummy status since we're using direct RPC scanning
     return {
-      latestSlot: data.latest_slot,
-      indexedSlot: data.latest_slot,
+      latestSlot: 0,
+      indexedSlot: 0,
       isSynced: true,
     };
   }

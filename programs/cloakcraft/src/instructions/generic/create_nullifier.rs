@@ -68,7 +68,7 @@ pub fn create_nullifier<'info>(
 
     // Validate index
     require!(
-        nullifier_index < pending_op.num_nullifiers,
+        nullifier_index < pending_op.num_inputs,
         CloakCraftError::InvalidNullifierIndex
     );
 
@@ -79,14 +79,14 @@ pub fn create_nullifier<'info>(
     );
 
     // Verify pool matches what was stored during verify_operation
-    let expected_pool = pending_op.nullifier_pools[nullifier_index as usize];
+    let expected_pool = pending_op.input_pools[nullifier_index as usize];
     require!(
         pool.key().to_bytes() == expected_pool,
         CloakCraftError::PoolMismatch
     );
 
     // Get nullifier hash from pending operation (verified by proof)
-    let nullifier = pending_op.nullifiers[nullifier_index as usize];
+    let nullifier = pending_op.expected_nullifiers[nullifier_index as usize];
 
     // Create nullifier via Light Protocol (prevents double-spend)
     create_spend_nullifier_account(

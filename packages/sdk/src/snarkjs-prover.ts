@@ -50,9 +50,13 @@ export async function loadCircomArtifacts(
     // Node.js: Load from file system
     const fs = await import('fs');
 
+    // Strip query parameters (cache busters) from file paths in Node.js
+    const wasmPath = wasmUrl.split('?')[0];
+    const zkeyPath = zkeyUrl.split('?')[0];
+
     // Use the actual paths provided (wasmUrl and zkeyUrl are file paths in Node.js)
-    wasmBuffer = fs.readFileSync(wasmUrl).buffer;
-    zkeyBuffer = fs.readFileSync(zkeyUrl).buffer;
+    wasmBuffer = fs.readFileSync(wasmPath).buffer;
+    zkeyBuffer = fs.readFileSync(zkeyPath).buffer;
   } else {
     // Browser: Use fetch
     const wasmRes = await fetch(wasmUrl);
@@ -100,17 +104,38 @@ export async function generateSnarkjsProof(
   const elapsed = performance.now() - startTime;
 
   // Log public signals as hex for comparison
+  console.log('[snarkjs] Public signals from proof:');
   publicSignals.forEach((sig: string, i: number) => {
     const hex = BigInt(sig).toString(16).padStart(64, '0');
+    console.log(`  [${i}]: ${sig} -> 0x${hex.slice(0, 16)}...`);
   });
 
   // Log raw proof from snarkjs BEFORE formatting
+  console.log('[snarkjs] Raw proof from snarkjs:');
+  console.log('  pi_a[0] (Ax):', proof.pi_a[0]);
+  console.log('  pi_a[1] (Ay):', proof.pi_a[1]);
+  console.log('  pi_b[0][0] (Bx_re):', proof.pi_b[0][0]);
+  console.log('  pi_b[0][1] (Bx_im):', proof.pi_b[0][1]);
+  console.log('  pi_b[1][0] (By_re):', proof.pi_b[1][0]);
+  console.log('  pi_b[1][1] (By_im):', proof.pi_b[1][1]);
+  console.log('  pi_c[0] (Cx):', proof.pi_c[0]);
+  console.log('  pi_c[1] (Cy):', proof.pi_c[1]);
 
   // Convert to bytes and format for Solana
   const formattedProof = formatSnarkjsProofForSolana(proof as { pi_a: string[]; pi_b: string[][]; pi_c: string[] });
 
   // Log formatted proof components with more detail
   const toHexStr = (arr: Uint8Array) => Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+
+  console.log('[snarkjs] Formatted proof for Solana (first 16 bytes of each component):');
+  console.log('  A.x (0-31):', toHexStr(formattedProof.slice(0, 16)) + '...');
+  console.log('  A.y_neg (32-63):', toHexStr(formattedProof.slice(32, 48)) + '...');
+  console.log('  B.x_im (64-95):', toHexStr(formattedProof.slice(64, 80)) + '...');
+  console.log('  B.x_re (96-127):', toHexStr(formattedProof.slice(96, 112)) + '...');
+  console.log('  B.y_im (128-159):', toHexStr(formattedProof.slice(128, 144)) + '...');
+  console.log('  B.y_re (160-191):', toHexStr(formattedProof.slice(160, 176)) + '...');
+  console.log('  C.x (192-223):', toHexStr(formattedProof.slice(192, 208)) + '...');
+  console.log('  C.y (224-255):', toHexStr(formattedProof.slice(224, 240)) + '...');
 
   return formattedProof;
 }

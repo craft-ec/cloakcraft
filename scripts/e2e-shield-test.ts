@@ -206,6 +206,10 @@ async function main() {
   const randomness = new Uint8Array(32);
   require("crypto").randomFillSync(randomness);
 
+  // Generate stealth ephemeral pubkey (normally from ECDH)
+  const stealthEphemeralPubkey = new Uint8Array(64);
+  require("crypto").randomFillSync(stealthEphemeralPubkey);
+
   const commitment = computeCommitment(
     stealthPubX,
     tokenMint,
@@ -292,6 +296,7 @@ async function main() {
       .shield(
         Array.from(commitment),
         new anchor.BN(SHIELD_AMOUNT.toString()),
+        Array.from(stealthEphemeralPubkey),
         encryptedNote,
         lightParams
       )

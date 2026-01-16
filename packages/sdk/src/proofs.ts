@@ -1211,6 +1211,28 @@ export class ProofGenerator {
       );
     }
 
+    // Debug: log unshield amount for proof generation
+    const unshieldAmountForProof = params.unshield?.amount ?? 0n;
+    console.log('[buildTransferWitness] unshield_amount for proof:', unshieldAmountForProof.toString());
+    console.log('[buildTransferWitness] params.unshield:', params.unshield);
+    console.log('[buildTransferWitness] output 1 amount:', params.outputs[0].amount.toString());
+    console.log('[buildTransferWitness] output 2 amount:', out2Amount.toString());
+    console.log('[buildTransferWitness] input amount:', input.amount.toString());
+
+    // Verify balance: input = out1 + out2 + unshield
+    const expectedTotal = params.outputs[0].amount + out2Amount + unshieldAmountForProof;
+    console.log('[buildTransferWitness] Balance check: input=', input.amount.toString(),
+                'expected=', expectedTotal.toString(),
+                'match=', input.amount === expectedTotal);
+
+    // Debug: Log exact commitment bytes for comparison with on-chain
+    console.log('[buildTransferWitness] === Commitment bytes for proof ===');
+    console.log('  out_commitment_1 (full):', Buffer.from(params.outputs[0].commitment).toString('hex'));
+    console.log('  out_commitment_2 (full):', Buffer.from(out2Commitment).toString('hex'));
+    console.log('  out_stealth_pub_x_1:', Buffer.from(params.outputs[0].stealthPubX).toString('hex').slice(0, 32) + '...');
+    console.log('  out_amount_1:', params.outputs[0].amount.toString());
+    console.log('  out_randomness_1:', Buffer.from(params.outputs[0].randomness).toString('hex').slice(0, 32) + '...');
+
     return {
       // Public inputs
       merkle_root: fieldToHex(params.merkleRoot),
@@ -1218,7 +1240,7 @@ export class ProofGenerator {
       out_commitment_1: fieldToHex(params.outputs[0].commitment),
       out_commitment_2: fieldToHex(out2Commitment),
       token_mint: fieldToHex(tokenMint),
-      unshield_amount: (params.unshield?.amount ?? 0n).toString(),
+      unshield_amount: unshieldAmountForProof.toString(),
 
       // Private inputs (Circom circuit - no in_stealth_pub_y)
       in_stealth_pub_x: fieldToHex(input.stealthPubX),

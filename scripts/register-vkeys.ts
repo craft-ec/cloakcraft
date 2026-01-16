@@ -12,7 +12,7 @@ import * as path from "path";
 import * as os from "os";
 
 // Program ID
-const PROGRAM_ID = new PublicKey("fBh7FvBZpex64Qp7i45yuyxh7sH8YstYyxGLmToLRTP");
+const PROGRAM_ID = new PublicKey("DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha");
 
 // Seeds
 const VK_SEED = Buffer.from("vk");
@@ -46,7 +46,9 @@ async function main() {
   }
 
   // Setup connection
-  const connection = new Connection("https://api.devnet.solana.com", "confirmed");
+  const HELIUS_API_KEY = process.env.HELIUS_API_KEY || '88ac54a3-8850-4686-a521-70d116779182';
+  const RPC_URL = `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
+  const connection = new Connection(RPC_URL, "confirmed");
 
   // Load wallet
   const walletPath = path.join(os.homedir(), ".config", "solana", "id.json");

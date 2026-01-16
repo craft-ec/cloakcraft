@@ -1,6 +1,6 @@
 
 > @cloakcraft/hooks@0.1.0 build /Users/onlyabrak/dev/craftec/cloakcraft/packages/hooks
-> tsup src/index.ts --format cjs,esm --dts --external react --external @solana/web3.js --external @solana/spl-token --external @cloakcraft/sdk
+> tsup src/index.ts --format cjs,esm --dts --external react --external @solana/web3.js --external @solana/spl-token --external @solana/wallet-adapter-react --external @cloakcraft/sdk
 
 CLI Building entry: src/index.ts
 CLI Using tsconfig: tsconfig.json
@@ -8,11 +8,11 @@ CLI tsup v8.5.1
 CLI Target: es2020
 CJS Build start
 ESM Build start
-CJS dist/index.js 38.64 KB
-CJS ⚡️ Build success in 15ms
-ESM dist/index.mjs 34.97 KB
+ESM dist/index.mjs 35.54 KB
 ESM ⚡️ Build success in 15ms
+CJS dist/index.js 39.22 KB
+CJS ⚡️ Build success in 15ms
 DTS Build start
-DTS ⚡️ Build success in 768ms
-DTS dist/index.d.ts  10.43 KB
-DTS dist/index.d.mts 10.43 KB
+DTS ⚡️ Build success in 887ms
+DTS dist/index.d.ts  10.46 KB
+DTS dist/index.d.mts 10.46 KB

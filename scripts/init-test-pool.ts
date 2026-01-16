@@ -5,11 +5,24 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
-const PROGRAM_ID = new PublicKey("fBh7FvBZpex64Qp7i45yuyxh7sH8YstYyxGLmToLRTP");
-const TOKEN_MINT = new PublicKey("2wuebVsaAWDSRQQkgmYjCMXrmGyuUWe5Uc5Kv8XG4SZm");
+const PROGRAM_ID = new PublicKey("DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha");
 
 async function main() {
-  const connection = new Connection("https://api.devnet.solana.com", "confirmed");
+  // Load test data to get token mint
+  const testDataPath = path.join(__dirname, ".test-data.json");
+  let TOKEN_MINT: PublicKey;
+  if (fs.existsSync(testDataPath)) {
+    const testData = JSON.parse(fs.readFileSync(testDataPath, "utf-8"));
+    TOKEN_MINT = new PublicKey(testData.mint);
+    console.log("Using token from test data:", TOKEN_MINT.toBase58());
+  } else {
+    console.error("No test data found. Run sdk-shield.ts first.");
+    process.exit(1);
+  }
+
+  const HELIUS_API_KEY = process.env.HELIUS_API_KEY || '88ac54a3-8850-4686-a521-70d116779182';
+  const RPC_URL = `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
+  const connection = new Connection(RPC_URL, "confirmed");
   const walletPath = path.join(os.homedir(), ".config", "solana", "id.json");
   const wallet = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(walletPath, "utf-8"))));
 

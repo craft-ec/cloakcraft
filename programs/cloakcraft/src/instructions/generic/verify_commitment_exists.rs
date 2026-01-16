@@ -26,6 +26,7 @@ use crate::errors::CloakCraftError;
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct CommitmentMerkleContext {
     pub merkle_tree_pubkey_index: u8,
+    pub queue_pubkey_index: u8,
     pub leaf_index: u32,
     pub root_index: u16,
 }

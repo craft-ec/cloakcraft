@@ -6,16 +6,16 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-cloakcraft = "fBh7FvBZpex64Qp7i45yuyxh7sH8YstYyxGLmToLRTP"
+cloakcraft = "DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha"
 
 [programs.devnet]
-cloakcraft = "fBh7FvBZpex64Qp7i45yuyxh7sH8YstYyxGLmToLRTP"
+cloakcraft = "DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Localnet"
+cluster = "https://devnet.helius-rpc.com/?api-key=88ac54a3-8850-4686-a521-70d116779182"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

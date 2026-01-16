@@ -13,6 +13,7 @@ interface CloakCraftContextValue {
     isInitialized: boolean;
     isInitializing: boolean;
     isProverReady: boolean;
+    isProgramReady: boolean;
     isSyncing: boolean;
     syncStatus: SyncStatus | null;
     notes: DecryptedNote[];

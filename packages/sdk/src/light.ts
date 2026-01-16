@@ -709,9 +709,6 @@ export class LightCommitmentClient extends LightClient {
 
       const address = this.deriveNullifierAddress(nullifier, programId, addressTree, note.pool);
       const addressStr = new PublicKey(address).toBase58();
-      const poolStr = note.pool ? note.pool.toBase58() : 'none';
-      const nullifierHex = Buffer.from(nullifier).toString('hex').slice(0, 16);
-      console.log(`[Scanner] Note ${note.amount}, pool: ${poolStr.slice(0, 8)}..., nullifier: ${nullifierHex}..., addr: ${addressStr.slice(0, 8)}...`);
       nullifierData.push({ note, nullifier, address });
     }
 
@@ -719,17 +716,10 @@ export class LightCommitmentClient extends LightClient {
     const addresses = nullifierData.map(d => new PublicKey(d.address).toBase58());
     const spentSet = await this.batchCheckNullifiers(addresses);
 
-    // Debug: Log spent detection
-    const spentCount = Array.from(spentSet).length;
-    console.log(`[Scanner] Checked ${addresses.length} nullifiers, found ${spentCount} spent`);
-
     // Build results
     return nullifierData.map(({ note, nullifier, address }) => {
       const addressStr = new PublicKey(address).toBase58();
       const isSpent = spentSet.has(addressStr);
-      if (isSpent) {
-        console.log(`[Scanner] Note ${addressStr.slice(0, 8)}... is SPENT, filtering out`);
-      }
       return {
         ...note,
         spent: isSpent,
@@ -782,7 +772,6 @@ export class LightCommitmentClient extends LightClient {
   ): Promise<DecryptedNote[]> {
     // Query commitment accounts from Helius
     const accounts = await this.getCommitmentAccounts(programId, pool);
-    console.log(`[Scanner] Found ${accounts.length} commitment accounts${pool ? ` for pool ${pool.toBase58()}` : ' (all pools)'}`);
 
     // Get or create cache for this viewing key
     const cacheKey = this.getCacheKey(viewingKey);
@@ -888,8 +877,6 @@ export class LightCommitmentClient extends LightClient {
           stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? undefined, // Store for stealth key derivation
         };
 
-        console.log(`[Scanner] Decrypted note: tokenMint=${new PublicKey(note.tokenMint).toBase58().slice(0, 8)}..., amount=${note.amount}, pool=${new PublicKey(parsed.pool).toBase58().slice(0, 8)}...`);
-
         cache.set(account.hash, decryptedNote); // Cache our note
         decryptedNotes.push(decryptedNote);
       } catch (err) {
@@ -899,7 +886,6 @@ export class LightCommitmentClient extends LightClient {
       }
     }
 
-    console.log(`[Scanner] Total decrypted notes: ${decryptedNotes.length}`);
     return decryptedNotes;
   }
 

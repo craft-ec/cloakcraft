@@ -1,17 +1,22 @@
 //! Field element conversion helpers for BN254 curve
 //!
 //! Provides utilities for converting Solana types (Pubkey, u64) to BN254 field elements
-//! used in ZK proofs. Ensures all values are less than the BN254 field modulus.
+//! used in ZK proofs. Ensures all values are less than the BN254 scalar field modulus (Fr).
+//!
+//! IMPORTANT: Circom/Groth16 circuits use the SCALAR field (Fr), not the base field (Fq).
+//! - Fr = 21888242871839275222246405745257275088548364400416034343698204186575808495617 (circuit field)
+//! - Fq = 21888242871839275222246405745257275088696311157297823662689037894645226208583 (curve coordinates)
 
 use anchor_lang::prelude::*;
 
-/// BN254 field modulus (big-endian)
-/// p = 21888242871839275222246405745257275088548364400416034343698204186575808495617
-const BN254_FIELD_MODULUS: [u8; 32] = [
+/// BN254 scalar field modulus (Fr) - big-endian
+/// This is the field used by Circom circuits for Groth16 proofs.
+/// r = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+const BN254_SCALAR_FIELD_MODULUS: [u8; 32] = [
     0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29,
     0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d,
-    0x97, 0x81, 0x6a, 0x91, 0x68, 0x71, 0xca, 0x8d,
-    0x3c, 0x20, 0x8c, 0x16, 0xd8, 0x7c, 0xfd, 0x47,
+    0x28, 0x33, 0xe8, 0x48, 0x79, 0xb9, 0x70, 0x91,
+    0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
 ];
 
 /// Convert a Pubkey to a BN254 field element
@@ -44,14 +49,14 @@ pub fn u64_to_field(value: u64) -> [u8; 32] {
     result
 }
 
-/// Subtract BN254 field modulus from value: result = value - modulus
+/// Subtract BN254 scalar field modulus from value: result = value - modulus
 fn subtract_modulus(value: &[u8; 32]) -> [u8; 32] {
     let mut result = [0u8; 32];
     let mut borrow: i16 = 0;
 
     // Big-endian subtraction
     for i in (0..32).rev() {
-        let diff = value[i] as i16 - BN254_FIELD_MODULUS[i] as i16 - borrow;
+        let diff = value[i] as i16 - BN254_SCALAR_FIELD_MODULUS[i] as i16 - borrow;
         if diff < 0 {
             result[i] = (diff + 256) as u8;
             borrow = 1;
@@ -63,14 +68,14 @@ fn subtract_modulus(value: &[u8; 32]) -> [u8; 32] {
     result
 }
 
-/// Compare 32-byte big-endian number with BN254 field modulus
+/// Compare 32-byte big-endian number with BN254 scalar field modulus
 ///
 /// Returns true if value >= modulus
 fn ge_modulus(value: &[u8; 32]) -> bool {
     for i in 0..32 {
-        if value[i] > BN254_FIELD_MODULUS[i] {
+        if value[i] > BN254_SCALAR_FIELD_MODULUS[i] {
             return true;
-        } else if value[i] < BN254_FIELD_MODULUS[i] {
+        } else if value[i] < BN254_SCALAR_FIELD_MODULUS[i] {
             return false;
         }
     }

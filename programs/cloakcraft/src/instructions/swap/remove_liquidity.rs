@@ -177,7 +177,6 @@ pub fn remove_liquidity<'info>(
     pending_op.expires_at = clock.unix_timestamp + PENDING_OPERATION_EXPIRY_SECONDS;
 
     // Nullifier already created in Phase 1 (no Phase 2 needed)
-    pending_op.num_nullifiers = 0;
     pending_op.nullifier_completed_mask = 0;
 
     // Store commitment data for Phase 2/3 (create_commitment calls)

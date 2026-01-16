@@ -159,8 +159,6 @@ pub fn create_pending_with_proof_swap<'info>(
     pending_op.pools[1] = input_pool.key().to_bytes(); // Change commitment (remaining input)
     pending_op.commitments[1] = change_commitment;
 
-    // DESIGN: Set num_nullifiers = num_inputs for consistency
-    pending_op.num_nullifiers = pending_op.num_inputs; // 1 for swap
     pending_op.nullifier_completed_mask = 0;
     pending_op.completed_mask = 0;
 

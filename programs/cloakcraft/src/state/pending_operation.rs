@@ -18,17 +18,13 @@ use anchor_lang::prelude::*;
 use super::commitment::MAX_ENCRYPTED_NOTE_SIZE;
 
 /// Maximum number of pending commitments per operation
-/// Supports up to 10 outputs (e.g., multi-recipient transfers, complex swaps with fees)
-pub const MAX_PENDING_COMMITMENTS: usize = 10;
+/// 8 outputs allows flexibility for change, fees, multi-recipient transfers
+pub const MAX_PENDING_COMMITMENTS: usize = 8;
 
-/// Maximum number of pending nullifiers per operation
-/// Supports up to 8 inputs (e.g., batched operations, multi-token swaps)
-pub const MAX_PENDING_NULLIFIERS: usize = 8;
-
-/// Maximum number of input commitments per operation (for append pattern multi-input support)
-/// Supports up to 8 inputs (e.g., batched operations, complex multi-token swaps)
-/// Most operations use 1-2 inputs, but this allows future flexibility
-pub const MAX_INPUT_COMMITMENTS: usize = 8;
+/// Maximum number of inputs per operation (each input = 1 commitment + 1 nullifier)
+/// 3 inputs allows note consolidation (combine 3 notes into 1)
+/// For more notes, use recursive consolidation: (1+2+3)→A, (A+4+5)→B, etc.
+pub const MAX_INPUTS: usize = 3;
 
 /// Pending operation for multi-phase commit with append pattern
 ///
@@ -72,13 +68,13 @@ pub struct PendingOperation {
     /// Phase 1 must verify THIS exact commitment
     /// For single-input operations (swap, remove_liquidity): Uses index 0
     /// For multi-input operations (add_liquidity): Uses indices 0 and 1
-    pub input_commitments: [[u8; 32]; MAX_INPUT_COMMITMENTS],
+    pub input_commitments: [[u8; 32]; MAX_INPUTS],
 
     /// SECURITY: Expected nullifiers from ZK proof (binds Phase 0 to Phase 2)
     /// Phase 0 extracts from proof public inputs
     /// Phase 2 must create THIS exact nullifier
     /// Matches input_commitments indices
-    pub expected_nullifiers: [[u8; 32]; MAX_INPUT_COMMITMENTS],
+    pub expected_nullifiers: [[u8; 32]; MAX_INPUTS],
 
     /// SECURITY: Input pools for each input commitment (binds Phase 1/2 to correct pool)
     /// Phase 0 stores which pool each input commitment belongs to
@@ -86,7 +82,7 @@ pub struct PendingOperation {
     /// Phase 2 must create nullifier in THIS exact pool
     /// This prevents pool confusion attacks in multi-pool operations (e.g., swap)
     /// Matches input_commitments and expected_nullifiers indices
-    pub input_pools: [[u8; 32]; MAX_INPUT_COMMITMENTS],
+    pub input_pools: [[u8; 32]; MAX_INPUTS],
 
     /// Number of input commitments to verify (1 for swap/remove, 2 for add_liquidity)
     pub num_inputs: u8,
@@ -95,16 +91,8 @@ pub struct PendingOperation {
     /// Bit i = 1 means input_commitments[i] was verified
     pub inputs_verified_mask: u8,
 
-    /// Number of pending nullifiers
-    pub num_nullifiers: u8,
-
-    /// Pool keys for each nullifier (serialized as [u8; 32])
-    pub nullifier_pools: [[u8; 32]; MAX_PENDING_NULLIFIERS],
-
-    /// Nullifier hashes
-    pub nullifiers: [[u8; 32]; MAX_PENDING_NULLIFIERS],
-
     /// Which nullifiers have been created (bitmask)
+    /// Uses same indices as expected_nullifiers array
     pub nullifier_completed_mask: u8,
 
     /// Number of pending commitments
@@ -184,23 +172,20 @@ impl PendingOperation {
         32 + // relayer
         1 + // operation_type
         1 + // proof_verified
-        (32 * MAX_INPUT_COMMITMENTS) + // input_commitments (8 × 32 = 256) (SECURITY: binds Phase 0 to Phase 1)
-        (32 * MAX_INPUT_COMMITMENTS) + // expected_nullifiers (8 × 32 = 256) (SECURITY: binds Phase 0 to Phase 2)
-        (32 * MAX_INPUT_COMMITMENTS) + // input_pools (8 × 32 = 256) (SECURITY: binds Phase 1/2 to correct pool)
+        (32 * MAX_INPUTS) + // input_commitments (3 × 32 = 96) (SECURITY: binds Phase 0 to Phase 1)
+        (32 * MAX_INPUTS) + // expected_nullifiers (3 × 32 = 96) (SECURITY: binds Phase 0 to Phase 2)
+        (32 * MAX_INPUTS) + // input_pools (3 × 32 = 96) (SECURITY: binds Phase 1/2 to correct pool)
         1 + // num_inputs
         1 + // inputs_verified_mask
-        1 + // num_nullifiers
-        (32 * MAX_PENDING_NULLIFIERS) + // nullifier_pools (8 × 32 = 256)
-        (32 * MAX_PENDING_NULLIFIERS) + // nullifiers (8 × 32 = 256)
         1 + // nullifier_completed_mask
         1 + // num_commitments
-        (32 * MAX_PENDING_COMMITMENTS) + // pools (10 × 32 = 320)
-        (32 * MAX_PENDING_COMMITMENTS) + // commitments (10 × 32 = 320)
-        (8 * MAX_PENDING_COMMITMENTS) + // leaf_indices (10 × 8 = 80)
-        (64 * MAX_PENDING_COMMITMENTS) + // stealth_ephemeral_pubkeys (10 × 64 = 640)
-        (32 * MAX_PENDING_COMMITMENTS) + // output_recipients (10 × 32 = 320)
-        (8 * MAX_PENDING_COMMITMENTS) + // output_amounts (10 × 8 = 80)
-        (32 * MAX_PENDING_COMMITMENTS) + // output_randomness (10 × 32 = 320)
+        (32 * MAX_PENDING_COMMITMENTS) + // pools (8 × 32 = 256)
+        (32 * MAX_PENDING_COMMITMENTS) + // commitments (8 × 32 = 256)
+        (8 * MAX_PENDING_COMMITMENTS) + // leaf_indices (8 × 8 = 64)
+        (64 * MAX_PENDING_COMMITMENTS) + // stealth_ephemeral_pubkeys (8 × 64 = 512)
+        (32 * MAX_PENDING_COMMITMENTS) + // output_recipients (8 × 32 = 256)
+        (8 * MAX_PENDING_COMMITMENTS) + // output_amounts (8 × 8 = 64)
+        (32 * MAX_PENDING_COMMITMENTS) + // output_randomness (8 × 32 = 256)
         1 + // completed_mask
         8 + // expires_at
         8 + // created_at
@@ -208,7 +193,7 @@ impl PendingOperation {
         8 + // output_amount (operation-specific)
         8 + // extra_amount (operation-specific)
         1; // swap_a_to_b (operation-specific)
-        // Total: ~3,034 bytes with 8 max inputs (vs 5,034 with encrypted notes)
+        // Total: ~2,066 bytes with 3 inputs + 8 outputs (192 bytes saved, safe for 4KB stack)
 
     /// Check if all input commitments have been verified
     pub fn all_inputs_verified(&self) -> bool {
@@ -227,13 +212,10 @@ impl PendingOperation {
         (self.nullifier_completed_mask & mask) == mask
     }
 
-    /// Check if all nullifiers have been created (legacy nullifier array)
+    /// Check if all nullifiers have been created
+    /// This is the same as all_expected_nullifiers_created() - kept for compatibility
     pub fn all_nullifiers_created(&self) -> bool {
-        if self.num_nullifiers == 0 {
-            return true;
-        }
-        let mask = (1u8 << self.num_nullifiers) - 1;
-        self.nullifier_completed_mask == mask
+        self.all_expected_nullifiers_created()
     }
 
     /// Check if all commitments have been created
@@ -267,7 +249,7 @@ impl PendingOperation {
 
     /// Get next uncreated nullifier index
     pub fn next_uncreated_nullifier(&self) -> Option<u8> {
-        for i in 0..self.num_nullifiers {
+        for i in 0..self.num_inputs {
             if (self.nullifier_completed_mask & (1u8 << i)) == 0 {
                 return Some(i);
             }

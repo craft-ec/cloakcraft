@@ -156,8 +156,6 @@ pub fn create_pending_with_proof_add_liquidity<'info>(
     msg!("  input_pool_b: {:?}", pool_b.key());
 
     // Store nullifier tracking (will be created in Phase 2a/2b)
-    // DESIGN: Set num_nullifiers = num_inputs for consistency with legacy code
-    pending_op.num_nullifiers = pending_op.num_inputs; // 2 for add_liquidity
     pending_op.nullifier_completed_mask = 0;
 
     // SECURITY: Validate output count

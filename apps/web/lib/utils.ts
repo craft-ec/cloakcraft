@@ -1,0 +1,104 @@
+import { type ClassValue, clsx } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+import { PublicKey } from '@solana/web3.js';
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+/**
+ * Format a token amount with decimals
+ */
+export function formatAmount(amount: bigint, decimals: number = 9): string {
+  const divisor = BigInt(10 ** decimals);
+  const whole = amount / divisor;
+  const fraction = amount % divisor;
+
+  if (fraction === 0n) {
+    return whole.toString();
+  }
+
+  const fractionStr = fraction.toString().padStart(decimals, '0');
+  // Remove trailing zeros
+  const trimmed = fractionStr.replace(/0+$/, '');
+  return `${whole}.${trimmed}`;
+}
+
+/**
+ * Parse a user-input amount string to bigint
+ */
+export function parseAmount(input: string, decimals: number = 9): bigint {
+  const trimmed = input.trim();
+  if (!trimmed || trimmed === '.') return 0n;
+
+  const parts = trimmed.split('.');
+  const whole = BigInt(parts[0] || '0');
+
+  let fraction = 0n;
+  if (parts[1]) {
+    const fractionStr = parts[1].slice(0, decimals).padEnd(decimals, '0');
+    fraction = BigInt(fractionStr);
+  }
+
+  return whole * BigInt(10 ** decimals) + fraction;
+}
+
+/**
+ * Truncate an address for display
+ */
+export function truncateAddress(address: string | PublicKey, chars: number = 4): string {
+  const str = typeof address === 'string' ? address : address.toBase58();
+  if (str.length <= chars * 2 + 3) return str;
+  return `${str.slice(0, chars)}...${str.slice(-chars)}`;
+}
+
+/**
+ * Format SOL amount (always 9 decimals)
+ */
+export function formatSol(lamports: bigint): string {
+  return formatAmount(lamports, 9);
+}
+
+/**
+ * Validate a Solana public key
+ */
+export function isValidPublicKey(input: string): boolean {
+  try {
+    new PublicKey(input);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Copy text to clipboard
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Format a transaction signature for display
+ */
+export function formatSignature(signature: string, chars: number = 8): string {
+  if (signature.length <= chars * 2 + 3) return signature;
+  return `${signature.slice(0, chars)}...${signature.slice(-chars)}`;
+}
+
+/**
+ * Get Solana explorer URL
+ */
+export function getExplorerUrl(
+  signature: string,
+  network: 'devnet' | 'mainnet-beta' = 'devnet'
+): string {
+  const base = 'https://explorer.solana.com/tx';
+  const cluster = network === 'devnet' ? '?cluster=devnet' : '';
+  return `${base}/${signature}${cluster}`;
+}

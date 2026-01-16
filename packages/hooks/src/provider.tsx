@@ -14,6 +14,7 @@ interface CloakCraftContextValue {
   isInitialized: boolean;
   isInitializing: boolean;
   isProverReady: boolean;
+  isProgramReady: boolean;
   isSyncing: boolean;
   syncStatus: SyncStatus | null;
   notes: DecryptedNote[];
@@ -64,6 +65,7 @@ export function CloakCraftProvider({
   const [isInitialized, setIsInitialized] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [isProverReady, setIsProverReady] = useState(false);
+  const [isProgramReady, setIsProgramReady] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [notes, setNotes] = useState<DecryptedNote[]>([]);
@@ -134,8 +136,15 @@ export function CloakCraftProvider({
     }
   }, [isInitialized, wallet, client]);
 
-  // Note: Auto-sync disabled - let user manually refresh in Notes tab
-  // This prevents unnecessary scanning of all commitments on wallet connect
+  // Auto-sync notes when wallet connects and program is ready
+  useEffect(() => {
+    if (wallet && isProgramReady && !isSyncing && notes.length === 0) {
+      console.log('[CloakCraft] Auto-syncing notes on wallet connect...');
+      sync().catch((err) => {
+        console.error('[CloakCraft] Auto-sync failed:', err);
+      });
+    }
+  }, [wallet, isProgramReady]);
 
   // Auto-initialize prover for transfer circuits when wallet connects
   useEffect(() => {
@@ -218,6 +227,7 @@ export function CloakCraftProvider({
   const setProgram = useCallback((program: unknown) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     client.setProgram(program as any);
+    setIsProgramReady(true);
   }, [client]);
 
   const initializeProver = useCallback(async (circuits?: string[]) => {
@@ -242,6 +252,7 @@ export function CloakCraftProvider({
     isInitialized,
     isInitializing,
     isProverReady,
+    isProgramReady,
     isSyncing,
     syncStatus,
     notes,

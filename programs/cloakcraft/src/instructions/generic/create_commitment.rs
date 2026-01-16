@@ -111,6 +111,16 @@ pub fn create_commitment<'info>(
         return Ok(());
     }
 
+    // Skip zero-amount dummy commitments (circuit padding)
+    // These are created by SDK to satisfy circuit input requirements (e.g., transfer_1x2 needs exactly 2 outputs)
+    // Instead of creating actual Light Protocol accounts, we mark them complete immediately
+    let output_amount = pending_op.output_amounts[commitment_index as usize];
+    if output_amount == 0 {
+        msg!("Skipping zero-amount dummy commitment at index {}", commitment_index);
+        pending_op.mark_completed(commitment_index);
+        return Ok(());
+    }
+
     // Convert Vec to fixed-size array for Light Protocol
     let (encrypted_note_fixed, note_len) = vec_to_fixed_note(&encrypted_note);
 

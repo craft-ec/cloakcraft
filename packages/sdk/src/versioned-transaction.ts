@@ -227,21 +227,32 @@ export async function executeVersionedTransaction(
     try {
       console.log(`[Versioned TX] Sending transaction (attempt ${attempt + 1}/${maxRetries})...`);
 
-      const signature = await connection.sendTransaction(tx, {
+      const rawTransaction = tx.serialize();
+      const signature = await connection.sendRawTransaction(rawTransaction, {
         skipPreflight,
         maxRetries: 0, // Handle retries ourselves
+        preflightCommitment: 'confirmed',
       });
 
       console.log(`[Versioned TX] Transaction sent: ${signature}`);
+      console.log(`[Versioned TX] Explorer: https://explorer.solana.com/tx/${signature}?cluster=devnet`);
 
-      // Confirm transaction
-      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+      // Get latest blockhash for confirmation
+      const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+
+      // Wait for confirmation
+      const confirmation = await connection.confirmTransaction({
+        signature,
+        blockhash: latestBlockhash.blockhash,
+        lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+      }, 'confirmed');
 
       if (confirmation.value.err) {
+        console.error('[Versioned TX] Transaction failed:', confirmation.value.err);
         throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
       }
 
-      console.log(`[Versioned TX] Transaction confirmed: ${signature}`);
+      console.log(`[Versioned TX] ✅ Transaction confirmed successfully: ${signature}`);
       return signature;
 
     } catch (err) {

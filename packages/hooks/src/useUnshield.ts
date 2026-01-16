@@ -60,12 +60,16 @@ export function useUnshield() {
       let recipientTokenAccount = recipient;
       if (isWalletAddress && inputs[0]?.tokenMint) {
         try {
+          console.log('[Unshield] Deriving ATA from wallet:', recipient.toBase58());
+          console.log('[Unshield] Token mint:', inputs[0].tokenMint.toBase58());
           recipientTokenAccount = getAssociatedTokenAddressSync(
             inputs[0].tokenMint,
             recipient,
             true // allowOwnerOffCurve - standard practice for flexibility
           );
+          console.log('[Unshield] Derived ATA:', recipientTokenAccount.toBase58());
         } catch (err) {
+          console.error('[Unshield] Failed to derive ATA:', err);
           setState({
             isUnshielding: false,
             error: `Failed to derive token account: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -73,6 +77,8 @@ export function useUnshield() {
           });
           return null;
         }
+      } else {
+        console.log('[Unshield] Skipping ATA derivation - isWalletAddress:', isWalletAddress, 'has tokenMint:', !!inputs[0]?.tokenMint);
       }
 
       // Force re-scan to get fresh notes with stealthEphemeralPubkey
@@ -127,19 +133,52 @@ export function useUnshield() {
       try {
         // Calculate change (if any)
         const change = totalInput - amount;
+        console.log('[Unshield] Total input:', totalInput.toString());
+        console.log('[Unshield] Amount to unshield:', amount.toString());
+        console.log('[Unshield] Change:', change.toString());
 
         // Import generateStealthAddress here to avoid circular deps
         const { generateStealthAddress } = await import('@cloakcraft/sdk');
-        const { stealthAddress } = generateStealthAddress(wallet.publicKey);
 
         // Circuit always requires at least one output commitment
-        // If no change, create a dummy zero-amount output
-        const outputs = [{
-          recipient: stealthAddress,
-          amount: change > 0n ? change : 0n,
-        }];
+        // If change > 0, create a real change output
+        // If change = 0 (full unshield), we still need an output for the circuit
+        // but it will be a zero-amount note to self
+        const outputs: Array<{ recipient: ReturnType<typeof generateStealthAddress>['stealthAddress']; amount: bigint }> = [];
+
+        if (change > 0n) {
+          // Real change output
+          const { stealthAddress } = generateStealthAddress(wallet.publicKey);
+          outputs.push({
+            recipient: stealthAddress,
+            amount: change,
+          });
+        } else {
+          // Full unshield - create a TRUE dummy output with all zeros
+          // This ensures the commitment matches what the circuit expects for a dummy
+          // Commitment = Poseidon(domain, zeros, tokenMint, 0, zeros)
+          const dummyStealthAddress = {
+            stealthPubkey: {
+              x: new Uint8Array(32),  // zeros
+              y: new Uint8Array(32),  // zeros
+            },
+            ephemeralPubkey: {
+              x: new Uint8Array(32),  // zeros
+              y: new Uint8Array(32),  // zeros
+            },
+          };
+          outputs.push({
+            recipient: dummyStealthAddress as ReturnType<typeof generateStealthAddress>['stealthAddress'],
+            amount: 0n,
+          });
+        }
+
+        console.log('[Unshield] Matched inputs:', matchedInputs.length);
+        console.log('[Unshield] Outputs:', outputs.length);
+        console.log('[Unshield] Recipient token account:', recipientTokenAccount.toBase58());
 
         // Execute transfer with unshield using FRESH notes
+        console.log('[Unshield] Calling prepareAndTransfer...');
         const result = await client.prepareAndTransfer(
           {
             inputs: matchedInputs,  // Use fresh notes with stealthEphemeralPubkey
@@ -149,6 +188,8 @@ export function useUnshield() {
           undefined // relayer - wallet adapter will be used via provider
         );
 
+        console.log('[Unshield] prepareAndTransfer result:', result);
+
         // Sync notes after successful unshield (clear cache for fresh data)
         if (matchedInputs.length > 0 && matchedInputs[0].tokenMint) {
           await sync(matchedInputs[0].tokenMint, true);
@@ -157,7 +198,9 @@ export function useUnshield() {
         setState({ isUnshielding: false, error: null, result });
         return result;
       } catch (err) {
+        console.error('[Unshield] Error:', err);
         const error = err instanceof Error ? err.message : 'Unshield failed';
+        console.error('[Unshield] Error message:', error);
         setState({ isUnshielding: false, error, result: null });
         return null;
       }

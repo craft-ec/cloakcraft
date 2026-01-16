@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phantom Wallet Test - Simple Transaction</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      color: #fff;
+    }
+
+    .container {
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(10px);
+      border-radius: 24px;
+      padding: 40px;
+      max-width: 600px;
+      width: 100%;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+
+    h1 {
+      font-size: 32px;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    p {
+      color: rgba(255, 255, 255, 0.7);
+      margin-bottom: 32px;
+      line-height: 1.6;
+    }
+
+    .status {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 16px 20px;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 14px;
+    }
+
+    .status.connected {
+      background: rgba(52, 211, 153, 0.15);
+      border: 1px solid rgba(52, 211, 153, 0.3);
+      color: #34d399;
+    }
+
+    .status.disconnected {
+      background: rgba(251, 191, 36, 0.15);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      color: #fbbf24;
+    }
+
+    button {
+      width: 100%;
+      padding: 16px 32px;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      margin-bottom: 12px;
+      font-family: inherit;
+    }
+
+    button.primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    button.primary:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);
+    }
+
+    button.secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    button.secondary:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .result {
+      margin-top: 24px;
+      padding: 20px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .result h3 {
+      margin-bottom: 12px;
+      color: #34d399;
+      font-size: 18px;
+    }
+
+    .result pre {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .result a {
+      color: #667eea;
+      text-decoration: none;
+      display: inline-block;
+      margin-top: 12px;
+      padding: 8px 16px;
+      background: rgba(102, 126, 234, 0.15);
+      border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .result a:hover {
+      background: rgba(102, 126, 234, 0.25);
+    }
+
+    .instructions {
+      background: rgba(251, 191, 36, 0.1);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      padding: 20px;
+      border-radius: 12px;
+      margin-top: 24px;
+    }
+
+    .instructions h3 {
+      color: #fbbf24;
+      margin-bottom: 12px;
+      font-size: 16px;
+    }
+
+    .instructions ol {
+      margin-left: 20px;
+      color: rgba(255, 255, 255, 0.8);
+      line-height: 1.8;
+    }
+
+    .instructions code {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Phantom Wallet Test</h1>
+    <p>
+      This test sends a simple SOL transfer (0.001 SOL to yourself) to verify
+      if Phantom shows "reverted" status even when transactions succeed on-chain.
+    </p>
+
+    <div id="status" class="status disconnected">
+      Wallet not connected
+    </div>
+
+    <button id="connectBtn" class="primary">Connect Phantom Wallet</button>
+    <button id="sendBtn" class="secondary" disabled>Send Test Transaction (0.001 SOL)</button>
+
+    <div id="result" style="display: none;"></div>
+
+    <div class="instructions">
+      <h3>What to check:</h3>
+      <ol>
+        <li>Click "Connect Phantom Wallet"</li>
+        <li>Click "Send Test Transaction"</li>
+        <li>Approve in Phantom popup</li>
+        <li>Check Phantom's transaction history - does it show <code>Success</code> or <code>Reverted</code>?</li>
+        <li>Click the explorer link below to verify the transaction actually succeeded on-chain</li>
+      </ol>
+    </div>
+  </div>
+
+  <script>
+    let provider = null;
+    let publicKey = null;
+
+    // Helper to safely update result div
+    function updateResult(title, content, link = null) {
+      const resultDiv = document.getElementById('result');
+      resultDiv.style.display = 'block';
+      resultDiv.textContent = ''; // Clear existing content
+
+      const h3 = document.createElement('h3');
+      h3.textContent = title;
+      resultDiv.appendChild(h3);
+
+      const pre = document.createElement('pre');
+      pre.textContent = content;
+      resultDiv.appendChild(pre);
+
+      if (link) {
+        const a = document.createElement('a');
+        a.href = link.href;
+        a.textContent = link.text;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        resultDiv.appendChild(a);
+      }
+    }
+
+    // Connect to Phantom
+    document.getElementById('connectBtn').addEventListener('click', async () => {
+      try {
+        const { solana } = window;
+
+        if (!solana || !solana.isPhantom) {
+          alert('Phantom wallet not found! Please install Phantom browser extension.');
+          return;
+        }
+
+        const resp = await solana.connect();
+        provider = solana;
+        publicKey = resp.publicKey.toString();
+
+        document.getElementById('status').className = 'status connected';
+        document.getElementById('status').textContent = `Connected: ${publicKey.slice(0, 8)}...${publicKey.slice(-8)}`;
+        document.getElementById('sendBtn').disabled = false;
+        document.getElementById('connectBtn').textContent = 'Connected ✓';
+        document.getElementById('connectBtn').disabled = true;
+
+        console.log('Connected to Phantom:', publicKey);
+      } catch (err) {
+        console.error('Connection error:', err);
+        alert('Failed to connect: ' + err.message);
+      }
+    });
+
+    // Send test transaction
+    document.getElementById('sendBtn').addEventListener('click', async () => {
+      if (!provider || !publicKey) {
+        alert('Please connect wallet first');
+        return;
+      }
+
+      updateResult('Processing...', 'Building transaction...');
+
+      try {
+        // Import Solana web3.js from CDN
+        const { Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } = window.solanaWeb3;
+
+        const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+        const fromPubkey = new PublicKey(publicKey);
+
+        console.log('[Test] Creating transaction...');
+
+        // Create a simple self-transfer transaction
+        const transaction = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: fromPubkey,
+            toPubkey: fromPubkey,
+            lamports: 0.001 * LAMPORTS_PER_SOL, // 0.001 SOL
+          })
+        );
+
+        // Get recent blockhash
+        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = fromPubkey;
+
+        console.log('[Test] Transaction prepared:', {
+          feePayer: transaction.feePayer.toString(),
+          recentBlockhash: transaction.recentBlockhash,
+        });
+
+        updateResult('Processing...', 'Waiting for Phantom approval...');
+
+        // Sign and send via Phantom
+        const { signature } = await provider.signAndSendTransaction(transaction);
+
+        console.log('[Test] Transaction sent:', signature);
+        updateResult('Processing...', `Transaction sent: ${signature}\n\nWaiting for confirmation...`);
+
+        // Wait for confirmation
+        await connection.confirmTransaction({
+          signature,
+          blockhash,
+          lastValidBlockHeight,
+        }, 'confirmed');
+
+        console.log('[Test] ✅ Transaction confirmed on-chain!');
+
+        const successContent = `Signature: ${signature}
+
+Status: SUCCESS (verified on Solana blockchain)
+
+⚠️ Check Phantom's transaction history:
+   Does it show "Success" or "Reverted"?
+
+If Phantom shows "Reverted" but this says SUCCESS,
+then it's a Phantom UI bug (not your code!)`;
+
+        updateResult('✅ Transaction Confirmed On-Chain!', successContent, {
+          href: `https://explorer.solana.com/tx/${signature}?cluster=devnet`,
+          text: 'View on Solana Explorer →'
+        });
+
+      } catch (err) {
+        console.error('[Test] ❌ Error:', err);
+        const resultDiv = document.getElementById('result');
+        resultDiv.style.display = 'block';
+        resultDiv.textContent = '';
+
+        const h3 = document.createElement('h3');
+        h3.textContent = '❌ Transaction Failed';
+        h3.style.color = '#ef4444';
+        resultDiv.appendChild(h3);
+
+        const pre = document.createElement('pre');
+        pre.textContent = err.message || err.toString();
+        resultDiv.appendChild(pre);
+      }
+    });
+
+    // Handle Phantom disconnect
+    if (window.solana) {
+      window.solana.on('disconnect', () => {
+        publicKey = null;
+        provider = null;
+        document.getElementById('status').className = 'status disconnected';
+        document.getElementById('status').textContent = 'Wallet disconnected';
+        document.getElementById('sendBtn').disabled = true;
+        document.getElementById('connectBtn').textContent = 'Connect Phantom Wallet';
+        document.getElementById('connectBtn').disabled = false;
+      });
+    }
+  </script>
+
+  <!-- Solana Web3.js from CDN -->
+  <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+</body>
+</html>

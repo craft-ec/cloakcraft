@@ -40,7 +40,7 @@ export interface TransactInput {
   leafIndex: number;
   /** Spending key for this note */
   spendingKey: bigint;
-  /** Account hash from scanning (for commitment existence proof) */
+  /** Account hash from scanning (REQUIRED - this is where commitment exists in state tree) */
   accountHash: string;
 }
 
@@ -124,7 +124,10 @@ export async function buildTransactWithProgram(
   rpcUrl: string,
   circuitId: string = CIRCUIT_IDS.TRANSFER_1X2
 ): Promise<{
-  tx: any;
+  tx: any;  // Phase 0
+  phase1Tx: any;  // Phase 1
+  phase2Tx: any;  // Phase 2
+  phase3Tx: any | null;  // Phase 3 (optional unshield)
   result: TransactResult;
   operationId: Uint8Array;
   pendingCommitments: Array<{
@@ -242,12 +245,12 @@ export async function buildTransactWithProgram(
   console.log(`[Transact Phase 1] Generated operation ID: ${Buffer.from(operationId).toString('hex').slice(0, 16)}...`);
   console.log(`[Transact Phase 1] Nullifier: ${Buffer.from(nullifier).toString('hex').slice(0, 16)}...`);
 
-  // Build pending commitments data (for Phase 2+)
+  // Build pending commitments data (for Phase 4+)
+  // IMPORTANT: Include ALL commitments, even zero commitments
+  // Zero commitments (all zeros) are handled by the on-chain instruction which marks them complete without creating Light accounts
   const pendingCommitments = [];
   for (let i = 0; i < outputCommitments.length; i++) {
-    // Skip zero-amount outputs (dummy commitments)
-    if (outputAmounts[i] === 0n) continue;
-
+    // Include all commitments - on-chain instruction handles zero commitments efficiently
     pendingCommitments.push({
       pool: poolPda,
       commitment: outputCommitments[i],
@@ -257,36 +260,82 @@ export async function buildTransactWithProgram(
   }
 
   // SECURITY: Fetch commitment inclusion proof and nullifier non-inclusion proof
+  // Use the scanner's accountHash - this is where the commitment actually exists
+  // (The scanner found it in the state tree, so this is the correct address)
+  if (!params.input.accountHash) {
+    throw new Error('Input note missing accountHash. Ensure notes are from scanNotes() which includes accountHash.');
+  }
+
+  console.log('[Transact] Input commitment:', Buffer.from(inputCommitment).toString('hex').slice(0, 16) + '...');
+  console.log('[Transact] Account hash from scanner:', params.input.accountHash);
+  console.log('[Transact] Pool:', poolPda.toBase58());
+
   console.log('[Transact] Fetching commitment inclusion proof...');
   const commitmentProof = await lightProtocol.getInclusionProofByHash(params.input.accountHash);
+  console.log('[Transact] Commitment proof:', JSON.stringify(commitmentProof, null, 2));
 
   console.log('[Transact] Fetching nullifier non-inclusion proof...');
   const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, nullifier);
   const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
 
-  const { accounts: remainingAccounts, outputTreeIndex, addressTreeIndex } =
-    lightProtocol.buildRemainingAccounts();
+  // Extract tree, queue, and CPI context from commitment proof (where it was actually created)
+  const commitmentTree = new PublicKey(commitmentProof.treeInfo.tree);
+  const commitmentQueue = new PublicKey(commitmentProof.treeInfo.queue);
+  const commitmentCpiContext = commitmentProof.treeInfo.cpiContext
+    ? new PublicKey(commitmentProof.treeInfo.cpiContext)
+    : null;
+
+  // Build packed accounts manually
+  const { SystemAccountMetaConfig, PackedAccounts } = await import('@lightprotocol/stateless.js');
+  const { DEVNET_V2_TREES } = await import('./constants');
+  const systemConfig = SystemAccountMetaConfig.new(lightProtocol.programId);
+  const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
+
+  // Add output queue
+  const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES.OUTPUT_QUEUE);
+
+  // Add address tree (for address derivation - both commitment and nullifier)
+  const addressTree = DEVNET_V2_TREES.ADDRESS_TREE;
+  const addressTreeIndex = packedAccounts.insertOrGet(addressTree);
+
+  // Add commitment STATE tree from proof (for merkle verification)
+  const commitmentStateTreeIndex = packedAccounts.insertOrGet(commitmentTree);
+  const commitmentQueueIndex = packedAccounts.insertOrGet(commitmentQueue);
+
+  // Add CPI context if present (Light Protocol V2 batched operations)
+  if (commitmentCpiContext) {
+    packedAccounts.insertOrGet(commitmentCpiContext);
+    console.log('[Transact] Added CPI context from proof:', commitmentCpiContext.toBase58());
+  }
+
+  console.log('[Transact] STATE tree from proof:', commitmentTree.toBase58(), 'index:', commitmentStateTreeIndex);
+  console.log('[Transact] ADDRESS tree (current):', addressTree.toBase58(), 'index:', addressTreeIndex);
+
+  const { remainingAccounts: finalRemainingAccounts } = packedAccounts.toAccountMetas();
 
   // Build complete LightTransactParams with all security proofs
   const lightParams: LightTransactParams = {
     commitmentAccountHash: Array.from(new PublicKey(params.input.accountHash).toBytes()),
     commitmentMerkleContext: {
-      merkleTreePubkeyIndex: addressTreeIndex,
+      merkleTreePubkeyIndex: commitmentStateTreeIndex, // STATE tree from proof (for data/merkle verification)
+      queuePubkeyIndex: commitmentQueueIndex,          // Queue from proof
       leafIndex: commitmentProof.leafIndex,
       rootIndex: commitmentProof.rootIndex,
     },
     // SECURITY: Convert commitment inclusion proof (Groth16 SNARK)
     commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    // VERIFY existing commitment: Address tree for CPI address derivation
     commitmentAddressTreeInfo: {
-      addressMerkleTreePubkeyIndex: addressTreeIndex,
-      addressQueuePubkeyIndex: addressTreeIndex,
-      rootIndex: commitmentProof.rootIndex,
+      addressMerkleTreePubkeyIndex: addressTreeIndex,           // CURRENT address tree (for CPI address derivation)
+      addressQueuePubkeyIndex: addressTreeIndex,                // CURRENT address tree queue
+      rootIndex: nullifierProof.rootIndices[0] ?? 0,            // Current address tree root
     },
     nullifierNonInclusionProof: LightProtocol.convertCompressedProof(nullifierProof),
+    // CREATE new nullifier: Use current address tree
     nullifierAddressTreeInfo: {
-      addressMerkleTreePubkeyIndex: addressTreeIndex,
-      addressQueuePubkeyIndex: addressTreeIndex,
-      rootIndex: nullifierProof.rootIndices[0] ?? 0,
+      addressMerkleTreePubkeyIndex: addressTreeIndex,   // CURRENT address tree
+      addressQueuePubkeyIndex: addressTreeIndex,        // CURRENT address tree queue
+      rootIndex: nullifierProof.rootIndices[0] ?? 0,    // Current root
     },
     outputTreeIndex,
   };
@@ -299,39 +348,157 @@ export async function buildTransactWithProgram(
     unshieldRecipientAta = params.unshieldRecipient;
   }
 
-  // Build Phase 1 transaction using new multi-phase signature
-  const numCommitments = pendingCommitments.length;
-  const tx = await program.methods
-    .transact(
+  // ====================================================================
+  // MULTI-PHASE APPEND PATTERN
+  // ====================================================================
+  // Phase 0: Create pending operation with ZK proof verification
+  // Phase 1: Verify commitment exists
+  // Phase 2: Create nullifier (point of no return)
+  // Phase 3: Process unshield (if unshield_amount > 0)
+  // Phase 4+: Create output commitments
+  // Final: Close pending operation
+  // ====================================================================
+
+  // Prepare output recipients (stealth pubkey X coordinates)
+  const outputRecipients = params.outputs.map(output => Array.from(output.recipientPubkey.x));
+
+  // Debug: log unshield amount for instruction
+  const unshieldAmountForInstruction = params.unshieldAmount ?? 0n;
+  console.log('[Phase 0] unshield_amount for instruction:', unshieldAmountForInstruction.toString());
+  console.log('[Phase 0] params.unshieldAmount:', params.unshieldAmount);
+
+  // Log all public inputs being sent on-chain for comparison with snarkjs
+  console.log('[Phase 0] Public inputs for on-chain verification:');
+  console.log('  [0] merkle_root:', Buffer.from(params.merkleRoot).toString('hex').slice(0, 32) + '...');
+  console.log('  [1] nullifier:', Buffer.from(nullifier).toString('hex').slice(0, 32) + '...');
+  for (let i = 0; i < outputCommitments.length; i++) {
+    console.log(`  [${2+i}] out_commitment_${i+1}:`, Buffer.from(outputCommitments[i]).toString('hex').slice(0, 32) + '...');
+  }
+  console.log(`  [${2+outputCommitments.length}] token_mint:`, params.tokenMint.toBase58());
+  console.log(`  [${3+outputCommitments.length}] unshield_amount:`, unshieldAmountForInstruction.toString());
+
+  // Debug: Log FULL commitment bytes for comparison with proof
+  console.log('[Phase 0] === FULL commitment bytes for on-chain ===');
+  for (let i = 0; i < outputCommitments.length; i++) {
+    console.log(`  out_commitment_${i+1} (full):`, Buffer.from(outputCommitments[i]).toString('hex'));
+  }
+
+  // Phase 0: Create Pending with Proof
+  const phase0Tx = await program.methods
+    .createPendingWithProof(
       Array.from(operationId),
       Buffer.from(params.proof),
       Array.from(params.merkleRoot),
+      Array.from(inputCommitment),
       Array.from(nullifier),
-      Array.from(inputCommitment), // Input commitment for inclusion verification
       outputCommitments.map(c => Array.from(c)),
-      encryptedNotes.map(e => Buffer.from(e)), // Still passed for events but not stored
-      new BN((params.unshieldAmount ?? 0n).toString()),
-      numCommitments,
-      lightParams
+      outputRecipients,
+      outputAmounts.map(a => new BN(a.toString())),
+      outputRandomness.map(r => Array.from(r)),
+      stealthEphemeralPubkeys.map(e => Array.from(e)),
+      new BN(unshieldAmountForInstruction.toString())
+    )
+    .accountsStrict({
+      pool: poolPda,
+      verificationKey: vkPda,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+      systemProgram: new PublicKey('11111111111111111111111111111111'),
+    })
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 450_000 }), // Reduced: smaller PDA (192 bytes saved) = less serialization
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  // Phase 1: Verify Commitment Exists
+  const phase1Tx = await program.methods
+    .verifyCommitmentExists(
+      Array.from(operationId),
+      0, // commitment_index (always 0 for single-input transfer)
+      {
+        commitmentAccountHash: lightParams.commitmentAccountHash,
+        commitmentMerkleContext: lightParams.commitmentMerkleContext,
+        commitmentInclusionProof: lightParams.commitmentInclusionProof,
+        commitmentAddressTreeInfo: lightParams.commitmentAddressTreeInfo,
+      }
     )
     .accountsStrict({
       pool: poolPda,
       pendingOperation: pendingOpPda,
-      tokenVault: vaultPda,
-      verificationKey: vkPda,
-      unshieldRecipient: unshieldRecipientAta ?? (null as any),
       relayer: params.relayer,
-      tokenProgram: TOKEN_PROGRAM_ID,
-      systemProgram: new PublicKey('11111111111111111111111111111111'),
     })
-    .remainingAccounts(remainingAccounts)
+    .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isSigner: acc.isSigner,
+      isWritable: acc.isWritable,
+    })))
     .preInstructions([
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }), // Light Protocol inclusion proof (simple CPI)
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
     ]);
 
+  // Phase 2: Create Nullifier
+  const phase2Tx = await program.methods
+    .createNullifierAndPending(
+      Array.from(operationId),
+      0, // nullifier_index (always 0 for single-input transfer)
+      {
+        proof: lightParams.nullifierNonInclusionProof,
+        addressTreeInfo: lightParams.nullifierAddressTreeInfo,
+        outputTreeIndex: lightParams.outputTreeIndex,
+      }
+    )
+    .accountsStrict({
+      pool: poolPda,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+    })
+    .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isSigner: acc.isSigner,
+      isWritable: acc.isWritable,
+    })))
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }), // Light Protocol non-inclusion proof (simple CPI)
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  // Phase 3: Process Unshield (optional)
+  let phase3Tx = null;
+  if (params.unshieldAmount && params.unshieldAmount > 0n && unshieldRecipientAta) {
+    console.log('[Phase 3] Building with:');
+    console.log('  pool:', poolPda.toBase58());
+    console.log('  tokenVault:', vaultPda.toBase58());
+    console.log('  pendingOperation:', pendingOpPda.toBase58());
+    console.log('  unshieldRecipient:', unshieldRecipientAta.toBase58());
+    console.log('  relayer:', params.relayer.toBase58());
+
+    phase3Tx = await program.methods
+      .processUnshield(
+        Array.from(operationId),
+        new BN(params.unshieldAmount.toString()) // unshield_amount parameter
+      )
+      .accounts({
+        pool: poolPda,
+        tokenVault: vaultPda,
+        pendingOperation: pendingOpPda,
+        unshieldRecipient: unshieldRecipientAta,
+        relayer: params.relayer,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .preInstructions([
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 100_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+      ]);
+    console.log('[Phase 3] Transaction builder created');
+  }
+
+  // Return single Phase 0 transaction (others will be built in client.ts)
   return {
-    tx,
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
     result: {
       nullifier,
       outputCommitments,
