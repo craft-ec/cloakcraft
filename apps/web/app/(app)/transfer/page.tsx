@@ -98,17 +98,17 @@ export default function TransferPage() {
 
       <Tabs defaultValue={defaultTab} className="max-w-lg mx-auto">
         <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="shield" className="gap-2">
-            <ArrowDownToLine className="h-4 w-4" />
-            Shield
+          <TabsTrigger value="shield" className="gap-1 xs:gap-2 px-2 xs:px-3 text-xs xs:text-sm">
+            <ArrowDownToLine className="h-4 w-4 shrink-0" />
+            <span className="hidden xs:inline">Shield</span>
           </TabsTrigger>
-          <TabsTrigger value="transfer" className="gap-2">
-            <ArrowRight className="h-4 w-4" />
-            Transfer
+          <TabsTrigger value="transfer" className="gap-1 xs:gap-2 px-2 xs:px-3 text-xs xs:text-sm">
+            <ArrowRight className="h-4 w-4 shrink-0" />
+            <span className="hidden xs:inline">Transfer</span>
           </TabsTrigger>
-          <TabsTrigger value="unshield" className="gap-2">
-            <ArrowUpFromLine className="h-4 w-4" />
-            Unshield
+          <TabsTrigger value="unshield" className="gap-1 xs:gap-2 px-2 xs:px-3 text-xs xs:text-sm">
+            <ArrowUpFromLine className="h-4 w-4 shrink-0" />
+            <span className="hidden xs:inline">Unshield</span>
           </TabsTrigger>
         </TabsList>
 

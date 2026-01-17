@@ -119,49 +119,51 @@ function TransactionRow({ tx }: { tx: TransactionRecord }) {
   }, [tx.amount]);
 
   return (
-    <div className="flex items-center justify-between py-3 border-b last:border-0">
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted">
-          {getTypeIcon(tx.type)}
+    <div className="py-3 border-b last:border-0">
+      <div className="flex items-start xs:items-center justify-between gap-2">
+        <div className="flex items-start xs:items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted">
+            {getTypeIcon(tx.type)}
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1 xs:gap-2">
+              <span className="font-medium">{getTypeLabel(tx.type)}</span>
+              <StatusBadge status={tx.status} />
+            </div>
+            <div className="flex flex-wrap items-center gap-1 xs:gap-2 text-sm text-muted-foreground">
+              <span>{formattedTime}</span>
+              {tx.signature && (
+                <>
+                  <span className="hidden xs:inline">·</span>
+                  <a
+                    href={getExplorerTxUrl(tx.signature)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 hover:text-foreground transition-colors"
+                  >
+                    View
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </>
+              )}
+            </div>
+          </div>
         </div>
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{getTypeLabel(tx.type)}</span>
-            <StatusBadge status={tx.status} />
+        <div className="text-right shrink-0">
+          <div className="font-mono font-medium text-sm xs:text-base">
+            {formattedAmount} {tx.tokenSymbol || 'tokens'}
           </div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>{formattedTime}</span>
-            {tx.signature && (
-              <>
-                <span>·</span>
-                <a
-                  href={getExplorerTxUrl(tx.signature)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 hover:text-foreground transition-colors"
-                >
-                  View
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </>
-            )}
-          </div>
+          {tx.secondaryAmount && tx.secondaryTokenSymbol && (
+            <div className="text-xs xs:text-sm text-muted-foreground font-mono">
+              → {formatAmount(BigInt(tx.secondaryAmount), 9)} {tx.secondaryTokenSymbol}
+            </div>
+          )}
+          {tx.error && (
+            <div className="text-xs xs:text-sm text-destructive truncate max-w-[120px] xs:max-w-[200px]" title={tx.error}>
+              {tx.error}
+            </div>
+          )}
         </div>
-      </div>
-      <div className="text-right">
-        <div className="font-mono font-medium">
-          {formattedAmount} {tx.tokenSymbol || 'tokens'}
-        </div>
-        {tx.secondaryAmount && tx.secondaryTokenSymbol && (
-          <div className="text-sm text-muted-foreground font-mono">
-            → {formatAmount(BigInt(tx.secondaryAmount), 9)} {tx.secondaryTokenSymbol}
-          </div>
-        )}
-        {tx.error && (
-          <div className="text-sm text-destructive truncate max-w-[200px]" title={tx.error}>
-            {tx.error}
-          </div>
-        )}
       </div>
     </div>
   );

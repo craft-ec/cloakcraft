@@ -330,15 +330,15 @@ export function PoolList({ className }: { className?: string }) {
           <p className="text-muted-foreground text-center py-8">No pools available</p>
         ) : (
           <div className="space-y-2">
-            {/* Header */}
-            <div className="grid grid-cols-4 gap-4 text-sm text-muted-foreground px-2">
+            {/* Header - hidden on mobile */}
+            <div className="hidden sm:grid grid-cols-4 gap-4 text-sm text-muted-foreground px-2">
               <span>Pool</span>
               <span className="text-right">TVL</span>
               <span className="text-right">Volume 24h</span>
               <span className="text-right">Fee</span>
             </div>
             {/* Rows */}
-            <div className="space-y-1">
+            <div className="space-y-2 sm:space-y-1">
               {poolStats.map((stats) => (
                 <PoolRow key={stats.poolAddress} stats={stats} />
               ))}
@@ -364,13 +364,29 @@ function PoolRow({ stats }: { stats: PoolStats }) {
   );
 
   return (
-    <div className="grid grid-cols-4 gap-4 rounded-lg bg-muted/50 p-3 text-sm hover:bg-muted transition-colors">
-      <div className="font-medium">
-        {tokenAInfo?.symbol || 'Unknown'} / {tokenBInfo?.symbol || 'Unknown'}
+    <div className="rounded-lg bg-muted/50 p-3 text-sm hover:bg-muted transition-colors">
+      {/* Mobile layout - stacked */}
+      <div className="sm:hidden space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="font-medium">
+            {tokenAInfo?.symbol || 'Unknown'} / {tokenBInfo?.symbol || 'Unknown'}
+          </span>
+          <span className="text-xs bg-muted px-2 py-0.5 rounded">{stats.feeBps / 100}% fee</span>
+        </div>
+        <div className="flex items-center justify-between text-muted-foreground">
+          <span>TVL</span>
+          <span className="font-mono">{formatTvl(stats.tvlUsd)}</span>
+        </div>
       </div>
-      <div className="text-right font-mono">{formatTvl(stats.tvlUsd)}</div>
-      <div className="text-right font-mono text-muted-foreground">--</div>
-      <div className="text-right">{stats.feeBps / 100}%</div>
+      {/* Desktop layout - grid */}
+      <div className="hidden sm:grid grid-cols-4 gap-4">
+        <div className="font-medium">
+          {tokenAInfo?.symbol || 'Unknown'} / {tokenBInfo?.symbol || 'Unknown'}
+        </div>
+        <div className="text-right font-mono">{formatTvl(stats.tvlUsd)}</div>
+        <div className="text-right font-mono text-muted-foreground">--</div>
+        <div className="text-right">{stats.feeBps / 100}%</div>
+      </div>
     </div>
   );
 }
@@ -417,11 +433,25 @@ function StatSkeleton() {
  */
 function PoolRowSkeleton() {
   return (
-    <div className="grid grid-cols-4 gap-4 rounded-lg bg-muted/50 p-3">
-      <Skeleton className="h-5 w-24" />
-      <Skeleton className="h-5 w-16 ml-auto" />
-      <Skeleton className="h-5 w-16 ml-auto" />
-      <Skeleton className="h-5 w-12 ml-auto" />
+    <div className="rounded-lg bg-muted/50 p-3">
+      {/* Mobile skeleton */}
+      <div className="sm:hidden space-y-2">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-5 w-24" />
+          <Skeleton className="h-5 w-12" />
+        </div>
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-4 w-8" />
+          <Skeleton className="h-4 w-16" />
+        </div>
+      </div>
+      {/* Desktop skeleton */}
+      <div className="hidden sm:grid grid-cols-4 gap-4">
+        <Skeleton className="h-5 w-24" />
+        <Skeleton className="h-5 w-16 ml-auto" />
+        <Skeleton className="h-5 w-16 ml-auto" />
+        <Skeleton className="h-5 w-12 ml-auto" />
+      </div>
     </div>
   );
 }

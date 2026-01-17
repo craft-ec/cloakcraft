@@ -98,21 +98,21 @@ export default function SwapPage() {
 
       <Tabs defaultValue={defaultTab} className="max-w-lg mx-auto">
         <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="swap" className="gap-2">
+          <TabsTrigger value="swap" className="gap-1 xs:gap-2 px-2 xs:px-3">
             <ArrowDownUp className="h-4 w-4" />
-            Swap
+            <span className="hidden xs:inline">Swap</span>
           </TabsTrigger>
-          <TabsTrigger value="create" className="gap-2">
+          <TabsTrigger value="create" className="gap-1 xs:gap-2 px-2 xs:px-3">
             <Plus className="h-4 w-4" />
-            Create
+            <span className="hidden xs:inline">Create</span>
           </TabsTrigger>
-          <TabsTrigger value="add" className="gap-2">
+          <TabsTrigger value="add" className="gap-1 xs:gap-2 px-2 xs:px-3">
             <Droplets className="h-4 w-4" />
-            Add
+            <span className="hidden xs:inline">Add</span>
           </TabsTrigger>
-          <TabsTrigger value="remove" className="gap-2">
+          <TabsTrigger value="remove" className="gap-1 xs:gap-2 px-2 xs:px-3">
             <Minus className="h-4 w-4" />
-            Remove
+            <span className="hidden xs:inline">Remove</span>
           </TabsTrigger>
         </TabsList>
 
