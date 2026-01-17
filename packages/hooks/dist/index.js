@@ -1647,6 +1647,12 @@ function useTransactionHistory(filter) {
   const [isLoading, setIsLoading] = (0, import_react13.useState)(true);
   const [error, setError] = (0, import_react13.useState)(null);
   const [history, setHistory] = (0, import_react13.useState)(null);
+  const filterKey = (0, import_react13.useMemo)(
+    () => JSON.stringify(filter ?? {}),
+    [filter?.type, filter?.status, filter?.limit, filter?.tokenMint, filter?.after?.getTime(), filter?.before?.getTime()]
+  );
+  const filterRef = (0, import_react13.useRef)(filter);
+  filterRef.current = filter;
   (0, import_react13.useEffect)(() => {
     if (!wallet?.publicKey) {
       setHistory(null);
@@ -1673,7 +1679,7 @@ function useTransactionHistory(filter) {
       setIsLoading(true);
       setError(null);
       try {
-        const txs = await history.getTransactions(filter);
+        const txs = await history.getTransactions(filterRef.current);
         setTransactions(txs);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load history");
@@ -1682,19 +1688,19 @@ function useTransactionHistory(filter) {
       }
     };
     loadTransactions();
-  }, [history, filter]);
+  }, [history, filterKey]);
   const refresh = (0, import_react13.useCallback)(async () => {
     if (!history) return;
     setIsLoading(true);
     try {
-      const txs = await history.getTransactions(filter);
+      const txs = await history.getTransactions(filterRef.current);
       setTransactions(txs);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh history");
     } finally {
       setIsLoading(false);
     }
-  }, [history, filter]);
+  }, [history]);
   const addTransaction = (0, import_react13.useCallback)(
     async (type, tokenMint, amount, options) => {
       if (!history) return null;

@@ -1565,7 +1565,7 @@ function useRemoveLiquidity() {
 }
 
 // src/useTransactionHistory.ts
-import { useState as useState13, useEffect as useEffect8, useCallback as useCallback13, useMemo as useMemo5 } from "react";
+import { useState as useState13, useEffect as useEffect8, useCallback as useCallback13, useMemo as useMemo5, useRef as useRef2 } from "react";
 import {
   TransactionHistory,
   TransactionStatus,
@@ -1578,6 +1578,12 @@ function useTransactionHistory(filter) {
   const [isLoading, setIsLoading] = useState13(true);
   const [error, setError] = useState13(null);
   const [history, setHistory] = useState13(null);
+  const filterKey = useMemo5(
+    () => JSON.stringify(filter ?? {}),
+    [filter?.type, filter?.status, filter?.limit, filter?.tokenMint, filter?.after?.getTime(), filter?.before?.getTime()]
+  );
+  const filterRef = useRef2(filter);
+  filterRef.current = filter;
   useEffect8(() => {
     if (!wallet?.publicKey) {
       setHistory(null);
@@ -1604,7 +1610,7 @@ function useTransactionHistory(filter) {
       setIsLoading(true);
       setError(null);
       try {
-        const txs = await history.getTransactions(filter);
+        const txs = await history.getTransactions(filterRef.current);
         setTransactions(txs);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load history");
@@ -1613,19 +1619,19 @@ function useTransactionHistory(filter) {
       }
     };
     loadTransactions();
-  }, [history, filter]);
+  }, [history, filterKey]);
   const refresh = useCallback13(async () => {
     if (!history) return;
     setIsLoading(true);
     try {
-      const txs = await history.getTransactions(filter);
+      const txs = await history.getTransactions(filterRef.current);
       setTransactions(txs);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh history");
     } finally {
       setIsLoading(false);
     }
-  }, [history, filter]);
+  }, [history]);
   const addTransaction = useCallback13(
     async (type, tokenMint, amount, options) => {
       if (!history) return null;
@@ -1729,7 +1735,7 @@ function useRecentTransactions(limit = 5) {
 }
 
 // src/useTokenPrices.ts
-import { useState as useState14, useEffect as useEffect9, useCallback as useCallback14, useMemo as useMemo6, useRef as useRef2 } from "react";
+import { useState as useState14, useEffect as useEffect9, useCallback as useCallback14, useMemo as useMemo6, useRef as useRef3 } from "react";
 import {
   TokenPriceFetcher
 } from "@cloakcraft/sdk";
@@ -1747,7 +1753,7 @@ function useTokenPrices(mints, refreshInterval) {
   const [error, setError] = useState14(null);
   const [lastUpdated, setLastUpdated] = useState14(null);
   const [isAvailable, setIsAvailable] = useState14(true);
-  const fetcher = useRef2(getPriceFetcher());
+  const fetcher = useRef3(getPriceFetcher());
   const mintStrings = useMemo6(
     () => mints.map((m) => typeof m === "string" ? m : m.toBase58()),
     [mints]
@@ -1892,7 +1898,7 @@ function usePortfolioValue(balances) {
 }
 
 // src/usePoolAnalytics.ts
-import { useState as useState15, useEffect as useEffect10, useCallback as useCallback15, useMemo as useMemo7, useRef as useRef3 } from "react";
+import { useState as useState15, useEffect as useEffect10, useCallback as useCallback15, useMemo as useMemo7, useRef as useRef4 } from "react";
 import {
   PoolAnalyticsCalculator,
   formatTvl
@@ -1911,7 +1917,7 @@ function usePoolAnalytics(decimalsMap, refreshInterval) {
   const [isLoading, setIsLoading] = useState15(true);
   const [error, setError] = useState15(null);
   const [lastUpdated, setLastUpdated] = useState15(null);
-  const calculator = useRef3(getCalculator());
+  const calculator = useRef4(getCalculator());
   const calculateAnalytics = useCallback15(async () => {
     if (pools.length === 0) {
       setAnalytics(null);
@@ -1963,7 +1969,7 @@ function usePoolStats(pool, tokenADecimals = 9, tokenBDecimals = 9) {
   const [stats, setStats] = useState15(null);
   const [isLoading, setIsLoading] = useState15(true);
   const [error, setError] = useState15(null);
-  const calculator = useRef3(getCalculator());
+  const calculator = useRef4(getCalculator());
   const calculateStats = useCallback15(async () => {
     if (!pool) {
       setStats(null);
@@ -1999,7 +2005,7 @@ function useUserPosition(pool, lpBalance, tokenADecimals = 9, tokenBDecimals = 9
   const [position, setPosition] = useState15(null);
   const [isLoading, setIsLoading] = useState15(true);
   const [error, setError] = useState15(null);
-  const calculator = useRef3(getCalculator());
+  const calculator = useRef4(getCalculator());
   const calculatePosition = useCallback15(async () => {
     if (!pool || lpBalance === 0n) {
       setPosition(null);
@@ -2036,7 +2042,7 @@ function useUserPosition(pool, lpBalance, tokenADecimals = 9, tokenBDecimals = 9
   };
 }
 function useImpermanentLoss(initialPriceRatio, currentPriceRatio) {
-  const calculator = useRef3(getCalculator());
+  const calculator = useRef4(getCalculator());
   const impermanentLoss = useMemo7(() => {
     return calculator.current.calculateImpermanentLoss(
       initialPriceRatio,

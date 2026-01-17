@@ -4,7 +4,7 @@
  * Provides access to transaction history with automatic persistence.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PublicKey } from '@solana/web3.js';
 import {
   TransactionHistory,
@@ -74,6 +74,16 @@ export function useTransactionHistory(
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TransactionHistory | null>(null);
 
+  // Serialize filter for stable dependency comparison
+  const filterKey = useMemo(
+    () => JSON.stringify(filter ?? {}),
+    [filter?.type, filter?.status, filter?.limit, filter?.tokenMint, filter?.after?.getTime(), filter?.before?.getTime()]
+  );
+
+  // Store filter in ref for use in callbacks
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
+
   // Initialize history manager
   useEffect(() => {
     if (!wallet?.publicKey) {
@@ -99,7 +109,7 @@ export function useTransactionHistory(
     initHistory();
   }, [wallet]);
 
-  // Load transactions when history is initialized
+  // Load transactions when history is initialized or filter changes
   useEffect(() => {
     if (!history) return;
 
@@ -107,7 +117,7 @@ export function useTransactionHistory(
       setIsLoading(true);
       setError(null);
       try {
-        const txs = await history.getTransactions(filter);
+        const txs = await history.getTransactions(filterRef.current);
         setTransactions(txs);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load history');
@@ -117,21 +127,21 @@ export function useTransactionHistory(
     };
 
     loadTransactions();
-  }, [history, filter]);
+  }, [history, filterKey]);
 
   const refresh = useCallback(async () => {
     if (!history) return;
 
     setIsLoading(true);
     try {
-      const txs = await history.getTransactions(filter);
+      const txs = await history.getTransactions(filterRef.current);
       setTransactions(txs);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to refresh history');
     } finally {
       setIsLoading(false);
     }
-  }, [history, filter]);
+  }, [history]);
 
   const addTransaction = useCallback(
     async (
