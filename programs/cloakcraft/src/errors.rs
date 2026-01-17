@@ -94,6 +94,9 @@ pub enum CloakCraftError {
     #[msg("AMM pool not found")]
     AmmPoolNotFound,
 
+    #[msg("Tokens must be in canonical order (token_a < token_b by bytes)")]
+    TokensNotInCanonicalOrder,
+
     #[msg("Slippage exceeded")]
     SlippageExceeded,
 

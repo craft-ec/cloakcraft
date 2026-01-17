@@ -29,9 +29,9 @@ use crate::instructions::pool::CommitmentMerkleContext;
 /// Convert [u8; 32] to field element by zeroing MSB
 /// Used for state hashes (keccak256) which can exceed BN254 field modulus
 fn to_field_element(hash: &[u8; 32]) -> [u8; 32] {
-    let mut bytes = *hash;
-    bytes[0] = 0;
-    bytes
+    let mut result = *hash;
+    result[0] &= 0x1F; // Zero top 3 bits of MSB to ensure < BN254 modulus
+    result
 }
 
 // =============================================================================

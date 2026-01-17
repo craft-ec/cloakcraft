@@ -1349,20 +1349,82 @@ export class CloakCraftClient {
       }
 
       // Initialize the LP pool for storing LP token commitments
-      // This is required before users can add liquidity
+      // This is required before users can add/remove liquidity and scan LP notes
       console.log(`[AMM] Initializing LP token pool: ${lpMintKeypair.publicKey.toBase58()}`);
       try {
         // Call initPool directly which will use wallet adapter
         const lpPoolInit = await initPool(this.program, lpMintKeypair.publicKey, payerPublicKey, payerPublicKey);
-        console.log(`[AMM] LP pool initialized: ${lpPoolInit.poolTx}`);
+        console.log(`[AMM] LP pool initialized: pool=${lpPoolInit.poolTx}, counter=${lpPoolInit.counterTx}`);
       } catch (err) {
-        console.warn(`[AMM] LP pool initialization failed (may already exist): ${err instanceof Error ? err.message : err}`);
+        // If pool already exists, that's fine. Otherwise, throw to alert user.
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (!errMsg.includes('already in use') && !errMsg.includes('already_exists')) {
+          console.error(`[AMM] LP pool initialization failed: ${errMsg}`);
+          throw new Error(`AMM pool created but LP pool initialization failed: ${errMsg}. LP tokens will not be scannable.`);
+        }
+        console.log(`[AMM] LP pool already exists`);
       }
 
       return ammSignature;
     } catch (err) {
       console.error('[AMM] Failed to initialize pool:', err);
       throw err;
+    }
+  }
+
+  /**
+   * Initialize LP pool for an existing AMM pool
+   *
+   * Call this if you have an AMM pool whose LP token pool wasn't created.
+   * This is required for LP tokens to be scannable after adding liquidity.
+   *
+   * @param ammPoolAddress - Address of the AMM pool
+   * @returns Transaction signature
+   */
+  async initializeLpPool(
+    ammPoolAddress: PublicKey
+  ): Promise<{ poolTx: string; counterTx: string }> {
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    // Fetch AMM pool to get LP mint
+    const ammPoolAccount = await (this.program.account as any).ammPool.fetch(ammPoolAddress);
+    const lpMint = ammPoolAccount.lpMint as PublicKey;
+
+    // Get payer from provider
+    const payer = this.program.provider.publicKey;
+    if (!payer) {
+      throw new Error('No wallet connected');
+    }
+
+    console.log(`[AMM] Initializing LP pool for mint: ${lpMint.toBase58()}`);
+    return initPool(this.program, lpMint, payer, payer);
+  }
+
+  /**
+   * Initialize LP pools for all existing AMM pools
+   *
+   * Useful for ensuring all LP tokens are scannable.
+   */
+  async initializeAllLpPools(): Promise<void> {
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    const pools = await this.getAllAmmPools();
+    console.log(`[AMM] Initializing LP pools for ${pools.length} AMM pools...`);
+
+    for (const pool of pools) {
+      try {
+        const result = await this.initializeLpPool(pool.address);
+        console.log(`[AMM] LP pool for ${pool.lpMint.toBase58()}: pool=${result.poolTx}, counter=${result.counterTx}`);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (!errMsg.includes('already in use') && !errMsg.includes('already_exists')) {
+          console.error(`[AMM] Failed to init LP pool for ${pool.lpMint.toBase58()}: ${errMsg}`);
+        }
+      }
     }
   }
 

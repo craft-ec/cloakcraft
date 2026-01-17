@@ -18,9 +18,10 @@ use crate::constants::seeds;
 use crate::errors::CloakCraftError;
 
 /// Convert [u8; 32] to field element by zeroing MSB
+/// keccak256 outputs big-endian bytes, so byte[0] is the MSB
 fn to_field_element(hash: &[u8; 32]) -> [u8; 32] {
     let mut result = *hash;
-    result[31] &= 0x1F;
+    result[0] &= 0x1F; // Zero top 3 bits of MSB to ensure < BN254 modulus
     result
 }
 

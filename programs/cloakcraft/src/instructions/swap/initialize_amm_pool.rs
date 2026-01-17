@@ -6,6 +6,7 @@ use anchor_spl::token::{Mint, Token, InitializeMint};
 
 use crate::state::AmmPool;
 use crate::constants::seeds;
+use crate::errors::CloakCraftError;
 
 #[derive(Accounts)]
 #[instruction(token_a_mint: Pubkey, token_b_mint: Pubkey)]
@@ -54,6 +55,14 @@ pub fn initialize_amm_pool(
     token_b_mint: Pubkey,
     fee_bps: u16,
 ) -> Result<()> {
+    // Enforce canonical ordering: token_a must be < token_b by bytes
+    // This ensures USDC-SOL and SOL-USDC always create the same pool
+    let (canonical_a, canonical_b) = AmmPool::canonical_order(token_a_mint, token_b_mint);
+    require!(
+        token_a_mint == canonical_a && token_b_mint == canonical_b,
+        CloakCraftError::TokensNotInCanonicalOrder
+    );
+
     let amm_pool = &mut ctx.accounts.amm_pool;
     let clock = Clock::get()?;
 

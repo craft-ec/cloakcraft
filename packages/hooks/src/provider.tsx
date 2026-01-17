@@ -209,7 +209,23 @@ export function CloakCraftProvider({
       }
       // Use Light Protocol scanning if configured
       const scannedNotes = await client.scanNotes(tokenMint);
-      setNotes(scannedNotes);
+
+      // If scanning for a specific token, merge with existing notes instead of replacing
+      // This prevents losing notes for other tokens when syncing multiple tokens sequentially
+      if (tokenMint) {
+        setNotes((prevNotes) => {
+          // Remove old notes for this token
+          const otherNotes = prevNotes.filter(
+            (n) => n.tokenMint && !n.tokenMint.equals(tokenMint)
+          );
+          // Add fresh notes for this token
+          return [...otherNotes, ...scannedNotes];
+        });
+      } else {
+        // Full sync - replace all notes
+        setNotes(scannedNotes);
+      }
+
       const status = await client.getSyncStatus();
       setSyncStatus(status);
     } catch (err) {

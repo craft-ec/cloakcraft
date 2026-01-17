@@ -97,6 +97,9 @@ export function useTransfer() {
           undefined // relayer - wallet adapter will be used via provider
         );
 
+        // Wait for indexer to pick up new compressed accounts
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
         // Sync notes after successful transfer (clear cache for fresh data)
         if (matchedInputs.length > 0 && matchedInputs[0].tokenMint) {
           await sync(matchedInputs[0].tokenMint, true);

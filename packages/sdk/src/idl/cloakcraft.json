@@ -5306,271 +5306,276 @@
     },
     {
       "code": 6027,
+      "name": "TokensNotInCanonicalOrder",
+      "msg": "Tokens must be in canonical order (token_a < token_b by bytes)"
+    },
+    {
+      "code": 6028,
       "name": "SlippageExceeded",
       "msg": "Slippage exceeded"
     },
     {
-      "code": 6028,
+      "code": 6029,
       "name": "InsufficientLiquidity",
       "msg": "Insufficient liquidity"
     },
     {
-      "code": 6029,
+      "code": 6030,
       "name": "InvalidPoolState",
       "msg": "Invalid pool state transition"
     },
     {
-      "code": 6030,
+      "code": 6031,
       "name": "InvariantViolated",
       "msg": "Constant product invariant violated"
     },
     {
-      "code": 6031,
+      "code": 6032,
       "name": "InvalidLpAmount",
       "msg": "Invalid LP token amount - must match calculated amount"
     },
     {
-      "code": 6032,
+      "code": 6033,
       "name": "AggregationNotFound",
       "msg": "Aggregation not found"
     },
     {
-      "code": 6033,
+      "code": 6034,
       "name": "AggregationNotActive",
       "msg": "Aggregation not active"
     },
     {
-      "code": 6034,
+      "code": 6035,
       "name": "AggregationDeadlinePassed",
       "msg": "Aggregation deadline passed"
     },
     {
-      "code": 6035,
+      "code": 6036,
       "name": "AlreadyVoted",
       "msg": "Already voted on this proposal"
     },
     {
-      "code": 6036,
+      "code": 6037,
       "name": "InvalidVoteOption",
       "msg": "Invalid vote option"
     },
     {
-      "code": 6037,
+      "code": 6038,
       "name": "DecryptionNotComplete",
       "msg": "Decryption not complete"
     },
     {
-      "code": 6038,
+      "code": 6039,
       "name": "InvalidDecryptionShare",
       "msg": "Invalid decryption share"
     },
     {
-      "code": 6039,
+      "code": 6040,
       "name": "ThresholdNotMet",
       "msg": "Threshold not met"
     },
     {
-      "code": 6040,
+      "code": 6041,
       "name": "AdapterNotRegistered",
       "msg": "Adapter module not registered"
     },
     {
-      "code": 6041,
+      "code": 6042,
       "name": "AdapterDisabled",
       "msg": "Adapter module disabled"
     },
     {
-      "code": 6042,
+      "code": 6043,
       "name": "AdapterExecutionFailed",
       "msg": "Adapter execution failed"
     },
     {
-      "code": 6043,
+      "code": 6044,
       "name": "Unauthorized",
       "msg": "Unauthorized"
     },
     {
-      "code": 6044,
+      "code": 6045,
       "name": "InvalidVerificationKey",
       "msg": "Invalid verification key"
     },
     {
-      "code": 6045,
+      "code": 6046,
       "name": "VerificationKeyNotFound",
       "msg": "Verification key not found"
     },
     {
-      "code": 6046,
+      "code": 6047,
       "name": "CommitteeNotFound",
       "msg": "Committee not found"
     },
     {
-      "code": 6047,
+      "code": 6048,
       "name": "NotCommitteeMember",
       "msg": "Not a committee member"
     },
     {
-      "code": 6048,
+      "code": 6049,
       "name": "InvalidEncryptedNote",
       "msg": "Invalid encrypted note"
     },
     {
-      "code": 6049,
+      "code": 6050,
       "name": "DecryptionFailed",
       "msg": "Decryption failed"
     },
     {
-      "code": 6050,
+      "code": 6051,
       "name": "InvalidCiphertext",
       "msg": "Invalid ciphertext"
     },
     {
-      "code": 6051,
+      "code": 6052,
       "name": "LightProtocolError",
       "msg": "Light Protocol CPI failed"
     },
     {
-      "code": 6052,
+      "code": 6053,
       "name": "LightCpiError",
       "msg": "Light Protocol CPI operation failed"
     },
     {
-      "code": 6053,
+      "code": 6054,
       "name": "NullifierTreeError",
       "msg": "Nullifier tree error"
     },
     {
-      "code": 6054,
+      "code": 6055,
       "name": "NullifierInsertionFailed",
       "msg": "Failed to insert nullifier"
     },
     {
-      "code": 6055,
+      "code": 6056,
       "name": "NullifierAlreadySpent",
       "msg": "Nullifier has already been spent (compressed account exists)"
     },
     {
-      "code": 6056,
+      "code": 6057,
       "name": "ActionNullifierAlreadyUsed",
       "msg": "Action nullifier has already been used (already voted)"
     },
     {
-      "code": 6057,
+      "code": 6058,
       "name": "CommitmentCreationFailed",
       "msg": "Failed to create commitment compressed account"
     },
     {
-      "code": 6058,
+      "code": 6059,
       "name": "CommitmentProofFailed",
       "msg": "Commitment merkle proof verification failed"
     },
     {
-      "code": 6059,
+      "code": 6060,
       "name": "PoseidonHashError",
       "msg": "Poseidon hash computation failed"
     },
     {
-      "code": 6060,
+      "code": 6061,
       "name": "InvalidProofLength",
       "msg": "Invalid proof length"
     },
     {
-      "code": 6061,
+      "code": 6062,
       "name": "Bn254MulError",
       "msg": "BN254 scalar multiplication failed"
     },
     {
-      "code": 6062,
+      "code": 6063,
       "name": "Bn254AddError",
       "msg": "BN254 point addition failed"
     },
     {
-      "code": 6063,
+      "code": 6064,
       "name": "Bn254PairingError",
       "msg": "BN254 pairing check failed"
     },
     {
-      "code": 6064,
+      "code": 6065,
       "name": "AdapterSwapFailed",
       "msg": "Adapter swap execution failed"
     },
     {
-      "code": 6065,
+      "code": 6066,
       "name": "TooManyPendingCommitments",
       "msg": "Too many pending commitments"
     },
     {
-      "code": 6066,
+      "code": 6067,
       "name": "PendingOperationExpired",
       "msg": "Pending operation has expired"
     },
     {
-      "code": 6067,
+      "code": 6068,
       "name": "PendingOperationNotComplete",
       "msg": "Pending operation not complete or expired"
     },
     {
-      "code": 6068,
+      "code": 6069,
       "name": "InvalidCommitmentIndex",
       "msg": "Invalid commitment index"
     },
     {
-      "code": 6069,
+      "code": 6070,
       "name": "CommitmentAlreadyCreated",
       "msg": "Commitment already created"
     },
     {
-      "code": 6070,
+      "code": 6071,
       "name": "PoolMismatch",
       "msg": "Pool mismatch for commitment"
     },
     {
-      "code": 6071,
+      "code": 6072,
       "name": "InvalidRelayer",
       "msg": "Invalid relayer for pending operation"
     },
     {
-      "code": 6072,
+      "code": 6073,
       "name": "InvalidNullifierIndex",
       "msg": "Invalid nullifier index"
     },
     {
-      "code": 6073,
+      "code": 6074,
       "name": "NullifierAlreadyCreated",
       "msg": "Nullifier already created"
     },
     {
-      "code": 6074,
+      "code": 6075,
       "name": "NullifiersNotComplete",
       "msg": "Not all nullifiers have been created yet"
     },
     {
-      "code": 6075,
+      "code": 6076,
       "name": "NullifiersNotCreated",
       "msg": "Nullifiers have not been created - required before processing unshield"
     },
     {
-      "code": 6076,
+      "code": 6077,
       "name": "ProofNotVerified",
       "msg": "ZK proof has not been verified - Phase 0 required"
     },
     {
-      "code": 6077,
+      "code": 6078,
       "name": "CommitmentNotVerified",
       "msg": "Commitment existence has not been verified - Phase 1 required"
     },
     {
-      "code": 6078,
+      "code": 6079,
       "name": "CommitmentAlreadyVerified",
       "msg": "Commitment has already been verified"
     },
     {
-      "code": 6079,
+      "code": 6080,
       "name": "NullifierNotCreated",
       "msg": "Nullifier has not been created - Phase 2 required"
     },
     {
-      "code": 6080,
+      "code": 6081,
       "name": "Deprecated",
       "msg": "This instruction is deprecated - use append pattern instead"
     }

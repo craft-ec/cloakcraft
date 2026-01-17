@@ -190,6 +190,9 @@ export function useUnshield() {
 
         console.log('[Unshield] prepareAndTransfer result:', result);
 
+        // Wait for indexer to pick up new compressed accounts
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
         // Sync notes after successful unshield (clear cache for fresh data)
         if (matchedInputs.length > 0 && matchedInputs[0].tokenMint) {
           await sync(matchedInputs[0].tokenMint, true);

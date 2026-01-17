@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowDownToLine, ArrowRight, ArrowUpFromLine } from 'lucide-react';
+import { ArrowDownToLine, ArrowRight, ArrowUpFromLine, ArrowDownUp } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PublicBalanceList, PrivateBalanceList } from '@/components/balance/balance-list';
@@ -17,7 +17,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Quick Actions */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <QuickActionCard
           href="/transfer?tab=shield"
           icon={<ArrowDownToLine className="h-5 w-5" />}
@@ -35,6 +35,12 @@ export default function DashboardPage() {
           icon={<ArrowUpFromLine className="h-5 w-5" />}
           title="Unshield"
           description="Withdraw to public wallet"
+        />
+        <QuickActionCard
+          href="/swap"
+          icon={<ArrowDownUp className="h-5 w-5" />}
+          title="Swap"
+          description="Swap tokens and manage liquidity"
         />
       </div>
 

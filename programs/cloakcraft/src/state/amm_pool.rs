@@ -66,6 +66,16 @@ impl AmmPool {
         + 1   // bump
         + 1;  // lp_mint_bump
 
+    /// Returns tokens in canonical order (sorted by bytes).
+    /// This ensures USDC-SOL and SOL-USDC always derive the same pool PDA.
+    pub fn canonical_order(mint_a: Pubkey, mint_b: Pubkey) -> (Pubkey, Pubkey) {
+        if mint_a.as_ref() < mint_b.as_ref() {
+            (mint_a, mint_b)
+        } else {
+            (mint_b, mint_a)
+        }
+    }
+
     /// Compute state hash from reserves
     pub fn compute_state_hash(&self) -> [u8; 32] {
         let mut data = Vec::with_capacity(32);

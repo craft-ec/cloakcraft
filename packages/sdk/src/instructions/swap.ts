@@ -124,6 +124,19 @@ export interface InitializeAmmPoolParams {
 }
 
 /**
+ * Returns tokens in canonical order (lower pubkey first by bytes).
+ * This ensures USDC-SOL and SOL-USDC always derive the same pool PDA.
+ */
+export function canonicalTokenOrder(
+  tokenA: PublicKey,
+  tokenB: PublicKey
+): [PublicKey, PublicKey] {
+  return tokenA.toBuffer().compare(tokenB.toBuffer()) < 0
+    ? [tokenA, tokenB]
+    : [tokenB, tokenA];
+}
+
+/**
  * Build initialize AMM pool transaction
  */
 export async function buildInitializeAmmPoolWithProgram(
@@ -132,21 +145,24 @@ export async function buildInitializeAmmPoolWithProgram(
 ): Promise<any> {
   const programId = program.programId;
 
-  // Derive AMM pool PDA
-  const [ammPoolPda] = deriveAmmPoolPda(params.tokenAMint, params.tokenBMint, programId);
+  // Sort tokens into canonical order (enforced on-chain)
+  const [canonicalA, canonicalB] = canonicalTokenOrder(params.tokenAMint, params.tokenBMint);
 
-  // Build transaction
+  // Derive AMM pool PDA (uses same canonical ordering)
+  const [ammPoolPda] = deriveAmmPoolPda(canonicalA, canonicalB, programId);
+
+  // Build transaction with tokens in canonical order
   const tx = await program.methods
     .initializeAmmPool(
-      params.tokenAMint,
-      params.tokenBMint,
+      canonicalA,
+      canonicalB,
       params.feeBps
     )
     .accountsStrict({
       ammPool: ammPoolPda,
       lpMint: params.lpMint,
-      tokenAMintAccount: params.tokenAMint,
-      tokenBMintAccount: params.tokenBMint,
+      tokenAMintAccount: canonicalA,
+      tokenBMintAccount: canonicalB,
       authority: params.authority,
       payer: params.payer,
       systemProgram: SystemProgram.programId,

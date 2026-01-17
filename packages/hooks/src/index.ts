@@ -13,3 +13,4 @@ export { useScanner, usePrivateBalance, useNullifierStatus } from './useScanner'
 export { usePool, useInitializePool, usePoolList } from './usePool';
 export { usePublicBalance, useSolBalance, useTokenBalances } from './usePublicBalance';
 export { useOrders } from './useOrders';
+export { useSwap, useAmmPools, useSwapQuote, useInitializeAmmPool, useAddLiquidity, useRemoveLiquidity } from './useSwap';

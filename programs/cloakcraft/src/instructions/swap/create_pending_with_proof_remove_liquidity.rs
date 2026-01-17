@@ -29,9 +29,10 @@ pub const OP_TYPE_REMOVE_LIQUIDITY: u8 = 3;
 
 /// Convert [u8; 32] to field element by zeroing MSB
 /// Used for state hashes (keccak256) which can exceed BN254 field modulus
+/// keccak256 outputs big-endian bytes, so byte[0] is the MSB
 fn to_field_element(hash: &[u8; 32]) -> [u8; 32] {
     let mut result = *hash;
-    result[31] &= 0x1F; // Zero top 3 bits to ensure < BN254 modulus
+    result[0] &= 0x1F; // Zero top 3 bits of MSB to ensure < BN254 modulus
     result
 }
 
@@ -169,6 +170,11 @@ pub fn create_pending_with_proof_remove_liquidity<'info>(
     pending_op.commitments[0] = out_a_commitment;
     pending_op.pools[1] = pool_b.key().to_bytes(); // Output B
     pending_op.commitments[1] = out_b_commitment;
+
+    // CRITICAL FIX: Store output amounts for create_commitment validation
+    // Without these, create_commitment skips commitments as "zero-amount dummies"
+    pending_op.output_amounts[0] = withdraw_a_amount; // Token A withdrawn
+    pending_op.output_amounts[1] = withdraw_b_amount; // Token B withdrawn
 
     pending_op.nullifier_completed_mask = 0;
     pending_op.completed_mask = 0;

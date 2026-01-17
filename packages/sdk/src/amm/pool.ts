@@ -122,22 +122,24 @@ export function computeAmmStateHash(
   lpSupply: bigint,
   poolId: PublicKey
 ): Uint8Array {
-  const data = new Uint8Array(32);
+  // On-chain layout (56 bytes total):
+  // - reserve_a: 8 bytes (u64 LE)
+  // - reserve_b: 8 bytes (u64 LE)
+  // - lp_supply: 8 bytes (u64 LE)
+  // - pool_id: 32 bytes
+  const data = new Uint8Array(56);
   const view = new DataView(data.buffer);
 
   // Write reserves and LP supply as little-endian u64
   view.setBigUint64(0, reserveA, true);
   view.setBigUint64(8, reserveB, true);
   view.setBigUint64(16, lpSupply, true);
-  // Remaining 8 bytes are zeros
 
-  // Combine with pool_id (32 bytes)
-  const fullData = new Uint8Array(32 + 32);
-  fullData.set(data.slice(0, 24), 0); // First 24 bytes (3 * u64)
-  fullData.set(poolId.toBytes(), 24); // Pool ID
+  // Write pool_id (32 bytes starting at offset 24)
+  data.set(poolId.toBytes(), 24);
 
   // Keccak256 hash
-  return keccak_256(fullData);
+  return keccak_256(data);
 }
 
 /**

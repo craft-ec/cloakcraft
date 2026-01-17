@@ -81,6 +81,9 @@ export function useShield() {
         );
         console.log('[useShield] shieldWithWallet result:', result);
 
+        // Wait for indexer to pick up new compressed accounts
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
         // Sync notes after successful shield (clear cache to pick up new commitment)
         console.log('[useShield] Syncing notes...');
         await sync(options.tokenMint, true);

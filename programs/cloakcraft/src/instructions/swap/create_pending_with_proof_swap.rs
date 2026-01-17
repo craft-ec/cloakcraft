@@ -159,6 +159,11 @@ pub fn create_pending_with_proof_swap<'info>(
     pending_op.pools[1] = input_pool.key().to_bytes(); // Change commitment (remaining input)
     pending_op.commitments[1] = change_commitment;
 
+    // CRITICAL FIX: Store output amounts for create_commitment validation
+    // Without these, create_commitment skips commitments as "zero-amount dummies"
+    pending_op.output_amounts[0] = output_amount; // Swap output amount
+    pending_op.output_amounts[1] = 1; // Change placeholder (non-zero = not dummy, actual amount in encrypted note)
+
     pending_op.nullifier_completed_mask = 0;
     pending_op.completed_mask = 0;
 

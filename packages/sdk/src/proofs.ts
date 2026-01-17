@@ -721,10 +721,12 @@ export class ProofGenerator {
     const poolIdBytes = pubkeyToField(params.poolId);
 
     // Reduce state hashes to field elements (keccak256 can produce values >= BN254 modulus)
+    // keccak256 outputs big-endian bytes, so byte[0] is the MSB
+    // Must match on-chain to_field_element: result[0] &= 0x1F
     const oldStateHash = new Uint8Array(params.oldPoolStateHash);
     const newStateHash = new Uint8Array(params.newPoolStateHash);
-    oldStateHash[0] = 0;
-    newStateHash[0] = 0;
+    oldStateHash[0] &= 0x1F;
+    newStateHash[0] &= 0x1F;
 
     // Use provided randomness or generate new values
     const outputARandomness = (params as any).outputARandomness ?? generateRandomness();
