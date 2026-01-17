@@ -157,6 +157,22 @@ pub struct PendingOperation {
     /// Add Liquidity: unused
     /// Remove Liquidity: unused
     pub swap_a_to_b: bool,
+
+    // =============================================================================
+    // Protocol Fee fields
+    // =============================================================================
+
+    /// Protocol fee amount (verified in ZK proof)
+    /// Transfer/Unshield: Fee deducted from transfer amount
+    /// Swap: Fee deducted from swap output
+    /// Remove Liquidity: Fee deducted from withdrawal
+    pub fee_amount: u64,
+
+    /// Unshield amount (for process_unshield phase)
+    pub unshield_amount: u64,
+
+    /// Whether fee has been processed (transferred to treasury)
+    pub fee_processed: bool,
 }
 
 impl PendingOperation {
@@ -192,8 +208,11 @@ impl PendingOperation {
         8 + // swap_amount (operation-specific)
         8 + // output_amount (operation-specific)
         8 + // extra_amount (operation-specific)
-        1; // swap_a_to_b (operation-specific)
-        // Total: ~2,066 bytes with 3 inputs + 8 outputs (192 bytes saved, safe for 4KB stack)
+        1 + // swap_a_to_b (operation-specific)
+        8 + // fee_amount (protocol fee)
+        8 + // unshield_amount
+        1; // fee_processed
+        // Total: ~2,083 bytes with 3 inputs + 8 outputs (safe for 4KB stack)
 
     /// Check if all input commitments have been verified
     pub fn all_inputs_verified(&self) -> bool {

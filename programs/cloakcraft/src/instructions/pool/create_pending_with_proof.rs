@@ -69,12 +69,14 @@ pub struct CreatePendingWithProof<'info> {
 /// - Nullifier is correctly derived from commitment
 /// - Output commitments are correctly computed
 /// - Token mint and amounts are correct
+/// - Fee amount is correctly deducted from balance
 ///
 /// This phase creates the PendingOperation PDA with:
 /// - input_commitment (binds to Phase 1)
 /// - expected_nullifier (binds to Phase 2)
 /// - output commitments (for Phase 4+)
 /// - output regeneration data (recipients, amounts, randomness)
+/// - fee_amount (for Phase 3 fee transfer)
 ///
 /// Transaction size: ~600-800 bytes (NO Light CPI)
 #[allow(clippy::too_many_arguments)]
@@ -91,6 +93,7 @@ pub fn create_pending_with_proof(
     output_randomness: Vec<[u8; 32]>,
     stealth_ephemeral_pubkeys: Vec<[u8; 64]>,
     unshield_amount: u64,
+    fee_amount: u64,
 ) -> Result<()> {
     let pool = &ctx.accounts.pool;
     let pending_op = &mut ctx.accounts.pending_operation;
@@ -117,6 +120,7 @@ pub fn create_pending_with_proof(
             &out_commitments,
             &pool.token_mint,
             unshield_amount,
+            fee_amount,
         );
 
         verify_groth16_proof(
@@ -126,7 +130,7 @@ pub fn create_pending_with_proof(
             "Transfer",
         )?;
 
-        msg!("✅ ZK proof verified");
+        msg!("✅ ZK proof verified (fee_amount: {})", fee_amount);
     }
 
     #[cfg(feature = "skip-zk-verify")]
@@ -185,20 +189,28 @@ pub fn create_pending_with_proof(
     }
     pending_op.completed_mask = 0;
 
+    // Store fee and unshield amounts for Phase 3
+    pending_op.fee_amount = fee_amount;
+    pending_op.unshield_amount = unshield_amount;
+    pending_op.fee_processed = false;
+
     msg!("Phase 0 complete: ZK proof verified, PendingOperation created");
+    msg!("  fee_amount: {}", fee_amount);
+    msg!("  unshield_amount: {}", unshield_amount);
     msg!("Next: Phase 1 - verify_commitment_for_pending");
 
     Ok(())
 }
 
 /// Build public inputs array for proof verification
-/// Order matches circuit: merkle_root, nullifier, out_commitments, token_mint, unshield_amount
+/// Order matches circuit: merkle_root, nullifier, out_commitments, token_mint, unshield_amount, fee_amount
 fn build_transact_public_inputs(
     merkle_root: &[u8; 32],
     nullifier: &[u8; 32],
     out_commitments: &[[u8; 32]],
     token_mint: &Pubkey,
     unshield_amount: u64,
+    fee_amount: u64,
 ) -> Vec<[u8; 32]> {
     let mut inputs = Vec::new();
     inputs.push(*merkle_root);
@@ -208,5 +220,6 @@ fn build_transact_public_inputs(
     }
     inputs.push(pubkey_to_field(token_mint));
     inputs.push(u64_to_field(unshield_amount));
+    inputs.push(u64_to_field(fee_amount));
     inputs
 }

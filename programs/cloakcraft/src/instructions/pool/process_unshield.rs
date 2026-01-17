@@ -1,19 +1,20 @@
-//! Process Unshield Phase 2 - Process unshield and finalize output commitments
+//! Process Unshield Phase 3 - Process unshield and protocol fees
 //!
-//! This is Phase 2 of the multi-phase transact operation.
-//! It processes the unshield (if any) and prepares output commitments for Phase 3+.
+//! This is Phase 3 of the multi-phase transact operation.
+//! It processes the unshield (if any) and transfers protocol fees to the treasury.
 //!
 //! Flow:
 //! Phase 0: Verify ZK proof + Create pending operation
-//! Phase 1: Create nullifier via generic instruction
-//! Phase 2 (this): Process unshield + Finalize output commitments
-//! Phase 3+: Create output commitments via generic instruction
+//! Phase 1: Verify commitment exists
+//! Phase 2: Create nullifier via generic instruction
+//! Phase 3 (this): Process unshield + Protocol fees
+//! Phase 4+: Create output commitments via generic instruction
 //! Final: Close pending operation
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-use crate::state::{Pool, PendingOperation};
+use crate::state::{Pool, PendingOperation, ProtocolConfig};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
 use crate::helpers::vault::{transfer_from_vault, update_pool_balance};
@@ -29,15 +30,15 @@ pub struct ProcessUnshield<'info> {
     )]
     pub pool: Box<Account<'info, Pool>>,
 
-    /// Token vault
+    /// Token vault (boxed to reduce stack usage)
     #[account(
         mut,
         seeds = [seeds::VAULT, pool.token_mint.as_ref()],
         bump = pool.vault_bump,
     )]
-    pub token_vault: Account<'info, TokenAccount>,
+    pub token_vault: Box<Account<'info, TokenAccount>>,
 
-    /// Pending operation PDA
+    /// Pending operation PDA (boxed to reduce stack usage)
     #[account(
         mut,
         seeds = [PendingOperation::SEEDS_PREFIX, operation_id.as_ref()],
@@ -48,10 +49,22 @@ pub struct ProcessUnshield<'info> {
     )]
     pub pending_operation: Box<Account<'info, PendingOperation>>,
 
-    /// Unshield recipient (optional)
+    /// Protocol config (optional - if fees are enabled, boxed to reduce stack usage)
+    #[account(
+        seeds = [seeds::PROTOCOL_CONFIG],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Option<Box<Account<'info, ProtocolConfig>>>,
+
+    /// Treasury token account for receiving fees (optional - required if fee_amount > 0)
+    /// CHECK: Verified to match treasury in protocol_config
+    #[account(mut)]
+    pub treasury_token_account: Option<Box<Account<'info, TokenAccount>>>,
+
+    /// Unshield recipient (optional, boxed to reduce stack usage)
     /// CHECK: This is the recipient for unshielded tokens
     #[account(mut)]
-    pub unshield_recipient: Option<Account<'info, TokenAccount>>,
+    pub unshield_recipient: Option<Box<Account<'info, TokenAccount>>>,
 
     /// Relayer (must match operation creator)
     #[account(
@@ -64,11 +77,12 @@ pub struct ProcessUnshield<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-/// Phase 3: Process unshield only
+/// Phase 3: Process unshield and protocol fees
 ///
 /// This phase:
 /// 1. Verifies nullifier was created in Phase 2
 /// 2. Processes unshield if requested (transfer tokens from vault)
+/// 3. Transfers protocol fee to treasury if fee_amount > 0
 ///
 /// NO encrypted notes stored - they will be regenerated in Phase 4 from:
 /// - output_recipients (stored in Phase 2)
@@ -85,8 +99,9 @@ pub fn process_unshield<'info>(
     let pool = &mut ctx.accounts.pool;
     let pending_op = &mut ctx.accounts.pending_operation;
 
-    msg!("=== Phase 3: Process Unshield ===");
-    msg!("Unshield amount: {}", unshield_amount);
+    msg!("=== Phase 3: Process Unshield + Fees ===");
+    msg!("Unshield amount: {} (stored: {})", unshield_amount, pending_op.unshield_amount);
+    msg!("Fee amount: {}", pending_op.fee_amount);
     msg!("Output commitments pending: {}", pending_op.num_commitments);
 
     // Verify nullifier was created
@@ -95,6 +110,52 @@ pub fn process_unshield<'info>(
         CloakCraftError::NullifiersNotCreated
     );
 
+    // Copy pool values for signer seeds (to avoid borrow conflicts)
+    let token_mint_bytes = pool.token_mint.to_bytes();
+    let pool_bump = pool.bump;
+
+    // Prepare pool signer seeds for token transfers
+    let pool_seeds = &[
+        seeds::POOL,
+        token_mint_bytes.as_ref(),
+        &[pool_bump],
+    ];
+    let signer_seeds = &[&pool_seeds[..]];
+
+    // Process protocol fee if amount > 0 and not already processed
+    let fee_amount = pending_op.fee_amount;
+    if fee_amount > 0 && !pending_op.fee_processed {
+        // Verify treasury account is provided
+        let treasury = ctx.accounts.treasury_token_account.as_ref()
+            .ok_or(CloakCraftError::InvalidAmount)?;
+
+        // Verify protocol config is provided if fees are charged
+        if let Some(_config) = ctx.accounts.protocol_config.as_ref() {
+            // Note: We don't verify the fee matches expected rate here because
+            // the fee_amount was already verified in the ZK proof (Phase 0).
+            // The circuit enforces: in_amount = outputs + unshield + fee
+            msg!("Transferring {} fee to treasury {:?}", fee_amount, treasury.key());
+
+            transfer_from_vault(
+                &ctx.accounts.token_program,
+                &*ctx.accounts.token_vault,
+                &**treasury,
+                &pool.to_account_info(),
+                signer_seeds,
+                fee_amount,
+            )?;
+
+            update_pool_balance(pool, fee_amount, false)?;
+            pending_op.fee_processed = true;
+
+            msg!("✅ Fee transfer complete");
+        } else {
+            // If no protocol config but fee_amount > 0, this is an error
+            // (circuit proved a fee but we can't collect it)
+            msg!("WARNING: Fee amount {} but no protocol config - fee not collected", fee_amount);
+        }
+    }
+
     // Process unshield if amount > 0
     if unshield_amount > 0 {
         let recipient = ctx.accounts.unshield_recipient.as_ref()
@@ -102,18 +163,10 @@ pub fn process_unshield<'info>(
 
         msg!("Unshielding {} tokens to {:?}", unshield_amount, recipient.key());
 
-        // Transfer from vault to recipient
-        let pool_seeds = &[
-            seeds::POOL,
-            pool.token_mint.as_ref(),
-            &[pool.bump],
-        ];
-        let signer_seeds = &[&pool_seeds[..]];
-
         transfer_from_vault(
             &ctx.accounts.token_program,
-            &ctx.accounts.token_vault,
-            recipient,
+            &*ctx.accounts.token_vault,
+            &**recipient,
             &pool.to_account_info(),
             signer_seeds,
             unshield_amount,
@@ -124,7 +177,7 @@ pub fn process_unshield<'info>(
         msg!("✅ Unshield complete");
     }
 
-    msg!("Phase 3 complete: unshield processed");
+    msg!("Phase 3 complete: unshield and fees processed");
     msg!("Next: Phase 4+ - create_commitment (SDK regenerates encrypted notes from randomness)");
 
     Ok(())

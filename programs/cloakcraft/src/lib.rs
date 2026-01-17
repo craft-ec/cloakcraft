@@ -70,6 +70,7 @@ pub mod cloakcraft {
     /// Final: Close pending operation (GENERIC)
     ///
     /// SECURITY: ZK proof verified, binding fields stored in PendingOperation.
+    /// Fee amount is a public input verified in the ZK proof.
     #[allow(clippy::too_many_arguments)]
     pub fn create_pending_with_proof<'info>(
         ctx: Context<'_, '_, '_, 'info, CreatePendingWithProof<'info>>,
@@ -84,8 +85,9 @@ pub mod cloakcraft {
         output_randomness: Vec<[u8; 32]>,
         stealth_ephemeral_pubkeys: Vec<[u8; 64]>,
         unshield_amount: u64,
+        fee_amount: u64,
     ) -> Result<()> {
-        pool::create_pending_with_proof(ctx, operation_id, proof, merkle_root, input_commitment, nullifier, out_commitments, output_recipients, output_amounts, output_randomness, stealth_ephemeral_pubkeys, unshield_amount)
+        pool::create_pending_with_proof(ctx, operation_id, proof, merkle_root, input_commitment, nullifier, out_commitments, output_recipients, output_amounts, output_randomness, stealth_ephemeral_pubkeys, unshield_amount, fee_amount)
     }
 
     /// Process Unshield Phase 3 - process unshield only (Transfer-specific)
@@ -545,5 +547,65 @@ pub mod cloakcraft {
     /// Used to fix corrupted pool state
     pub fn reset_amm_pool(ctx: Context<ResetAmmPool>) -> Result<()> {
         admin::reset_amm_pool(ctx)
+    }
+
+    // ============ Protocol Fee Configuration ============
+
+    /// Initialize protocol configuration with fee rates
+    ///
+    /// Creates the global ProtocolConfig account. Can only be called once.
+    /// Fee rates are in basis points (10 = 0.1%, 100 = 1%, 1000 = 10% max).
+    pub fn initialize_protocol_config(
+        ctx: Context<InitializeProtocolConfig>,
+        transfer_fee_bps: u16,
+        unshield_fee_bps: u16,
+        swap_fee_bps: u16,
+        remove_liquidity_fee_bps: u16,
+        fees_enabled: bool,
+    ) -> Result<()> {
+        admin::initialize_protocol_config(
+            ctx,
+            transfer_fee_bps,
+            unshield_fee_bps,
+            swap_fee_bps,
+            remove_liquidity_fee_bps,
+            fees_enabled,
+        )
+    }
+
+    /// Update protocol fee rates
+    ///
+    /// Only callable by the protocol authority. Allows updating individual
+    /// fee rates or toggling fees on/off.
+    pub fn update_protocol_fees(
+        ctx: Context<UpdateProtocolFees>,
+        transfer_fee_bps: Option<u16>,
+        unshield_fee_bps: Option<u16>,
+        swap_fee_bps: Option<u16>,
+        remove_liquidity_fee_bps: Option<u16>,
+        fees_enabled: Option<bool>,
+    ) -> Result<()> {
+        admin::update_protocol_fees(
+            ctx,
+            transfer_fee_bps,
+            unshield_fee_bps,
+            swap_fee_bps,
+            remove_liquidity_fee_bps,
+            fees_enabled,
+        )
+    }
+
+    /// Update protocol treasury address
+    ///
+    /// Only callable by the protocol authority. Changes where fees are sent.
+    pub fn update_treasury(ctx: Context<UpdateTreasury>) -> Result<()> {
+        admin::update_treasury(ctx)
+    }
+
+    /// Transfer protocol authority to a new account
+    ///
+    /// Only callable by the current authority.
+    pub fn update_protocol_authority(ctx: Context<UpdateProtocolAuthority>) -> Result<()> {
+        admin::update_protocol_authority(ctx)
     }
 }

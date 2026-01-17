@@ -46,3 +46,18 @@ export {
   formatShare,
 } from './usePoolAnalytics';
 export type { PoolStats, PoolAnalytics, UserPoolPosition } from './usePoolAnalytics';
+
+// Consolidation
+export {
+  useConsolidation,
+  useShouldConsolidate,
+  useFragmentationScore,
+} from './useConsolidation';
+export type { ConsolidationState, UseConsolidationOptions } from './useConsolidation';
+
+// Auto-consolidation
+export {
+  useAutoConsolidation,
+  useIsConsolidationRecommended,
+} from './useAutoConsolidation';
+export type { UseAutoConsolidationResult, UseAutoConsolidationOptions } from './useAutoConsolidation';

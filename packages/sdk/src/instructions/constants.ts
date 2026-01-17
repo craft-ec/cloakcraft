@@ -13,6 +13,7 @@ export const SEEDS = {
   VAULT: Buffer.from('vault'),
   VERIFICATION_KEY: Buffer.from('vk'),
   COMMITMENT_COUNTER: Buffer.from('commitment_counter'),
+  PROTOCOL_CONFIG: Buffer.from('protocol_config'),
 } as const;
 
 // V2 Batch Trees (Devnet)
@@ -30,6 +31,7 @@ export const CIRCUIT_IDS = {
   TRANSFER_2X3: 'transfer_2x3',
   TRANSFER_3X2: 'transfer_3x2',
   TRANSFER_3X3: 'transfer_3x3',
+  CONSOLIDATE_3X1: 'consolidate_3x1',
   SWAP: 'swap_swap',
   ADD_LIQUIDITY: 'swap_add_liquidity',
   REMOVE_LIQUIDITY: 'swap_remove_liquidity',
@@ -84,6 +86,16 @@ export function deriveCommitmentCounterPda(pool: PublicKey, programId: PublicKey
 export function deriveVerificationKeyPda(circuitId: string, programId: PublicKey = PROGRAM_ID): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [SEEDS.VERIFICATION_KEY, padCircuitId(circuitId)],
+    programId
+  );
+}
+
+/**
+ * Derive protocol config PDA
+ */
+export function deriveProtocolConfigPda(programId: PublicKey = PROGRAM_ID): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [SEEDS.PROTOCOL_CONFIG],
     programId
   );
 }

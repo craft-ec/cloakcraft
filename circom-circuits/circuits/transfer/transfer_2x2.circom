@@ -68,15 +68,23 @@ template RangeCheck64() {
 }
 
 // ============================================================================
-// Main Transfer Circuit: 1 Input -> 2 Outputs
+// Main Transfer Circuit: 2 Inputs -> 2 Outputs
+// ============================================================================
+//
+// Use cases:
+// - Combine 2 notes into a transfer + change
+// - Spend when no single note is large enough
+// - Normal transfer when balance is fragmented
+//
 // ============================================================================
 
-template Transfer1x2() {
+template Transfer2x2() {
     // ========================================================================
     // Public Inputs (signals that will be verified on-chain)
     // ========================================================================
     signal input merkle_root;           // Merkle root (verified on-chain via Light Protocol)
-    signal input nullifier;             // Prevents double-spending
+    signal input nullifier_1;           // Nullifier for input 1
+    signal input nullifier_2;           // Nullifier for input 2
     signal input out_commitment_1;      // Output 1 commitment (recipient)
     signal input out_commitment_2;      // Output 2 commitment (change)
     signal input token_mint;            // Token being transferred
@@ -87,16 +95,27 @@ template Transfer1x2() {
     // Private Inputs (witness - never revealed)
     // ========================================================================
 
-    // Input note details
-    signal input in_stealth_pub_x;
-    signal input in_amount;
-    signal input in_randomness;
-    signal input in_stealth_spending_key;
+    // Input note 1 details
+    signal input in_stealth_pub_x_1;
+    signal input in_amount_1;
+    signal input in_randomness_1;
+    signal input in_stealth_spending_key_1;
 
-    // Merkle proof (32 levels)
-    signal input merkle_path[32];
-    signal input merkle_path_indices[32];
-    signal input leaf_index;
+    // Merkle proof for input 1 (32 levels)
+    signal input merkle_path_1[32];
+    signal input merkle_path_indices_1[32];
+    signal input leaf_index_1;
+
+    // Input note 2 details
+    signal input in_stealth_pub_x_2;
+    signal input in_amount_2;
+    signal input in_randomness_2;
+    signal input in_stealth_spending_key_2;
+
+    // Merkle proof for input 2 (32 levels)
+    signal input merkle_path_2[32];
+    signal input merkle_path_indices_2[32];
+    signal input leaf_index_2;
 
     // Output 1 details (recipient)
     signal input out_stealth_pub_x_1;
@@ -109,32 +128,53 @@ template Transfer1x2() {
     signal input out_randomness_2;
 
     // ========================================================================
-    // 1. Verify Input Commitment
+    // 1. Verify Input Commitment 1
     // ========================================================================
-    component in_commitment = Commitment();
-    in_commitment.stealth_pub_x <== in_stealth_pub_x;
-    in_commitment.token_mint <== token_mint;
-    in_commitment.amount <== in_amount;
-    in_commitment.randomness <== in_randomness;
+    component in_commitment_1 = Commitment();
+    in_commitment_1.stealth_pub_x <== in_stealth_pub_x_1;
+    in_commitment_1.token_mint <== token_mint;
+    in_commitment_1.amount <== in_amount_1;
+    in_commitment_1.randomness <== in_randomness_1;
 
     // ========================================================================
-    // 2. Verify Nullifier
+    // 2. Verify Nullifier 1
     // ========================================================================
-    // nullifier = Poseidon(domain, nullifier_key, commitment, leaf_index)
+    component nk_1 = NullifierKey();
+    nk_1.spending_key <== in_stealth_spending_key_1;
 
-    component nk = NullifierKey();
-    nk.spending_key <== in_stealth_spending_key;
-
-    component computed_nullifier = SpendingNullifier();
-    computed_nullifier.nullifier_key <== nk.out;
-    computed_nullifier.commitment <== in_commitment.out;
-    computed_nullifier.leaf_index <== leaf_index;
+    component computed_nullifier_1 = SpendingNullifier();
+    computed_nullifier_1.nullifier_key <== nk_1.out;
+    computed_nullifier_1.commitment <== in_commitment_1.out;
+    computed_nullifier_1.leaf_index <== leaf_index_1;
 
     // Constrain provided nullifier to match computed
-    nullifier === computed_nullifier.out;
+    nullifier_1 === computed_nullifier_1.out;
 
     // ========================================================================
-    // 3. Verify Output Commitments
+    // 3. Verify Input Commitment 2
+    // ========================================================================
+    component in_commitment_2 = Commitment();
+    in_commitment_2.stealth_pub_x <== in_stealth_pub_x_2;
+    in_commitment_2.token_mint <== token_mint;
+    in_commitment_2.amount <== in_amount_2;
+    in_commitment_2.randomness <== in_randomness_2;
+
+    // ========================================================================
+    // 4. Verify Nullifier 2
+    // ========================================================================
+    component nk_2 = NullifierKey();
+    nk_2.spending_key <== in_stealth_spending_key_2;
+
+    component computed_nullifier_2 = SpendingNullifier();
+    computed_nullifier_2.nullifier_key <== nk_2.out;
+    computed_nullifier_2.commitment <== in_commitment_2.out;
+    computed_nullifier_2.leaf_index <== leaf_index_2;
+
+    // Constrain provided nullifier to match computed
+    nullifier_2 === computed_nullifier_2.out;
+
+    // ========================================================================
+    // 5. Verify Output Commitments
     // ========================================================================
 
     // Output 1 (recipient)
@@ -154,18 +194,25 @@ template Transfer1x2() {
     out_commitment_2 === out_commit_2.out;
 
     // ========================================================================
-    // 4. Balance Check (with protocol fee)
+    // 6. Balance Check (with protocol fee)
     // ========================================================================
-    // input = output_1 + output_2 + unshield + fee
+    // input_1 + input_2 = output_1 + output_2 + unshield + fee
+    signal total_in;
+    total_in <== in_amount_1 + in_amount_2;
+
     signal total_out;
     total_out <== out_amount_1 + out_amount_2 + unshield_amount + fee_amount;
-    in_amount === total_out;
+
+    total_in === total_out;
 
     // ========================================================================
-    // 5. Range Checks (64-bit amounts)
+    // 7. Range Checks (64-bit amounts)
     // ========================================================================
-    component range_in = RangeCheck64();
-    range_in.in <== in_amount;
+    component range_in1 = RangeCheck64();
+    range_in1.in <== in_amount_1;
+
+    component range_in2 = RangeCheck64();
+    range_in2.in <== in_amount_2;
 
     component range_out1 = RangeCheck64();
     range_out1.in <== out_amount_1;
@@ -181,20 +228,21 @@ template Transfer1x2() {
 
     // ========================================================================
     // Note: Merkle proof verification is done ON-CHAIN via Light Protocol
-    // The merkle_root, merkle_path, and merkle_path_indices are included
+    // The merkle_root, merkle_path_*, and merkle_path_indices_* are included
     // for ABI compatibility but not verified in this circuit.
     // merkle_root is a public input so it's inherently constrained.
-    // merkle_path and merkle_path_indices are private inputs in the witness.
+    // merkle_path_* and merkle_path_indices_* are private inputs in the witness.
     // ========================================================================
 }
 
 // Main component with public inputs
 component main {public [
     merkle_root,
-    nullifier,
+    nullifier_1,
+    nullifier_2,
     out_commitment_1,
     out_commitment_2,
     token_mint,
     unshield_amount,
     fee_amount
-]} = Transfer1x2();
+]} = Transfer2x2();

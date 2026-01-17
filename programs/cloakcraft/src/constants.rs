@@ -24,6 +24,11 @@ pub mod domains {
 pub mod circuits {
     pub const TRANSFER_1X2: [u8; 32] = *b"transfer_1x2____________________";
     pub const TRANSFER_1X3: [u8; 32] = *b"transfer_1x3____________________";
+    pub const TRANSFER_2X2: [u8; 32] = *b"transfer_2x2____________________";
+    pub const TRANSFER_2X3: [u8; 32] = *b"transfer_2x3____________________";
+    pub const TRANSFER_3X2: [u8; 32] = *b"transfer_3x2____________________";
+    pub const TRANSFER_3X3: [u8; 32] = *b"transfer_3x3____________________";
+    pub const CONSOLIDATE_3X1: [u8; 32] = *b"consolidate_3x1_________________";
     pub const ADAPTER_1X1: [u8; 32] = *b"adapter_1x1_____________________";
     pub const ADAPTER_1X2: [u8; 32] = *b"adapter_1x2_____________________";
     pub const MARKET_ORDER_CREATE: [u8; 32] = *b"market_order_create_____________";
@@ -46,6 +51,7 @@ pub mod seeds {
     pub const VERIFICATION_KEY: &[u8] = b"vk";
     pub const ADAPT_MODULE: &[u8] = b"adapt";
     pub const COMMITTEE: &[u8] = b"committee";
+    pub const PROTOCOL_CONFIG: &[u8] = b"protocol_config";
 }
 
 /// Encrypted note size in bytes

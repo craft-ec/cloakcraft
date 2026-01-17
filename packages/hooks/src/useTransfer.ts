@@ -5,9 +5,10 @@
  * The client handles all cryptographic preparation.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { PublicKey, Keypair as SolanaKeypair } from '@solana/web3.js';
 import { useCloakCraft } from './provider';
+import { SmartNoteSelector, SelectionStrategy } from '@cloakcraft/sdk';
 import type { DecryptedNote, StealthAddress, TransactionResult } from '@cloakcraft/types';
 
 interface TransferState {
@@ -129,45 +130,86 @@ export function useTransfer() {
 
 /**
  * Hook for selecting notes for a transfer
+ *
+ * Uses SmartNoteSelector for intelligent note selection based on:
+ * - Available circuit types (1x2, 2x2, 3x2)
+ * - Selection strategy
+ * - Fee amounts
  */
 export function useNoteSelector(tokenMint: PublicKey) {
   const { notes } = useCloakCraft();
   const [selected, setSelected] = useState<DecryptedNote[]>([]);
 
+  // Create SmartNoteSelector
+  const selector = useMemo(() => new SmartNoteSelector(), []);
+
   // Filter notes by token mint
-  const availableNotes = notes.filter(
-    (note) => note.tokenMint && note.tokenMint.equals(tokenMint)
+  const availableNotes = useMemo(() =>
+    notes.filter((note) => note.tokenMint && note.tokenMint.equals(tokenMint)),
+    [notes, tokenMint]
   );
 
+  /**
+   * Select notes for a target amount using SmartNoteSelector
+   *
+   * @param targetAmount - Amount needed
+   * @param options - Selection options
+   */
   const selectNotesForAmount = useCallback(
-    (targetAmount: bigint): DecryptedNote[] => {
-      let total = 0n;
-      const selectedNotes: DecryptedNote[] = [];
+    (
+      targetAmount: bigint,
+      options?: {
+        strategy?: SelectionStrategy;
+        maxInputs?: number;
+        feeAmount?: bigint;
+      }
+    ): DecryptedNote[] => {
+      const result = selector.selectNotes(availableNotes, targetAmount, {
+        strategy: options?.strategy ?? 'greedy',
+        maxInputs: options?.maxInputs ?? 2,
+        feeAmount: options?.feeAmount,
+      });
 
-      // Sort by amount descending for efficient selection
-      const sorted = [...availableNotes].sort((a, b) =>
-        a.amount > b.amount ? -1 : a.amount < b.amount ? 1 : 0
-      );
-
-      for (const note of sorted) {
-        if (total >= targetAmount) break;
-        selectedNotes.push(note);
-        total += note.amount;
+      if (result.error) {
+        throw new Error(result.error);
       }
 
-      if (total < targetAmount) {
-        throw new Error(`Insufficient balance. Have ${total}, need ${targetAmount}`);
-      }
-
-      setSelected(selectedNotes);
-      return selectedNotes;
+      setSelected(result.notes);
+      return result.notes;
     },
-    [availableNotes]
+    [availableNotes, selector]
+  );
+
+  /**
+   * Get selection result with circuit type recommendation
+   */
+  const getSelectionResult = useCallback(
+    (
+      targetAmount: bigint,
+      options?: {
+        strategy?: SelectionStrategy;
+        maxInputs?: number;
+        feeAmount?: bigint;
+      }
+    ) => {
+      return selector.selectNotes(availableNotes, targetAmount, {
+        strategy: options?.strategy ?? 'greedy',
+        maxInputs: options?.maxInputs ?? 2,
+        feeAmount: options?.feeAmount,
+      });
+    },
+    [availableNotes, selector]
   );
 
   const clearSelection = useCallback(() => {
     setSelected([]);
   }, []);
+
+  // Analyze fragmentation
+  const fragmentation = useMemo(
+    () => selector.analyzeFragmentation(availableNotes),
+    [availableNotes, selector]
+  );
 
   const totalAvailable = availableNotes.reduce((sum, n) => sum + n.amount, 0n);
   const totalSelected = selected.reduce((sum, n) => sum + n.amount, 0n);
@@ -178,6 +220,9 @@ export function useNoteSelector(tokenMint: PublicKey) {
     totalAvailable,
     totalSelected,
     selectNotesForAmount,
+    getSelectionResult,
     clearSelection,
+    fragmentation,
+    shouldConsolidate: fragmentation.shouldConsolidate,
   };
 }

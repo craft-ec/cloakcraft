@@ -49,3 +49,15 @@ export * from './prices';
 
 // Export pool analytics
 export * from './analytics';
+
+// Export protocol fees
+export * from './fees';
+
+// Export smart note selector
+export * from './note-selector';
+
+// Export consolidation service
+export * from './consolidation';
+
+// Export auto-consolidator
+export * from './auto-consolidator';

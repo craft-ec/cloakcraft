@@ -80,6 +80,12 @@ export interface TransactInstructionParams {
   unshieldAmount?: bigint;
   /** Unshield recipient token account */
   unshieldRecipient?: PublicKey;
+  /** Protocol fee amount (verified in ZK proof) */
+  feeAmount?: bigint;
+  /** Treasury token account for receiving fees (required if feeAmount > 0) */
+  treasuryTokenAccount?: PublicKey;
+  /** Protocol config PDA (optional, used for fee verification) */
+  protocolConfig?: PublicKey;
   /** Relayer public key */
   relayer: PublicKey;
   /** ZK proof bytes */
@@ -362,10 +368,13 @@ export async function buildTransactWithProgram(
   // Prepare output recipients (stealth pubkey X coordinates)
   const outputRecipients = params.outputs.map(output => Array.from(output.recipientPubkey.x));
 
-  // Debug: log unshield amount for instruction
+  // Debug: log unshield amount and fee amount for instruction
   const unshieldAmountForInstruction = params.unshieldAmount ?? 0n;
+  const feeAmountForInstruction = params.feeAmount ?? 0n;
   console.log('[Phase 0] unshield_amount for instruction:', unshieldAmountForInstruction.toString());
+  console.log('[Phase 0] fee_amount for instruction:', feeAmountForInstruction.toString());
   console.log('[Phase 0] params.unshieldAmount:', params.unshieldAmount);
+  console.log('[Phase 0] params.feeAmount:', params.feeAmount);
 
   // Log all public inputs being sent on-chain for comparison with snarkjs
   console.log('[Phase 0] Public inputs for on-chain verification:');
@@ -376,6 +385,7 @@ export async function buildTransactWithProgram(
   }
   console.log(`  [${2+outputCommitments.length}] token_mint:`, params.tokenMint.toBase58());
   console.log(`  [${3+outputCommitments.length}] unshield_amount:`, unshieldAmountForInstruction.toString());
+  console.log(`  [${4+outputCommitments.length}] fee_amount:`, feeAmountForInstruction.toString());
 
   // Debug: Log FULL commitment bytes for comparison with proof
   console.log('[Phase 0] === FULL commitment bytes for on-chain ===');
@@ -396,7 +406,8 @@ export async function buildTransactWithProgram(
       outputAmounts.map(a => new BN(a.toString())),
       outputRandomness.map(r => Array.from(r)),
       stealthEphemeralPubkeys.map(e => Array.from(e)),
-      new BN(unshieldAmountForInstruction.toString())
+      new BN(unshieldAmountForInstruction.toString()),
+      new BN(feeAmountForInstruction.toString())
     )
     .accountsStrict({
       pool: poolPda,
@@ -463,31 +474,44 @@ export async function buildTransactWithProgram(
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
     ]);
 
-  // Phase 3: Process Unshield (optional)
+  // Phase 3: Process Unshield (optional - but required if unshield_amount > 0 OR fee_amount > 0)
   let phase3Tx = null;
-  if (params.unshieldAmount && params.unshieldAmount > 0n && unshieldRecipientAta) {
+  const needsPhase3 = (params.unshieldAmount && params.unshieldAmount > 0n) ||
+                      (params.feeAmount && params.feeAmount > 0n);
+
+  if (needsPhase3) {
     console.log('[Phase 3] Building with:');
     console.log('  pool:', poolPda.toBase58());
     console.log('  tokenVault:', vaultPda.toBase58());
     console.log('  pendingOperation:', pendingOpPda.toBase58());
-    console.log('  unshieldRecipient:', unshieldRecipientAta.toBase58());
+    console.log('  unshieldRecipient:', unshieldRecipientAta?.toBase58() ?? 'null');
+    console.log('  protocolConfig:', params.protocolConfig?.toBase58() ?? 'null');
+    console.log('  treasuryTokenAccount:', params.treasuryTokenAccount?.toBase58() ?? 'null');
     console.log('  relayer:', params.relayer.toBase58());
+    console.log('  feeAmount:', feeAmountForInstruction.toString());
+    console.log('  unshieldAmount:', unshieldAmountForInstruction.toString());
+
+    // Build accounts object - Anchor's Option<Account> maps to optional fields
+    const phase3Accounts: Record<string, PublicKey | null> = {
+      pool: poolPda,
+      tokenVault: vaultPda,
+      pendingOperation: pendingOpPda,
+      protocolConfig: params.protocolConfig ?? null,
+      treasuryTokenAccount: params.treasuryTokenAccount ?? null,
+      unshieldRecipient: unshieldRecipientAta ?? null,
+      relayer: params.relayer,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    };
 
     phase3Tx = await program.methods
       .processUnshield(
         Array.from(operationId),
-        new BN(params.unshieldAmount.toString()) // unshield_amount parameter
+        new BN(unshieldAmountForInstruction.toString()) // unshield_amount parameter
       )
-      .accounts({
-        pool: poolPda,
-        tokenVault: vaultPda,
-        pendingOperation: pendingOpPda,
-        unshieldRecipient: unshieldRecipientAta,
-        relayer: params.relayer,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .accounts(phase3Accounts as any)
       .preInstructions([
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 100_000 }),
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 }), // Increased for fee transfer
         ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
       ]);
     console.log('[Phase 3] Transaction builder created');

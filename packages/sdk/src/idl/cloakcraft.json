@@ -1077,7 +1077,8 @@
         "Phase 4+: Create commitments (GENERIC)",
         "Final: Close pending operation (GENERIC)",
         "",
-        "SECURITY: ZK proof verified, binding fields stored in PendingOperation."
+        "SECURITY: ZK proof verified, binding fields stored in PendingOperation.",
+        "Fee amount is a public input verified in the ZK proof."
       ],
       "discriminator": [
         115,
@@ -1275,6 +1276,10 @@
         },
         {
           "name": "unshield_amount",
+          "type": "u64"
+        },
+        {
+          "name": "fee_amount",
           "type": "u64"
         }
       ]
@@ -3347,6 +3352,108 @@
       "args": []
     },
     {
+      "name": "initialize_protocol_config",
+      "docs": [
+        "Initialize protocol configuration with fee rates",
+        "",
+        "Creates the global ProtocolConfig account. Can only be called once.",
+        "Fee rates are in basis points (10 = 0.1%, 100 = 1%, 1000 = 10% max)."
+      ],
+      "discriminator": [
+        28,
+        50,
+        43,
+        233,
+        244,
+        98,
+        123,
+        118
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "docs": [
+            "Protocol config account (singleton PDA)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "Treasury account that will receive fees"
+          ]
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Authority that can update config (typically a multisig or governance)"
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Payer for account creation"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "transfer_fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "unshield_fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "swap_fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "remove_liquidity_fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "fees_enabled",
+          "type": "bool"
+        }
+      ]
+    },
+    {
       "name": "process_unshield",
       "docs": [
         "Process Unshield Phase 3 - process unshield only (Transfer-specific)",
@@ -3396,7 +3503,7 @@
         {
           "name": "token_vault",
           "docs": [
-            "Token vault"
+            "Token vault (boxed to reduce stack usage)"
           ],
           "writable": true,
           "pda": {
@@ -3422,7 +3529,7 @@
         {
           "name": "pending_operation",
           "docs": [
-            "Pending operation PDA"
+            "Pending operation PDA (boxed to reduce stack usage)"
           ],
           "writable": true,
           "pda": {
@@ -3450,9 +3557,48 @@
           }
         },
         {
+          "name": "protocol_config",
+          "docs": [
+            "Protocol config (optional - if fees are enabled, boxed to reduce stack usage)"
+          ],
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury_token_account",
+          "docs": [
+            "Treasury token account for receiving fees (optional - required if fee_amount > 0)"
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
           "name": "unshield_recipient",
           "docs": [
-            "Unshield recipient (optional)"
+            "Unshield recipient (optional, boxed to reduce stack usage)"
           ],
           "writable": true,
           "optional": true
@@ -4935,6 +5081,236 @@
       ]
     },
     {
+      "name": "update_protocol_authority",
+      "docs": [
+        "Transfer protocol authority to a new account",
+        "",
+        "Only callable by the current authority."
+      ],
+      "discriminator": [
+        207,
+        19,
+        17,
+        100,
+        133,
+        169,
+        89,
+        253
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "docs": [
+            "Protocol config account"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_authority",
+          "docs": [
+            "New authority"
+          ]
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Current authority"
+          ],
+          "signer": true,
+          "relations": [
+            "protocol_config"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_protocol_fees",
+      "docs": [
+        "Update protocol fee rates",
+        "",
+        "Only callable by the protocol authority. Allows updating individual",
+        "fee rates or toggling fees on/off."
+      ],
+      "discriminator": [
+        158,
+        219,
+        253,
+        143,
+        54,
+        45,
+        113,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "docs": [
+            "Protocol config account"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Authority that can update fees"
+          ],
+          "signer": true,
+          "relations": [
+            "protocol_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "transfer_fee_bps",
+          "type": {
+            "option": "u16"
+          }
+        },
+        {
+          "name": "unshield_fee_bps",
+          "type": {
+            "option": "u16"
+          }
+        },
+        {
+          "name": "swap_fee_bps",
+          "type": {
+            "option": "u16"
+          }
+        },
+        {
+          "name": "remove_liquidity_fee_bps",
+          "type": {
+            "option": "u16"
+          }
+        },
+        {
+          "name": "fees_enabled",
+          "type": {
+            "option": "bool"
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_treasury",
+      "docs": [
+        "Update protocol treasury address",
+        "",
+        "Only callable by the protocol authority. Changes where fees are sent."
+      ],
+      "discriminator": [
+        60,
+        16,
+        243,
+        66,
+        96,
+        59,
+        254,
+        131
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "docs": [
+            "Protocol config account"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_treasury",
+          "docs": [
+            "New treasury account"
+          ]
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "Authority that can update treasury"
+          ],
+          "signer": true,
+          "relations": [
+            "protocol_config"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "verify_commitment_exists",
       "docs": [
         "Verify Commitment Exists Phase 1 - verify commitment in Light Protocol state tree (GENERIC)",
@@ -5139,6 +5515,19 @@
         153,
         118,
         196
+      ]
+    },
+    {
+      "name": "ProtocolConfig",
+      "discriminator": [
+        207,
+        91,
+        250,
+        28,
+        152,
+        179,
+        215,
+        209
       ]
     },
     {
@@ -7128,6 +7517,30 @@
               "Remove Liquidity: unused"
             ],
             "type": "bool"
+          },
+          {
+            "name": "fee_amount",
+            "docs": [
+              "Protocol fee amount (verified in ZK proof)",
+              "Transfer/Unshield: Fee deducted from transfer amount",
+              "Swap: Fee deducted from swap output",
+              "Remove Liquidity: Fee deducted from withdrawal"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "unshield_amount",
+            "docs": [
+              "Unshield amount (for process_unshield phase)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "fee_processed",
+            "docs": [
+              "Whether fee has been processed (transferred to treasury)"
+            ],
+            "type": "bool"
           }
         ]
       }
@@ -7227,6 +7640,92 @@
               "PDA bump seed"
             ],
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProtocolConfig",
+      "docs": [
+        "Protocol configuration account",
+        "",
+        "Stores fee rates in basis points (10000 = 100%) and treasury address.",
+        "Fee rates can be updated by the authority."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "Authority that can update fees"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "docs": [
+              "Treasury account that receives protocol fees"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "transfer_fee_bps",
+            "docs": [
+              "Transfer fee in basis points (e.g., 10 = 0.1%)",
+              "Applied to private → private transfers"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "unshield_fee_bps",
+            "docs": [
+              "Unshield fee in basis points (e.g., 25 = 0.25%)",
+              "Applied to private → public withdrawals"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "swap_fee_bps",
+            "docs": [
+              "Swap fee in basis points (e.g., 30 = 0.3%)",
+              "Applied to private AMM swaps"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "remove_liquidity_fee_bps",
+            "docs": [
+              "Remove liquidity fee in basis points (e.g., 25 = 0.25%)",
+              "Applied to LP token withdrawals"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "fees_enabled",
+            "docs": [
+              "Whether fees are enabled (can be paused)"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump seed"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_reserved",
+            "docs": [
+              "Reserved for future use"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                62
+              ]
+            }
           }
         ]
       }
