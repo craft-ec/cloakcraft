@@ -49,6 +49,11 @@ interface JupiterPriceResponse {
 const DEFAULT_CACHE_TTL = 60 * 1000;
 
 /**
+ * Error backoff duration (5 minutes) - don't retry if API is down
+ */
+const ERROR_BACKOFF_MS = 5 * 60 * 1000;
+
+/**
  * Jupiter Price API endpoint
  */
 const JUPITER_PRICE_API = 'https://price.jup.ag/v6/price';
@@ -70,9 +75,37 @@ export class TokenPriceFetcher {
   private cache: Map<string, PriceCacheEntry> = new Map();
   private cacheTtl: number;
   private pendingRequests: Map<string, Promise<TokenPrice | null>> = new Map();
+  private apiUnavailableUntil: number = 0;
+  private consecutiveErrors: number = 0;
 
   constructor(cacheTtlMs: number = DEFAULT_CACHE_TTL) {
     this.cacheTtl = cacheTtlMs;
+  }
+
+  /**
+   * Check if API is currently in backoff state
+   */
+  private isApiUnavailable(): boolean {
+    return Date.now() < this.apiUnavailableUntil;
+  }
+
+  /**
+   * Mark API as unavailable for backoff period
+   */
+  private markApiUnavailable(): void {
+    this.consecutiveErrors++;
+    // Exponential backoff: 5min, 10min, 20min, max 30min
+    const backoffMs = Math.min(ERROR_BACKOFF_MS * Math.pow(2, this.consecutiveErrors - 1), 30 * 60 * 1000);
+    this.apiUnavailableUntil = Date.now() + backoffMs;
+    console.warn(`[TokenPriceFetcher] API unavailable, backing off for ${backoffMs / 1000}s`);
+  }
+
+  /**
+   * Mark API as available (reset backoff)
+   */
+  private markApiAvailable(): void {
+    this.consecutiveErrors = 0;
+    this.apiUnavailableUntil = 0;
   }
 
   /**
@@ -84,6 +117,11 @@ export class TokenPriceFetcher {
     // Check cache first
     const cached = this.getCached(mintStr);
     if (cached) return cached;
+
+    // Don't fetch if API is in backoff
+    if (this.isApiUnavailable()) {
+      return null;
+    }
 
     // Check if there's already a pending request for this mint
     const pending = this.pendingRequests.get(mintStr);
@@ -119,8 +157,8 @@ export class TokenPriceFetcher {
       }
     }
 
-    // Fetch uncached prices in batch
-    if (uncached.length > 0) {
+    // Fetch uncached prices in batch (if API available)
+    if (uncached.length > 0 && !this.isApiUnavailable()) {
       const fetched = await this.fetchPrices(uncached);
       for (const [mint, price] of fetched) {
         result.set(mint, price);
@@ -218,12 +256,18 @@ export class TokenPriceFetcher {
       const response = await fetch(url);
 
       if (!response.ok) {
-        console.warn(`[TokenPriceFetcher] Failed to fetch price for ${mint}: ${response.status}`);
+        // Don't treat 4xx as API being down (just that token not found)
+        if (response.status >= 500) {
+          this.markApiUnavailable();
+        }
         return null;
       }
 
       const data: JupiterPriceResponse = await response.json();
       const priceData = data.data[mint];
+
+      // API is working, reset backoff
+      this.markApiAvailable();
 
       if (!priceData) {
         return null;
@@ -238,7 +282,8 @@ export class TokenPriceFetcher {
       this.setCache(price);
       return price;
     } catch (err) {
-      console.warn(`[TokenPriceFetcher] Error fetching price for ${mint}:`, err);
+      // Network errors suggest API is unavailable
+      this.markApiUnavailable();
       return null;
     }
   }
@@ -256,11 +301,17 @@ export class TokenPriceFetcher {
       const response = await fetch(url);
 
       if (!response.ok) {
-        console.warn(`[TokenPriceFetcher] Failed to fetch prices: ${response.status}`);
+        // Server errors suggest API is unavailable
+        if (response.status >= 500) {
+          this.markApiUnavailable();
+        }
         return result;
       }
 
       const data: JupiterPriceResponse = await response.json();
+
+      // API is working, reset backoff
+      this.markApiAvailable();
 
       for (const mint of mints) {
         const priceData = data.data[mint];
@@ -275,10 +326,25 @@ export class TokenPriceFetcher {
         }
       }
     } catch (err) {
-      console.warn('[TokenPriceFetcher] Error fetching prices:', err);
+      // Network errors suggest API is unavailable
+      this.markApiUnavailable();
     }
 
     return result;
+  }
+
+  /**
+   * Check if price API is currently available
+   */
+  isAvailable(): boolean {
+    return !this.isApiUnavailable();
+  }
+
+  /**
+   * Force reset the backoff state (for manual retry)
+   */
+  resetBackoff(): void {
+    this.markApiAvailable();
   }
 }
 

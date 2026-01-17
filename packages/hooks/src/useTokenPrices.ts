@@ -42,6 +42,10 @@ export interface UseTokenPricesResult {
   solPrice: number;
   /** Last update timestamp */
   lastUpdated: number | null;
+  /** Whether price API is available */
+  isAvailable: boolean;
+  /** Force retry (reset backoff) */
+  forceRetry: () => Promise<void>;
 }
 
 /**
@@ -55,6 +59,7 @@ export function useTokenPrices(
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [isAvailable, setIsAvailable] = useState(true);
   const fetcher = useRef(getPriceFetcher());
 
   // Convert mints to strings for comparison
@@ -77,12 +82,20 @@ export function useTokenPrices(
       const priceMap = await fetcher.current.getPrices(mintStrings);
       setPrices(priceMap);
       setLastUpdated(Date.now());
+      setIsAvailable(fetcher.current.isAvailable());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch prices');
+      setIsAvailable(fetcher.current.isAvailable());
     } finally {
       setIsLoading(false);
     }
   }, [mintStrings]);
+
+  const forceRetry = useCallback(async () => {
+    fetcher.current.resetBackoff();
+    setIsAvailable(true);
+    await fetchPrices();
+  }, [fetchPrices]);
 
   // Initial fetch and refresh interval
   useEffect(() => {
@@ -126,6 +139,8 @@ export function useTokenPrices(
     refresh: fetchPrices,
     solPrice,
     lastUpdated,
+    isAvailable,
+    forceRetry,
   };
 }
 

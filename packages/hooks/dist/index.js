@@ -31,10 +31,21 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var index_exports = {};
 __export(index_exports, {
   CloakCraftProvider: () => CloakCraftProvider,
+  TransactionStatus: () => import_sdk5.TransactionStatus,
+  TransactionType: () => import_sdk5.TransactionType,
   WALLET_DERIVATION_MESSAGE: () => WALLET_DERIVATION_MESSAGE,
+  formatApy: () => import_sdk9.formatApy,
+  formatPrice: () => import_sdk7.formatPrice,
+  formatPriceChange: () => import_sdk7.formatPriceChange,
+  formatShare: () => import_sdk9.formatShare,
+  formatTvl: () => import_sdk9.formatTvl,
+  useAddLiquidity: () => useAddLiquidity,
   useAllBalances: () => useAllBalances,
+  useAmmPools: () => useAmmPools,
   useBalance: () => useBalance,
   useCloakCraft: () => useCloakCraft,
+  useImpermanentLoss: () => useImpermanentLoss,
+  useInitializeAmmPool: () => useInitializeAmmPool,
   useInitializePool: () => useInitializePool,
   useNoteSelection: () => useNoteSelection,
   useNoteSelector: () => useNoteSelector,
@@ -42,15 +53,27 @@ __export(index_exports, {
   useNullifierStatus: () => useNullifierStatus,
   useOrders: () => useOrders,
   usePool: () => usePool,
+  usePoolAnalytics: () => usePoolAnalytics,
   usePoolList: () => usePoolList,
+  usePoolStats: () => usePoolStats,
+  usePortfolioValue: () => usePortfolioValue,
   usePrivateBalance: () => usePrivateBalance,
   usePublicBalance: () => usePublicBalance,
+  useRecentTransactions: () => useRecentTransactions,
+  useRemoveLiquidity: () => useRemoveLiquidity,
   useScanner: () => useScanner,
   useShield: () => useShield,
   useSolBalance: () => useSolBalance,
+  useSolPrice: () => useSolPrice,
+  useSwap: () => useSwap,
+  useSwapQuote: () => useSwapQuote,
   useTokenBalances: () => useTokenBalances,
+  useTokenPrice: () => useTokenPrice,
+  useTokenPrices: () => useTokenPrices,
+  useTransactionHistory: () => useTransactionHistory,
   useTransfer: () => useTransfer,
   useUnshield: () => useUnshield,
+  useUserPosition: () => useUserPosition,
   useWallet: () => useWallet
 });
 module.exports = __toCommonJS(index_exports);
@@ -186,7 +209,16 @@ function CloakCraftProvider({
         client.clearScanCache();
       }
       const scannedNotes = await client.scanNotes(tokenMint);
-      setNotes(scannedNotes);
+      if (tokenMint) {
+        setNotes((prevNotes) => {
+          const otherNotes = prevNotes.filter(
+            (n) => n.tokenMint && !n.tokenMint.equals(tokenMint)
+          );
+          return [...otherNotes, ...scannedNotes];
+        });
+      } else {
+        setNotes(scannedNotes);
+      }
       const status = await client.getSyncStatus();
       setSyncStatus(status);
     } catch (err) {
@@ -510,6 +542,7 @@ function useShield() {
           options.walletPublicKey
         );
         console.log("[useShield] shieldWithWallet result:", result);
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
         console.log("[useShield] Syncing notes...");
         await sync(options.tokenMint, true);
         setState({ isShielding: false, error: null, result });
@@ -589,6 +622,7 @@ function useTransfer() {
           void 0
           // relayer - wallet adapter will be used via provider
         );
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
         if (matchedInputs.length > 0 && matchedInputs[0].tokenMint) {
           await sync(matchedInputs[0].tokenMint, true);
         }
@@ -741,10 +775,10 @@ function useUnshield() {
         console.log("[Unshield] Total input:", totalInput.toString());
         console.log("[Unshield] Amount to unshield:", amount.toString());
         console.log("[Unshield] Change:", change.toString());
-        const { generateStealthAddress: generateStealthAddress2 } = await import("@cloakcraft/sdk");
+        const { generateStealthAddress: generateStealthAddress3 } = await import("@cloakcraft/sdk");
         const outputs = [];
         if (change > 0n) {
-          const { stealthAddress } = generateStealthAddress2(wallet.publicKey);
+          const { stealthAddress } = generateStealthAddress3(wallet.publicKey);
           outputs.push({
             recipient: stealthAddress,
             amount: change
@@ -784,6 +818,7 @@ function useUnshield() {
           // relayer - wallet adapter will be used via provider
         );
         console.log("[Unshield] prepareAndTransfer result:", result);
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
         if (matchedInputs.length > 0 && matchedInputs[0].tokenMint) {
           await sync(matchedInputs[0].tokenMint, true);
         }
@@ -1250,13 +1285,854 @@ function useOrders() {
     refresh: fetchOrders
   };
 }
+
+// src/useSwap.ts
+var import_react12 = require("react");
+var import_sdk3 = require("@cloakcraft/sdk");
+var import_web33 = require("@solana/web3.js");
+function useSwap() {
+  const { client, wallet, sync } = useCloakCraft();
+  const [state, setState] = (0, import_react12.useState)({
+    isSwapping: false,
+    error: null,
+    result: null
+  });
+  const swap = (0, import_react12.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isSwapping: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      if (!client.getProgram()) {
+        setState({ isSwapping: false, error: "Program not set", result: null });
+        return null;
+      }
+      setState({ isSwapping: true, error: null, result: null });
+      try {
+        const { input, pool, swapDirection, swapAmount, slippageBps = 50 } = options;
+        const reserveIn = swapDirection === "aToB" ? pool.reserveA : pool.reserveB;
+        const reserveOut = swapDirection === "aToB" ? pool.reserveB : pool.reserveA;
+        const { outputAmount } = (0, import_sdk3.calculateSwapOutput)(
+          swapAmount,
+          reserveIn,
+          reserveOut,
+          pool.feeBps
+        );
+        const minOutput = (0, import_sdk3.calculateMinOutput)(outputAmount, slippageBps);
+        const outputTokenMint = swapDirection === "aToB" ? pool.tokenBMint : pool.tokenAMint;
+        const { stealthAddress: outputRecipient } = (0, import_sdk3.generateStealthAddress)(wallet.publicKey);
+        const { stealthAddress: changeRecipient } = (0, import_sdk3.generateStealthAddress)(wallet.publicKey);
+        client.clearScanCache();
+        const freshNotes = await client.scanNotes(input.tokenMint);
+        const freshInput = freshNotes.find(
+          (n) => n.commitment && input.commitment && Buffer.from(n.commitment).toString("hex") === Buffer.from(input.commitment).toString("hex")
+        );
+        if (!freshInput) {
+          throw new Error("Selected note not found. It may have been spent.");
+        }
+        const merkleRoot = freshInput.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
+        const result = await client.swap({
+          input: freshInput,
+          poolId: pool.address,
+          swapDirection,
+          swapAmount,
+          outputAmount,
+          minOutput,
+          outputTokenMint,
+          outputRecipient,
+          changeRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices
+        });
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        await sync(input.tokenMint, true);
+        await sync(outputTokenMint, true);
+        setState({ isSwapping: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Swap failed";
+        setState({ isSwapping: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet, sync]
+  );
+  const reset = (0, import_react12.useCallback)(() => {
+    setState({ isSwapping: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    swap,
+    reset
+  };
+}
+function useAmmPools() {
+  const { client } = useCloakCraft();
+  const [pools, setPools] = (0, import_react12.useState)([]);
+  const [isLoading, setIsLoading] = (0, import_react12.useState)(false);
+  const [error, setError] = (0, import_react12.useState)(null);
+  const refresh = (0, import_react12.useCallback)(async () => {
+    if (!client?.getProgram()) {
+      setPools([]);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const allPools = await client.getAllAmmPools();
+      setPools(allPools);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch pools");
+      setPools([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [client]);
+  (0, import_react12.useEffect)(() => {
+    refresh();
+  }, [refresh]);
+  return {
+    pools,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function useSwapQuote(pool, swapDirection, inputAmount) {
+  const [quote, setQuote] = (0, import_react12.useState)(null);
+  (0, import_react12.useEffect)(() => {
+    if (!pool || inputAmount <= 0n) {
+      setQuote(null);
+      return;
+    }
+    try {
+      const reserveIn = swapDirection === "aToB" ? pool.reserveA : pool.reserveB;
+      const reserveOut = swapDirection === "aToB" ? pool.reserveB : pool.reserveA;
+      const { outputAmount, priceImpact } = (0, import_sdk3.calculateSwapOutput)(
+        inputAmount,
+        reserveIn,
+        reserveOut,
+        pool.feeBps
+      );
+      const minOutput = (0, import_sdk3.calculateMinOutput)(outputAmount, 50);
+      setQuote({ outputAmount, minOutput, priceImpact });
+    } catch {
+      setQuote(null);
+    }
+  }, [pool, swapDirection, inputAmount]);
+  return quote;
+}
+function useInitializeAmmPool() {
+  const { client } = useCloakCraft();
+  const [state, setState] = (0, import_react12.useState)({
+    isInitializing: false,
+    error: null,
+    result: null
+  });
+  const initializePool = (0, import_react12.useCallback)(
+    async (tokenAMint, tokenBMint, feeBps = 30) => {
+      if (!client?.getProgram()) {
+        setState({ isInitializing: false, error: "Program not set", result: null });
+        return null;
+      }
+      setState({ isInitializing: true, error: null, result: null });
+      try {
+        const lpMintKeypair = import_web33.Keypair.generate();
+        const signature = await client.initializeAmmPool(
+          tokenAMint,
+          tokenBMint,
+          lpMintKeypair,
+          feeBps
+        );
+        setState({ isInitializing: false, error: null, result: signature });
+        return signature;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Failed to initialize pool";
+        setState({ isInitializing: false, error, result: null });
+        return null;
+      }
+    },
+    [client]
+  );
+  const reset = (0, import_react12.useCallback)(() => {
+    setState({ isInitializing: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    initializePool,
+    reset
+  };
+}
+function useAddLiquidity() {
+  const { client, wallet, sync } = useCloakCraft();
+  const [state, setState] = (0, import_react12.useState)({
+    isAdding: false,
+    error: null,
+    result: null
+  });
+  const addLiquidity = (0, import_react12.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isAdding: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      if (!client.getProgram()) {
+        setState({ isAdding: false, error: "Program not set", result: null });
+        return null;
+      }
+      setState({ isAdding: true, error: null, result: null });
+      try {
+        const { pool, inputA, inputB, amountA, amountB, slippageBps = 50 } = options;
+        const { depositA, depositB, lpAmount } = (0, import_sdk3.calculateAddLiquidityAmounts)(
+          amountA,
+          amountB,
+          pool.reserveA,
+          pool.reserveB,
+          pool.lpSupply
+        );
+        const minLpAmount = lpAmount * BigInt(1e4 - slippageBps) / 10000n;
+        const { stealthAddress: lpRecipient } = (0, import_sdk3.generateStealthAddress)(wallet.publicKey);
+        const { stealthAddress: changeARecipient } = (0, import_sdk3.generateStealthAddress)(wallet.publicKey);
+        const { stealthAddress: changeBRecipient } = (0, import_sdk3.generateStealthAddress)(wallet.publicKey);
+        client.clearScanCache();
+        const freshNotesA = await client.scanNotes(inputA.tokenMint);
+        const freshNotesB = await client.scanNotes(inputB.tokenMint);
+        const freshInputA = freshNotesA.find(
+          (n) => n.commitment && inputA.commitment && Buffer.from(n.commitment).toString("hex") === Buffer.from(inputA.commitment).toString("hex")
+        );
+        const freshInputB = freshNotesB.find(
+          (n) => n.commitment && inputB.commitment && Buffer.from(n.commitment).toString("hex") === Buffer.from(inputB.commitment).toString("hex")
+        );
+        if (!freshInputA || !freshInputB) {
+          throw new Error("Selected notes not found. They may have been spent.");
+        }
+        const result = await client.addLiquidity({
+          inputA: freshInputA,
+          inputB: freshInputB,
+          poolId: pool.address,
+          lpMint: pool.lpMint,
+          depositA,
+          depositB,
+          lpAmount,
+          minLpAmount,
+          lpRecipient,
+          changeARecipient,
+          changeBRecipient
+        });
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        await sync(inputA.tokenMint, true);
+        await sync(inputB.tokenMint, true);
+        await sync(pool.lpMint, true);
+        setState({ isAdding: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Add liquidity failed";
+        setState({ isAdding: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet, sync]
+  );
+  const reset = (0, import_react12.useCallback)(() => {
+    setState({ isAdding: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    addLiquidity,
+    reset
+  };
+}
+function useRemoveLiquidity() {
+  const { client, wallet, sync } = useCloakCraft();
+  const [state, setState] = (0, import_react12.useState)({
+    isRemoving: false,
+    error: null,
+    result: null
+  });
+  const removeLiquidity = (0, import_react12.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isRemoving: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      if (!client.getProgram()) {
+        setState({ isRemoving: false, error: "Program not set", result: null });
+        return null;
+      }
+      setState({ isRemoving: true, error: null, result: null });
+      try {
+        const { pool, lpInput, lpAmount, slippageBps = 50 } = options;
+        const { outputA, outputB } = (0, import_sdk3.calculateRemoveLiquidityOutput)(
+          lpAmount,
+          pool.lpSupply,
+          pool.reserveA,
+          pool.reserveB
+        );
+        const { stealthAddress: outputARecipient } = (0, import_sdk3.generateStealthAddress)(wallet.publicKey);
+        const { stealthAddress: outputBRecipient } = (0, import_sdk3.generateStealthAddress)(wallet.publicKey);
+        client.clearScanCache();
+        const freshNotes = await client.scanNotes(pool.lpMint);
+        const freshLpInput = freshNotes.find(
+          (n) => n.commitment && lpInput.commitment && Buffer.from(n.commitment).toString("hex") === Buffer.from(lpInput.commitment).toString("hex")
+        );
+        if (!freshLpInput) {
+          throw new Error("LP note not found. It may have been spent.");
+        }
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
+        const oldPoolStateHash = (0, import_sdk3.computeAmmStateHash)(
+          pool.reserveA,
+          pool.reserveB,
+          pool.lpSupply,
+          pool.poolId
+        );
+        const newReserveA = pool.reserveA - outputA;
+        const newReserveB = pool.reserveB - outputB;
+        const newLpSupply = pool.lpSupply - lpAmount;
+        const newPoolStateHash = (0, import_sdk3.computeAmmStateHash)(
+          newReserveA,
+          newReserveB,
+          newLpSupply,
+          pool.poolId
+        );
+        const result = await client.removeLiquidity({
+          lpInput: freshLpInput,
+          poolId: pool.address,
+          tokenAMint: pool.tokenAMint,
+          tokenBMint: pool.tokenBMint,
+          lpAmount,
+          outputAAmount: outputA,
+          outputBAmount: outputB,
+          outputARecipient,
+          outputBRecipient,
+          oldPoolStateHash,
+          newPoolStateHash,
+          merklePath: dummyPath,
+          merklePathIndices: dummyIndices
+        });
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        await sync(pool.lpMint, true);
+        await sync(pool.tokenAMint, true);
+        await sync(pool.tokenBMint, true);
+        setState({ isRemoving: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Remove liquidity failed";
+        setState({ isRemoving: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet, sync]
+  );
+  const reset = (0, import_react12.useCallback)(() => {
+    setState({ isRemoving: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    removeLiquidity,
+    reset
+  };
+}
+
+// src/useTransactionHistory.ts
+var import_react13 = require("react");
+var import_sdk4 = require("@cloakcraft/sdk");
+var import_sdk5 = require("@cloakcraft/sdk");
+function useTransactionHistory(filter) {
+  const { wallet } = useCloakCraft();
+  const [transactions, setTransactions] = (0, import_react13.useState)([]);
+  const [isLoading, setIsLoading] = (0, import_react13.useState)(true);
+  const [error, setError] = (0, import_react13.useState)(null);
+  const [history, setHistory] = (0, import_react13.useState)(null);
+  (0, import_react13.useEffect)(() => {
+    if (!wallet?.publicKey) {
+      setHistory(null);
+      setTransactions([]);
+      setIsLoading(false);
+      return;
+    }
+    const initHistory = async () => {
+      try {
+        const walletId = Buffer.from(wallet.publicKey.x).toString("hex");
+        const historyManager = new import_sdk4.TransactionHistory(walletId);
+        await historyManager.initialize();
+        setHistory(historyManager);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to initialize history");
+        setIsLoading(false);
+      }
+    };
+    initHistory();
+  }, [wallet]);
+  (0, import_react13.useEffect)(() => {
+    if (!history) return;
+    const loadTransactions = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const txs = await history.getTransactions(filter);
+        setTransactions(txs);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load history");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadTransactions();
+  }, [history, filter]);
+  const refresh = (0, import_react13.useCallback)(async () => {
+    if (!history) return;
+    setIsLoading(true);
+    try {
+      const txs = await history.getTransactions(filter);
+      setTransactions(txs);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refresh history");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [history, filter]);
+  const addTransaction = (0, import_react13.useCallback)(
+    async (type, tokenMint, amount, options) => {
+      if (!history) return null;
+      try {
+        const pending = (0, import_sdk4.createPendingTransaction)(type, tokenMint, amount, options);
+        const record = await history.addTransaction(pending);
+        setTransactions((prev) => [record, ...prev]);
+        return record;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to add transaction");
+        return null;
+      }
+    },
+    [history]
+  );
+  const updateTransaction = (0, import_react13.useCallback)(
+    async (id, updates) => {
+      if (!history) return null;
+      try {
+        const updated = await history.updateTransaction(id, updates);
+        if (updated) {
+          setTransactions(
+            (prev) => prev.map((tx) => tx.id === id ? updated : tx)
+          );
+        }
+        return updated;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to update transaction");
+        return null;
+      }
+    },
+    [history]
+  );
+  const confirmTransaction = (0, import_react13.useCallback)(
+    async (id, signature) => {
+      return updateTransaction(id, {
+        status: import_sdk4.TransactionStatus.CONFIRMED,
+        signature
+      });
+    },
+    [updateTransaction]
+  );
+  const failTransaction = (0, import_react13.useCallback)(
+    async (id, errorMsg) => {
+      return updateTransaction(id, {
+        status: import_sdk4.TransactionStatus.FAILED,
+        error: errorMsg
+      });
+    },
+    [updateTransaction]
+  );
+  const clearHistory = (0, import_react13.useCallback)(async () => {
+    if (!history) return;
+    try {
+      await history.clearHistory();
+      setTransactions([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to clear history");
+    }
+  }, [history]);
+  const summary = (0, import_react13.useMemo)(() => {
+    let pending = 0;
+    let confirmed = 0;
+    let failed = 0;
+    for (const tx of transactions) {
+      switch (tx.status) {
+        case import_sdk4.TransactionStatus.PENDING:
+          pending++;
+          break;
+        case import_sdk4.TransactionStatus.CONFIRMED:
+          confirmed++;
+          break;
+        case import_sdk4.TransactionStatus.FAILED:
+          failed++;
+          break;
+      }
+    }
+    return {
+      total: transactions.length,
+      pending,
+      confirmed,
+      failed
+    };
+  }, [transactions]);
+  return {
+    transactions,
+    isLoading,
+    error,
+    addTransaction,
+    updateTransaction,
+    confirmTransaction,
+    failTransaction,
+    refresh,
+    clearHistory,
+    count: transactions.length,
+    summary
+  };
+}
+function useRecentTransactions(limit = 5) {
+  return useTransactionHistory({ limit });
+}
+
+// src/useTokenPrices.ts
+var import_react14 = require("react");
+var import_sdk6 = require("@cloakcraft/sdk");
+var import_sdk7 = require("@cloakcraft/sdk");
+var sharedPriceFetcher = null;
+function getPriceFetcher() {
+  if (!sharedPriceFetcher) {
+    sharedPriceFetcher = new import_sdk6.TokenPriceFetcher();
+  }
+  return sharedPriceFetcher;
+}
+function useTokenPrices(mints, refreshInterval) {
+  const [prices, setPrices] = (0, import_react14.useState)(/* @__PURE__ */ new Map());
+  const [isLoading, setIsLoading] = (0, import_react14.useState)(true);
+  const [error, setError] = (0, import_react14.useState)(null);
+  const [lastUpdated, setLastUpdated] = (0, import_react14.useState)(null);
+  const [isAvailable, setIsAvailable] = (0, import_react14.useState)(true);
+  const fetcher = (0, import_react14.useRef)(getPriceFetcher());
+  const mintStrings = (0, import_react14.useMemo)(
+    () => mints.map((m) => typeof m === "string" ? m : m.toBase58()),
+    [mints]
+  );
+  const fetchPrices = (0, import_react14.useCallback)(async () => {
+    if (mintStrings.length === 0) {
+      setPrices(/* @__PURE__ */ new Map());
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const priceMap = await fetcher.current.getPrices(mintStrings);
+      setPrices(priceMap);
+      setLastUpdated(Date.now());
+      setIsAvailable(fetcher.current.isAvailable());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch prices");
+      setIsAvailable(fetcher.current.isAvailable());
+    } finally {
+      setIsLoading(false);
+    }
+  }, [mintStrings]);
+  const forceRetry = (0, import_react14.useCallback)(async () => {
+    fetcher.current.resetBackoff();
+    setIsAvailable(true);
+    await fetchPrices();
+  }, [fetchPrices]);
+  (0, import_react14.useEffect)(() => {
+    fetchPrices();
+    if (refreshInterval && refreshInterval > 0) {
+      const interval = setInterval(fetchPrices, refreshInterval);
+      return () => clearInterval(interval);
+    }
+  }, [fetchPrices, refreshInterval]);
+  const getPrice = (0, import_react14.useCallback)(
+    (mint) => {
+      const mintStr = typeof mint === "string" ? mint : mint.toBase58();
+      return prices.get(mintStr);
+    },
+    [prices]
+  );
+  const getUsdValue = (0, import_react14.useCallback)(
+    (mint, amount, decimals) => {
+      const price = getPrice(mint);
+      if (!price) return 0;
+      const amountNumber = Number(amount) / Math.pow(10, decimals);
+      return amountNumber * price.priceUsd;
+    },
+    [getPrice]
+  );
+  const solPrice = (0, import_react14.useMemo)(() => {
+    const sol = prices.get("So11111111111111111111111111111111111111112");
+    return sol?.priceUsd ?? 0;
+  }, [prices]);
+  return {
+    prices,
+    getPrice,
+    getUsdValue,
+    isLoading,
+    error,
+    refresh: fetchPrices,
+    solPrice,
+    lastUpdated,
+    isAvailable,
+    forceRetry
+  };
+}
+function useTokenPrice(mint) {
+  const mints = (0, import_react14.useMemo)(
+    () => mint ? [mint] : [],
+    [mint]
+  );
+  const { prices, isLoading, error, refresh } = useTokenPrices(mints);
+  const price = (0, import_react14.useMemo)(() => {
+    if (!mint) return null;
+    const mintStr = typeof mint === "string" ? mint : mint.toBase58();
+    return prices.get(mintStr) ?? null;
+  }, [mint, prices]);
+  return {
+    price,
+    priceUsd: price?.priceUsd ?? 0,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function useSolPrice(refreshInterval = 6e4) {
+  const { solPrice, isLoading, error, refresh } = useTokenPrices(
+    ["So11111111111111111111111111111111111111112"],
+    refreshInterval
+  );
+  return {
+    price: solPrice,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function usePortfolioValue(balances) {
+  const mints = (0, import_react14.useMemo)(
+    () => balances.map((b) => b.mint),
+    [balances]
+  );
+  const { prices, isLoading, error } = useTokenPrices(mints);
+  const totalValue = (0, import_react14.useMemo)(() => {
+    let total = 0;
+    for (const balance of balances) {
+      const mintStr = typeof balance.mint === "string" ? balance.mint : balance.mint.toBase58();
+      const price = prices.get(mintStr);
+      if (price) {
+        const amountNumber = Number(balance.amount) / Math.pow(10, balance.decimals);
+        total += amountNumber * price.priceUsd;
+      }
+    }
+    return total;
+  }, [balances, prices]);
+  const breakdown = (0, import_react14.useMemo)(() => {
+    return balances.map((balance) => {
+      const mintStr = typeof balance.mint === "string" ? balance.mint : balance.mint.toBase58();
+      const price = prices.get(mintStr);
+      const amountNumber = Number(balance.amount) / Math.pow(10, balance.decimals);
+      const value = price ? amountNumber * price.priceUsd : 0;
+      const percentage = totalValue > 0 ? value / totalValue * 100 : 0;
+      return {
+        mint: mintStr,
+        amount: balance.amount,
+        decimals: balance.decimals,
+        priceUsd: price?.priceUsd ?? 0,
+        valueUsd: value,
+        percentage
+      };
+    });
+  }, [balances, prices, totalValue]);
+  return {
+    totalValue,
+    breakdown,
+    isLoading,
+    error
+  };
+}
+
+// src/usePoolAnalytics.ts
+var import_react15 = require("react");
+var import_sdk8 = require("@cloakcraft/sdk");
+var import_sdk9 = require("@cloakcraft/sdk");
+var sharedCalculator = null;
+function getCalculator() {
+  if (!sharedCalculator) {
+    sharedCalculator = new import_sdk8.PoolAnalyticsCalculator();
+  }
+  return sharedCalculator;
+}
+function usePoolAnalytics(decimalsMap, refreshInterval) {
+  const { pools, isLoading: poolsLoading, refresh: refreshPools } = useAmmPools();
+  const [analytics, setAnalytics] = (0, import_react15.useState)(null);
+  const [isLoading, setIsLoading] = (0, import_react15.useState)(true);
+  const [error, setError] = (0, import_react15.useState)(null);
+  const [lastUpdated, setLastUpdated] = (0, import_react15.useState)(null);
+  const calculator = (0, import_react15.useRef)(getCalculator());
+  const calculateAnalytics = (0, import_react15.useCallback)(async () => {
+    if (pools.length === 0) {
+      setAnalytics(null);
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await calculator.current.calculateAnalytics(pools, decimalsMap);
+      setAnalytics(result);
+      setLastUpdated(Date.now());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to calculate analytics");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [pools, decimalsMap]);
+  (0, import_react15.useEffect)(() => {
+    if (!poolsLoading) {
+      calculateAnalytics();
+    }
+  }, [pools, poolsLoading, calculateAnalytics]);
+  (0, import_react15.useEffect)(() => {
+    if (refreshInterval && refreshInterval > 0) {
+      const interval = setInterval(() => {
+        refreshPools();
+      }, refreshInterval);
+      return () => clearInterval(interval);
+    }
+  }, [refreshInterval, refreshPools]);
+  const refresh = (0, import_react15.useCallback)(async () => {
+    await refreshPools();
+    await calculateAnalytics();
+  }, [refreshPools, calculateAnalytics]);
+  return {
+    analytics,
+    totalTvl: analytics?.totalTvlUsd ?? 0,
+    formattedTvl: (0, import_sdk8.formatTvl)(analytics?.totalTvlUsd ?? 0),
+    poolCount: analytics?.poolCount ?? 0,
+    poolStats: analytics?.pools ?? [],
+    isLoading: isLoading || poolsLoading,
+    error,
+    refresh,
+    lastUpdated
+  };
+}
+function usePoolStats(pool, tokenADecimals = 9, tokenBDecimals = 9) {
+  const [stats, setStats] = (0, import_react15.useState)(null);
+  const [isLoading, setIsLoading] = (0, import_react15.useState)(true);
+  const [error, setError] = (0, import_react15.useState)(null);
+  const calculator = (0, import_react15.useRef)(getCalculator());
+  const calculateStats = (0, import_react15.useCallback)(async () => {
+    if (!pool) {
+      setStats(null);
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await calculator.current.calculatePoolStats(
+        pool,
+        tokenADecimals,
+        tokenBDecimals
+      );
+      setStats(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to calculate stats");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [pool, tokenADecimals, tokenBDecimals]);
+  (0, import_react15.useEffect)(() => {
+    calculateStats();
+  }, [calculateStats]);
+  return {
+    stats,
+    isLoading,
+    error,
+    refresh: calculateStats
+  };
+}
+function useUserPosition(pool, lpBalance, tokenADecimals = 9, tokenBDecimals = 9) {
+  const [position, setPosition] = (0, import_react15.useState)(null);
+  const [isLoading, setIsLoading] = (0, import_react15.useState)(true);
+  const [error, setError] = (0, import_react15.useState)(null);
+  const calculator = (0, import_react15.useRef)(getCalculator());
+  const calculatePosition = (0, import_react15.useCallback)(async () => {
+    if (!pool || lpBalance === 0n) {
+      setPosition(null);
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await calculator.current.calculateUserPosition(
+        pool,
+        lpBalance,
+        tokenADecimals,
+        tokenBDecimals
+      );
+      setPosition(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to calculate position");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [pool, lpBalance, tokenADecimals, tokenBDecimals]);
+  (0, import_react15.useEffect)(() => {
+    calculatePosition();
+  }, [calculatePosition]);
+  return {
+    position,
+    lpBalance,
+    sharePercent: position?.sharePercent ?? 0,
+    valueUsd: position?.valueUsd ?? 0,
+    isLoading,
+    error,
+    refresh: calculatePosition
+  };
+}
+function useImpermanentLoss(initialPriceRatio, currentPriceRatio) {
+  const calculator = (0, import_react15.useRef)(getCalculator());
+  const impermanentLoss = (0, import_react15.useMemo)(() => {
+    return calculator.current.calculateImpermanentLoss(
+      initialPriceRatio,
+      currentPriceRatio
+    );
+  }, [initialPriceRatio, currentPriceRatio]);
+  const formattedLoss = (0, import_react15.useMemo)(() => {
+    return `${impermanentLoss.toFixed(2)}%`;
+  }, [impermanentLoss]);
+  return {
+    impermanentLoss,
+    formattedLoss
+  };
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   CloakCraftProvider,
+  TransactionStatus,
+  TransactionType,
   WALLET_DERIVATION_MESSAGE,
+  formatApy,
+  formatPrice,
+  formatPriceChange,
+  formatShare,
+  formatTvl,
+  useAddLiquidity,
   useAllBalances,
+  useAmmPools,
   useBalance,
   useCloakCraft,
+  useImpermanentLoss,
+  useInitializeAmmPool,
   useInitializePool,
   useNoteSelection,
   useNoteSelector,
@@ -1264,14 +2140,26 @@ function useOrders() {
   useNullifierStatus,
   useOrders,
   usePool,
+  usePoolAnalytics,
   usePoolList,
+  usePoolStats,
+  usePortfolioValue,
   usePrivateBalance,
   usePublicBalance,
+  useRecentTransactions,
+  useRemoveLiquidity,
   useScanner,
   useShield,
   useSolBalance,
+  useSolPrice,
+  useSwap,
+  useSwapQuote,
   useTokenBalances,
+  useTokenPrice,
+  useTokenPrices,
+  useTransactionHistory,
   useTransfer,
   useUnshield,
+  useUserPosition,
   useWallet
 });

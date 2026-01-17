@@ -860,6 +860,25 @@ declare class CloakCraftClient {
      */
     initializeAmmPool(tokenAMint: PublicKey, tokenBMint: PublicKey, lpMintKeypair: Keypair$1, feeBps: number, payer?: Keypair$1): Promise<string>;
     /**
+     * Initialize LP pool for an existing AMM pool
+     *
+     * Call this if you have an AMM pool whose LP token pool wasn't created.
+     * This is required for LP tokens to be scannable after adding liquidity.
+     *
+     * @param ammPoolAddress - Address of the AMM pool
+     * @returns Transaction signature
+     */
+    initializeLpPool(ammPoolAddress: PublicKey): Promise<{
+        poolTx: string;
+        counterTx: string;
+    }>;
+    /**
+     * Initialize LP pools for all existing AMM pools
+     *
+     * Useful for ensuring all LP tokens are scannable.
+     */
+    initializeAllLpPools(): Promise<void>;
+    /**
      * Execute an AMM swap
      *
      * Swaps tokens through the private AMM pool.
@@ -2002,6 +2021,11 @@ interface InitializeAmmPoolParams {
     payer: PublicKey;
 }
 /**
+ * Returns tokens in canonical order (lower pubkey first by bytes).
+ * This ensures USDC-SOL and SOL-USDC always derive the same pool PDA.
+ */
+declare function canonicalTokenOrder(tokenA: PublicKey, tokenB: PublicKey): [PublicKey, PublicKey];
+/**
  * Build initialize AMM pool transaction
  */
 declare function buildInitializeAmmPoolWithProgram(program: Program, params: InitializeAmmPoolParams): Promise<any>;
@@ -2962,4 +2986,402 @@ declare class ALTManager {
     clear(): void;
 }
 
-export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, MAINNET_LIGHT_TREES, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, ProofGenerator, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, SEEDS, type ScannedNote, type ShieldInstructionParams, type ShieldResult, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePoolWithProgram, buildRemoveLiquidityWithProgram, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateMinOutput, calculatePriceImpact, calculatePriceRatio, calculateRemoveLiquidityOutput, calculateSlippage, calculateSwapOutput, calculateTotalLiquidity, canFitInSingleTransaction, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, createAddressLookupTable, createCloakCraftALT, createNote, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePoolPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, elgamalEncrypt, encryptNote, encryptVote, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fieldToBytes, formatAmmPool, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isInSubgroup, isOnCurve, lagrangeCoefficient, loadCircomArtifacts, loadWallet, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof };
+/**
+ * Transaction History Module
+ *
+ * Tracks and persists transaction history for privacy operations.
+ * Uses IndexedDB for browser storage with fallback to localStorage.
+ */
+
+/**
+ * Transaction type enum
+ */
+declare enum TransactionType {
+    SHIELD = "shield",
+    UNSHIELD = "unshield",
+    TRANSFER = "transfer",
+    SWAP = "swap",
+    ADD_LIQUIDITY = "add_liquidity",
+    REMOVE_LIQUIDITY = "remove_liquidity"
+}
+/**
+ * Transaction status enum
+ */
+declare enum TransactionStatus {
+    PENDING = "pending",
+    CONFIRMED = "confirmed",
+    FAILED = "failed"
+}
+/**
+ * Transaction record
+ */
+interface TransactionRecord {
+    /** Unique transaction ID */
+    id: string;
+    /** Transaction type */
+    type: TransactionType;
+    /** Transaction status */
+    status: TransactionStatus;
+    /** Transaction signature (if confirmed) */
+    signature?: string;
+    /** Timestamp (ISO string) */
+    timestamp: string;
+    /** Token mint address */
+    tokenMint: string;
+    /** Token symbol (for display) */
+    tokenSymbol?: string;
+    /** Amount in lamports/smallest unit */
+    amount: string;
+    /** Secondary amount (for swaps/liquidity) */
+    secondaryAmount?: string;
+    /** Secondary token mint (for swaps/liquidity) */
+    secondaryTokenMint?: string;
+    /** Secondary token symbol */
+    secondaryTokenSymbol?: string;
+    /** Recipient address (for transfers/unshield) */
+    recipient?: string;
+    /** Error message (if failed) */
+    error?: string;
+    /** Additional metadata */
+    metadata?: Record<string, unknown>;
+}
+/**
+ * Transaction history filter options
+ */
+interface TransactionFilter {
+    /** Filter by type */
+    type?: TransactionType;
+    /** Filter by status */
+    status?: TransactionStatus;
+    /** Filter by token mint */
+    tokenMint?: string;
+    /** Filter after this date */
+    after?: Date;
+    /** Filter before this date */
+    before?: Date;
+    /** Maximum number of results */
+    limit?: number;
+    /** Offset for pagination */
+    offset?: number;
+}
+/**
+ * Transaction history manager
+ */
+declare class TransactionHistory {
+    private readonly walletId;
+    private db;
+    private useIndexedDB;
+    constructor(walletPublicKey: string | PublicKey);
+    /**
+     * Initialize the database
+     */
+    initialize(): Promise<void>;
+    /**
+     * Open IndexedDB database
+     */
+    private openDatabase;
+    /**
+     * Generate a unique transaction ID
+     */
+    private generateId;
+    /**
+     * Add a new transaction record
+     */
+    addTransaction(params: Omit<TransactionRecord, 'id' | 'timestamp'>): Promise<TransactionRecord>;
+    /**
+     * Update an existing transaction record
+     */
+    updateTransaction(id: string, updates: Partial<Omit<TransactionRecord, 'id' | 'timestamp'>>): Promise<TransactionRecord | null>;
+    /**
+     * Get a single transaction by ID
+     */
+    getTransaction(id: string): Promise<TransactionRecord | null>;
+    /**
+     * Get transaction history with optional filters
+     */
+    getTransactions(filter?: TransactionFilter): Promise<TransactionRecord[]>;
+    /**
+     * Get recent transactions
+     */
+    getRecentTransactions(limit?: number): Promise<TransactionRecord[]>;
+    /**
+     * Delete a transaction record
+     */
+    deleteTransaction(id: string): Promise<boolean>;
+    /**
+     * Clear all transaction history
+     */
+    clearHistory(): Promise<void>;
+    /**
+     * Get transaction count
+     */
+    getTransactionCount(filter?: TransactionFilter): Promise<number>;
+    /**
+     * Get transaction summary (counts by type and status)
+     */
+    getSummary(): Promise<{
+        total: number;
+        byType: Record<TransactionType, number>;
+        byStatus: Record<TransactionStatus, number>;
+    }>;
+    private saveToIndexedDB;
+    private getFromIndexedDB;
+    private getAllFromIndexedDB;
+    private deleteFromIndexedDB;
+    private clearIndexedDB;
+    private getStorageKey;
+    private saveToLocalStorage;
+    private getFromLocalStorage;
+    private getAllFromLocalStorage;
+    private deleteFromLocalStorage;
+    private clearLocalStorage;
+}
+/**
+ * Create a pending transaction record
+ */
+declare function createPendingTransaction(type: TransactionType, tokenMint: string | PublicKey, amount: bigint, options?: {
+    tokenSymbol?: string;
+    secondaryAmount?: bigint;
+    secondaryTokenMint?: string | PublicKey;
+    secondaryTokenSymbol?: string;
+    recipient?: string;
+    metadata?: Record<string, unknown>;
+}): Omit<TransactionRecord, 'id' | 'timestamp'>;
+
+/**
+ * Token Price Module
+ *
+ * Fetches token prices from Jupiter Price API (free, no API key required).
+ * Includes caching to minimize API calls.
+ */
+
+/**
+ * Token price data
+ */
+interface TokenPrice {
+    /** Token mint address */
+    mint: string;
+    /** Price in USD */
+    priceUsd: number;
+    /** 24h price change percentage */
+    change24h?: number;
+    /** Last update timestamp */
+    updatedAt: number;
+}
+/**
+ * Token price fetcher
+ */
+declare class TokenPriceFetcher {
+    private cache;
+    private cacheTtl;
+    private pendingRequests;
+    private apiUnavailableUntil;
+    private consecutiveErrors;
+    constructor(cacheTtlMs?: number);
+    /**
+     * Check if API is currently in backoff state
+     */
+    private isApiUnavailable;
+    /**
+     * Mark API as unavailable for backoff period
+     */
+    private markApiUnavailable;
+    /**
+     * Mark API as available (reset backoff)
+     */
+    private markApiAvailable;
+    /**
+     * Get price for a single token
+     */
+    getPrice(mint: string | PublicKey): Promise<TokenPrice | null>;
+    /**
+     * Get prices for multiple tokens
+     */
+    getPrices(mints: (string | PublicKey)[]): Promise<Map<string, TokenPrice>>;
+    /**
+     * Get SOL price in USD
+     */
+    getSolPrice(): Promise<number>;
+    /**
+     * Convert token amount to USD value
+     */
+    getUsdValue(mint: string | PublicKey, amount: bigint, decimals: number): Promise<number>;
+    /**
+     * Get total USD value for multiple tokens
+     */
+    getTotalUsdValue(balances: Array<{
+        mint: string | PublicKey;
+        amount: bigint;
+        decimals: number;
+    }>): Promise<number>;
+    /**
+     * Clear the price cache
+     */
+    clearCache(): void;
+    /**
+     * Get cached price if not expired
+     */
+    private getCached;
+    /**
+     * Cache a price
+     */
+    private setCache;
+    /**
+     * Fetch price for a single token from Jupiter
+     */
+    private fetchPrice;
+    /**
+     * Fetch prices for multiple tokens from Jupiter (batch)
+     */
+    private fetchPrices;
+    /**
+     * Check if price API is currently available
+     */
+    isAvailable(): boolean;
+    /**
+     * Force reset the backoff state (for manual retry)
+     */
+    resetBackoff(): void;
+}
+/**
+ * Format price for display
+ */
+declare function formatPrice(price: number, decimals?: number): string;
+/**
+ * Format price change for display
+ */
+declare function formatPriceChange(change: number): string;
+/**
+ * Calculate price impact for a swap based on USD values
+ */
+declare function calculateUsdPriceImpact(inputAmount: bigint, outputAmount: bigint, inputPrice: number, outputPrice: number, inputDecimals: number, outputDecimals: number): number;
+
+/**
+ * Pool Analytics Module
+ *
+ * Calculates and tracks AMM pool statistics, TVL, volume, and APY.
+ */
+
+/**
+ * Pool statistics
+ */
+interface PoolStats {
+    /** Pool address */
+    poolAddress: string;
+    /** Token A mint */
+    tokenAMint: string;
+    /** Token B mint */
+    tokenBMint: string;
+    /** Token A reserve */
+    reserveA: bigint;
+    /** Token B reserve */
+    reserveB: bigint;
+    /** LP token supply */
+    lpSupply: bigint;
+    /** Total Value Locked in USD */
+    tvlUsd: number;
+    /** Token A price in USD */
+    tokenAPrice: number;
+    /** Token B price in USD */
+    tokenBPrice: number;
+    /** Token A value in USD */
+    tokenAValueUsd: number;
+    /** Token B value in USD */
+    tokenBValueUsd: number;
+    /** Exchange rate (B per A) */
+    rateAToB: number;
+    /** Exchange rate (A per B) */
+    rateBToA: number;
+    /** Fee in basis points */
+    feeBps: number;
+    /** LP token price in USD */
+    lpTokenPriceUsd: number;
+    /** Last update timestamp */
+    updatedAt: number;
+}
+/**
+ * User's position in a pool
+ */
+interface UserPoolPosition {
+    /** Pool address */
+    poolAddress: string;
+    /** LP token balance */
+    lpBalance: bigint;
+    /** LP balance as percentage of total supply */
+    sharePercent: number;
+    /** Underlying token A amount */
+    tokenAAmount: bigint;
+    /** Underlying token B amount */
+    tokenBAmount: bigint;
+    /** Position value in USD */
+    valueUsd: number;
+}
+/**
+ * Pool analytics aggregator
+ */
+interface PoolAnalytics {
+    /** Total TVL across all pools */
+    totalTvlUsd: number;
+    /** Number of active pools */
+    poolCount: number;
+    /** Individual pool stats */
+    pools: PoolStats[];
+    /** Last update timestamp */
+    updatedAt: number;
+}
+/**
+ * Pool analytics calculator
+ */
+declare class PoolAnalyticsCalculator {
+    private priceFetcher;
+    constructor(priceFetcher?: TokenPriceFetcher);
+    /**
+     * Calculate statistics for a single pool
+     */
+    calculatePoolStats(pool: AmmPoolState & {
+        address: PublicKey;
+    }, tokenADecimals?: number, tokenBDecimals?: number): Promise<PoolStats>;
+    /**
+     * Calculate statistics for multiple pools
+     */
+    calculateAnalytics(pools: Array<AmmPoolState & {
+        address: PublicKey;
+    }>, decimalsMap?: Map<string, number>): Promise<PoolAnalytics>;
+    /**
+     * Calculate user's position in a pool
+     */
+    calculateUserPosition(pool: AmmPoolState & {
+        address: PublicKey;
+    }, lpBalance: bigint, tokenADecimals?: number, tokenBDecimals?: number): Promise<UserPoolPosition>;
+    /**
+     * Calculate impermanent loss percentage
+     */
+    calculateImpermanentLoss(initialPriceRatio: number, currentPriceRatio: number): number;
+    /**
+     * Estimate APY based on fee income (simplified)
+     * Note: This is an estimate and would need historical volume data for accuracy
+     */
+    estimateApy(feeBps: number, estimatedDailyVolumeUsd: number, tvlUsd: number): number;
+}
+/**
+ * Format TVL for display
+ */
+declare function formatTvl(tvlUsd: number): string;
+/**
+ * Format APY for display
+ */
+declare function formatApy(apy: number): string;
+/**
+ * Format share percentage for display
+ */
+declare function formatShare(sharePercent: number): string;
+/**
+ * Calculate constant product invariant
+ */
+declare function calculateInvariant(reserveA: bigint, reserveB: bigint): bigint;
+/**
+ * Verify constant product invariant is maintained (with tolerance for fees)
+ */
+declare function verifyInvariant(oldReserveA: bigint, oldReserveB: bigint, newReserveA: bigint, newReserveB: bigint, feeBps: number): boolean;
+
+export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, MAINNET_LIGHT_TREES, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, type PoolAnalytics, PoolAnalyticsCalculator, type PoolStats, ProofGenerator, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, SEEDS, type ScannedNote, type ShieldInstructionParams, type ShieldResult, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TokenPrice, TokenPriceFetcher, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type TransactionFilter, TransactionHistory, type TransactionRecord, TransactionStatus, TransactionType, type UserPoolPosition, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePoolWithProgram, buildRemoveLiquidityWithProgram, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateInvariant, calculateMinOutput, calculatePriceImpact, calculatePriceRatio, calculateRemoveLiquidityOutput, calculateSlippage, calculateSwapOutput, calculateTotalLiquidity, calculateUsdPriceImpact, canFitInSingleTransaction, canonicalTokenOrder, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, createAddressLookupTable, createCloakCraftALT, createNote, createPendingTransaction, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePoolPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, elgamalEncrypt, encryptNote, encryptVote, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fieldToBytes, formatAmmPool, formatApy, formatPrice, formatPriceChange, formatShare, formatTvl, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isInSubgroup, isOnCurve, lagrangeCoefficient, loadCircomArtifacts, loadWallet, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof, verifyInvariant };

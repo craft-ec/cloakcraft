@@ -15,10 +15,11 @@ import {
   buildInitializeAmmPoolWithProgram,
   buildRemoveLiquidityWithProgram,
   buildSwapWithProgram,
+  canonicalTokenOrder,
   deriveAmmPoolPda,
   derivePendingOperationPda,
   generateOperationId
-} from "./chunk-5F7KJNWX.mjs";
+} from "./chunk-QFASOST2.mjs";
 import {
   DOMAIN_ACTION_NULLIFIER,
   DOMAIN_COMMITMENT,
@@ -1062,8 +1063,8 @@ var ProofGenerator = class {
     const poolIdBytes = pubkeyToField(params.poolId);
     const oldStateHash = new Uint8Array(params.oldPoolStateHash);
     const newStateHash = new Uint8Array(params.newPoolStateHash);
-    oldStateHash[0] = 0;
-    newStateHash[0] = 0;
+    oldStateHash[0] &= 31;
+    newStateHash[0] &= 31;
     const outputARandomness = params.outputARandomness ?? generateRandomness();
     const outputBRandomness = params.outputBRandomness ?? generateRandomness();
     const tokenAMint = params.tokenAMint.toBytes();
@@ -2379,7 +2380,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     encryptedNotes.push(Buffer.alloc(0));
     outputAmounts.push(0n);
   }
-  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await import("./swap-AF7RJ7CK.mjs");
+  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await import("./swap-WBKXOGSW.mjs");
   const operationId = generateOperationId2(
     nullifier,
     outputCommitments[0],
@@ -3727,7 +3728,7 @@ var CloakCraftClient = class {
       console.error("[Transfer] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-AF7RJ7CK.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-WBKXOGSW.mjs");
     console.log("[Transfer] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -4093,14 +4094,64 @@ var CloakCraftClient = class {
       console.log(`[AMM] Initializing LP token pool: ${lpMintKeypair.publicKey.toBase58()}`);
       try {
         const lpPoolInit = await initializePool(this.program, lpMintKeypair.publicKey, payerPublicKey, payerPublicKey);
-        console.log(`[AMM] LP pool initialized: ${lpPoolInit.poolTx}`);
+        console.log(`[AMM] LP pool initialized: pool=${lpPoolInit.poolTx}, counter=${lpPoolInit.counterTx}`);
       } catch (err) {
-        console.warn(`[AMM] LP pool initialization failed (may already exist): ${err instanceof Error ? err.message : err}`);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (!errMsg.includes("already in use") && !errMsg.includes("already_exists")) {
+          console.error(`[AMM] LP pool initialization failed: ${errMsg}`);
+          throw new Error(`AMM pool created but LP pool initialization failed: ${errMsg}. LP tokens will not be scannable.`);
+        }
+        console.log(`[AMM] LP pool already exists`);
       }
       return ammSignature;
     } catch (err) {
       console.error("[AMM] Failed to initialize pool:", err);
       throw err;
+    }
+  }
+  /**
+   * Initialize LP pool for an existing AMM pool
+   *
+   * Call this if you have an AMM pool whose LP token pool wasn't created.
+   * This is required for LP tokens to be scannable after adding liquidity.
+   *
+   * @param ammPoolAddress - Address of the AMM pool
+   * @returns Transaction signature
+   */
+  async initializeLpPool(ammPoolAddress) {
+    if (!this.program) {
+      throw new Error("No program set. Call setProgram() first.");
+    }
+    const ammPoolAccount = await this.program.account.ammPool.fetch(ammPoolAddress);
+    const lpMint = ammPoolAccount.lpMint;
+    const payer = this.program.provider.publicKey;
+    if (!payer) {
+      throw new Error("No wallet connected");
+    }
+    console.log(`[AMM] Initializing LP pool for mint: ${lpMint.toBase58()}`);
+    return initializePool(this.program, lpMint, payer, payer);
+  }
+  /**
+   * Initialize LP pools for all existing AMM pools
+   *
+   * Useful for ensuring all LP tokens are scannable.
+   */
+  async initializeAllLpPools() {
+    if (!this.program) {
+      throw new Error("No program set. Call setProgram() first.");
+    }
+    const pools = await this.getAllAmmPools();
+    console.log(`[AMM] Initializing LP pools for ${pools.length} AMM pools...`);
+    for (const pool of pools) {
+      try {
+        const result = await this.initializeLpPool(pool.address);
+        console.log(`[AMM] LP pool for ${pool.lpMint.toBase58()}: pool=${result.poolTx}, counter=${result.counterTx}`);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (!errMsg.includes("already in use") && !errMsg.includes("already_exists")) {
+          console.error(`[AMM] Failed to init LP pool for ${pool.lpMint.toBase58()}: ${errMsg}`);
+        }
+      }
     }
   }
   /**
@@ -4187,7 +4238,7 @@ var CloakCraftClient = class {
       console.error("[Swap] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-AF7RJ7CK.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-WBKXOGSW.mjs");
     console.log("[Swap] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -4395,7 +4446,7 @@ var CloakCraftClient = class {
       console.error("[Add Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-AF7RJ7CK.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-WBKXOGSW.mjs");
     console.log("[Add Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -4588,7 +4639,7 @@ var CloakCraftClient = class {
       console.error("[Remove Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-AF7RJ7CK.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-WBKXOGSW.mjs");
     console.log("[Remove Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -5252,15 +5303,13 @@ function deserializeAmmPool(data) {
   };
 }
 function computeAmmStateHash(reserveA, reserveB, lpSupply, poolId) {
-  const data = new Uint8Array(32);
+  const data = new Uint8Array(56);
   const view = new DataView(data.buffer);
   view.setBigUint64(0, reserveA, true);
   view.setBigUint64(8, reserveB, true);
   view.setBigUint64(16, lpSupply, true);
-  const fullData = new Uint8Array(32 + 32);
-  fullData.set(data.slice(0, 24), 0);
-  fullData.set(poolId.toBytes(), 24);
-  return keccak_256(fullData);
+  data.set(poolId.toBytes(), 24);
+  return keccak_256(data);
 }
 async function ammPoolExists(connection, tokenAMint, tokenBMint, programId) {
   const [poolPda] = deriveAmmPoolPda(tokenAMint, tokenBMint, programId);
@@ -5574,6 +5623,744 @@ async function executeVersionedTransaction(connection, tx, options = {}) {
 async function getInstructionFromAnchorMethod(methodBuilder) {
   return await methodBuilder.instruction();
 }
+
+// src/history.ts
+var TransactionType = /* @__PURE__ */ ((TransactionType2) => {
+  TransactionType2["SHIELD"] = "shield";
+  TransactionType2["UNSHIELD"] = "unshield";
+  TransactionType2["TRANSFER"] = "transfer";
+  TransactionType2["SWAP"] = "swap";
+  TransactionType2["ADD_LIQUIDITY"] = "add_liquidity";
+  TransactionType2["REMOVE_LIQUIDITY"] = "remove_liquidity";
+  return TransactionType2;
+})(TransactionType || {});
+var TransactionStatus = /* @__PURE__ */ ((TransactionStatus2) => {
+  TransactionStatus2["PENDING"] = "pending";
+  TransactionStatus2["CONFIRMED"] = "confirmed";
+  TransactionStatus2["FAILED"] = "failed";
+  return TransactionStatus2;
+})(TransactionStatus || {});
+var STORAGE_KEY_PREFIX = "cloakcraft_tx_history_";
+var DB_NAME = "CloakCraftHistory";
+var DB_VERSION = 1;
+var STORE_NAME = "transactions";
+var TransactionHistory = class {
+  constructor(walletPublicKey) {
+    this.db = null;
+    this.useIndexedDB = false;
+    this.walletId = typeof walletPublicKey === "string" ? walletPublicKey : walletPublicKey.toBase58();
+  }
+  /**
+   * Initialize the database
+   */
+  async initialize() {
+    if (typeof window === "undefined") {
+      this.useIndexedDB = false;
+      return;
+    }
+    try {
+      this.db = await this.openDatabase();
+      this.useIndexedDB = true;
+    } catch (err) {
+      console.warn("[TransactionHistory] IndexedDB not available, falling back to localStorage");
+      this.useIndexedDB = false;
+    }
+  }
+  /**
+   * Open IndexedDB database
+   */
+  openDatabase() {
+    return new Promise((resolve2, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve2(request.result);
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          const store = db.createObjectStore(STORE_NAME, { keyPath: "id" });
+          store.createIndex("walletId", "walletId", { unique: false });
+          store.createIndex("type", "type", { unique: false });
+          store.createIndex("status", "status", { unique: false });
+          store.createIndex("timestamp", "timestamp", { unique: false });
+          store.createIndex("tokenMint", "tokenMint", { unique: false });
+        }
+      };
+    });
+  }
+  /**
+   * Generate a unique transaction ID
+   */
+  generateId() {
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  }
+  /**
+   * Add a new transaction record
+   */
+  async addTransaction(params) {
+    const record = {
+      ...params,
+      id: this.generateId(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    if (this.useIndexedDB && this.db) {
+      await this.saveToIndexedDB(record);
+    } else {
+      this.saveToLocalStorage(record);
+    }
+    return record;
+  }
+  /**
+   * Update an existing transaction record
+   */
+  async updateTransaction(id, updates) {
+    const existing = await this.getTransaction(id);
+    if (!existing) return null;
+    const updated = {
+      ...existing,
+      ...updates
+    };
+    if (this.useIndexedDB && this.db) {
+      await this.saveToIndexedDB(updated);
+    } else {
+      this.saveToLocalStorage(updated);
+    }
+    return updated;
+  }
+  /**
+   * Get a single transaction by ID
+   */
+  async getTransaction(id) {
+    if (this.useIndexedDB && this.db) {
+      return this.getFromIndexedDB(id);
+    }
+    return this.getFromLocalStorage(id);
+  }
+  /**
+   * Get transaction history with optional filters
+   */
+  async getTransactions(filter) {
+    let transactions;
+    if (this.useIndexedDB && this.db) {
+      transactions = await this.getAllFromIndexedDB();
+    } else {
+      transactions = this.getAllFromLocalStorage();
+    }
+    if (filter) {
+      transactions = transactions.filter((tx) => {
+        if (filter.type && tx.type !== filter.type) return false;
+        if (filter.status && tx.status !== filter.status) return false;
+        if (filter.tokenMint && tx.tokenMint !== filter.tokenMint) return false;
+        if (filter.after && new Date(tx.timestamp) < filter.after) return false;
+        if (filter.before && new Date(tx.timestamp) > filter.before) return false;
+        return true;
+      });
+    }
+    transactions.sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    if (filter?.offset) {
+      transactions = transactions.slice(filter.offset);
+    }
+    if (filter?.limit) {
+      transactions = transactions.slice(0, filter.limit);
+    }
+    return transactions;
+  }
+  /**
+   * Get recent transactions
+   */
+  async getRecentTransactions(limit = 10) {
+    return this.getTransactions({ limit });
+  }
+  /**
+   * Delete a transaction record
+   */
+  async deleteTransaction(id) {
+    if (this.useIndexedDB && this.db) {
+      return this.deleteFromIndexedDB(id);
+    }
+    return this.deleteFromLocalStorage(id);
+  }
+  /**
+   * Clear all transaction history
+   */
+  async clearHistory() {
+    if (this.useIndexedDB && this.db) {
+      await this.clearIndexedDB();
+    } else {
+      this.clearLocalStorage();
+    }
+  }
+  /**
+   * Get transaction count
+   */
+  async getTransactionCount(filter) {
+    const transactions = await this.getTransactions(filter);
+    return transactions.length;
+  }
+  /**
+   * Get transaction summary (counts by type and status)
+   */
+  async getSummary() {
+    const transactions = await this.getTransactions();
+    const byType = {};
+    const byStatus = {};
+    for (const tx of transactions) {
+      byType[tx.type] = (byType[tx.type] || 0) + 1;
+      byStatus[tx.status] = (byStatus[tx.status] || 0) + 1;
+    }
+    return {
+      total: transactions.length,
+      byType,
+      byStatus
+    };
+  }
+  // =========================================================================
+  // IndexedDB Methods
+  // =========================================================================
+  async saveToIndexedDB(record) {
+    if (!this.db) throw new Error("Database not initialized");
+    return new Promise((resolve2, reject) => {
+      const transaction = this.db.transaction(STORE_NAME, "readwrite");
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.put({ ...record, walletId: this.walletId });
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve2();
+    });
+  }
+  async getFromIndexedDB(id) {
+    if (!this.db) throw new Error("Database not initialized");
+    return new Promise((resolve2, reject) => {
+      const transaction = this.db.transaction(STORE_NAME, "readonly");
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(id);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const result = request.result;
+        if (result && result.walletId === this.walletId) {
+          const { walletId, ...record } = result;
+          resolve2(record);
+        } else {
+          resolve2(null);
+        }
+      };
+    });
+  }
+  async getAllFromIndexedDB() {
+    if (!this.db) throw new Error("Database not initialized");
+    return new Promise((resolve2, reject) => {
+      const transaction = this.db.transaction(STORE_NAME, "readonly");
+      const store = transaction.objectStore(STORE_NAME);
+      const index = store.index("walletId");
+      const request = index.getAll(this.walletId);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const results = request.result.map((r) => {
+          const { walletId, ...record } = r;
+          return record;
+        });
+        resolve2(results);
+      };
+    });
+  }
+  async deleteFromIndexedDB(id) {
+    if (!this.db) throw new Error("Database not initialized");
+    const existing = await this.getFromIndexedDB(id);
+    if (!existing) return false;
+    return new Promise((resolve2, reject) => {
+      const transaction = this.db.transaction(STORE_NAME, "readwrite");
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.delete(id);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve2(true);
+    });
+  }
+  async clearIndexedDB() {
+    if (!this.db) throw new Error("Database not initialized");
+    const records = await this.getAllFromIndexedDB();
+    return new Promise((resolve2, reject) => {
+      const transaction = this.db.transaction(STORE_NAME, "readwrite");
+      const store = transaction.objectStore(STORE_NAME);
+      let completed = 0;
+      const total = records.length;
+      if (total === 0) {
+        resolve2();
+        return;
+      }
+      for (const record of records) {
+        const request = store.delete(record.id);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          completed++;
+          if (completed === total) resolve2();
+        };
+      }
+    });
+  }
+  // =========================================================================
+  // LocalStorage Methods (fallback)
+  // =========================================================================
+  getStorageKey() {
+    return `${STORAGE_KEY_PREFIX}${this.walletId}`;
+  }
+  saveToLocalStorage(record) {
+    const key = this.getStorageKey();
+    const existing = this.getAllFromLocalStorage();
+    const index = existing.findIndex((t) => t.id === record.id);
+    if (index >= 0) {
+      existing[index] = record;
+    } else {
+      existing.push(record);
+    }
+    try {
+      localStorage.setItem(key, JSON.stringify(existing));
+    } catch (err) {
+      console.error("[TransactionHistory] Failed to save to localStorage:", err);
+    }
+  }
+  getFromLocalStorage(id) {
+    const all = this.getAllFromLocalStorage();
+    return all.find((t) => t.id === id) || null;
+  }
+  getAllFromLocalStorage() {
+    const key = this.getStorageKey();
+    try {
+      const data = localStorage.getItem(key);
+      if (!data) return [];
+      return JSON.parse(data);
+    } catch {
+      return [];
+    }
+  }
+  deleteFromLocalStorage(id) {
+    const key = this.getStorageKey();
+    const existing = this.getAllFromLocalStorage();
+    const filtered = existing.filter((t) => t.id !== id);
+    if (filtered.length === existing.length) return false;
+    try {
+      localStorage.setItem(key, JSON.stringify(filtered));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  clearLocalStorage() {
+    const key = this.getStorageKey();
+    try {
+      localStorage.removeItem(key);
+    } catch {
+    }
+  }
+};
+function createPendingTransaction(type, tokenMint, amount, options) {
+  return {
+    type,
+    status: "pending" /* PENDING */,
+    tokenMint: typeof tokenMint === "string" ? tokenMint : tokenMint.toBase58(),
+    tokenSymbol: options?.tokenSymbol,
+    amount: amount.toString(),
+    secondaryAmount: options?.secondaryAmount?.toString(),
+    secondaryTokenMint: options?.secondaryTokenMint ? typeof options.secondaryTokenMint === "string" ? options.secondaryTokenMint : options.secondaryTokenMint.toBase58() : void 0,
+    secondaryTokenSymbol: options?.secondaryTokenSymbol,
+    recipient: options?.recipient,
+    metadata: options?.metadata
+  };
+}
+
+// src/prices.ts
+var DEFAULT_CACHE_TTL = 60 * 1e3;
+var ERROR_BACKOFF_MS = 5 * 60 * 1e3;
+var JUPITER_PRICE_API = "https://price.jup.ag/v6/price";
+var SOL_MINT = "So11111111111111111111111111111111111111112";
+var TokenPriceFetcher = class {
+  constructor(cacheTtlMs = DEFAULT_CACHE_TTL) {
+    this.cache = /* @__PURE__ */ new Map();
+    this.pendingRequests = /* @__PURE__ */ new Map();
+    this.apiUnavailableUntil = 0;
+    this.consecutiveErrors = 0;
+    this.cacheTtl = cacheTtlMs;
+  }
+  /**
+   * Check if API is currently in backoff state
+   */
+  isApiUnavailable() {
+    return Date.now() < this.apiUnavailableUntil;
+  }
+  /**
+   * Mark API as unavailable for backoff period
+   */
+  markApiUnavailable() {
+    this.consecutiveErrors++;
+    const backoffMs = Math.min(ERROR_BACKOFF_MS * Math.pow(2, this.consecutiveErrors - 1), 30 * 60 * 1e3);
+    this.apiUnavailableUntil = Date.now() + backoffMs;
+    console.warn(`[TokenPriceFetcher] API unavailable, backing off for ${backoffMs / 1e3}s`);
+  }
+  /**
+   * Mark API as available (reset backoff)
+   */
+  markApiAvailable() {
+    this.consecutiveErrors = 0;
+    this.apiUnavailableUntil = 0;
+  }
+  /**
+   * Get price for a single token
+   */
+  async getPrice(mint) {
+    const mintStr = typeof mint === "string" ? mint : mint.toBase58();
+    const cached = this.getCached(mintStr);
+    if (cached) return cached;
+    if (this.isApiUnavailable()) {
+      return null;
+    }
+    const pending = this.pendingRequests.get(mintStr);
+    if (pending) return pending;
+    const request = this.fetchPrice(mintStr);
+    this.pendingRequests.set(mintStr, request);
+    try {
+      const result = await request;
+      return result;
+    } finally {
+      this.pendingRequests.delete(mintStr);
+    }
+  }
+  /**
+   * Get prices for multiple tokens
+   */
+  async getPrices(mints) {
+    const mintStrs = mints.map((m) => typeof m === "string" ? m : m.toBase58());
+    const result = /* @__PURE__ */ new Map();
+    const uncached = [];
+    for (const mint of mintStrs) {
+      const cached = this.getCached(mint);
+      if (cached) {
+        result.set(mint, cached);
+      } else {
+        uncached.push(mint);
+      }
+    }
+    if (uncached.length > 0 && !this.isApiUnavailable()) {
+      const fetched = await this.fetchPrices(uncached);
+      for (const [mint, price] of fetched) {
+        result.set(mint, price);
+      }
+    }
+    return result;
+  }
+  /**
+   * Get SOL price in USD
+   */
+  async getSolPrice() {
+    const price = await this.getPrice(SOL_MINT);
+    return price?.priceUsd ?? 0;
+  }
+  /**
+   * Convert token amount to USD value
+   */
+  async getUsdValue(mint, amount, decimals) {
+    const price = await this.getPrice(mint);
+    if (!price) return 0;
+    const amountNumber = Number(amount) / Math.pow(10, decimals);
+    return amountNumber * price.priceUsd;
+  }
+  /**
+   * Get total USD value for multiple tokens
+   */
+  async getTotalUsdValue(balances) {
+    const mints = balances.map(
+      (b) => typeof b.mint === "string" ? b.mint : b.mint.toBase58()
+    );
+    const prices = await this.getPrices(mints);
+    let total = 0;
+    for (const balance of balances) {
+      const mintStr = typeof balance.mint === "string" ? balance.mint : balance.mint.toBase58();
+      const price = prices.get(mintStr);
+      if (price) {
+        const amountNumber = Number(balance.amount) / Math.pow(10, balance.decimals);
+        total += amountNumber * price.priceUsd;
+      }
+    }
+    return total;
+  }
+  /**
+   * Clear the price cache
+   */
+  clearCache() {
+    this.cache.clear();
+  }
+  /**
+   * Get cached price if not expired
+   */
+  getCached(mint) {
+    const entry = this.cache.get(mint);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.cache.delete(mint);
+      return null;
+    }
+    return entry.price;
+  }
+  /**
+   * Cache a price
+   */
+  setCache(price) {
+    this.cache.set(price.mint, {
+      price,
+      expiresAt: Date.now() + this.cacheTtl
+    });
+  }
+  /**
+   * Fetch price for a single token from Jupiter
+   */
+  async fetchPrice(mint) {
+    try {
+      const url = `${JUPITER_PRICE_API}?ids=${mint}`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        if (response.status >= 500) {
+          this.markApiUnavailable();
+        }
+        return null;
+      }
+      const data = await response.json();
+      const priceData = data.data[mint];
+      this.markApiAvailable();
+      if (!priceData) {
+        return null;
+      }
+      const price = {
+        mint,
+        priceUsd: priceData.price,
+        updatedAt: Date.now()
+      };
+      this.setCache(price);
+      return price;
+    } catch (err) {
+      this.markApiUnavailable();
+      return null;
+    }
+  }
+  /**
+   * Fetch prices for multiple tokens from Jupiter (batch)
+   */
+  async fetchPrices(mints) {
+    const result = /* @__PURE__ */ new Map();
+    if (mints.length === 0) return result;
+    try {
+      const url = `${JUPITER_PRICE_API}?ids=${mints.join(",")}`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        if (response.status >= 500) {
+          this.markApiUnavailable();
+        }
+        return result;
+      }
+      const data = await response.json();
+      this.markApiAvailable();
+      for (const mint of mints) {
+        const priceData = data.data[mint];
+        if (priceData) {
+          const price = {
+            mint,
+            priceUsd: priceData.price,
+            updatedAt: Date.now()
+          };
+          this.setCache(price);
+          result.set(mint, price);
+        }
+      }
+    } catch (err) {
+      this.markApiUnavailable();
+    }
+    return result;
+  }
+  /**
+   * Check if price API is currently available
+   */
+  isAvailable() {
+    return !this.isApiUnavailable();
+  }
+  /**
+   * Force reset the backoff state (for manual retry)
+   */
+  resetBackoff() {
+    this.markApiAvailable();
+  }
+};
+function formatPrice(price, decimals = 2) {
+  if (price === 0) return "$0.00";
+  if (price < 0.01) {
+    return `$${price.toFixed(6)}`;
+  }
+  if (price < 1) {
+    return `$${price.toFixed(4)}`;
+  }
+  if (price >= 1e6) {
+    return `$${(price / 1e6).toFixed(2)}M`;
+  }
+  if (price >= 1e3) {
+    return `$${(price / 1e3).toFixed(2)}K`;
+  }
+  return `$${price.toFixed(decimals)}`;
+}
+function formatPriceChange(change) {
+  const sign = change >= 0 ? "+" : "";
+  return `${sign}${change.toFixed(2)}%`;
+}
+function calculateUsdPriceImpact(inputAmount, outputAmount, inputPrice, outputPrice, inputDecimals, outputDecimals) {
+  if (inputPrice === 0 || outputPrice === 0) return 0;
+  const inputValue = Number(inputAmount) / Math.pow(10, inputDecimals) * inputPrice;
+  const outputValue = Number(outputAmount) / Math.pow(10, outputDecimals) * outputPrice;
+  if (inputValue === 0) return 0;
+  const impact = (inputValue - outputValue) / inputValue * 100;
+  return Math.max(0, impact);
+}
+
+// src/analytics.ts
+var PoolAnalyticsCalculator = class {
+  constructor(priceFetcher) {
+    this.priceFetcher = priceFetcher || new TokenPriceFetcher();
+  }
+  /**
+   * Calculate statistics for a single pool
+   */
+  async calculatePoolStats(pool, tokenADecimals = 9, tokenBDecimals = 9) {
+    const prices = await this.priceFetcher.getPrices([
+      pool.tokenAMint,
+      pool.tokenBMint
+    ]);
+    const tokenAPrice = prices.get(pool.tokenAMint.toBase58())?.priceUsd ?? 0;
+    const tokenBPrice = prices.get(pool.tokenBMint.toBase58())?.priceUsd ?? 0;
+    const tokenAValueUsd = Number(pool.reserveA) / Math.pow(10, tokenADecimals) * tokenAPrice;
+    const tokenBValueUsd = Number(pool.reserveB) / Math.pow(10, tokenBDecimals) * tokenBPrice;
+    const tvlUsd = tokenAValueUsd + tokenBValueUsd;
+    const rateAToB = pool.reserveA > 0n ? Number(pool.reserveB) / Number(pool.reserveA) * Math.pow(10, tokenADecimals - tokenBDecimals) : 0;
+    const rateBToA = rateAToB > 0 ? 1 / rateAToB : 0;
+    const lpTokenPriceUsd = pool.lpSupply > 0n ? tvlUsd / (Number(pool.lpSupply) / 1e9) : 0;
+    return {
+      poolAddress: pool.address.toBase58(),
+      tokenAMint: pool.tokenAMint.toBase58(),
+      tokenBMint: pool.tokenBMint.toBase58(),
+      reserveA: pool.reserveA,
+      reserveB: pool.reserveB,
+      lpSupply: pool.lpSupply,
+      tvlUsd,
+      tokenAPrice,
+      tokenBPrice,
+      tokenAValueUsd,
+      tokenBValueUsd,
+      rateAToB,
+      rateBToA,
+      feeBps: pool.feeBps,
+      lpTokenPriceUsd,
+      updatedAt: Date.now()
+    };
+  }
+  /**
+   * Calculate statistics for multiple pools
+   */
+  async calculateAnalytics(pools, decimalsMap) {
+    const poolStats = [];
+    let totalTvlUsd = 0;
+    for (const pool of pools) {
+      const decimalsA = decimalsMap?.get(pool.tokenAMint.toBase58()) ?? 9;
+      const decimalsB = decimalsMap?.get(pool.tokenBMint.toBase58()) ?? 9;
+      const stats = await this.calculatePoolStats(pool, decimalsA, decimalsB);
+      poolStats.push(stats);
+      totalTvlUsd += stats.tvlUsd;
+    }
+    return {
+      totalTvlUsd,
+      poolCount: pools.length,
+      pools: poolStats,
+      updatedAt: Date.now()
+    };
+  }
+  /**
+   * Calculate user's position in a pool
+   */
+  async calculateUserPosition(pool, lpBalance, tokenADecimals = 9, tokenBDecimals = 9) {
+    const sharePercent = pool.lpSupply > 0n ? Number(lpBalance) / Number(pool.lpSupply) * 100 : 0;
+    const tokenAAmount = pool.lpSupply > 0n ? lpBalance * pool.reserveA / pool.lpSupply : 0n;
+    const tokenBAmount = pool.lpSupply > 0n ? lpBalance * pool.reserveB / pool.lpSupply : 0n;
+    const prices = await this.priceFetcher.getPrices([
+      pool.tokenAMint,
+      pool.tokenBMint
+    ]);
+    const tokenAPrice = prices.get(pool.tokenAMint.toBase58())?.priceUsd ?? 0;
+    const tokenBPrice = prices.get(pool.tokenBMint.toBase58())?.priceUsd ?? 0;
+    const valueUsd = Number(tokenAAmount) / Math.pow(10, tokenADecimals) * tokenAPrice + Number(tokenBAmount) / Math.pow(10, tokenBDecimals) * tokenBPrice;
+    return {
+      poolAddress: pool.address.toBase58(),
+      lpBalance,
+      sharePercent,
+      tokenAAmount,
+      tokenBAmount,
+      valueUsd
+    };
+  }
+  /**
+   * Calculate impermanent loss percentage
+   */
+  calculateImpermanentLoss(initialPriceRatio, currentPriceRatio) {
+    if (initialPriceRatio <= 0 || currentPriceRatio <= 0) return 0;
+    const priceRatioChange = currentPriceRatio / initialPriceRatio;
+    const sqrtRatio = Math.sqrt(priceRatioChange);
+    const il = 2 * sqrtRatio / (1 + priceRatioChange) - 1;
+    return Math.abs(il) * 100;
+  }
+  /**
+   * Estimate APY based on fee income (simplified)
+   * Note: This is an estimate and would need historical volume data for accuracy
+   */
+  estimateApy(feeBps, estimatedDailyVolumeUsd, tvlUsd) {
+    if (tvlUsd <= 0) return 0;
+    const dailyFeeIncome = estimatedDailyVolumeUsd * feeBps / 1e4;
+    const dailyYield = dailyFeeIncome / tvlUsd;
+    const apy = (Math.pow(1 + dailyYield, 365) - 1) * 100;
+    return apy;
+  }
+};
+function formatTvl(tvlUsd) {
+  if (tvlUsd === 0) return "$0";
+  if (tvlUsd >= 1e9) {
+    return `$${(tvlUsd / 1e9).toFixed(2)}B`;
+  }
+  if (tvlUsd >= 1e6) {
+    return `$${(tvlUsd / 1e6).toFixed(2)}M`;
+  }
+  if (tvlUsd >= 1e3) {
+    return `$${(tvlUsd / 1e3).toFixed(2)}K`;
+  }
+  return `$${tvlUsd.toFixed(2)}`;
+}
+function formatApy(apy) {
+  if (apy === 0) return "0%";
+  if (apy >= 1e4) {
+    return `${(apy / 1e3).toFixed(1)}K%`;
+  }
+  if (apy >= 100) {
+    return `${apy.toFixed(0)}%`;
+  }
+  return `${apy.toFixed(2)}%`;
+}
+function formatShare(sharePercent) {
+  if (sharePercent === 0) return "0%";
+  if (sharePercent < 0.01) {
+    return "<0.01%";
+  }
+  if (sharePercent < 1) {
+    return `${sharePercent.toFixed(4)}%`;
+  }
+  return `${sharePercent.toFixed(2)}%`;
+}
+function calculateInvariant(reserveA, reserveB) {
+  return reserveA * reserveB;
+}
+function verifyInvariant(oldReserveA, oldReserveB, newReserveA, newReserveB, feeBps) {
+  const oldK = oldReserveA * oldReserveB;
+  const newK = newReserveA * newReserveB;
+  return newK >= oldK;
+}
 export {
   ALTManager,
   CIRCUIT_IDS,
@@ -5598,8 +6385,13 @@ export {
   MAX_TRANSACTION_SIZE,
   NoteManager,
   PROGRAM_ID,
+  PoolAnalyticsCalculator,
   ProofGenerator,
   SEEDS,
+  TokenPriceFetcher,
+  TransactionHistory,
+  TransactionStatus,
+  TransactionType,
   VoteOption,
   WALLET_DERIVATION_MESSAGE,
   Wallet,
@@ -5631,6 +6423,7 @@ export {
   bytesToField,
   bytesToFieldString,
   calculateAddLiquidityAmounts,
+  calculateInvariant,
   calculateMinOutput,
   calculatePriceImpact,
   calculatePriceRatio,
@@ -5638,7 +6431,9 @@ export {
   calculateSlippage,
   calculateSwapOutput,
   calculateTotalLiquidity,
+  calculateUsdPriceImpact,
   canFitInSingleTransaction,
+  canonicalTokenOrder,
   checkNullifierSpent,
   checkStealthOwnership,
   combineShares,
@@ -5649,6 +6444,7 @@ export {
   createAddressLookupTable,
   createCloakCraftALT,
   createNote,
+  createPendingTransaction,
   createWallet,
   createWatchOnlyWallet,
   decryptNote,
@@ -5679,6 +6475,11 @@ export {
   fetchAmmPool,
   fieldToBytes,
   formatAmmPool,
+  formatApy,
+  formatPrice,
+  formatPriceChange,
+  formatShare,
+  formatTvl,
   generateDleqProof,
   generateOperationId,
   generateRandomness,
@@ -5719,5 +6520,6 @@ export {
   validateSwapAmount,
   verifyAmmStateHash,
   verifyCommitment,
-  verifyDleqProof
+  verifyDleqProof,
+  verifyInvariant
 };

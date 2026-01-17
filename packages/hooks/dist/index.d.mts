@@ -2,9 +2,10 @@ import * as react_jsx_runtime from 'react/jsx-runtime';
 import { ReactNode } from 'react';
 import { PublicKey, Keypair } from '@solana/web3.js';
 import * as _cloakcraft_sdk from '@cloakcraft/sdk';
-import { CloakCraftClient, Wallet } from '@cloakcraft/sdk';
+import { CloakCraftClient, Wallet, TransactionFilter, TransactionRecord, TransactionType, TransactionStatus, TokenPrice, PoolAnalytics, PoolStats, UserPoolPosition } from '@cloakcraft/sdk';
+export { PoolAnalytics, PoolStats, TokenPrice, TransactionFilter, TransactionRecord, TransactionStatus, TransactionType, UserPoolPosition, formatApy, formatPrice, formatPriceChange, formatShare, formatTvl } from '@cloakcraft/sdk';
 import * as _cloakcraft_types from '@cloakcraft/types';
-import { SyncStatus, DecryptedNote, TransactionResult, StealthAddress, PoolState, OrderState } from '@cloakcraft/types';
+import { SyncStatus, DecryptedNote, TransactionResult, StealthAddress, PoolState, OrderState, AmmPoolState } from '@cloakcraft/types';
 
 interface CloakCraftContextValue {
     client: CloakCraftClient | null;
@@ -352,4 +353,299 @@ declare function useOrders(): {
     error: string | null;
 };
 
-export { CloakCraftProvider, WALLET_DERIVATION_MESSAGE, useAllBalances, useBalance, useCloakCraft, useInitializePool, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOrders, usePool, usePoolList, usePrivateBalance, usePublicBalance, useScanner, useShield, useSolBalance, useTokenBalances, useTransfer, useUnshield, useWallet };
+/**
+ * Swap operation hook
+ *
+ * Provides interface for AMM swaps
+ */
+
+interface SwapOptions {
+    /** Input note to spend */
+    input: DecryptedNote;
+    /** AMM pool to swap through */
+    pool: AmmPoolState & {
+        address: PublicKey;
+    };
+    /** Swap direction */
+    swapDirection: 'aToB' | 'bToA';
+    /** Amount to swap */
+    swapAmount: bigint;
+    /** Slippage tolerance in basis points (e.g., 50 = 0.5%) */
+    slippageBps?: number;
+}
+declare function useSwap(): {
+    swap: (options: SwapOptions) => Promise<TransactionResult | null>;
+    reset: () => void;
+    isSwapping: boolean;
+    error: string | null;
+    result: TransactionResult | null;
+};
+/**
+ * Hook for fetching AMM pools
+ */
+declare function useAmmPools(): {
+    pools: (AmmPoolState & {
+        address: PublicKey;
+    })[];
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
+/**
+ * Hook for swap quote calculation
+ */
+declare function useSwapQuote(pool: (AmmPoolState & {
+    address: PublicKey;
+}) | null, swapDirection: 'aToB' | 'bToA', inputAmount: bigint): {
+    outputAmount: bigint;
+    minOutput: bigint;
+    priceImpact: number;
+} | null;
+/**
+ * Hook for initializing AMM pool
+ */
+declare function useInitializeAmmPool(): {
+    initializePool: (tokenAMint: PublicKey, tokenBMint: PublicKey, feeBps?: number) => Promise<string | null>;
+    reset: () => void;
+    isInitializing: boolean;
+    error: string | null;
+    result: string | null;
+};
+/**
+ * Hook for adding liquidity
+ */
+declare function useAddLiquidity(): {
+    addLiquidity: (options: {
+        pool: AmmPoolState & {
+            address: PublicKey;
+        };
+        inputA: DecryptedNote;
+        inputB: DecryptedNote;
+        amountA: bigint;
+        amountB: bigint;
+        slippageBps?: number;
+    }) => Promise<TransactionResult | null>;
+    reset: () => void;
+    isAdding: boolean;
+    error: string | null;
+    result: TransactionResult | null;
+};
+/**
+ * Hook for removing liquidity
+ */
+declare function useRemoveLiquidity(): {
+    removeLiquidity: (options: {
+        pool: AmmPoolState & {
+            address: PublicKey;
+        };
+        lpInput: DecryptedNote;
+        lpAmount: bigint;
+        slippageBps?: number;
+    }) => Promise<TransactionResult | null>;
+    reset: () => void;
+    isRemoving: boolean;
+    error: string | null;
+    result: TransactionResult | null;
+};
+
+/**
+ * Transaction History Hook
+ *
+ * Provides access to transaction history with automatic persistence.
+ */
+
+interface UseTransactionHistoryResult {
+    /** Transaction history records */
+    transactions: TransactionRecord[];
+    /** Whether history is loading */
+    isLoading: boolean;
+    /** Error message if any */
+    error: string | null;
+    /** Add a new transaction */
+    addTransaction: (type: TransactionType, tokenMint: string | PublicKey, amount: bigint, options?: {
+        tokenSymbol?: string;
+        secondaryAmount?: bigint;
+        secondaryTokenMint?: string | PublicKey;
+        secondaryTokenSymbol?: string;
+        recipient?: string;
+        metadata?: Record<string, unknown>;
+    }) => Promise<TransactionRecord | null>;
+    /** Update an existing transaction */
+    updateTransaction: (id: string, updates: {
+        status?: TransactionStatus;
+        signature?: string;
+        error?: string;
+    }) => Promise<TransactionRecord | null>;
+    /** Mark transaction as confirmed */
+    confirmTransaction: (id: string, signature: string) => Promise<TransactionRecord | null>;
+    /** Mark transaction as failed */
+    failTransaction: (id: string, error: string) => Promise<TransactionRecord | null>;
+    /** Refresh transaction history */
+    refresh: () => Promise<void>;
+    /** Clear all history */
+    clearHistory: () => Promise<void>;
+    /** Get transaction count */
+    count: number;
+    /** Transaction summary */
+    summary: {
+        total: number;
+        pending: number;
+        confirmed: number;
+        failed: number;
+    };
+}
+declare function useTransactionHistory(filter?: TransactionFilter): UseTransactionHistoryResult;
+/**
+ * Hook for recent transactions (simplified view)
+ */
+declare function useRecentTransactions(limit?: number): UseTransactionHistoryResult;
+
+/**
+ * Token Prices Hook
+ *
+ * Provides token price data with automatic caching and refresh.
+ */
+
+interface UseTokenPricesResult {
+    /** Map of token mint to price */
+    prices: Map<string, TokenPrice>;
+    /** Get price for a specific token */
+    getPrice: (mint: string | PublicKey) => TokenPrice | undefined;
+    /** Get USD value for token amount */
+    getUsdValue: (mint: string | PublicKey, amount: bigint, decimals: number) => number;
+    /** Whether prices are loading */
+    isLoading: boolean;
+    /** Error message if any */
+    error: string | null;
+    /** Refresh prices */
+    refresh: () => Promise<void>;
+    /** SOL price in USD */
+    solPrice: number;
+    /** Last update timestamp */
+    lastUpdated: number | null;
+    /** Whether price API is available */
+    isAvailable: boolean;
+    /** Force retry (reset backoff) */
+    forceRetry: () => Promise<void>;
+}
+/**
+ * Hook for fetching token prices
+ */
+declare function useTokenPrices(mints: (string | PublicKey)[], refreshInterval?: number): UseTokenPricesResult;
+/**
+ * Hook for a single token price
+ */
+declare function useTokenPrice(mint: string | PublicKey | null): {
+    price: TokenPrice | null;
+    priceUsd: number;
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
+/**
+ * Hook for SOL price
+ */
+declare function useSolPrice(refreshInterval?: number): {
+    price: number;
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
+/**
+ * Hook for calculating total portfolio value
+ */
+declare function usePortfolioValue(balances: Array<{
+    mint: string | PublicKey;
+    amount: bigint;
+    decimals: number;
+}>): {
+    totalValue: number;
+    breakdown: {
+        mint: string;
+        amount: bigint;
+        decimals: number;
+        priceUsd: number;
+        valueUsd: number;
+        percentage: number;
+    }[];
+    isLoading: boolean;
+    error: string | null;
+};
+
+/**
+ * Pool Analytics Hook
+ *
+ * Provides pool statistics, TVL, and user position data.
+ */
+
+interface UsePoolAnalyticsResult {
+    /** Pool analytics data */
+    analytics: PoolAnalytics | null;
+    /** Total TVL across all pools */
+    totalTvl: number;
+    /** Formatted total TVL */
+    formattedTvl: string;
+    /** Number of pools */
+    poolCount: number;
+    /** Individual pool stats */
+    poolStats: PoolStats[];
+    /** Whether loading */
+    isLoading: boolean;
+    /** Error message */
+    error: string | null;
+    /** Refresh analytics */
+    refresh: () => Promise<void>;
+    /** Last update timestamp */
+    lastUpdated: number | null;
+}
+/**
+ * Hook for overall pool analytics
+ */
+declare function usePoolAnalytics(decimalsMap?: Map<string, number>, refreshInterval?: number): UsePoolAnalyticsResult;
+interface UsePoolStatsResult {
+    /** Pool statistics */
+    stats: PoolStats | null;
+    /** Whether loading */
+    isLoading: boolean;
+    /** Error message */
+    error: string | null;
+    /** Refresh stats */
+    refresh: () => Promise<void>;
+}
+/**
+ * Hook for single pool statistics
+ */
+declare function usePoolStats(pool: (AmmPoolState & {
+    address: PublicKey;
+}) | null, tokenADecimals?: number, tokenBDecimals?: number): UsePoolStatsResult;
+interface UseUserPositionResult {
+    /** User's position in the pool */
+    position: UserPoolPosition | null;
+    /** LP balance */
+    lpBalance: bigint;
+    /** Share percentage */
+    sharePercent: number;
+    /** Position value in USD */
+    valueUsd: number;
+    /** Whether loading */
+    isLoading: boolean;
+    /** Error message */
+    error: string | null;
+    /** Refresh position */
+    refresh: () => Promise<void>;
+}
+/**
+ * Hook for user's position in a pool
+ */
+declare function useUserPosition(pool: (AmmPoolState & {
+    address: PublicKey;
+}) | null, lpBalance: bigint, tokenADecimals?: number, tokenBDecimals?: number): UseUserPositionResult;
+/**
+ * Hook for impermanent loss calculation
+ */
+declare function useImpermanentLoss(initialPriceRatio: number, currentPriceRatio: number): {
+    impermanentLoss: number;
+    formattedLoss: string;
+};
+
+export { CloakCraftProvider, WALLET_DERIVATION_MESSAGE, useAddLiquidity, useAllBalances, useAmmPools, useBalance, useCloakCraft, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOrders, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePrivateBalance, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useWallet };
