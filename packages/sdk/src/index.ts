@@ -40,3 +40,12 @@ export * from './versioned-transaction';
 
 // Export Address Lookup Table utilities
 export * from './address-lookup-table';
+
+// Export transaction history
+export * from './history';
+
+// Export token prices
+export * from './prices';
+
+// Export pool analytics
+export * from './analytics';

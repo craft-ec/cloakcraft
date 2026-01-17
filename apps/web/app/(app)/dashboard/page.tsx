@@ -5,15 +5,21 @@ import { ArrowDownToLine, ArrowRight, ArrowUpFromLine, ArrowDownUp } from 'lucid
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PublicBalanceList, PrivateBalanceList } from '@/components/balance/balance-list';
+import { RecentTransactions } from '@/components/history/transaction-history';
+import { ProtocolAnalytics } from '@/components/pool/pool-analytics';
+import { SolPriceTicker } from '@/components/balance/token-price';
 
 export default function DashboardPage() {
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <p className="text-muted-foreground">
-          Manage your public and private token balances.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Manage your public and private token balances.
+          </p>
+        </div>
+        <SolPriceTicker className="hidden sm:flex" />
       </div>
 
       {/* Quick Actions */}
@@ -44,11 +50,17 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* Protocol Analytics */}
+      <ProtocolAnalytics />
+
       {/* Balances */}
       <div className="grid gap-6 lg:grid-cols-2">
         <PublicBalanceList />
         <PrivateBalanceList />
       </div>
+
+      {/* Recent Activity */}
+      <RecentTransactions limit={5} />
     </div>
   );
 }

@@ -76,6 +76,7 @@ export function PublicBalanceList() {
               name={token.name}
               balance={getBalance(token.mint)}
               decimals={token.decimals}
+              mint={token.mint}
             />
           ))
         )}
@@ -162,6 +163,7 @@ export function PrivateBalanceList() {
               name={balance.name}
               balance={balance.balance}
               decimals={balance.decimals}
+              mint={balance.mint}
               isPrivate
             />
           ))
