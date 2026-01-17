@@ -19,19 +19,19 @@ export default function DashboardPage() {
       {/* Quick Actions */}
       <div className="grid gap-4 sm:grid-cols-3">
         <QuickActionCard
-          href="/shield"
+          href="/transfer?tab=shield"
           icon={<ArrowDownToLine className="h-5 w-5" />}
           title="Shield"
           description="Deposit tokens into the privacy pool"
         />
         <QuickActionCard
-          href="/transfer"
+          href="/transfer?tab=transfer"
           icon={<ArrowRight className="h-5 w-5" />}
           title="Transfer"
           description="Send tokens privately"
         />
         <QuickActionCard
-          href="/unshield"
+          href="/transfer?tab=unshield"
           icon={<ArrowUpFromLine className="h-5 w-5" />}
           title="Unshield"
           description="Withdraw to public wallet"

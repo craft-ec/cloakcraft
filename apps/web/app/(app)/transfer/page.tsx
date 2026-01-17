@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { PublicKey } from '@solana/web3.js';
 import { useWallet as useSolanaWallet } from '@solana/wallet-adapter-react';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
@@ -54,6 +55,10 @@ import { SUPPORTED_TOKENS, TokenInfo } from '@/lib/constants';
 import { formatAmount, parseAmount, isValidPublicKey } from '@/lib/utils';
 
 export default function TransferPage() {
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const defaultTab = ['shield', 'transfer', 'unshield'].includes(tabParam || '') ? tabParam! : 'shield';
+
   const { publicKey } = useSolanaWallet();
   const { isConnected: isStealthConnected, isProgramReady, isProverReady, wallet, client, notes } = useCloakCraft();
 
@@ -91,7 +96,7 @@ export default function TransferPage() {
         <p className="text-muted-foreground">Shield, transfer, or unshield your tokens.</p>
       </div>
 
-      <Tabs defaultValue="shield" className="max-w-lg mx-auto">
+      <Tabs defaultValue={defaultTab} className="max-w-lg mx-auto">
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="shield" className="gap-2">
             <ArrowDownToLine className="h-4 w-4" />
