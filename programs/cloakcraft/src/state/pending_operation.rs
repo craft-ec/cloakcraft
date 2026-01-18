@@ -143,10 +143,15 @@ pub struct PendingOperation {
     /// Remove Liquidity: LP tokens burned
     pub swap_amount: u64,
 
-    /// Swap: Output amount received
+    /// Swap: Output amount received (recalculated on-chain for flexibility)
     /// Add Liquidity: Token B deposit amount
     /// Remove Liquidity: Token A withdrawn
     pub output_amount: u64,
+
+    /// Swap: Minimum acceptable output (slippage protection)
+    /// Verified on-chain: recalculated_output >= min_output
+    /// Add Liquidity/Remove Liquidity: unused
+    pub min_output: u64,
 
     /// Swap: unused
     /// Add Liquidity: LP tokens minted
@@ -211,6 +216,7 @@ impl PendingOperation {
         8 + // created_at
         8 + // swap_amount (operation-specific)
         8 + // output_amount (operation-specific)
+        8 + // min_output (slippage protection for swap)
         8 + // extra_amount (operation-specific)
         1 + // swap_a_to_b (operation-specific)
         8 + // fee_amount (protocol fee)

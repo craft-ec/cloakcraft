@@ -115,19 +115,27 @@ pub fn execute_swap<'info>(
 
     // Get swap parameters from Phase 0
     let swap_amount = pending_op.swap_amount;
-    let output_amount = pending_op.output_amount;
+    let min_output = pending_op.min_output;
     let swap_a_to_b = pending_op.swap_a_to_b;
 
-    msg!("Swap direction: {}, amount: {}, output: {}",
-        if swap_a_to_b { "A->B" } else { "B->A" }, swap_amount, output_amount);
+    msg!("Swap direction: {}, amount: {}, min_output: {}",
+        if swap_a_to_b { "A->B" } else { "B->A" }, swap_amount, min_output);
 
-    // SECURITY: Verify output amount matches AMM formula
-    // This prevents malicious clients from claiming incorrect output amounts
+    // FLEXIBLE RECALCULATION: Calculate output using CURRENT pool reserves
+    // This handles concurrent swaps gracefully:
+    // - If price moved favorably → user gets more, tx succeeds
+    // - If price moved within slippage → tx succeeds with slightly less
+    // - If price moved beyond slippage → tx fails (correct behavior)
+    let (output_amount, _fee_amount) = amm_pool.calculate_swap_output(swap_amount, swap_a_to_b)
+        .ok_or(CloakCraftError::InvalidSwapOutput)?;
+
+    // SECURITY: Verify recalculated output meets minimum (slippage protection)
     require!(
-        amm_pool.verify_swap_output(swap_amount, output_amount, swap_a_to_b),
-        CloakCraftError::InvalidSwapOutput
+        output_amount >= min_output,
+        CloakCraftError::SlippageExceeded
     );
-    msg!("✅ Swap output verified against {} formula",
+    msg!("✅ Swap output calculated: {} (min: {}) using {} formula",
+        output_amount, min_output,
         if amm_pool.pool_type == crate::state::PoolType::StableSwap { "StableSwap" } else { "ConstantProduct" });
 
     // Calculate protocol fee (percentage of LP fees)

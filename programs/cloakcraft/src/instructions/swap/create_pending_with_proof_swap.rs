@@ -169,7 +169,8 @@ pub fn create_pending_with_proof_swap<'info>(
 
     // Store swap-specific data for Phase 3
     pending_op.swap_amount = swap_amount;
-    pending_op.output_amount = output_amount;
+    pending_op.output_amount = output_amount; // Client's expected output (may be recalculated)
+    pending_op.min_output = min_output; // Slippage protection - recalculated output must be >= this
     pending_op.swap_a_to_b = swap_a_to_b;
 
     msg!("Phase 0 complete: ZK proof verified, pending operation created");
