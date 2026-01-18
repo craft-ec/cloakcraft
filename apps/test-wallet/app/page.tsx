@@ -17,7 +17,10 @@ import '@solana/wallet-adapter-react-ui/styles.css';
 const RPC_URL = 'https://api.devnet.solana.com';
 
 function TestContent() {
-  const { publicKey, signTransaction, sendTransaction, signAndSendTransaction } = useWallet();
+  const wallet = useWallet();
+  const { publicKey, signTransaction, sendTransaction } = wallet;
+  // signAndSendTransaction is Phantom-specific, access via adapter
+  const signAndSendTransaction = (wallet as any).signAndSendTransaction;
   const { connection } = useConnection();
   const [results, setResults] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);

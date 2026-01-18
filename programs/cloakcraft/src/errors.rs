@@ -269,4 +269,8 @@ pub enum CloakCraftError {
     // ============ Deprecated Feature Errors ============
     #[msg("This instruction is deprecated - use append pattern instead")]
     Deprecated,
+
+    // ============ Consolidation Errors ============
+    #[msg("Invalid input count - must be between 2 and 3 for consolidation")]
+    InvalidInputCount,
 }

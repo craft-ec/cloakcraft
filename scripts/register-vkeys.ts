@@ -20,7 +20,7 @@ const VK_SEED = Buffer.from("vk");
 // Circuit configurations
 const CIRCUITS = [
   { id: "transfer_1x2", file: "transfer_1x2.vk" },
-  { id: "transfer_1x3", file: "transfer_1x3.vk" },
+  { id: "transfer_2x2", file: "transfer_2x2.vk" },
   { id: "adapter_1x1", file: "adapter_1x1.vk" },
   { id: "adapter_1x2", file: "adapter_1x2.vk" },
   { id: "market_order_create", file: "market_order_create.vk" },

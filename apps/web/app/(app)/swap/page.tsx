@@ -14,6 +14,9 @@ import {
   useAddLiquidity,
   useRemoveLiquidity,
   useTokenBalances,
+  useShouldConsolidate,
+  useProtocolFees,
+  useConsolidation,
 } from '@cloakcraft/hooks';
 import {
   calculateAddLiquidityAmounts,
@@ -51,6 +54,14 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TransactionStatus } from '@/components/operations/transaction-status';
+import {
+  TransactionOverlay,
+  TransactionStep,
+  ConsolidationPrompt,
+  FeeBreakdown,
+  useFeeBreakdown,
+  FreeOperationBadge,
+} from '@/components/operations';
 import { SUPPORTED_TOKENS, TokenInfo, getTokenInfo } from '@/lib/constants';
 import { formatAmount, parseAmount } from '@/lib/utils';
 import type { AmmPoolState } from '@cloakcraft/sdk';
@@ -461,13 +472,15 @@ function SwapTab({
 }) {
   const { pools, isLoading: poolsLoading, refresh: refreshPools } = useAmmPools();
   const { swap, isSwapping, error: swapError } = useSwap();
+  const { config: protocolFees } = useProtocolFees();
 
   const [selectedPool, setSelectedPool] = useState<(AmmPoolState & { address: PublicKey }) | null>(null);
   const [swapDirection, setSwapDirection] = useState<'aToB' | 'bToA'>('aToB');
   const [amount, setAmount] = useState('');
-  const [txStatus, setTxStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [overlaySteps, setOverlaySteps] = useState<TransactionStep[]>([]);
+  const [overlayStatus, setOverlayStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
   const [txSignature, setTxSignature] = useState<string | undefined>();
-  const [txError, setTxError] = useState<string | undefined>();
 
   // Get token info for selected pool
   const inputToken = useMemo(() => {
@@ -483,9 +496,12 @@ function SwapTab({
   }, [selectedPool, swapDirection]);
 
   // Note selector for input token
-  const { totalAvailable, selectNotesForAmount } = useNoteSelector(
+  const { totalAvailable, selectNotesForAmount, getSelectionResult } = useNoteSelector(
     inputToken?.mint || SUPPORTED_TOKENS[0]?.mint
   );
+
+  const shouldConsolidate = useShouldConsolidate(inputToken?.mint || SUPPORTED_TOKENS[0]?.mint);
+  const { consolidate, isConsolidating } = useConsolidation({ tokenMint: inputToken?.mint || SUPPORTED_TOKENS[0]?.mint });
 
   // Parse amount
   const parsedAmount = useMemo(() => {
@@ -496,6 +512,15 @@ function SwapTab({
       return 0n;
     }
   }, [amount, inputToken]);
+
+  // Fee calculation for display - swap fee is typically 0.3%
+  const feeBreakdown = useFeeBreakdown({
+    amount: parsedAmount,
+    feeRateBps: protocolFees?.swapFeeBps ?? 30,
+    feesEnabled: protocolFees?.feesEnabled ?? true,
+    symbol: inputToken?.symbol ?? '',
+    decimals: inputToken?.decimals ?? 9,
+  });
 
   // Get swap quote
   const quote = useSwapQuote(selectedPool, swapDirection, parsedAmount);
@@ -542,7 +567,7 @@ function SwapTab({
     isProgramReady &&
     isProverReady &&
     !isSwapping &&
-    txStatus !== 'pending' &&
+    overlayStatus !== 'pending' &&
     selectedPool !== null;
 
   const handleFlipDirection = useCallback(() => {
@@ -553,24 +578,122 @@ function SwapTab({
   const handleSubmit = useCallback(async () => {
     if (!canSubmit || !selectedPool || !inputToken) return;
 
-    setTxStatus('pending');
-    setTxError(undefined);
+    // Check if consolidation is needed first
+    let selectionResult = getSelectionResult(parsedAmount);
+
+    // Build initial steps based on whether consolidation is needed
+    const steps: TransactionStep[] = [];
+
+    if (selectionResult.needsConsolidation) {
+      steps.push(
+        { id: 'consolidate-prepare-1', name: 'Preparing consolidation', description: 'Analyzing fragmented notes...', status: 'active' },
+        { id: 'consolidate-approve-1', name: 'Consolidating notes', description: 'Approve in wallet...', status: 'pending' },
+        { id: 'consolidate-confirm-1', name: 'Confirming consolidation', description: 'Waiting for confirmation...', status: 'pending' },
+      );
+    }
+
+    steps.push(
+      { id: 'prepare', name: 'Preparing swap', description: 'Selecting notes...', status: selectionResult.needsConsolidation ? 'pending' : 'active' },
+      { id: 'proof', name: 'Generating proof', description: 'Creating zero-knowledge proof...', status: 'pending' },
+      { id: 'submit', name: 'Executing swap', description: 'Approve in wallet...', status: 'pending' },
+      { id: 'confirm', name: 'Confirming', description: 'Waiting for confirmation...', status: 'pending' },
+    );
+
+    setOverlaySteps(steps);
+    setOverlayStatus('pending');
+    setShowOverlay(true);
     setTxSignature(undefined);
 
     try {
-      // Select notes for the swap amount
-      let selectedNotes;
-      try {
-        selectedNotes = selectNotesForAmount(parsedAmount);
-      } catch (err) {
-        throw new Error(err instanceof Error ? err.message : 'Insufficient balance');
+      let selectedNotes = selectionResult.notes;
+      let consolidationRound = 1;
+      const maxConsolidationRounds = 10; // Safety limit
+
+      // Keep consolidating until notes are sufficiently merged
+      while (selectionResult.needsConsolidation && consolidationRound <= maxConsolidationRounds) {
+        const prepareId = `consolidate-prepare-${consolidationRound}`;
+        const approveId = `consolidate-approve-${consolidationRound}`;
+        const confirmId = `consolidate-confirm-${consolidationRound}`;
+
+        // Update to consolidation approval step
+        setOverlaySteps(prev => prev.map(s =>
+          s.id === prepareId ? { ...s, status: 'completed' } :
+          s.id === approveId ? { ...s, status: 'active' } : s
+        ));
+
+        await consolidate();
+
+        // Update to consolidation confirmation step
+        setOverlaySteps(prev => prev.map(s =>
+          s.id === approveId ? { ...s, status: 'completed' } :
+          s.id === confirmId ? { ...s, status: 'active' } : s
+        ));
+
+        // Wait for notes to sync after consolidation
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // Check if more consolidation is needed
+        selectionResult = getSelectionResult(parsedAmount);
+
+        if (selectionResult.needsConsolidation && consolidationRound < maxConsolidationRounds) {
+          // Add more consolidation steps for the next round
+          const nextRound = consolidationRound + 1;
+          setOverlaySteps(prev => {
+            // Mark current consolidation confirm as completed
+            const updated = prev.map(s =>
+              s.id === confirmId ? { ...s, status: 'completed' as const } : s
+            );
+            // Insert new consolidation steps before the 'prepare' step
+            const prepareIndex = updated.findIndex(s => s.id === 'prepare');
+            const newSteps: TransactionStep[] = [
+              { id: `consolidate-prepare-${nextRound}`, name: `Consolidation round ${nextRound}`, description: 'More consolidation needed...', status: 'active' },
+              { id: `consolidate-approve-${nextRound}`, name: 'Consolidating notes', description: 'Approve in wallet...', status: 'pending' },
+              { id: `consolidate-confirm-${nextRound}`, name: 'Confirming consolidation', description: 'Waiting for confirmation...', status: 'pending' },
+            ];
+            return [
+              ...updated.slice(0, prepareIndex),
+              ...newSteps,
+              ...updated.slice(prepareIndex),
+            ];
+          });
+        } else {
+          // Mark consolidation done, move to swap preparation
+          setOverlaySteps(prev => prev.map(s =>
+            s.id === confirmId ? { ...s, status: 'completed' } :
+            s.id === 'prepare' ? { ...s, status: 'active' } : s
+          ));
+        }
+
+        consolidationRound++;
       }
+
+      // Final check - if still needs consolidation after max rounds, throw error
+      if (selectionResult.needsConsolidation) {
+        throw new Error('Unable to consolidate notes after multiple attempts. Please try again later.');
+      }
+
+      if (selectionResult.error) {
+        throw new Error(selectionResult.error);
+      }
+      selectedNotes = selectionResult.notes;
+
+      // Update to proof generation step
+      setOverlaySteps(prev => prev.map(s =>
+        s.id === 'prepare' ? { ...s, status: 'completed' } :
+        s.id === 'proof' ? { ...s, status: 'active' } : s
+      ));
 
       // Use first note as input (simplification - could combine multiple)
       const input = selectedNotes[0];
       if (!input) {
         throw new Error('No notes selected');
       }
+
+      // Update to submit step
+      setOverlaySteps(prev => prev.map(s =>
+        s.id === 'proof' ? { ...s, status: 'completed' } :
+        s.id === 'submit' ? { ...s, status: 'active' } : s
+      ));
 
       const result = await swap({
         input,
@@ -581,25 +704,35 @@ function SwapTab({
       });
 
       if (result) {
+        // Mark all as completed
+        setOverlaySteps(prev => prev.map(s => ({
+          ...s,
+          status: 'completed' as const,
+          signature: s.id === 'submit' ? result.signature : undefined
+        })));
         setTxSignature(result.signature);
-        setTxStatus('success');
+        setOverlayStatus('success');
         setAmount('');
         toast.success('Swap completed successfully');
       } else {
-        setTxStatus('error');
-        setTxError(swapError || 'Swap failed');
+        throw new Error(swapError || 'Swap failed');
       }
     } catch (error) {
-      setTxStatus('error');
-      setTxError(error instanceof Error ? error.message : 'Unknown error');
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      setOverlaySteps(prev => {
+        const activeIndex = prev.findIndex(s => s.status === 'active');
+        return prev.map((s, i) => i === activeIndex ? { ...s, status: 'error', error: errorMsg } : s);
+      });
+      setOverlayStatus('error');
     }
-  }, [canSubmit, selectedPool, inputToken, parsedAmount, selectNotesForAmount, swap, swapDirection, swapError]);
+  }, [canSubmit, selectedPool, inputToken, parsedAmount, getSelectionResult, consolidate, swap, swapDirection, swapError]);
 
-  const handleReset = useCallback(() => {
-    setTxStatus('idle');
-    setTxSignature(undefined);
-    setTxError(undefined);
-  }, []);
+  const handleCloseOverlay = useCallback(() => {
+    setShowOverlay(false);
+    if (overlayStatus === 'success' || overlayStatus === 'error') {
+      setOverlayStatus('idle');
+    }
+  }, [overlayStatus]);
 
   return (
     <Card>
@@ -649,7 +782,7 @@ function SwapTab({
                     setAmount('');
                   }
                 }}
-                disabled={isSwapping || txStatus === 'pending'}
+                disabled={isSwapping || overlayStatus === 'pending'}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select pool" />
@@ -670,6 +803,15 @@ function SwapTab({
 
             {selectedPool && (
               <>
+                {/* Consolidation recommendation */}
+                {inputToken && shouldConsolidate && (
+                  <ConsolidationPrompt
+                    tokenMint={inputToken.mint}
+                    tokenSymbol={inputToken.symbol}
+                    variant="alert"
+                  />
+                )}
+
                 {/* Input Token */}
                 <div className="space-y-2">
                   <Label>From</Label>
@@ -680,7 +822,7 @@ function SwapTab({
                         variant="ghost"
                         size="sm"
                         onClick={handleFlipDirection}
-                        disabled={isSwapping || txStatus === 'pending'}
+                        disabled={isSwapping || overlayStatus === 'pending'}
                       >
                         <ArrowDownUp className="h-4 w-4" />
                       </Button>
@@ -696,7 +838,7 @@ function SwapTab({
                           setAmount(value);
                         }
                       }}
-                      disabled={isSwapping || txStatus === 'pending'}
+                      disabled={isSwapping || overlayStatus === 'pending'}
                       className="text-xl font-mono"
                     />
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -713,7 +855,7 @@ function SwapTab({
                             setAmount(formatAmount(totalAvailable, inputToken.decimals));
                           }
                         }}
-                        disabled={isSwapping || txStatus === 'pending'}
+                        disabled={isSwapping || overlayStatus === 'pending'}
                       >
                         MAX
                       </Button>
@@ -739,7 +881,7 @@ function SwapTab({
                   </div>
                 </div>
 
-                {/* Quote Info */}
+                {/* Quote Info with Protocol Fee */}
                 {quote && parsedAmount > 0n && (
                   <div className="rounded-lg bg-muted p-3 space-y-1 text-sm">
                     <div className="flex justify-between">
@@ -749,9 +891,17 @@ function SwapTab({
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Fee</span>
+                      <span className="text-muted-foreground">Pool Fee</span>
                       <span>{selectedPool.feeBps / 100}%</span>
                     </div>
+                    {feeBreakdown?.protocolFee && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Protocol Fee</span>
+                        <span className="text-orange-500">
+                          {feeBreakdown.protocolFee} {inputToken?.symbol}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -780,13 +930,6 @@ function SwapTab({
             <p className="text-yellow-600">Loading ZK prover for swaps...</p>
           </div>
         )}
-
-        <TransactionStatus
-          status={txStatus}
-          signature={txSignature}
-          error={txError}
-          onReset={handleReset}
-        />
       </CardContent>
 
       <CardFooter>
@@ -795,9 +938,26 @@ function SwapTab({
           onClick={handleSubmit}
           disabled={!canSubmit || pools.length === 0}
         >
-          {isSwapping || txStatus === 'pending' ? 'Swapping...' : 'Swap'}
+          {isSwapping || overlayStatus === 'pending' ? 'Swapping...' : 'Swap'}
         </Button>
       </CardFooter>
+
+      {/* Transaction Overlay */}
+      <TransactionOverlay
+        isOpen={showOverlay}
+        onClose={handleCloseOverlay}
+        title="Private Swap"
+        steps={overlaySteps}
+        status={overlayStatus}
+        finalSignature={txSignature}
+        feeBreakdown={feeBreakdown ? {
+          amount: feeBreakdown.amount,
+          protocolFee: feeBreakdown.protocolFee,
+          total: feeBreakdown.total,
+          symbol: feeBreakdown.symbol,
+        } : undefined}
+        onRetry={handleSubmit}
+      />
     </Card>
   );
 }
@@ -1294,7 +1454,10 @@ function AddLiquidityTab({
                 {/* Deposit Summary */}
                 {liquidityCalc && parsedAmountA > 0n && parsedAmountB > 0n && (
                   <div className="rounded-lg bg-muted p-4 space-y-3">
-                    <div className="text-sm font-medium">Deposit Summary</div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Deposit Summary</span>
+                      <FreeOperationBadge />
+                    </div>
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">LP Tokens to Receive</span>

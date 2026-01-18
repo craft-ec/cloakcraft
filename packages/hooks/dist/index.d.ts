@@ -2,7 +2,7 @@ import * as react_jsx_runtime from 'react/jsx-runtime';
 import { ReactNode } from 'react';
 import { PublicKey, Keypair } from '@solana/web3.js';
 import * as _cloakcraft_sdk from '@cloakcraft/sdk';
-import { CloakCraftClient, Wallet, TransactionFilter, TransactionRecord, TransactionType, TransactionStatus, TokenPrice, PoolAnalytics, PoolStats, UserPoolPosition } from '@cloakcraft/sdk';
+import { CloakCraftClient, Wallet, SelectionStrategy, TransactionFilter, TransactionRecord, TransactionType, TransactionStatus, TokenPrice, PoolAnalytics, PoolStats, UserPoolPosition, FragmentationReport, ConsolidationSuggestion, ConsolidationBatch, AutoConsolidationState } from '@cloakcraft/sdk';
 export { PoolAnalytics, PoolStats, TokenPrice, TransactionFilter, TransactionRecord, TransactionStatus, TransactionType, UserPoolPosition, formatApy, formatPrice, formatPriceChange, formatShare, formatTvl } from '@cloakcraft/sdk';
 import * as _cloakcraft_types from '@cloakcraft/types';
 import { SyncStatus, DecryptedNote, TransactionResult, StealthAddress, PoolState, OrderState, AmmPoolState } from '@cloakcraft/types';
@@ -147,13 +147,6 @@ declare function useShield(): {
     }) | null;
 };
 
-/**
- * Transfer operation hook
- *
- * Provides a simplified interface for private transfers.
- * The client handles all cryptographic preparation.
- */
-
 /** Simple transfer output */
 interface TransferOutput {
     recipient: StealthAddress;
@@ -164,8 +157,18 @@ interface UnshieldOption {
     amount: bigint;
     recipient: PublicKey;
 }
+/** Progress stages for transfer operation */
+type TransferProgressStage = 'scanning' | 'preparing' | 'generating' | 'building' | 'approving' | 'executing' | 'confirming';
+/** Transfer options */
+interface TransferOptions {
+    inputs: DecryptedNote[];
+    outputs: TransferOutput[];
+    unshield?: UnshieldOption;
+    walletPublicKey?: PublicKey;
+    onProgress?: (stage: TransferProgressStage) => void;
+}
 declare function useTransfer(): {
-    transfer: (inputs: DecryptedNote[], outputs: TransferOutput[], unshield?: UnshieldOption, walletPublicKey?: PublicKey) => Promise<TransactionResult | null>;
+    transfer: (inputsOrOptions: DecryptedNote[] | TransferOptions, outputs?: TransferOutput[], unshield?: UnshieldOption, walletPublicKey?: PublicKey) => Promise<TransactionResult | null>;
     reset: () => void;
     isTransferring: boolean;
     error: string | null;
@@ -173,14 +176,30 @@ declare function useTransfer(): {
 };
 /**
  * Hook for selecting notes for a transfer
+ *
+ * Uses SmartNoteSelector for intelligent note selection based on:
+ * - Available circuit types (1x2, 2x2, 3x2)
+ * - Selection strategy
+ * - Fee amounts
  */
 declare function useNoteSelector(tokenMint: PublicKey): {
     availableNotes: DecryptedNote[];
     selected: DecryptedNote[];
     totalAvailable: bigint;
     totalSelected: bigint;
-    selectNotesForAmount: (targetAmount: bigint) => DecryptedNote[];
+    selectNotesForAmount: (targetAmount: bigint, options?: {
+        strategy?: SelectionStrategy;
+        maxInputs?: number;
+        feeAmount?: bigint;
+    }) => DecryptedNote[];
+    getSelectionResult: (targetAmount: bigint, options?: {
+        strategy?: SelectionStrategy;
+        maxInputs?: number;
+        feeAmount?: bigint;
+    }) => _cloakcraft_sdk.NoteSelectionResult;
     clearSelection: () => void;
+    fragmentation: _cloakcraft_sdk.FragmentationReport;
+    shouldConsolidate: boolean;
 };
 
 /**
@@ -190,6 +209,8 @@ declare function useNoteSelector(tokenMint: PublicKey): {
  * This is done via a transfer with an unshield output (no recipient, just withdrawal).
  */
 
+/** Progress stages for unshield operation */
+type UnshieldProgressStage = 'scanning' | 'preparing' | 'generating' | 'building' | 'approving' | 'executing' | 'confirming';
 interface UnshieldOptions {
     /** Notes to spend */
     inputs: DecryptedNote[];
@@ -201,6 +222,8 @@ interface UnshieldOptions {
     walletPublicKey?: PublicKey;
     /** If true, recipient is a wallet address and token account will be derived */
     isWalletAddress?: boolean;
+    /** Optional progress callback */
+    onProgress?: (stage: UnshieldProgressStage) => void;
 }
 declare function useUnshield(): {
     unshield: (options: UnshieldOptions) => Promise<TransactionResult | null>;
@@ -648,4 +671,183 @@ declare function useImpermanentLoss(initialPriceRatio: number, currentPriceRatio
     formattedLoss: string;
 };
 
-export { CloakCraftProvider, WALLET_DERIVATION_MESSAGE, useAddLiquidity, useAllBalances, useAmmPools, useBalance, useCloakCraft, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOrders, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePrivateBalance, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useWallet };
+/** Progress stages for consolidation operation */
+type ConsolidationProgressStage = 'preparing' | 'generating' | 'building' | 'approving' | 'executing' | 'confirming' | 'syncing';
+/** Batch info passed to progress callback */
+interface ConsolidationBatchInfo {
+    current: number;
+    total: number;
+}
+/** Progress callback type for consolidation */
+type ConsolidationProgressCallback = (stage: ConsolidationProgressStage, batchInfo?: ConsolidationBatchInfo) => void;
+/**
+ * Consolidation state
+ */
+interface ConsolidationState {
+    isAnalyzing: boolean;
+    isConsolidating: boolean;
+    currentBatch: number;
+    totalBatches: number;
+    error: string | null;
+}
+/**
+ * Consolidation hook options
+ */
+interface UseConsolidationOptions {
+    /** Token mint to consolidate (required) */
+    tokenMint: PublicKey;
+    /** Dust threshold in smallest units (default: 1000) */
+    dustThreshold?: bigint;
+    /** Max notes per consolidation batch (default: 3) */
+    maxNotesPerBatch?: number;
+}
+/**
+ * Hook for note consolidation
+ *
+ * @param options - Consolidation options
+ * @returns Consolidation tools and state
+ */
+declare function useConsolidation(options: UseConsolidationOptions): {
+    fragmentationReport: FragmentationReport;
+    suggestions: ConsolidationSuggestion[];
+    consolidationPlan: ConsolidationBatch[];
+    summary: {
+        totalNotes: number;
+        dustNotes: number;
+        totalBalance: bigint;
+        shouldConsolidate: boolean;
+        estimatedBatches: number;
+        message: string;
+    };
+    tokenNotes: _cloakcraft_types.DecryptedNote[];
+    noteCount: number;
+    shouldConsolidate: boolean;
+    estimatedCost: bigint;
+    consolidate: (onProgress?: ConsolidationProgressCallback, targetAmount?: bigint, maxInputs?: number) => Promise<void>;
+    consolidateBatch: (batchIndex: number) => Promise<void>;
+    canConsolidate: boolean;
+    isAnalyzing: boolean;
+    isConsolidating: boolean;
+    currentBatch: number;
+    totalBatches: number;
+    error: string | null;
+};
+/**
+ * Simple hook for checking if consolidation is recommended
+ */
+declare function useShouldConsolidate(tokenMint: PublicKey): boolean;
+/**
+ * Hook for getting fragmentation score
+ */
+declare function useFragmentationScore(tokenMint: PublicKey): number;
+
+/**
+ * Auto-Consolidation Hook
+ *
+ * React hook for managing automatic note consolidation in the background.
+ */
+
+/**
+ * Auto-consolidation hook result
+ */
+interface UseAutoConsolidationResult {
+    /** Current state */
+    state: AutoConsolidationState;
+    /** Whether auto-consolidation is enabled */
+    isEnabled: boolean;
+    /** Whether consolidation is currently recommended */
+    isRecommended: boolean;
+    /** Last fragmentation report */
+    lastReport: FragmentationReport | null;
+    /** Enable auto-consolidation */
+    enable: () => void;
+    /** Disable auto-consolidation */
+    disable: () => void;
+    /** Toggle auto-consolidation */
+    toggle: () => void;
+    /** Manually trigger a check */
+    checkNow: () => void;
+    /** Estimated cost of consolidation */
+    estimatedCost: bigint;
+}
+/**
+ * Auto-consolidation hook options
+ */
+interface UseAutoConsolidationOptions {
+    /** Token mint to monitor (required) */
+    tokenMint: PublicKey;
+    /** Initial enabled state (default: false) */
+    initialEnabled?: boolean;
+    /** Fragmentation threshold to trigger (default: 60) */
+    fragmentationThreshold?: number;
+    /** Max note count before triggering (default: 8) */
+    maxNoteCount?: number;
+    /** Max dust notes before triggering (default: 3) */
+    maxDustNotes?: number;
+    /** Dust threshold in smallest units (default: 1000) */
+    dustThreshold?: bigint;
+    /** Check interval in ms (default: 60000) */
+    checkIntervalMs?: number;
+}
+/**
+ * Hook for managing automatic note consolidation
+ *
+ * @param options - Configuration options
+ * @returns Auto-consolidation controls and state
+ */
+declare function useAutoConsolidation(options: UseAutoConsolidationOptions): UseAutoConsolidationResult;
+/**
+ * Simple hook for checking if auto-consolidation is recommended
+ */
+declare function useIsConsolidationRecommended(tokenMint: PublicKey): boolean;
+
+/**
+ * Protocol Fees Hook
+ *
+ * Fetches and caches the protocol fee configuration from the chain.
+ */
+
+/**
+ * Protocol fee configuration
+ */
+interface ProtocolFeeConfig {
+    /** Transfer fee in basis points (100 = 1%) */
+    transferFeeBps: number;
+    /** Unshield fee in basis points */
+    unshieldFeeBps: number;
+    /** Swap fee in basis points */
+    swapFeeBps: number;
+    /** Remove liquidity fee in basis points */
+    removeLiquidityFeeBps: number;
+    /** Whether fees are enabled */
+    feesEnabled: boolean;
+    /** Treasury address */
+    treasury: PublicKey;
+    /** Authority who can update fees */
+    authority: PublicKey;
+}
+/**
+ * Hook result
+ */
+interface UseProtocolFeesResult {
+    /** Fee configuration (null if not loaded) */
+    config: ProtocolFeeConfig | null;
+    /** Whether the config is loading */
+    isLoading: boolean;
+    /** Error message if failed to load */
+    error: string | null;
+    /** Refresh the config */
+    refresh: () => Promise<void>;
+    /** Calculate fee for a given amount and operation */
+    calculateFee: (amount: bigint, operation: 'transfer' | 'unshield' | 'swap' | 'remove_liquidity') => bigint;
+}
+/**
+ * Hook for fetching and using protocol fees
+ */
+declare function useProtocolFees(): UseProtocolFeesResult;
+/**
+ * Hook to check if an operation is free
+ */
+declare function useIsFreeOperation(operation: 'shield' | 'add_liquidity' | 'consolidate' | 'transfer' | 'unshield' | 'swap' | 'remove_liquidity'): boolean;
+
+export { CloakCraftProvider, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type ProtocolFeeConfig, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, WALLET_DERIVATION_MESSAGE, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useCloakCraft, useConsolidation, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsConsolidationRecommended, useIsFreeOperation, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOrders, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePrivateBalance, useProtocolFees, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useWallet };

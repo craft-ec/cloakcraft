@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { Header } from '@/components/layout/header';
+import { DevnetWarningBanner } from '@/components/devnet-warning-banner';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { connected } = useWallet();
@@ -22,6 +23,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen flex flex-col">
+      <DevnetWarningBanner />
       <Header />
       <main className="flex-1 container mx-auto px-4 py-6">{children}</main>
     </div>

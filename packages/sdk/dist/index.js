@@ -436,6 +436,7 @@ __export(constants_exports, {
   SEEDS: () => SEEDS,
   deriveCommitmentCounterPda: () => deriveCommitmentCounterPda,
   derivePoolPda: () => derivePoolPda,
+  deriveProtocolConfigPda: () => deriveProtocolConfigPda,
   deriveVaultPda: () => deriveVaultPda,
   deriveVerificationKeyPda: () => deriveVerificationKeyPda,
   padCircuitId: () => padCircuitId
@@ -469,6 +470,12 @@ function deriveVerificationKeyPda(circuitId, programId = PROGRAM_ID) {
     programId
   );
 }
+function deriveProtocolConfigPda(programId = PROGRAM_ID) {
+  return import_web34.PublicKey.findProgramAddressSync(
+    [SEEDS.PROTOCOL_CONFIG],
+    programId
+  );
+}
 var import_web34, PROGRAM_ID, SEEDS, DEVNET_V2_TREES, CIRCUIT_IDS;
 var init_constants = __esm({
   "src/instructions/constants.ts"() {
@@ -479,7 +486,8 @@ var init_constants = __esm({
       POOL: Buffer.from("pool"),
       VAULT: Buffer.from("vault"),
       VERIFICATION_KEY: Buffer.from("vk"),
-      COMMITMENT_COUNTER: Buffer.from("commitment_counter")
+      COMMITMENT_COUNTER: Buffer.from("commitment_counter"),
+      PROTOCOL_CONFIG: Buffer.from("protocol_config")
     };
     DEVNET_V2_TREES = {
       STATE_TREE: new import_web34.PublicKey("bmt1LryLZUMmF7ZtqESaw7wifBXLfXHQYoE4GAmrahU"),
@@ -493,6 +501,7 @@ var init_constants = __esm({
       TRANSFER_2X3: "transfer_2x3",
       TRANSFER_3X2: "transfer_3x2",
       TRANSFER_3X3: "transfer_3x3",
+      CONSOLIDATE_3X1: "consolidate_3x1",
       SWAP: "swap_swap",
       ADD_LIQUIDITY: "swap_add_liquidity",
       REMOVE_LIQUIDITY: "swap_remove_liquidity",
@@ -1627,12 +1636,170 @@ var init_swap = __esm({
   }
 });
 
+// src/fees.ts
+var fees_exports = {};
+__export(fees_exports, {
+  BPS_DIVISOR: () => BPS_DIVISOR,
+  DEFAULT_FEE_CONFIG: () => DEFAULT_FEE_CONFIG,
+  MAX_FEE_BPS: () => MAX_FEE_BPS,
+  calculateMinimumFee: () => calculateMinimumFee,
+  calculateProtocolFee: () => calculateProtocolFee,
+  estimateTotalCost: () => estimateTotalCost,
+  fetchProtocolFeeConfig: () => fetchProtocolFeeConfig,
+  formatFeeAmount: () => formatFeeAmount,
+  formatFeeRate: () => formatFeeRate,
+  getFeeBps: () => getFeeBps,
+  isFeeableOperation: () => isFeeableOperation,
+  isFreeOperation: () => isFreeOperation,
+  verifyFeeAmount: () => verifyFeeAmount
+});
+function isFreeOperation(operation) {
+  return ["shield", "add_liquidity", "consolidate", "stake", "vote"].includes(operation);
+}
+function isFeeableOperation(operation) {
+  return ["transfer", "unshield", "swap", "remove_liquidity"].includes(operation);
+}
+function calculateProtocolFee(amount, operation, config) {
+  if (isFreeOperation(operation)) {
+    return {
+      amount,
+      feeAmount: 0n,
+      amountAfterFee: amount,
+      feeBps: 0,
+      isFree: true
+    };
+  }
+  if (!config || !config.feesEnabled) {
+    return {
+      amount,
+      feeAmount: 0n,
+      amountAfterFee: amount,
+      feeBps: 0,
+      isFree: false
+    };
+  }
+  const feeBps = getFeeBps(operation, config);
+  const feeAmount = amount * BigInt(feeBps) / BPS_DIVISOR;
+  const amountAfterFee = amount - feeAmount;
+  return {
+    amount,
+    feeAmount,
+    amountAfterFee,
+    feeBps,
+    isFree: false
+  };
+}
+function getFeeBps(operation, config) {
+  switch (operation) {
+    case "transfer":
+      return config.transferFeeBps;
+    case "unshield":
+      return config.unshieldFeeBps;
+    case "swap":
+      return config.swapFeeBps;
+    case "remove_liquidity":
+      return config.removeLiquidityFeeBps;
+    default:
+      return 0;
+  }
+}
+function calculateMinimumFee(amount, feeBps) {
+  if (feeBps === 0) return 0n;
+  const numerator = amount * BigInt(feeBps) + (BPS_DIVISOR - 1n);
+  return numerator / BPS_DIVISOR;
+}
+function verifyFeeAmount(amount, feeAmount, feeBps) {
+  if (feeBps === 0) return true;
+  const minFee = calculateMinimumFee(amount, feeBps);
+  return feeAmount >= minFee;
+}
+async function fetchProtocolFeeConfig(connection, programId = PROGRAM_ID) {
+  const [configPda] = deriveProtocolConfigPda(programId);
+  const accountInfo = await connection.getAccountInfo(configPda);
+  if (!accountInfo) {
+    return null;
+  }
+  const data = accountInfo.data.slice(8);
+  let offset = 0;
+  const authority = new import_web314.PublicKey(data.slice(offset, offset + 32));
+  offset += 32;
+  const treasury = new import_web314.PublicKey(data.slice(offset, offset + 32));
+  offset += 32;
+  const transferFeeBps = data.readUInt16LE(offset);
+  offset += 2;
+  const unshieldFeeBps = data.readUInt16LE(offset);
+  offset += 2;
+  const swapFeeBps = data.readUInt16LE(offset);
+  offset += 2;
+  const removeLiquidityFeeBps = data.readUInt16LE(offset);
+  offset += 2;
+  const feesEnabled = data[offset] === 1;
+  return {
+    authority,
+    treasury,
+    transferFeeBps,
+    unshieldFeeBps,
+    swapFeeBps,
+    removeLiquidityFeeBps,
+    feesEnabled
+  };
+}
+function formatFeeAmount(feeAmount, decimals) {
+  const divisor = BigInt(10 ** decimals);
+  const whole = feeAmount / divisor;
+  const fraction = feeAmount % divisor;
+  if (fraction === 0n) {
+    return whole.toString();
+  }
+  const fractionStr = fraction.toString().padStart(decimals, "0");
+  const trimmed = fractionStr.replace(/0+$/, "");
+  return `${whole}.${trimmed}`;
+}
+function formatFeeRate(feeBps) {
+  const percent = feeBps / 100;
+  return `${percent}%`;
+}
+function estimateTotalCost(amount, operation, config) {
+  const feeCalc = calculateProtocolFee(amount, operation, config);
+  return {
+    amount,
+    fee: feeCalc.feeAmount,
+    total: amount + feeCalc.feeAmount,
+    feeRate: formatFeeRate(feeCalc.feeBps)
+  };
+}
+var import_web314, DEFAULT_FEE_CONFIG, MAX_FEE_BPS, BPS_DIVISOR;
+var init_fees = __esm({
+  "src/fees.ts"() {
+    "use strict";
+    import_web314 = require("@solana/web3.js");
+    init_constants();
+    DEFAULT_FEE_CONFIG = {
+      transferFeeBps: 10,
+      // 0.1%
+      unshieldFeeBps: 25,
+      // 0.25%
+      swapFeeBps: 30,
+      // 0.3%
+      removeLiquidityFeeBps: 25,
+      // 0.25%
+      feesEnabled: true
+    };
+    MAX_FEE_BPS = 1e3;
+    BPS_DIVISOR = 10000n;
+  }
+});
+
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
   ALTManager: () => ALTManager,
+  AutoConsolidator: () => AutoConsolidator,
+  BPS_DIVISOR: () => BPS_DIVISOR,
   CIRCUIT_IDS: () => CIRCUIT_IDS,
   CloakCraftClient: () => CloakCraftClient,
+  ConsolidationService: () => ConsolidationService,
+  DEFAULT_FEE_CONFIG: () => DEFAULT_FEE_CONFIG,
   DEVNET_LIGHT_TREES: () => DEVNET_LIGHT_TREES,
   DEVNET_V2_TREES: () => DEVNET_V2_TREES,
   DOMAIN_ACTION_NULLIFIER: () => DOMAIN_ACTION_NULLIFIER,
@@ -1650,12 +1817,14 @@ __export(index_exports, {
   LightCommitmentClient: () => LightCommitmentClient,
   LightProtocol: () => LightProtocol,
   MAINNET_LIGHT_TREES: () => MAINNET_LIGHT_TREES,
+  MAX_FEE_BPS: () => MAX_FEE_BPS,
   MAX_TRANSACTION_SIZE: () => MAX_TRANSACTION_SIZE,
   NoteManager: () => NoteManager,
   PROGRAM_ID: () => PROGRAM_ID,
   PoolAnalyticsCalculator: () => PoolAnalyticsCalculator,
   ProofGenerator: () => ProofGenerator,
   SEEDS: () => SEEDS,
+  SmartNoteSelector: () => SmartNoteSelector,
   TokenPriceFetcher: () => TokenPriceFetcher,
   TransactionHistory: () => TransactionHistory,
   TransactionStatus: () => TransactionStatus,
@@ -1670,6 +1839,7 @@ __export(index_exports, {
   buildAtomicMultiPhaseTransaction: () => buildAtomicMultiPhaseTransaction,
   buildCancelOrderWithProgram: () => buildCancelOrderWithProgram,
   buildClosePendingOperationWithProgram: () => buildClosePendingOperationWithProgram,
+  buildConsolidationWithProgram: () => buildConsolidationWithProgram,
   buildCreateAggregationWithProgram: () => buildCreateAggregationWithProgram,
   buildCreateCommitmentWithProgram: () => buildCreateCommitmentWithProgram,
   buildCreateNullifierWithProgram: () => buildCreateNullifierWithProgram,
@@ -1693,8 +1863,10 @@ __export(index_exports, {
   calculateAddLiquidityAmounts: () => calculateAddLiquidityAmounts,
   calculateInvariant: () => calculateInvariant,
   calculateMinOutput: () => calculateMinOutput,
+  calculateMinimumFee: () => calculateMinimumFee,
   calculatePriceImpact: () => calculatePriceImpact,
   calculatePriceRatio: () => calculatePriceRatio,
+  calculateProtocolFee: () => calculateProtocolFee,
   calculateRemoveLiquidityOutput: () => calculateRemoveLiquidityOutput,
   calculateSlippage: () => calculateSlippage,
   calculateSwapOutput: () => calculateSwapOutput,
@@ -1709,6 +1881,7 @@ __export(index_exports, {
   computeCircuitInputs: () => computeCircuitInputs,
   computeCommitment: () => computeCommitment,
   computeDecryptionShare: () => computeDecryptionShare,
+  consolidationService: () => consolidationService,
   createAddressLookupTable: () => createAddressLookupTable,
   createCloakCraftALT: () => createCloakCraftALT,
   createNote: () => createNote,
@@ -1724,6 +1897,7 @@ __export(index_exports, {
   deriveOrderPda: () => deriveOrderPda,
   derivePendingOperationPda: () => derivePendingOperationPda,
   derivePoolPda: () => derivePoolPda,
+  deriveProtocolConfigPda: () => deriveProtocolConfigPda,
   derivePublicKey: () => derivePublicKey,
   deriveSpendingNullifier: () => deriveSpendingNullifier,
   deriveStealthPrivateKey: () => deriveStealthPrivateKey,
@@ -1733,17 +1907,23 @@ __export(index_exports, {
   deriveWalletFromSignature: () => deriveWalletFromSignature,
   deserializeAmmPool: () => deserializeAmmPool,
   deserializeEncryptedNote: () => deserializeEncryptedNote,
+  disableAutoConsolidation: () => disableAutoConsolidation,
   elgamalEncrypt: () => elgamalEncrypt,
+  enableAutoConsolidation: () => enableAutoConsolidation,
   encryptNote: () => encryptNote,
   encryptVote: () => encryptVote,
+  estimateTotalCost: () => estimateTotalCost,
   estimateTransactionSize: () => estimateTransactionSize,
   executeVersionedTransaction: () => executeVersionedTransaction,
   extendAddressLookupTable: () => extendAddressLookupTable,
   fetchAddressLookupTable: () => fetchAddressLookupTable,
   fetchAmmPool: () => fetchAmmPool,
+  fetchProtocolFeeConfig: () => fetchProtocolFeeConfig,
   fieldToBytes: () => fieldToBytes,
   formatAmmPool: () => formatAmmPool,
   formatApy: () => formatApy,
+  formatFeeAmount: () => formatFeeAmount,
+  formatFeeRate: () => formatFeeRate,
   formatPrice: () => formatPrice,
   formatPriceChange: () => formatPriceChange,
   formatShare: () => formatShare,
@@ -1755,17 +1935,22 @@ __export(index_exports, {
   generateStealthAddress: () => generateStealthAddress,
   generateVoteRandomness: () => generateVoteRandomness,
   getAmmPool: () => getAmmPool,
+  getAutoConsolidator: () => getAutoConsolidator,
+  getFeeBps: () => getFeeBps,
   getInstructionFromAnchorMethod: () => getInstructionFromAnchorMethod,
   getLightProtocolCommonAccounts: () => getLightProtocolCommonAccounts,
   getRandomStateTreeSet: () => getRandomStateTreeSet,
   getStateTreeSet: () => getStateTreeSet,
   initPoseidon: () => initPoseidon,
   initializePool: () => initializePool,
+  isFeeableOperation: () => isFeeableOperation,
+  isFreeOperation: () => isFreeOperation,
   isInSubgroup: () => isInSubgroup,
   isOnCurve: () => isOnCurve,
   lagrangeCoefficient: () => lagrangeCoefficient,
   loadCircomArtifacts: () => loadCircomArtifacts,
   loadWallet: () => loadWallet,
+  noteSelector: () => noteSelector,
   padCircuitId: () => padCircuitId,
   parseGroth16Proof: () => parseGroth16Proof,
   pointAdd: () => pointAdd,
@@ -1789,13 +1974,15 @@ __export(index_exports, {
   verifyAmmStateHash: () => verifyAmmStateHash,
   verifyCommitment: () => verifyCommitment,
   verifyDleqProof: () => verifyDleqProof,
+  verifyFeeAmount: () => verifyFeeAmount,
   verifyInvariant: () => verifyInvariant
 });
 module.exports = __toCommonJS(index_exports);
 __reExport(index_exports, require("@cloakcraft/types"), module.exports);
 
 // src/client.ts
-var import_web314 = require("@solana/web3.js");
+var import_web315 = require("@solana/web3.js");
+var import_spl_token4 = require("@solana/spl-token");
 
 // src/wallet.ts
 init_babyjubjub();
@@ -2344,6 +2531,8 @@ var BN254_FIELD_MODULUS3 = BigInt("218882428718392752222464057452572750886963111
 var CIRCUIT_FILE_MAP = {
   "transfer/1x2": "transfer_1x2",
   "transfer/1x3": "transfer_1x3",
+  "transfer/2x2": "transfer_2x2",
+  "consolidate/3x1": "consolidate_3x1",
   "adapter/1x1": "adapter_1x1",
   "adapter/1x2": "adapter_1x2",
   "market/order_create": "market_order_create",
@@ -2380,6 +2569,8 @@ var ProofGenerator = class {
     const circuits = circuitNames ?? [
       "transfer/1x2",
       "transfer/1x3",
+      "transfer/2x2",
+      "consolidate/3x1",
       "adapter/1x1",
       "adapter/1x2",
       "market/order_create",
@@ -2453,6 +2644,8 @@ var ProofGenerator = class {
     const knownCircuits = [
       "transfer/1x2",
       "transfer/1x3",
+      "transfer/2x2",
+      "consolidate/3x1",
       "adapter/1x1",
       "adapter/1x2",
       "market/order_create",
@@ -2469,7 +2662,7 @@ var ProofGenerator = class {
    * Generate a transfer proof (1 input, 2 outputs)
    */
   async generateTransferProof(params, keypair) {
-    const circuitName = params.inputs.length === 1 ? "transfer/1x2" : "transfer/1x3";
+    const circuitName = "transfer/1x2";
     if (!this.hasCircuit(circuitName)) {
       throw new Error(`Circuit not loaded: ${circuitName}`);
     }
@@ -2857,6 +3050,120 @@ var ProofGenerator = class {
     };
   }
   // =============================================================================
+  // Consolidation Proof Generation
+  // =============================================================================
+  /**
+   * Generate a consolidation proof (3 inputs -> 1 output)
+   *
+   * Consolidation merges multiple notes into a single note.
+   * - No fees (consolidation is free to encourage wallet cleanup)
+   * - Supports 1-3 input notes (unused inputs are zeroed)
+   * - Single output back to self
+   */
+  async generateConsolidationProof(params, keypair) {
+    const circuitName = "consolidate/3x1";
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`Circuit not loaded: ${circuitName}`);
+    }
+    if (params.inputs.length === 0 || params.inputs.length > 3) {
+      throw new Error("Consolidation requires 1-3 input notes");
+    }
+    const outputRandomness = params.outputRandomness ?? generateRandomness();
+    const outputAmount = params.inputs.reduce((sum, input) => sum + input.amount, 0n);
+    const tokenMintBytes = params.tokenMint.toBytes();
+    const outputNote = {
+      stealthPubX: params.outputRecipient.stealthPubkey.x,
+      tokenMint: tokenMintBytes,
+      amount: outputAmount,
+      randomness: outputRandomness
+    };
+    const outputCommitment = computeCommitment(outputNote);
+    const processedInputs = [];
+    for (const input of params.inputs) {
+      let effectiveKey;
+      if (input.stealthEphemeralPubkey) {
+        effectiveKey = deriveStealthPrivateKey(
+          bytesToField(keypair.spending.sk),
+          input.stealthEphemeralPubkey
+        );
+      } else {
+        effectiveKey = bytesToField(keypair.spending.sk);
+      }
+      const effectiveNullifierKey = deriveNullifierKey(fieldToBytes(effectiveKey));
+      const commitment = computeCommitment(input);
+      const nullifier = deriveSpendingNullifier(effectiveNullifierKey, commitment, input.leafIndex);
+      const dummyPath = Array(32).fill(new Uint8Array(32));
+      const dummyIndices = Array(32).fill(0);
+      processedInputs.push({
+        nullifier,
+        stealthPubX: input.stealthPubX,
+        amount: input.amount,
+        randomness: input.randomness,
+        spendingKey: fieldToBytes(effectiveKey),
+        leafIndex: input.leafIndex,
+        merklePath: dummyPath,
+        merklePathIndices: dummyIndices
+      });
+    }
+    while (processedInputs.length < 3) {
+      processedInputs.push({
+        nullifier: new Uint8Array(32),
+        stealthPubX: new Uint8Array(32),
+        amount: 0n,
+        randomness: new Uint8Array(32),
+        spendingKey: new Uint8Array(32),
+        leafIndex: 0,
+        merklePath: Array(32).fill(new Uint8Array(32)),
+        merklePathIndices: Array(32).fill(0)
+      });
+    }
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      nullifier_1: fieldToHex(processedInputs[0].nullifier),
+      nullifier_2: fieldToHex(processedInputs[1].nullifier),
+      nullifier_3: fieldToHex(processedInputs[2].nullifier),
+      out_commitment: fieldToHex(outputCommitment),
+      token_mint: fieldToHex(tokenMintBytes),
+      // Input 1 (always active)
+      in_stealth_pub_x_1: fieldToHex(processedInputs[0].stealthPubX),
+      in_amount_1: processedInputs[0].amount.toString(),
+      in_randomness_1: fieldToHex(processedInputs[0].randomness),
+      in_stealth_spending_key_1: fieldToHex(processedInputs[0].spendingKey),
+      merkle_path_1: processedInputs[0].merklePath.map((p) => fieldToHex(p)),
+      merkle_path_indices_1: processedInputs[0].merklePathIndices.map((i) => i.toString()),
+      leaf_index_1: processedInputs[0].leafIndex.toString(),
+      // Input 2 (optional - can be zeros)
+      in_stealth_pub_x_2: fieldToHex(processedInputs[1].stealthPubX),
+      in_amount_2: processedInputs[1].amount.toString(),
+      in_randomness_2: fieldToHex(processedInputs[1].randomness),
+      in_stealth_spending_key_2: fieldToHex(processedInputs[1].spendingKey),
+      merkle_path_2: processedInputs[1].merklePath.map((p) => fieldToHex(p)),
+      merkle_path_indices_2: processedInputs[1].merklePathIndices.map((i) => i.toString()),
+      leaf_index_2: processedInputs[1].leafIndex.toString(),
+      // Input 3 (optional - can be zeros)
+      in_stealth_pub_x_3: fieldToHex(processedInputs[2].stealthPubX),
+      in_amount_3: processedInputs[2].amount.toString(),
+      in_randomness_3: fieldToHex(processedInputs[2].randomness),
+      in_stealth_spending_key_3: fieldToHex(processedInputs[2].spendingKey),
+      merkle_path_3: processedInputs[2].merklePath.map((p) => fieldToHex(p)),
+      merkle_path_indices_3: processedInputs[2].merklePathIndices.map((i) => i.toString()),
+      leaf_index_3: processedInputs[2].leafIndex.toString(),
+      // Output
+      out_stealth_pub_x: fieldToHex(params.outputRecipient.stealthPubkey.x),
+      out_amount: outputAmount.toString(),
+      out_randomness: fieldToHex(outputRandomness)
+    };
+    const proof = await this.prove(circuitName, witnessInputs);
+    return {
+      proof,
+      nullifiers: processedInputs.filter((i) => i.amount > 0n).map((i) => i.nullifier),
+      outputCommitment,
+      outputRandomness,
+      outputAmount
+    };
+  }
+  // =============================================================================
   // Market Order Proof Generation
   // =============================================================================
   /**
@@ -3134,12 +3441,14 @@ var ProofGenerator = class {
       );
     }
     const unshieldAmountForProof = params.unshield?.amount ?? 0n;
+    const feeAmountForProof = params.fee ?? 0n;
     console.log("[buildTransferWitness] unshield_amount for proof:", unshieldAmountForProof.toString());
+    console.log("[buildTransferWitness] fee_amount for proof:", feeAmountForProof.toString());
     console.log("[buildTransferWitness] params.unshield:", params.unshield);
     console.log("[buildTransferWitness] output 1 amount:", params.outputs[0].amount.toString());
     console.log("[buildTransferWitness] output 2 amount:", out2Amount.toString());
     console.log("[buildTransferWitness] input amount:", input.amount.toString());
-    const expectedTotal = params.outputs[0].amount + out2Amount + unshieldAmountForProof;
+    const expectedTotal = params.outputs[0].amount + out2Amount + unshieldAmountForProof + feeAmountForProof;
     console.log(
       "[buildTransferWitness] Balance check: input=",
       input.amount.toString(),
@@ -3162,6 +3471,7 @@ var ProofGenerator = class {
       out_commitment_2: fieldToHex(out2Commitment),
       token_mint: fieldToHex(tokenMint),
       unshield_amount: unshieldAmountForProof.toString(),
+      fee_amount: feeAmountForProof.toString(),
       // Private inputs (Circom circuit - no in_stealth_pub_y)
       in_stealth_pub_x: fieldToHex(input.stealthPubX),
       in_amount: input.amount.toString(),
@@ -4217,8 +4527,11 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
   }
   const outputRecipients = params.outputs.map((output) => Array.from(output.recipientPubkey.x));
   const unshieldAmountForInstruction = params.unshieldAmount ?? 0n;
+  const feeAmountForInstruction = params.feeAmount ?? 0n;
   console.log("[Phase 0] unshield_amount for instruction:", unshieldAmountForInstruction.toString());
+  console.log("[Phase 0] fee_amount for instruction:", feeAmountForInstruction.toString());
   console.log("[Phase 0] params.unshieldAmount:", params.unshieldAmount);
+  console.log("[Phase 0] params.feeAmount:", params.feeAmount);
   console.log("[Phase 0] Public inputs for on-chain verification:");
   console.log("  [0] merkle_root:", Buffer.from(params.merkleRoot).toString("hex").slice(0, 32) + "...");
   console.log("  [1] nullifier:", Buffer.from(nullifier).toString("hex").slice(0, 32) + "...");
@@ -4227,6 +4540,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
   }
   console.log(`  [${2 + outputCommitments.length}] token_mint:`, params.tokenMint.toBase58());
   console.log(`  [${3 + outputCommitments.length}] unshield_amount:`, unshieldAmountForInstruction.toString());
+  console.log(`  [${4 + outputCommitments.length}] fee_amount:`, feeAmountForInstruction.toString());
   console.log("[Phase 0] === FULL commitment bytes for on-chain ===");
   for (let i = 0; i < outputCommitments.length; i++) {
     console.log(`  out_commitment_${i + 1} (full):`, Buffer.from(outputCommitments[i]).toString("hex"));
@@ -4242,7 +4556,8 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     outputAmounts.map((a) => new import_anchor3.BN(a.toString())),
     outputRandomness.map((r) => Array.from(r)),
     stealthEphemeralPubkeys.map((e) => Array.from(e)),
-    new import_anchor3.BN(unshieldAmountForInstruction.toString())
+    new import_anchor3.BN(unshieldAmountForInstruction.toString()),
+    new import_anchor3.BN(feeAmountForInstruction.toString())
   ).accountsStrict({
     pool: poolPda,
     verificationKey: vkPda,
@@ -4300,28 +4615,55 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     import_web38.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   let phase3Tx = null;
-  if (params.unshieldAmount && params.unshieldAmount > 0n && unshieldRecipientAta) {
+  const needsPhase3 = params.unshieldAmount && params.unshieldAmount > 0n || params.feeAmount && params.feeAmount > 0n;
+  if (needsPhase3) {
     console.log("[Phase 3] Building with:");
     console.log("  pool:", poolPda.toBase58());
     console.log("  tokenVault:", vaultPda.toBase58());
     console.log("  pendingOperation:", pendingOpPda.toBase58());
-    console.log("  unshieldRecipient:", unshieldRecipientAta.toBase58());
+    console.log("  unshieldRecipient:", unshieldRecipientAta?.toBase58() ?? "null");
+    console.log("  protocolConfig:", params.protocolConfig?.toBase58() ?? "null");
+    console.log("  treasuryTokenAccount:", params.treasuryTokenAccount?.toBase58() ?? "null");
     console.log("  relayer:", params.relayer.toBase58());
-    phase3Tx = await program.methods.processUnshield(
-      Array.from(operationId),
-      new import_anchor3.BN(params.unshieldAmount.toString())
-      // unshield_amount parameter
-    ).accounts({
+    console.log("  feeAmount:", feeAmountForInstruction.toString());
+    console.log("  unshieldAmount:", unshieldAmountForInstruction.toString());
+    const phase3Accounts = {
       pool: poolPda,
       tokenVault: vaultPda,
       pendingOperation: pendingOpPda,
-      unshieldRecipient: unshieldRecipientAta,
+      protocolConfig: params.protocolConfig ?? null,
+      treasuryTokenAccount: params.treasuryTokenAccount ?? null,
+      unshieldRecipient: unshieldRecipientAta ?? null,
       relayer: params.relayer,
       tokenProgram: import_spl_token2.TOKEN_PROGRAM_ID
-    }).preInstructions([
-      import_web38.ComputeBudgetProgram.setComputeUnitLimit({ units: 1e5 }),
+    };
+    const phase3PreInstructions = [
+      import_web38.ComputeBudgetProgram.setComputeUnitLimit({ units: 15e4 }),
+      // Increased for fee transfer
       import_web38.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
-    ]);
+    ];
+    if (params.treasuryWallet && params.treasuryTokenAccount && params.feeAmount && params.feeAmount > 0n) {
+      console.log("[Phase 3] Adding create treasury ATA instruction (idempotent)");
+      phase3PreInstructions.push(
+        (0, import_spl_token2.createAssociatedTokenAccountIdempotentInstruction)(
+          params.relayer,
+          // payer
+          params.treasuryTokenAccount,
+          // associated token account
+          params.treasuryWallet,
+          // owner
+          params.tokenMint,
+          // mint
+          import_spl_token2.TOKEN_PROGRAM_ID,
+          import_spl_token2.ASSOCIATED_TOKEN_PROGRAM_ID
+        )
+      );
+    }
+    phase3Tx = await program.methods.processUnshield(
+      Array.from(operationId),
+      new import_anchor3.BN(unshieldAmountForInstruction.toString())
+      // unshield_amount parameter
+    ).accounts(phase3Accounts).preInstructions(phase3PreInstructions);
     console.log("[Phase 3] Transaction builder created");
   }
   return {
@@ -4362,6 +4704,178 @@ function computeCircuitInputs(input, outputs, tokenMint, unshieldAmount = 0n) {
     });
   });
   return { inputCommitment, nullifier, outputCommitments };
+}
+async function buildConsolidationWithProgram(program, params, rpcUrl) {
+  const programId = program.programId;
+  const lightProtocol = new LightProtocol(rpcUrl, programId);
+  const circuitId = "consolidate_3x1";
+  if (params.inputs.length < 2 || params.inputs.length > 3) {
+    throw new Error("Consolidation requires 2-3 input notes");
+  }
+  const [poolPda] = derivePoolPda(params.tokenMint, programId);
+  const [vkPda] = deriveVerificationKeyPda(circuitId, programId);
+  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await Promise.resolve().then(() => (init_swap(), swap_exports));
+  const operationId = generateOperationId2(
+    params.nullifiers[0],
+    params.outputCommitment,
+    Date.now()
+  );
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  console.log(`[Consolidation Phase 0] Generated operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
+  console.log(`[Consolidation Phase 0] Num inputs: ${params.inputs.length}`);
+  console.log(`[Consolidation Phase 0] Nullifiers: ${params.nullifiers.length}`);
+  const stealthEphemeralPubkey = new Uint8Array(64);
+  stealthEphemeralPubkey.set(params.outputRecipient.ephemeralPubkey.x, 0);
+  stealthEphemeralPubkey.set(params.outputRecipient.ephemeralPubkey.y, 32);
+  const outputNote = {
+    stealthPubX: params.outputRecipient.stealthPubkey.x,
+    tokenMint: params.tokenMint,
+    amount: params.outputAmount,
+    randomness: params.outputRandomness
+  };
+  const encrypted = encryptNote(outputNote, params.outputRecipient.stealthPubkey);
+  const encryptedNote = Buffer.from(serializeEncryptedNote(encrypted));
+  const pendingCommitments = [{
+    pool: poolPda,
+    commitment: params.outputCommitment,
+    stealthEphemeralPubkey,
+    encryptedNote: new Uint8Array(encryptedNote)
+  }];
+  const { SystemAccountMetaConfig: SystemAccountMetaConfig2, PackedAccounts: PackedAccounts2 } = await import("@lightprotocol/stateless.js");
+  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await Promise.resolve().then(() => (init_constants(), constants_exports));
+  const systemConfig = SystemAccountMetaConfig2.new(lightProtocol.programId);
+  const packedAccounts = PackedAccounts2.newWithSystemAccountsV2(systemConfig);
+  const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES2.OUTPUT_QUEUE);
+  const addressTree = DEVNET_V2_TREES2.ADDRESS_TREE;
+  const addressTreeIndex = packedAccounts.insertOrGet(addressTree);
+  const inputProofs = await Promise.all(
+    params.inputs.map(async (input, i) => {
+      console.log(`[Consolidation] Fetching proof for input ${i}: ${input.accountHash}`);
+      const commitmentProof = await lightProtocol.getInclusionProofByHash(input.accountHash);
+      const commitmentTree = new import_web38.PublicKey(commitmentProof.treeInfo.tree);
+      const commitmentQueue = new import_web38.PublicKey(commitmentProof.treeInfo.queue);
+      const treeIndex = packedAccounts.insertOrGet(commitmentTree);
+      const queueIndex = packedAccounts.insertOrGet(commitmentQueue);
+      if (commitmentProof.treeInfo.cpiContext) {
+        packedAccounts.insertOrGet(new import_web38.PublicKey(commitmentProof.treeInfo.cpiContext));
+      }
+      return {
+        commitmentProof,
+        treeIndex,
+        queueIndex
+      };
+    })
+  );
+  const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, params.nullifiers[0]);
+  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
+  const { remainingAccounts: finalRemainingAccounts } = packedAccounts.toAccountMetas();
+  const phase0Tx = await program.methods.createPendingWithProofConsolidation(
+    Array.from(operationId),
+    Buffer.from(params.proof),
+    Array.from(params.merkleRoot),
+    params.inputs.length,
+    // num_inputs
+    params.inputs.map((i) => Array.from(i.commitment)),
+    // input_commitments
+    params.nullifiers.map((n) => Array.from(n)),
+    // nullifiers
+    Array.from(params.outputCommitment),
+    // out_commitment
+    Array.from(params.outputRecipient.stealthPubkey.x),
+    // output_recipient
+    new import_anchor3.BN(params.outputAmount.toString()),
+    // output_amount
+    Array.from(params.outputRandomness),
+    // output_randomness
+    Array.from(stealthEphemeralPubkey)
+    // stealth_ephemeral_pubkey
+  ).accountsStrict({
+    pool: poolPda,
+    verificationKey: vkPda,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer,
+    systemProgram: new import_web38.PublicKey("11111111111111111111111111111111")
+  }).preInstructions([
+    import_web38.ComputeBudgetProgram.setComputeUnitLimit({ units: 45e4 }),
+    import_web38.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+  ]);
+  const phase1Txs = await Promise.all(
+    params.inputs.map(async (input, i) => {
+      const proof = inputProofs[i];
+      const lightParams = {
+        commitmentAccountHash: Array.from(new import_web38.PublicKey(input.accountHash).toBytes()),
+        commitmentMerkleContext: {
+          merkleTreePubkeyIndex: proof.treeIndex,
+          queuePubkeyIndex: proof.queueIndex,
+          leafIndex: proof.commitmentProof.leafIndex,
+          rootIndex: proof.commitmentProof.rootIndex
+        },
+        commitmentInclusionProof: LightProtocol.convertCompressedProof(proof.commitmentProof),
+        commitmentAddressTreeInfo: {
+          addressMerkleTreePubkeyIndex: addressTreeIndex,
+          addressQueuePubkeyIndex: addressTreeIndex,
+          rootIndex: nullifierProof.rootIndices[0] ?? 0
+        }
+      };
+      return program.methods.verifyCommitmentExists(
+        Array.from(operationId),
+        i,
+        // commitment_index
+        lightParams
+      ).accountsStrict({
+        pool: poolPda,
+        pendingOperation: pendingOpPda,
+        relayer: params.relayer
+      }).remainingAccounts(finalRemainingAccounts.map((acc) => ({
+        pubkey: acc.pubkey,
+        isSigner: acc.isSigner,
+        isWritable: acc.isWritable
+      }))).preInstructions([
+        import_web38.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
+        import_web38.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+      ]);
+    })
+  );
+  const phase2Txs = await Promise.all(
+    params.inputs.map(async (input, i) => {
+      const nullifierAddr = lightProtocol.deriveNullifierAddress(poolPda, params.nullifiers[i]);
+      const nullProof = await lightProtocol.getValidityProof([nullifierAddr]);
+      const lightParams = {
+        proof: LightProtocol.convertCompressedProof(nullProof),
+        addressTreeInfo: {
+          addressMerkleTreePubkeyIndex: addressTreeIndex,
+          addressQueuePubkeyIndex: addressTreeIndex,
+          rootIndex: nullProof.rootIndices[0] ?? 0
+        },
+        outputTreeIndex
+      };
+      return program.methods.createNullifierAndPending(
+        Array.from(operationId),
+        i,
+        // nullifier_index
+        lightParams
+      ).accountsStrict({
+        pool: poolPda,
+        pendingOperation: pendingOpPda,
+        relayer: params.relayer
+      }).remainingAccounts(finalRemainingAccounts.map((acc) => ({
+        pubkey: acc.pubkey,
+        isSigner: acc.isSigner,
+        isWritable: acc.isWritable
+      }))).preInstructions([
+        import_web38.ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }),
+        import_web38.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
+      ]);
+    })
+  );
+  console.log(`[Consolidation] Built Phase 0 + ${phase1Txs.length} Phase 1 + ${phase2Txs.length} Phase 2 transactions`);
+  return {
+    phase0Tx,
+    phase1Txs,
+    phase2Txs,
+    operationId,
+    pendingCommitments
+  };
 }
 
 // src/instructions/store-commitment.ts
@@ -4923,7 +5437,7 @@ var CloakCraftClient = class {
     this.lightClient = null;
     this.program = null;
     this.heliusRpcUrl = null;
-    this.connection = new import_web314.Connection(config.rpcUrl, config.commitment ?? "confirmed");
+    this.connection = new import_web315.Connection(config.rpcUrl, config.commitment ?? "confirmed");
     this.programId = config.programId;
     this.rpcUrl = config.rpcUrl;
     this.indexerUrl = config.indexerUrl;
@@ -5112,11 +5626,11 @@ var CloakCraftClient = class {
    * Get pool state
    */
   async getPool(tokenMint) {
-    const [poolPda] = import_web314.PublicKey.findProgramAddressSync(
+    const [poolPda] = import_web315.PublicKey.findProgramAddressSync(
       [Buffer.from("pool"), tokenMint.toBuffer()],
       this.programId
     );
-    const [counterPda] = import_web314.PublicKey.findProgramAddressSync(
+    const [counterPda] = import_web315.PublicKey.findProgramAddressSync(
       [Buffer.from("commitment_counter"), poolPda.toBuffer()],
       this.programId
     );
@@ -5158,10 +5672,10 @@ var CloakCraftClient = class {
       commitmentCounter = counterInfo.data.readBigUInt64LE(8);
     }
     return {
-      tokenMint: new import_web314.PublicKey(data.subarray(8, 40)),
-      tokenVault: new import_web314.PublicKey(data.subarray(40, 72)),
+      tokenMint: new import_web315.PublicKey(data.subarray(8, 40)),
+      tokenVault: new import_web315.PublicKey(data.subarray(40, 72)),
       totalShielded: data.readBigUInt64LE(72),
-      authority: new import_web314.PublicKey(data.subarray(80, 112)),
+      authority: new import_web315.PublicKey(data.subarray(80, 112)),
       bump: data[112],
       vaultBump: data[113],
       commitmentCounter
@@ -5361,16 +5875,16 @@ var CloakCraftClient = class {
     if (!this.program) {
       throw new Error("No program set. Call setProgram() first.");
     }
-    const circuitName = params.inputs.length === 1 ? "transfer/1x2" : "transfer/1x3";
+    const circuitName = "transfer/1x2";
     if (!this.proofGenerator.hasCircuit(circuitName)) {
       throw new Error(`Prover not initialized. Call initializeProver(['${circuitName}']) first.`);
     }
-    const tokenMint = params.inputs[0].tokenMint instanceof Uint8Array ? new import_web314.PublicKey(params.inputs[0].tokenMint) : params.inputs[0].tokenMint;
-    const [poolPda] = import_web314.PublicKey.findProgramAddressSync(
+    const tokenMint = params.inputs[0].tokenMint instanceof Uint8Array ? new import_web315.PublicKey(params.inputs[0].tokenMint) : params.inputs[0].tokenMint;
+    const [poolPda] = import_web315.PublicKey.findProgramAddressSync(
       [Buffer.from("pool"), tokenMint.toBuffer()],
       this.programId
     );
-    const [counterPda] = import_web314.PublicKey.findProgramAddressSync(
+    const [counterPda] = import_web315.PublicKey.findProgramAddressSync(
       [Buffer.from("commitment_counter"), poolPda.toBuffer()],
       this.programId
     );
@@ -5379,10 +5893,12 @@ var CloakCraftClient = class {
       throw new Error("PoolCommitmentCounter not found. Initialize pool first.");
     }
     const baseLeafIndex = counterAccount.data.readBigUInt64LE(40);
+    params.onProgress?.("generating");
     const proof = await this.proofGenerator.generateTransferProof(
       params,
       this.wallet.keypair
     );
+    params.onProgress?.("building");
     const accountHash = params.inputs[0].accountHash;
     if (!accountHash) {
       throw new Error("Input note missing accountHash. Use scanNotes() to get notes with accountHash.");
@@ -5415,6 +5931,26 @@ var CloakCraftClient = class {
     const tokenMintField = toFieldBigInt(tokenMintBytes);
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
+    let protocolConfig;
+    let treasuryWallet;
+    let treasuryTokenAccount;
+    if (params.fee && params.fee > 0n) {
+      const [configPda] = deriveProtocolConfigPda(this.programId);
+      protocolConfig = configPda;
+      const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2 } = await Promise.resolve().then(() => (init_fees(), fees_exports));
+      const feeConfig = await fetchProtocolFeeConfig2(this.connection, this.programId);
+      if (feeConfig?.treasury) {
+        treasuryWallet = feeConfig.treasury;
+        treasuryTokenAccount = (0, import_spl_token4.getAssociatedTokenAddressSync)(
+          tokenMint,
+          treasuryWallet,
+          true
+          // allowOwnerOffCurve
+        );
+        console.log("[Transfer] Treasury wallet:", treasuryWallet.toBase58());
+        console.log("[Transfer] Treasury token account:", treasuryTokenAccount.toBase58());
+      }
+    }
     const instructionParams = {
       tokenMint,
       input: {
@@ -5438,12 +5974,16 @@ var CloakCraftClient = class {
       merklePathIndices: params.merkleIndices,
       unshieldAmount: params.unshield?.amount,
       unshieldRecipient: params.unshield?.recipient,
+      feeAmount: params.fee,
+      protocolConfig,
+      treasuryWallet,
+      treasuryTokenAccount,
       relayer: relayerPubkey,
       proof,
       nullifier,
       inputCommitment
     };
-    const circuitId = circuitName === "transfer/1x2" ? "transfer_1x2" : "transfer_1x3";
+    const circuitId = "transfer_1x2";
     console.log("[Transfer] === Starting Multi-Phase Transfer ===");
     console.log("[Transfer] Circuit:", circuitName);
     console.log("[Transfer] Token:", params.inputs[0].tokenMint.toBase58());
@@ -5452,6 +5992,13 @@ var CloakCraftClient = class {
     console.log("[Transfer] Unshield:", instructionParams.unshieldAmount?.toString() || "none");
     if (instructionParams.unshieldRecipient) {
       console.log("[Transfer] Unshield recipient:", instructionParams.unshieldRecipient.toBase58());
+    }
+    console.log("[Transfer] Fee:", instructionParams.feeAmount?.toString() || "0");
+    if (protocolConfig) {
+      console.log("[Transfer] Protocol config:", protocolConfig.toBase58());
+    }
+    if (treasuryTokenAccount) {
+      console.log("[Transfer] Treasury token account:", treasuryTokenAccount.toBase58());
     }
     console.log("[Transfer] Building phase transactions...");
     let phase0Tx, phase1Tx, phase2Tx, phase3Tx, result, operationId, pendingCommitments;
@@ -5542,6 +6089,7 @@ var CloakCraftClient = class {
       })
     );
     console.log("[Transfer] Requesting signature for all transactions...");
+    params.onProgress?.("approving");
     let signedTransactions;
     if (relayer) {
       signedTransactions = transactions.map((tx) => {
@@ -5559,6 +6107,7 @@ var CloakCraftClient = class {
       throw new Error("No signing method available");
     }
     console.log(`[Transfer] All ${signedTransactions.length} transactions signed!`);
+    params.onProgress?.("executing");
     console.log("[Transfer] Executing signed transactions sequentially...");
     let phase1Signature = "";
     for (let i = 0; i < signedTransactions.length; i++) {
@@ -5575,6 +6124,7 @@ var CloakCraftClient = class {
         phase1Signature = signature;
       }
     }
+    params.onProgress?.("confirming");
     return {
       signature: phase1Signature,
       slot: 0
@@ -5654,15 +6204,291 @@ var CloakCraftClient = class {
     const commitment = preparedInputs[0].commitment;
     const dummyPath = Array(32).fill(new Uint8Array(32));
     const dummyIndices = Array(32).fill(0);
+    const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2, calculateProtocolFee: calculateProtocolFee2 } = await Promise.resolve().then(() => (init_fees(), fees_exports));
+    const feeConfig = await fetchProtocolFeeConfig2(this.connection, this.programId);
+    const operationType = request.unshield ? "unshield" : "transfer";
+    const totalInputAmount = preparedInputs.reduce((sum, input) => sum + input.amount, 0n);
+    const feeableAmount = request.unshield?.amount ?? request.outputs[0]?.amount ?? 0n;
+    const feeCalc = calculateProtocolFee2(feeableAmount, operationType, feeConfig);
+    console.log("[prepareAndTransfer] Fee calculation:", {
+      operationType,
+      feeableAmount: feeableAmount.toString(),
+      feeAmount: feeCalc.feeAmount.toString(),
+      feeBps: feeCalc.feeBps,
+      feesEnabled: feeConfig?.feesEnabled ?? false,
+      totalInput: totalInputAmount.toString()
+    });
+    let adjustedOutputs = preparedOutputs;
+    let adjustedUnshield = request.unshield;
+    if (feeCalc.feeAmount > 0n) {
+      if (request.unshield && request.unshield.amount > 0n) {
+        if (request.unshield.amount < feeCalc.feeAmount) {
+          throw new Error(
+            `Insufficient unshield amount to pay protocol fee. Unshield: ${request.unshield.amount}, Fee: ${feeCalc.feeAmount}.`
+          );
+        }
+        adjustedUnshield = {
+          ...request.unshield,
+          amount: request.unshield.amount - feeCalc.feeAmount
+        };
+        console.log("[prepareAndTransfer] Adjusted unshield for fee:", {
+          originalAmount: request.unshield.amount.toString(),
+          adjustedAmount: adjustedUnshield.amount.toString(),
+          feeDeducted: feeCalc.feeAmount.toString()
+        });
+      } else if (preparedOutputs.length > 0) {
+        const changeOutputIndex = preparedOutputs.length > 1 ? 1 : 0;
+        const changeOutput = preparedOutputs[changeOutputIndex];
+        if (changeOutput.amount < feeCalc.feeAmount) {
+          throw new Error(
+            `Insufficient balance to pay protocol fee. Change: ${changeOutput.amount}, Fee: ${feeCalc.feeAmount}. Please use a larger input amount or reduce the transfer amount.`
+          );
+        }
+        const adjustedChangeOutput = {
+          ...changeOutput,
+          amount: changeOutput.amount - feeCalc.feeAmount
+        };
+        const adjustedNote = {
+          stealthPubX: adjustedChangeOutput.stealthPubX,
+          tokenMint,
+          amount: adjustedChangeOutput.amount,
+          randomness: adjustedChangeOutput.randomness
+        };
+        adjustedChangeOutput.commitment = computeCommitment(adjustedNote);
+        adjustedOutputs = [...preparedOutputs];
+        adjustedOutputs[changeOutputIndex] = adjustedChangeOutput;
+        console.log("[prepareAndTransfer] Adjusted change output for fee:", {
+          originalAmount: changeOutput.amount.toString(),
+          adjustedAmount: adjustedChangeOutput.amount.toString(),
+          feeDeducted: feeCalc.feeAmount.toString()
+        });
+      }
+    }
+    request.onProgress?.("preparing");
     const params = {
       inputs: preparedInputs,
       merkleRoot: commitment,
       merklePath: dummyPath,
       merkleIndices: dummyIndices,
-      outputs: preparedOutputs,
-      unshield: request.unshield
+      outputs: adjustedOutputs,
+      unshield: adjustedUnshield,
+      fee: feeCalc.feeAmount,
+      onProgress: request.onProgress
     };
     return this.transfer(params, relayer);
+  }
+  /**
+   * Prepare and consolidate notes
+   *
+   * Consolidates multiple notes into a single note.
+   * This is used to reduce wallet fragmentation.
+   *
+   * @param inputs - Notes to consolidate (1-3)
+   * @param tokenMint - Token mint (all inputs must use same token)
+   * @param onProgress - Optional progress callback
+   * @returns Transaction result with signature
+   */
+  async prepareAndConsolidate(inputs, tokenMint, onProgress) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    if (!this.program) {
+      throw new Error("Program not set. Call setProgram() first.");
+    }
+    if (inputs.length === 0 || inputs.length > 3) {
+      throw new Error("Consolidation requires 1-3 input notes");
+    }
+    onProgress?.("preparing");
+    console.log(`[prepareAndConsolidate] Consolidating ${inputs.length} notes...`);
+    this.clearScanCache();
+    const freshNotes = await this.scanNotes(tokenMint);
+    const matchedInputs = [];
+    for (const input of inputs) {
+      const fresh = freshNotes.find(
+        (n) => n.commitment && input.commitment && Buffer.from(n.commitment).toString("hex") === Buffer.from(input.commitment).toString("hex")
+      );
+      if (fresh) {
+        matchedInputs.push(fresh);
+      } else {
+        throw new Error("Selected note not found in pool. It may have been spent or not yet synced.");
+      }
+    }
+    const preparedInputs = await this.prepareInputs(matchedInputs);
+    const { stealthAddress } = generateStealthAddress(this.wallet.keypair.publicKey);
+    const commitment = preparedInputs[0].commitment;
+    const consolidationParams = {
+      inputs: preparedInputs,
+      merkleRoot: commitment,
+      tokenMint,
+      outputRecipient: stealthAddress
+    };
+    onProgress?.("generating");
+    console.log("[prepareAndConsolidate] Generating consolidation proof...");
+    const proofResult = await this.proofGenerator.generateConsolidationProof(
+      consolidationParams,
+      this.wallet.keypair
+    );
+    console.log(`[prepareAndConsolidate] Proof generated. Output amount: ${proofResult.outputAmount}`);
+    console.log(`[prepareAndConsolidate] Nullifiers: ${proofResult.nullifiers.length}`);
+    onProgress?.("building");
+    const result = await this.executeConsolidation(
+      preparedInputs,
+      proofResult,
+      tokenMint,
+      stealthAddress,
+      onProgress
+    );
+    onProgress?.("confirming");
+    await new Promise((resolve2) => setTimeout(resolve2, 2e3));
+    this.clearScanCache();
+    await this.scanNotes(tokenMint);
+    return result;
+  }
+  /**
+   * Execute consolidation transaction (multi-phase)
+   *
+   * Uses the consolidate_3x1 circuit and pre-generated proof.
+   */
+  async executeConsolidation(inputs, proofResult, tokenMint, outputRecipient, onProgress) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    if (!this.program) {
+      throw new Error("No program set");
+    }
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const relayerPubkey = await this.getRelayerPubkey();
+    for (let i = 0; i < inputs.length; i++) {
+      if (!inputs[i].accountHash) {
+        throw new Error(`Input note ${i} missing accountHash`);
+      }
+    }
+    console.log("[Consolidation] === Starting Multi-Phase Consolidation ===");
+    console.log("[Consolidation] Token:", tokenMint.toBase58());
+    console.log("[Consolidation] Inputs:", inputs.length);
+    console.log("[Consolidation] Output amount:", proofResult.outputAmount.toString());
+    const consolidationParams = {
+      tokenMint,
+      inputs: inputs.map((input) => ({
+        stealthPubX: input.stealthPubX,
+        amount: input.amount,
+        randomness: input.randomness,
+        leafIndex: input.leafIndex,
+        commitment: input.commitment,
+        accountHash: input.accountHash
+      })),
+      nullifiers: proofResult.nullifiers,
+      outputCommitment: proofResult.outputCommitment,
+      outputRandomness: proofResult.outputRandomness,
+      outputAmount: proofResult.outputAmount,
+      outputRecipient,
+      merkleRoot: inputs[0].commitment,
+      // Dummy - Light Protocol verifies on-chain
+      relayer: relayerPubkey,
+      proof: proofResult.proof
+    };
+    let phase0Tx, phase1Txs, phase2Txs, operationId, pendingCommitments;
+    try {
+      const buildResult = await buildConsolidationWithProgram(
+        this.program,
+        consolidationParams,
+        heliusRpcUrl
+      );
+      phase0Tx = buildResult.phase0Tx;
+      phase1Txs = buildResult.phase1Txs;
+      phase2Txs = buildResult.phase2Txs;
+      operationId = buildResult.operationId;
+      pendingCommitments = buildResult.pendingCommitments;
+      console.log("[Consolidation] Phase transactions built successfully");
+      console.log(`[Consolidation] Phase 0: 1, Phase 1: ${phase1Txs.length}, Phase 2: ${phase2Txs.length}`);
+    } catch (error) {
+      console.error("[Consolidation] FAILED to build phase transactions:", error);
+      throw error;
+    }
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await Promise.resolve().then(() => (init_swap(), swap_exports));
+    const transactionBuilders = [];
+    transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
+    for (let i = 0; i < phase1Txs.length; i++) {
+      transactionBuilders.push({ name: `Phase 1.${i} (Verify Commitment ${i})`, builder: phase1Txs[i] });
+    }
+    for (let i = 0; i < phase2Txs.length; i++) {
+      transactionBuilders.push({ name: `Phase 2.${i} (Create Nullifier ${i})`, builder: phase2Txs[i] });
+    }
+    for (let i = 0; i < pendingCommitments.length; i++) {
+      const pc = pendingCommitments[i];
+      const { tx: commitmentTx } = await buildCreateCommitmentWithProgram2(
+        this.program,
+        {
+          operationId,
+          commitmentIndex: i,
+          pool: pc.pool,
+          relayer: relayerPubkey,
+          stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+          encryptedNote: pc.encryptedNote,
+          commitment: pc.commitment
+        },
+        heliusRpcUrl
+      );
+      transactionBuilders.push({ name: `Phase 4 (Commitment ${i})`, builder: commitmentTx });
+    }
+    const { tx: closeTx } = await buildClosePendingOperationWithProgram2(
+      this.program,
+      operationId,
+      relayerPubkey
+    );
+    transactionBuilders.push({ name: "Final (Close Pending)", builder: closeTx });
+    console.log(`[Consolidation] Built ${transactionBuilders.length} transactions total`);
+    const lookupTables = await this.getAddressLookupTables();
+    const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
+    const transactions = await Promise.all(
+      transactionBuilders.map(async ({ name, builder }) => {
+        const mainIx = await builder.instruction();
+        const preIxs = builder._preInstructions || [];
+        const allInstructions = [...preIxs, mainIx];
+        return new VersionedTransaction2(
+          new TransactionMessage2({
+            payerKey: relayerPubkey,
+            recentBlockhash: blockhash,
+            instructions: allInstructions
+          }).compileToV0Message(lookupTables)
+        );
+      })
+    );
+    console.log("[Consolidation] Requesting signature for all transactions...");
+    onProgress?.("approving");
+    let signedTransactions;
+    if (this.program?.provider?.wallet) {
+      const wallet = this.program.provider.wallet;
+      if (typeof wallet.signAllTransactions === "function") {
+        signedTransactions = await wallet.signAllTransactions(transactions);
+      } else {
+        throw new Error("Wallet does not support batch signing");
+      }
+    } else {
+      throw new Error("No signing method available");
+    }
+    console.log(`[Consolidation] All ${signedTransactions.length} transactions signed!`);
+    onProgress?.("executing");
+    let finalSignature = "";
+    for (let i = 0; i < signedTransactions.length; i++) {
+      const tx = signedTransactions[i];
+      const name = transactionBuilders[i].name;
+      console.log(`[Consolidation] Sending ${name}...`);
+      const signature = await this.connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: "confirmed"
+      });
+      await this.connection.confirmTransaction(signature, "confirmed");
+      console.log(`[Consolidation] ${name} confirmed: ${signature}`);
+      finalSignature = signature;
+    }
+    console.log("[Consolidation] === Consolidation Complete ===");
+    return {
+      signature: finalSignature,
+      slot: 0
+      // Could fetch from confirmation if needed
+    };
   }
   /**
    * Swap through external adapter (partial privacy)
@@ -5922,7 +6748,7 @@ var CloakCraftClient = class {
       params,
       this.wallet.keypair
     );
-    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new import_web314.PublicKey(params.input.tokenMint) : params.input.tokenMint;
+    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new import_web315.PublicKey(params.input.tokenMint) : params.input.tokenMint;
     const ammPoolAccount = await this.program.account.ammPool.fetch(params.poolId);
     const outputTokenMint = params.swapDirection === "aToB" ? ammPoolAccount.tokenBMint : ammPoolAccount.tokenAMint;
     const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
@@ -6108,8 +6934,8 @@ var CloakCraftClient = class {
       params,
       this.wallet.keypair
     );
-    const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new import_web314.PublicKey(params.inputA.tokenMint) : params.inputA.tokenMint;
-    const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new import_web314.PublicKey(params.inputB.tokenMint) : params.inputB.tokenMint;
+    const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new import_web315.PublicKey(params.inputA.tokenMint) : params.inputA.tokenMint;
+    const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new import_web315.PublicKey(params.inputB.tokenMint) : params.inputB.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
     const [lpPool] = derivePoolPda(params.lpMint, this.programId);
@@ -6316,7 +7142,7 @@ var CloakCraftClient = class {
     }
     const tokenAMint = params.tokenAMint;
     const tokenBMint = params.tokenBMint;
-    const lpMint = params.lpInput.tokenMint instanceof Uint8Array ? new import_web314.PublicKey(params.lpInput.tokenMint) : params.lpInput.tokenMint;
+    const lpMint = params.lpInput.tokenMint instanceof Uint8Array ? new import_web315.PublicKey(params.lpInput.tokenMint) : params.lpInput.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
     const [lpPool] = derivePoolPda(lpMint, this.programId);
@@ -6517,8 +7343,8 @@ var CloakCraftClient = class {
     );
     const [orderPda] = deriveOrderPda(params.orderId, this.programId);
     const orderAccount = await this.program.account.order.fetch(orderPda);
-    const makerPool = new import_web314.PublicKey(orderAccount.makerPool || params.order.escrowCommitment);
-    const takerInputMint = params.takerInput.tokenMint instanceof Uint8Array ? new import_web314.PublicKey(params.takerInput.tokenMint) : params.takerInput.tokenMint;
+    const makerPool = new import_web315.PublicKey(orderAccount.makerPool || params.order.escrowCommitment);
+    const takerInputMint = params.takerInput.tokenMint instanceof Uint8Array ? new import_web315.PublicKey(params.takerInput.tokenMint) : params.takerInput.tokenMint;
     const [takerPool] = derivePoolPda(takerInputMint, this.programId);
     const escrowNullifier = new Uint8Array(32);
     const takerNullifier = this.computeInputNullifier(params.takerInput);
@@ -6602,7 +7428,7 @@ var CloakCraftClient = class {
     );
     const [orderPda] = deriveOrderPda(params.orderId, this.programId);
     const orderAccount = await this.program.account.order.fetch(orderPda);
-    const pool = new import_web314.PublicKey(orderAccount.pool || orderAccount.makerPool);
+    const pool = new import_web315.PublicKey(orderAccount.pool || orderAccount.makerPool);
     const escrowNullifier = new Uint8Array(32);
     const refundCommitment = computeCommitment({
       stealthPubX: params.refundRecipient.stealthPubkey.x,
@@ -6686,7 +7512,7 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("governance/encrypted_submit")) {
       throw new Error("Prover not initialized. Call initializeProver(['governance/encrypted_submit']) first.");
     }
-    const tokenMint = params.input.tokenMint instanceof Uint8Array ? new import_web314.PublicKey(params.input.tokenMint) : params.input.tokenMint;
+    const tokenMint = params.input.tokenMint instanceof Uint8Array ? new import_web315.PublicKey(params.input.tokenMint) : params.input.tokenMint;
     const [tokenPool] = derivePoolPda(tokenMint, this.programId);
     const randomness = generateVoteRandomness();
     const voteOption = params.voteChoice === 0 ? 0 /* Yes */ : params.voteChoice === 1 ? 1 /* No */ : 2 /* Abstain */;
@@ -6862,7 +7688,7 @@ var CloakCraftClient = class {
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     let poolPda;
     if (tokenMint) {
-      [poolPda] = import_web314.PublicKey.findProgramAddressSync(
+      [poolPda] = import_web315.PublicKey.findProgramAddressSync(
         [Buffer.from("pool"), tokenMint.toBuffer()],
         this.programId
       );
@@ -6887,7 +7713,7 @@ var CloakCraftClient = class {
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     let poolPda;
     if (tokenMint) {
-      [poolPda] = import_web314.PublicKey.findProgramAddressSync(
+      [poolPda] = import_web315.PublicKey.findProgramAddressSync(
         [Buffer.from("pool"), tokenMint.toBuffer()],
         this.programId
       );
@@ -6908,11 +7734,11 @@ var CloakCraftClient = class {
   // Private Methods
   // =============================================================================
   async buildAdapterSwapTransaction(_params, _proof) {
-    const tx = new import_web314.Transaction();
+    const tx = new import_web315.Transaction();
     return tx;
   }
   async buildCreateOrderTransaction(_params, _proof) {
-    const tx = new import_web314.Transaction();
+    const tx = new import_web315.Transaction();
     return tx;
   }
   async getRelayer() {
@@ -7003,7 +7829,7 @@ init_commitment();
 init_encryption();
 
 // src/amm/pool.ts
-var import_web315 = require("@solana/web3.js");
+var import_web316 = require("@solana/web3.js");
 var import_sha3 = require("@noble/hashes/sha3");
 init_swap();
 async function fetchAmmPool(connection, ammPoolPda) {
@@ -7016,13 +7842,13 @@ async function fetchAmmPool(connection, ammPoolPda) {
 }
 function deserializeAmmPool(data) {
   let offset = 8;
-  const poolId = new import_web315.PublicKey(data.slice(offset, offset + 32));
+  const poolId = new import_web316.PublicKey(data.slice(offset, offset + 32));
   offset += 32;
-  const tokenAMint = new import_web315.PublicKey(data.slice(offset, offset + 32));
+  const tokenAMint = new import_web316.PublicKey(data.slice(offset, offset + 32));
   offset += 32;
-  const tokenBMint = new import_web315.PublicKey(data.slice(offset, offset + 32));
+  const tokenBMint = new import_web316.PublicKey(data.slice(offset, offset + 32));
   offset += 32;
-  const lpMint = new import_web315.PublicKey(data.slice(offset, offset + 32));
+  const lpMint = new import_web316.PublicKey(data.slice(offset, offset + 32));
   offset += 32;
   const stateHash = new Uint8Array(data.slice(offset, offset + 32));
   offset += 32;
@@ -7032,7 +7858,7 @@ function deserializeAmmPool(data) {
   const lpSupply = view.getBigUint64(16, true);
   const feeBps = view.getUint16(24, true);
   offset += 26;
-  const authority = new import_web315.PublicKey(data.slice(offset, offset + 32));
+  const authority = new import_web316.PublicKey(data.slice(offset, offset + 32));
   offset += 32;
   const isActive = data[offset] === 1;
   offset += 1;
@@ -7261,27 +8087,27 @@ function validateLiquidityAmounts(amountA, amountB, balanceA, balanceB) {
 }
 
 // src/versioned-transaction.ts
-var import_web316 = require("@solana/web3.js");
+var import_web317 = require("@solana/web3.js");
 var MAX_TRANSACTION_SIZE = 1232;
 async function buildVersionedTransaction(connection, instructions, payer, config = {}) {
   const computeBudgetIxs = [];
   const computeUnits = config.computeUnits ?? 14e5;
   computeBudgetIxs.push(
-    import_web316.ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits })
+    import_web317.ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits })
   );
   if (config.computeUnitPrice !== void 0) {
     computeBudgetIxs.push(
-      import_web316.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: config.computeUnitPrice })
+      import_web317.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: config.computeUnitPrice })
     );
   }
   const allInstructions = [...computeBudgetIxs, ...instructions];
   const { blockhash } = await connection.getLatestBlockhash();
-  const messageV0 = new import_web316.TransactionMessage({
+  const messageV0 = new import_web317.TransactionMessage({
     payerKey: payer,
     recentBlockhash: blockhash,
     instructions: allInstructions
   }).compileToV0Message(config.lookupTables);
-  const versionedTx = new import_web316.VersionedTransaction(messageV0);
+  const versionedTx = new import_web317.VersionedTransaction(messageV0);
   return versionedTx;
 }
 function estimateTransactionSize(tx) {
@@ -8110,11 +8936,704 @@ function verifyInvariant(oldReserveA, oldReserveB, newReserveA, newReserveB, fee
   const newK = newReserveA * newReserveB;
   return newK >= oldK;
 }
+
+// src/index.ts
+init_fees();
+
+// src/note-selector.ts
+init_constants();
+var DEFAULT_OPTIONS = {
+  strategy: "smallest-first",
+  maxInputs: 2,
+  feeAmount: 0n,
+  dustThreshold: 1000n
+  // 0.001 tokens at 6 decimals
+};
+var SmartNoteSelector = class {
+  constructor(dustThreshold = 1000n) {
+    this.dustThreshold = dustThreshold;
+  }
+  /**
+   * Select notes for a transaction
+   *
+   * @param notes - Available notes to select from
+   * @param targetAmount - Amount needed for the transaction
+   * @param options - Selection options
+   * @returns Selection result with notes, circuit type, and metadata
+   */
+  selectNotes(notes, targetAmount, options = {}) {
+    const opts = { ...DEFAULT_OPTIONS, ...options };
+    const effectiveTarget = targetAmount + (opts.feeAmount ?? 0n);
+    const validNotes = notes.filter((n) => n.amount > 0n);
+    if (validNotes.length === 0) {
+      return {
+        notes: [],
+        totalAmount: 0n,
+        changeAmount: 0n,
+        circuitType: "transfer_1x2",
+        needsConsolidation: false,
+        error: "No valid notes available"
+      };
+    }
+    const totalBalance = validNotes.reduce((sum, n) => sum + n.amount, 0n);
+    if (totalBalance < effectiveTarget) {
+      return {
+        notes: [],
+        totalAmount: 0n,
+        changeAmount: 0n,
+        circuitType: "transfer_1x2",
+        needsConsolidation: false,
+        error: `Insufficient balance: have ${totalBalance}, need ${effectiveTarget}`
+      };
+    }
+    switch (opts.strategy) {
+      case "exact":
+        return this.selectExact(validNotes, effectiveTarget, opts.maxInputs);
+      case "minimize-change":
+        return this.selectMinimizeChange(validNotes, effectiveTarget, opts.maxInputs);
+      case "consolidation-aware":
+        return this.selectConsolidationAware(validNotes, effectiveTarget, opts.maxInputs);
+      case "smallest-first":
+        return this.selectSmallestFirst(validNotes, effectiveTarget, opts.maxInputs);
+      case "greedy":
+      default:
+        return this.selectGreedy(validNotes, effectiveTarget, opts.maxInputs);
+    }
+  }
+  /**
+   * Greedy selection - select largest notes first
+   */
+  selectGreedy(notes, target, maxInputs) {
+    const sorted = [...notes].sort(
+      (a, b) => Number(b.amount - a.amount)
+    );
+    const selected = [];
+    let total = 0n;
+    for (const note of sorted) {
+      if (total >= target) break;
+      if (selected.length >= maxInputs) break;
+      selected.push(note);
+      total += note.amount;
+    }
+    if (total < target) {
+      const needsConsolidation = this.wouldSucceedWithMoreInputs(sorted, target, maxInputs);
+      return {
+        notes: [],
+        totalAmount: 0n,
+        changeAmount: 0n,
+        circuitType: this.getCircuitType(maxInputs),
+        needsConsolidation,
+        error: needsConsolidation ? "Need more inputs than supported. Consolidate notes first." : "Cannot select sufficient notes"
+      };
+    }
+    return {
+      notes: selected,
+      totalAmount: total,
+      changeAmount: total - target,
+      circuitType: this.getCircuitType(selected.length),
+      needsConsolidation: false
+    };
+  }
+  /**
+   * Exact selection - try to find exact match
+   */
+  selectExact(notes, target, maxInputs) {
+    const exactMatch = notes.find((n) => n.amount === target);
+    if (exactMatch) {
+      return {
+        notes: [exactMatch],
+        totalAmount: target,
+        changeAmount: 0n,
+        circuitType: "transfer_1x2",
+        needsConsolidation: false
+      };
+    }
+    if (maxInputs >= 2) {
+      for (let i = 0; i < notes.length; i++) {
+        for (let j = i + 1; j < notes.length; j++) {
+          const sum = notes[i].amount + notes[j].amount;
+          if (sum === target) {
+            return {
+              notes: [notes[i], notes[j]],
+              totalAmount: target,
+              changeAmount: 0n,
+              circuitType: "transfer_2x2",
+              needsConsolidation: false
+            };
+          }
+        }
+      }
+    }
+    return this.selectGreedy(notes, target, maxInputs);
+  }
+  /**
+   * Minimize change - find combination with smallest change
+   */
+  selectMinimizeChange(notes, target, maxInputs) {
+    let bestResult = null;
+    for (const note of notes) {
+      if (note.amount >= target) {
+        const change = note.amount - target;
+        if (!bestResult || change < bestResult.changeAmount) {
+          bestResult = {
+            notes: [note],
+            totalAmount: note.amount,
+            changeAmount: change,
+            circuitType: "transfer_1x2",
+            needsConsolidation: false
+          };
+        }
+      }
+    }
+    if (maxInputs >= 2) {
+      for (let i = 0; i < notes.length; i++) {
+        for (let j = i + 1; j < notes.length; j++) {
+          const sum = notes[i].amount + notes[j].amount;
+          if (sum >= target) {
+            const change = sum - target;
+            if (!bestResult || change < bestResult.changeAmount) {
+              bestResult = {
+                notes: [notes[i], notes[j]],
+                totalAmount: sum,
+                changeAmount: change,
+                circuitType: "transfer_2x2",
+                needsConsolidation: false
+              };
+            }
+          }
+        }
+      }
+    }
+    if (bestResult) {
+      return bestResult;
+    }
+    return this.selectGreedy(notes, target, maxInputs);
+  }
+  /**
+   * Consolidation-aware - prefer using dust notes
+   */
+  selectConsolidationAware(notes, target, maxInputs) {
+    const dustNotes = notes.filter((n) => n.amount < this.dustThreshold);
+    const regularNotes = notes.filter((n) => n.amount >= this.dustThreshold);
+    if (dustNotes.length > 0) {
+      const dustTotal = dustNotes.reduce((sum, n) => sum + n.amount, 0n);
+      if (dustTotal >= target) {
+        const result = this.selectGreedy(dustNotes, target, maxInputs);
+        if (!result.error) {
+          return result;
+        }
+      }
+      if (maxInputs >= 2 && regularNotes.length > 0) {
+        const sortedDust = [...dustNotes].sort((a, b) => Number(b.amount - a.amount));
+        const sortedRegular = [...regularNotes].sort((a, b) => Number(b.amount - a.amount));
+        for (const dust of sortedDust) {
+          for (const regular of sortedRegular) {
+            const sum = dust.amount + regular.amount;
+            if (sum >= target) {
+              return {
+                notes: [regular, dust],
+                // Put larger first for consistency
+                totalAmount: sum,
+                changeAmount: sum - target,
+                circuitType: "transfer_2x2",
+                needsConsolidation: false
+              };
+            }
+          }
+        }
+      }
+    }
+    return this.selectGreedy(notes, target, maxInputs);
+  }
+  /**
+   * Smallest-first selection - for consolidation operations
+   */
+  selectSmallestFirst(notes, target, maxInputs) {
+    const sorted = [...notes].sort(
+      (a, b) => Number(a.amount - b.amount)
+    );
+    const selected = [];
+    let total = 0n;
+    for (const note of sorted) {
+      if (total >= target) break;
+      if (selected.length >= maxInputs) break;
+      selected.push(note);
+      total += note.amount;
+    }
+    if (total < target) {
+      const needsConsolidation = this.wouldSucceedWithMoreInputs(sorted, target, maxInputs);
+      return {
+        notes: [],
+        totalAmount: 0n,
+        changeAmount: 0n,
+        circuitType: this.getCircuitType(maxInputs),
+        needsConsolidation,
+        error: needsConsolidation ? "Need more inputs than supported. Consolidate notes first." : "Cannot select sufficient notes"
+      };
+    }
+    return {
+      notes: selected,
+      totalAmount: total,
+      changeAmount: total - target,
+      circuitType: this.getCircuitType(selected.length),
+      needsConsolidation: false
+    };
+  }
+  /**
+   * Check if we would succeed with more inputs
+   */
+  wouldSucceedWithMoreInputs(sortedNotes, target, currentMaxInputs) {
+    let total = 0n;
+    for (let i = 0; i < sortedNotes.length; i++) {
+      total += sortedNotes[i].amount;
+      if (total >= target && i >= currentMaxInputs) {
+        return true;
+      }
+    }
+    return false;
+  }
+  /**
+   * Get circuit type based on number of inputs
+   */
+  getCircuitType(numInputs) {
+    switch (numInputs) {
+      case 1:
+        return "transfer_1x2";
+      case 2:
+        return "transfer_2x2";
+      case 3:
+        return "transfer_3x2";
+      default:
+        return "transfer_1x2";
+    }
+  }
+  /**
+   * Get circuit ID for the given circuit type
+   */
+  getCircuitId(circuitType) {
+    switch (circuitType) {
+      case "transfer_1x2":
+        return CIRCUIT_IDS.TRANSFER_1X2;
+      case "transfer_2x2":
+        return CIRCUIT_IDS.TRANSFER_2X2;
+      case "transfer_3x2":
+        return CIRCUIT_IDS.TRANSFER_3X2;
+      case "consolidate_3x1":
+        return CIRCUIT_IDS.CONSOLIDATE_3X1;
+      default:
+        return CIRCUIT_IDS.TRANSFER_1X2;
+    }
+  }
+  /**
+   * Analyze wallet fragmentation
+   */
+  analyzeFragmentation(notes) {
+    const validNotes = notes.filter((n) => n.amount > 0n);
+    if (validNotes.length === 0) {
+      return {
+        totalNotes: 0,
+        dustNotes: 0,
+        largestNote: 0n,
+        smallestNote: 0n,
+        totalBalance: 0n,
+        fragmentationScore: 0,
+        shouldConsolidate: false
+      };
+    }
+    const dustNotes = validNotes.filter((n) => n.amount < this.dustThreshold).length;
+    const amounts = validNotes.map((n) => n.amount);
+    const largestNote = amounts.reduce((max, a) => a > max ? a : max, 0n);
+    const smallestNote = amounts.reduce((min, a) => a < min ? a : min, largestNote);
+    const totalBalance = amounts.reduce((sum, a) => sum + a, 0n);
+    const noteCountFactor = Math.min(validNotes.length / 10, 1) * 40;
+    const dustFactor = dustNotes / validNotes.length * 30;
+    const concentrationFactor = totalBalance > 0n ? (1 - Number(largestNote * 100n / totalBalance) / 100) * 30 : 0;
+    const fragmentationScore = Math.round(noteCountFactor + dustFactor + concentrationFactor);
+    const shouldConsolidate = validNotes.length > 5 || dustNotes > 2 || fragmentationScore > 50;
+    return {
+      totalNotes: validNotes.length,
+      dustNotes,
+      largestNote,
+      smallestNote,
+      totalBalance,
+      fragmentationScore,
+      shouldConsolidate
+    };
+  }
+  /**
+   * Select notes for consolidation
+   *
+   * @param notes - Available notes
+   * @param maxInputs - Maximum inputs (default: 3 for consolidate_3x1)
+   * @returns Notes to consolidate
+   */
+  selectForConsolidation(notes, maxInputs = 3) {
+    const validNotes = notes.filter((n) => n.amount > 0n);
+    if (validNotes.length <= 1) {
+      return [];
+    }
+    const sorted = [...validNotes].sort((a, b) => Number(a.amount - b.amount));
+    return sorted.slice(0, Math.min(maxInputs, sorted.length));
+  }
+};
+var noteSelector = new SmartNoteSelector();
+
+// src/consolidation.ts
+var DEFAULT_OPTIONS2 = {
+  targetNoteCount: 1,
+  maxNotesPerBatch: 3,
+  // consolidate_3x1 circuit supports 3 inputs
+  dustThreshold: 1000n
+};
+var ConsolidationService = class {
+  constructor(dustThreshold = 1000n) {
+    this.dustThreshold = dustThreshold;
+    this.noteSelector = new SmartNoteSelector(dustThreshold);
+  }
+  /**
+   * Analyze note fragmentation
+   *
+   * @param notes - Notes to analyze
+   * @returns Fragmentation report
+   */
+  analyzeNotes(notes) {
+    return this.noteSelector.analyzeFragmentation(notes);
+  }
+  /**
+   * Suggest consolidation opportunities
+   *
+   * @param notes - Available notes
+   * @param options - Consolidation options
+   * @returns Array of consolidation suggestions
+   */
+  suggestConsolidation(notes, options = {}) {
+    const opts = { ...DEFAULT_OPTIONS2, ...options };
+    const suggestions = [];
+    const validNotes = notes.filter((n) => n.amount > 0n);
+    if (validNotes.length <= 1) {
+      return [];
+    }
+    const dustNotes = validNotes.filter((n) => n.amount < opts.dustThreshold);
+    const regularNotes = validNotes.filter((n) => n.amount >= opts.dustThreshold);
+    if (dustNotes.length >= 3) {
+      const toConsolidate = dustNotes.slice(0, opts.maxNotesPerBatch);
+      const totalAmount = toConsolidate.reduce((sum, n) => sum + n.amount, 0n);
+      suggestions.push({
+        notesToConsolidate: toConsolidate,
+        resultingAmount: totalAmount,
+        notesReduced: toConsolidate.length - 1,
+        priority: "high",
+        reason: `${dustNotes.length} dust notes detected. Consolidating will improve wallet performance.`
+      });
+    }
+    if (regularNotes.length > 5) {
+      const sorted = [...regularNotes].sort((a, b) => Number(a.amount - b.amount));
+      const toConsolidate = sorted.slice(0, opts.maxNotesPerBatch);
+      const totalAmount = toConsolidate.reduce((sum, n) => sum + n.amount, 0n);
+      suggestions.push({
+        notesToConsolidate: toConsolidate,
+        resultingAmount: totalAmount,
+        notesReduced: toConsolidate.length - 1,
+        priority: "medium",
+        reason: `${regularNotes.length} notes in wallet. Consolidating smallest notes will simplify transfers.`
+      });
+    }
+    if (validNotes.length > 2 && suggestions.length === 0) {
+      const sorted = [...validNotes].sort((a, b) => Number(a.amount - b.amount));
+      const toConsolidate = sorted.slice(0, Math.min(opts.maxNotesPerBatch, validNotes.length));
+      const totalAmount = toConsolidate.reduce((sum, n) => sum + n.amount, 0n);
+      suggestions.push({
+        notesToConsolidate: toConsolidate,
+        resultingAmount: totalAmount,
+        notesReduced: toConsolidate.length - 1,
+        priority: "low",
+        reason: "Optional cleanup: consolidating notes may improve future transaction efficiency."
+      });
+    }
+    return suggestions;
+  }
+  /**
+   * Plan consolidation into batches
+   *
+   * For many notes, multiple consolidation transactions may be needed.
+   * This method plans the batches to minimize the number of transactions.
+   *
+   * @param notes - Notes to consolidate
+   * @param options - Consolidation options
+   * @returns Array of consolidation batches
+   */
+  planConsolidation(notes, options = {}) {
+    const opts = { ...DEFAULT_OPTIONS2, ...options };
+    const validNotes = notes.filter((n) => n.amount > 0n);
+    if (validNotes.length <= opts.targetNoteCount) {
+      return [];
+    }
+    const batches = [];
+    const sorted = [...validNotes].sort((a, b) => Number(a.amount - b.amount));
+    let remaining = [...sorted];
+    let batchNumber = 1;
+    while (remaining.length > opts.targetNoteCount) {
+      const batchSize = Math.min(opts.maxNotesPerBatch, remaining.length);
+      const batchNotes = remaining.slice(0, batchSize);
+      const totalAmount = batchNotes.reduce((sum, n) => sum + n.amount, 0n);
+      batches.push({
+        notes: batchNotes,
+        totalAmount,
+        batchNumber
+      });
+      remaining = remaining.slice(batchSize);
+      if (remaining.length + 1 > opts.targetNoteCount) {
+        const virtualNote = {
+          stealthPubX: batchNotes[0].stealthPubX,
+          // Placeholder
+          tokenMint: batchNotes[0].tokenMint,
+          amount: totalAmount,
+          randomness: new Uint8Array(32),
+          leafIndex: -1,
+          // Indicates virtual
+          pool: batchNotes[0].pool,
+          // Same pool as source notes
+          accountHash: "",
+          commitment: new Uint8Array(32)
+          // stealthEphemeralPubkey omitted - virtual note placeholder
+        };
+        remaining.push(virtualNote);
+        remaining.sort((a, b) => Number(a.amount - b.amount));
+      }
+      batchNumber++;
+    }
+    return batches;
+  }
+  /**
+   * Get optimal notes for a single consolidation transaction
+   *
+   * @param notes - Available notes
+   * @param maxInputs - Maximum inputs (default: 3)
+   * @returns Notes to consolidate in this batch
+   */
+  selectForConsolidation(notes, maxInputs = 3) {
+    return this.noteSelector.selectForConsolidation(notes, maxInputs);
+  }
+  /**
+   * Check if consolidation is recommended
+   *
+   * @param notes - Notes to check
+   * @returns Whether consolidation is recommended
+   */
+  shouldConsolidate(notes) {
+    const report = this.analyzeNotes(notes);
+    return report.shouldConsolidate;
+  }
+  /**
+   * Get consolidation summary for UI
+   *
+   * @param notes - Notes to analyze
+   * @returns Summary object for display
+   */
+  getConsolidationSummary(notes) {
+    const report = this.analyzeNotes(notes);
+    const batches = this.planConsolidation(notes);
+    let message = "";
+    if (!report.shouldConsolidate) {
+      message = "Your wallet is well organized. No consolidation needed.";
+    } else if (report.dustNotes > 2) {
+      message = `You have ${report.dustNotes} small notes that should be consolidated to improve wallet performance.`;
+    } else if (report.totalNotes > 5) {
+      message = `You have ${report.totalNotes} notes. Consolidating would simplify your transfers.`;
+    } else {
+      message = "Optional cleanup available.";
+    }
+    return {
+      totalNotes: report.totalNotes,
+      dustNotes: report.dustNotes,
+      totalBalance: report.totalBalance,
+      shouldConsolidate: report.shouldConsolidate,
+      estimatedBatches: batches.length,
+      message
+    };
+  }
+  /**
+   * Estimate gas cost for consolidation
+   *
+   * @param numInputs - Number of input notes
+   * @returns Estimated cost in lamports
+   */
+  estimateConsolidationCost(numInputs) {
+    const baseCost = 100000n;
+    const perInputCost = 50000n;
+    return baseCost + perInputCost * BigInt(numInputs);
+  }
+};
+var consolidationService = new ConsolidationService();
+
+// src/auto-consolidator.ts
+var DEFAULT_CONFIG = {
+  enabled: false,
+  fragmentationThreshold: 60,
+  maxNoteCount: 8,
+  maxDustNotes: 3,
+  dustThreshold: 1000n,
+  checkIntervalMs: 6e4
+  // 1 minute
+};
+var AutoConsolidator = class {
+  constructor(config = { enabled: false }) {
+    this.checkInterval = null;
+    this.noteProvider = null;
+    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.service = new ConsolidationService(this.config.dustThreshold);
+    this.state = {
+      enabled: this.config.enabled,
+      lastCheckAt: null,
+      isConsolidating: false,
+      lastReport: null,
+      isRecommended: false
+    };
+  }
+  /**
+   * Set the note provider function
+   *
+   * The provider is called periodically to get fresh notes for analysis.
+   */
+  setNoteProvider(provider) {
+    this.noteProvider = provider;
+  }
+  /**
+   * Update configuration
+   */
+  updateConfig(config) {
+    this.config = { ...this.config, ...config };
+    if (this.config.enabled !== this.state.enabled) {
+      this.state.enabled = this.config.enabled;
+      if (this.config.enabled) {
+        this.start();
+      } else {
+        this.stop();
+      }
+    }
+  }
+  /**
+   * Start background monitoring
+   */
+  start() {
+    if (this.checkInterval) {
+      return;
+    }
+    this.state.enabled = true;
+    this.check();
+    this.checkInterval = setInterval(() => {
+      this.check();
+    }, this.config.checkIntervalMs);
+  }
+  /**
+   * Stop background monitoring
+   */
+  stop() {
+    if (this.checkInterval) {
+      clearInterval(this.checkInterval);
+      this.checkInterval = null;
+    }
+    this.state.enabled = false;
+  }
+  /**
+   * Perform a manual check
+   */
+  check() {
+    if (!this.noteProvider) {
+      return null;
+    }
+    const notes = this.noteProvider();
+    const report = this.service.analyzeNotes(notes);
+    this.state.lastCheckAt = Date.now();
+    this.state.lastReport = report;
+    const isRecommended = this.shouldConsolidate(report);
+    this.state.isRecommended = isRecommended;
+    if (isRecommended && this.config.onConsolidationRecommended) {
+      this.config.onConsolidationRecommended(report);
+    }
+    return report;
+  }
+  /**
+   * Check if consolidation should be triggered
+   */
+  shouldConsolidate(report) {
+    if (report.fragmentationScore >= this.config.fragmentationThreshold) {
+      return true;
+    }
+    if (report.totalNotes >= this.config.maxNoteCount) {
+      return true;
+    }
+    if (report.dustNotes >= this.config.maxDustNotes) {
+      return true;
+    }
+    return false;
+  }
+  /**
+   * Get current state
+   */
+  getState() {
+    return { ...this.state };
+  }
+  /**
+   * Get the last fragmentation report
+   */
+  getLastReport() {
+    return this.state.lastReport;
+  }
+  /**
+   * Check if consolidation is currently recommended
+   */
+  isConsolidationRecommended() {
+    return this.state.isRecommended;
+  }
+  /**
+   * Get consolidation suggestions based on current notes
+   */
+  getSuggestions() {
+    if (!this.noteProvider) {
+      return [];
+    }
+    return this.service.suggestConsolidation(this.noteProvider());
+  }
+  /**
+   * Estimate the cost of consolidation
+   */
+  estimateCost() {
+    if (!this.noteProvider) {
+      return 0n;
+    }
+    const notes = this.noteProvider();
+    return this.service.estimateConsolidationCost(notes.length);
+  }
+};
+var globalAutoConsolidator = null;
+function getAutoConsolidator(config) {
+  if (!globalAutoConsolidator) {
+    globalAutoConsolidator = new AutoConsolidator(config);
+  } else if (config) {
+    globalAutoConsolidator.updateConfig(config);
+  }
+  return globalAutoConsolidator;
+}
+function enableAutoConsolidation(config = {}) {
+  const consolidator = getAutoConsolidator({ ...config, enabled: true });
+  consolidator.start();
+  return consolidator;
+}
+function disableAutoConsolidation() {
+  if (globalAutoConsolidator) {
+    globalAutoConsolidator.stop();
+  }
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   ALTManager,
+  AutoConsolidator,
+  BPS_DIVISOR,
   CIRCUIT_IDS,
   CloakCraftClient,
+  ConsolidationService,
+  DEFAULT_FEE_CONFIG,
   DEVNET_LIGHT_TREES,
   DEVNET_V2_TREES,
   DOMAIN_ACTION_NULLIFIER,
@@ -8132,12 +9651,14 @@ function verifyInvariant(oldReserveA, oldReserveB, newReserveA, newReserveB, fee
   LightCommitmentClient,
   LightProtocol,
   MAINNET_LIGHT_TREES,
+  MAX_FEE_BPS,
   MAX_TRANSACTION_SIZE,
   NoteManager,
   PROGRAM_ID,
   PoolAnalyticsCalculator,
   ProofGenerator,
   SEEDS,
+  SmartNoteSelector,
   TokenPriceFetcher,
   TransactionHistory,
   TransactionStatus,
@@ -8152,6 +9673,7 @@ function verifyInvariant(oldReserveA, oldReserveB, newReserveA, newReserveB, fee
   buildAtomicMultiPhaseTransaction,
   buildCancelOrderWithProgram,
   buildClosePendingOperationWithProgram,
+  buildConsolidationWithProgram,
   buildCreateAggregationWithProgram,
   buildCreateCommitmentWithProgram,
   buildCreateNullifierWithProgram,
@@ -8175,8 +9697,10 @@ function verifyInvariant(oldReserveA, oldReserveB, newReserveA, newReserveB, fee
   calculateAddLiquidityAmounts,
   calculateInvariant,
   calculateMinOutput,
+  calculateMinimumFee,
   calculatePriceImpact,
   calculatePriceRatio,
+  calculateProtocolFee,
   calculateRemoveLiquidityOutput,
   calculateSlippage,
   calculateSwapOutput,
@@ -8191,6 +9715,7 @@ function verifyInvariant(oldReserveA, oldReserveB, newReserveA, newReserveB, fee
   computeCircuitInputs,
   computeCommitment,
   computeDecryptionShare,
+  consolidationService,
   createAddressLookupTable,
   createCloakCraftALT,
   createNote,
@@ -8206,6 +9731,7 @@ function verifyInvariant(oldReserveA, oldReserveB, newReserveA, newReserveB, fee
   deriveOrderPda,
   derivePendingOperationPda,
   derivePoolPda,
+  deriveProtocolConfigPda,
   derivePublicKey,
   deriveSpendingNullifier,
   deriveStealthPrivateKey,
@@ -8215,17 +9741,23 @@ function verifyInvariant(oldReserveA, oldReserveB, newReserveA, newReserveB, fee
   deriveWalletFromSignature,
   deserializeAmmPool,
   deserializeEncryptedNote,
+  disableAutoConsolidation,
   elgamalEncrypt,
+  enableAutoConsolidation,
   encryptNote,
   encryptVote,
+  estimateTotalCost,
   estimateTransactionSize,
   executeVersionedTransaction,
   extendAddressLookupTable,
   fetchAddressLookupTable,
   fetchAmmPool,
+  fetchProtocolFeeConfig,
   fieldToBytes,
   formatAmmPool,
   formatApy,
+  formatFeeAmount,
+  formatFeeRate,
   formatPrice,
   formatPriceChange,
   formatShare,
@@ -8237,17 +9769,22 @@ function verifyInvariant(oldReserveA, oldReserveB, newReserveA, newReserveB, fee
   generateStealthAddress,
   generateVoteRandomness,
   getAmmPool,
+  getAutoConsolidator,
+  getFeeBps,
   getInstructionFromAnchorMethod,
   getLightProtocolCommonAccounts,
   getRandomStateTreeSet,
   getStateTreeSet,
   initPoseidon,
   initializePool,
+  isFeeableOperation,
+  isFreeOperation,
   isInSubgroup,
   isOnCurve,
   lagrangeCoefficient,
   loadCircomArtifacts,
   loadWallet,
+  noteSelector,
   padCircuitId,
   parseGroth16Proof,
   pointAdd,
@@ -8271,6 +9808,7 @@ function verifyInvariant(oldReserveA, oldReserveB, newReserveA, newReserveB, fee
   verifyAmmStateHash,
   verifyCommitment,
   verifyDleqProof,
+  verifyFeeAmount,
   verifyInvariant,
   ...require("@cloakcraft/types")
 });

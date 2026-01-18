@@ -8,6 +8,7 @@ import { Shield, Lock, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { NETWORK } from '@/lib/constants';
+import { DevnetWarningBanner } from '@/components/devnet-warning-banner';
 
 export default function LandingPage() {
   const { connected } = useWallet();
@@ -22,6 +23,9 @@ export default function LandingPage() {
 
   return (
     <main className="flex min-h-screen flex-col">
+      {/* Devnet Warning */}
+      <DevnetWarningBanner />
+
       {/* Header */}
       <header className="border-b">
         <div className="container mx-auto flex h-16 items-center justify-between px-4">

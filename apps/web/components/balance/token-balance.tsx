@@ -3,10 +3,8 @@
 import { PublicKey } from '@solana/web3.js';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { Eye, EyeOff } from 'lucide-react';
-import { formatAmount } from '@/lib/utils';
-import { cn } from '@/lib/utils';
-import { TokenValueDisplay } from './token-price';
+import { EyeOff } from 'lucide-react';
+import { formatAmount, cn } from '@/lib/utils';
 
 interface TokenBalanceProps {
   symbol: string;
@@ -16,7 +14,6 @@ interface TokenBalanceProps {
   mint?: PublicKey | string;
   isPrivate?: boolean;
   isLoading?: boolean;
-  showUsdValue?: boolean;
   className?: string;
 }
 
@@ -25,10 +22,8 @@ export function TokenBalance({
   name,
   balance,
   decimals,
-  mint,
   isPrivate = false,
   isLoading = false,
-  showUsdValue = true,
   className,
 }: TokenBalanceProps) {
   if (isLoading) {
@@ -56,9 +51,6 @@ export function TokenBalance({
       </div>
       <div className="text-right">
         <p className="font-mono font-medium">{formatAmount(balance, decimals)}</p>
-        {showUsdValue && mint && balance > 0n && (
-          <TokenValueDisplay mint={mint} amount={balance} decimals={decimals} />
-        )}
       </div>
     </div>
   );

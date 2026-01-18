@@ -1583,6 +1583,216 @@
       ]
     },
     {
+      "name": "create_pending_with_proof_consolidation",
+      "docs": [
+        "Create Pending with Proof Phase 0 - Consolidation (Append Pattern)",
+        "",
+        "Consolidates up to 3 notes into 1 using the consolidate_3x1 circuit.",
+        "This is a FREE operation (no protocol fee) - just reorganizing user's own notes.",
+        "",
+        "Flow:",
+        "Phase 0 (this): Verify ZK consolidation proof + Create PendingOperation",
+        "Phase 1: verify_commitment_exists for each input (1-3 times)",
+        "Phase 2: create_nullifier_and_pending for each input (1-3 times)",
+        "Phase 3: (skipped - no unshield for consolidation)",
+        "Phase 4: create_commitment for single output",
+        "Final: close_pending_operation"
+      ],
+      "discriminator": [
+        59,
+        97,
+        237,
+        177,
+        118,
+        164,
+        58,
+        81
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "docs": [
+            "Pool"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "verification_key",
+          "docs": [
+            "Verification key for the consolidate_3x1 circuit"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "verification_key.circuit_id",
+                "account": "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pending_operation",
+          "docs": [
+            "Pending operation PDA (created in this instruction)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer (pays for PDA creation)"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "operation_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "merkle_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "num_inputs",
+          "type": "u8"
+        },
+        {
+          "name": "input_commitments",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        },
+        {
+          "name": "nullifiers",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        },
+        {
+          "name": "out_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "output_recipient",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "output_amount",
+          "type": "u64"
+        },
+        {
+          "name": "output_randomness",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "stealth_ephemeral_pubkey",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "create_pending_with_proof_remove_liquidity",
       "docs": [
         "Create Pending with Proof Phase 0 - Remove Liquidity (Append Pattern)",
@@ -5967,6 +6177,11 @@
       "code": 6081,
       "name": "Deprecated",
       "msg": "This instruction is deprecated - use append pattern instead"
+    },
+    {
+      "code": 6082,
+      "name": "InvalidInputCount",
+      "msg": "Invalid input count - must be between 2 and 3 for consolidation"
     }
   ],
   "types": [

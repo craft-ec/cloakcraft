@@ -34,7 +34,7 @@ interface CircuitConfig {
 const CIRCUITS: CircuitConfig[] = [
   {
     id: "transfer_1x2",
-    vkJsonPath: "circom-circuits/build/transfer_1x2_new/verification_key.json",
+    vkJsonPath: "circom-circuits/build/transfer_1x2/verification_key.json",
   },
   {
     id: "transfer_2x2",

@@ -81,9 +81,12 @@ export interface FragmentationReport {
 
 /**
  * Default options
+ *
+ * Using 'smallest-first' as default to reduce wallet fragmentation.
+ * This uses smaller notes first, creating smaller change outputs.
  */
 const DEFAULT_OPTIONS: Required<NoteSelectionOptions> = {
-  strategy: 'greedy',
+  strategy: 'smallest-first',
   maxInputs: 2,
   feeAmount: 0n,
   dustThreshold: 1000n, // 0.001 tokens at 6 decimals

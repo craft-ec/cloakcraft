@@ -8,7 +8,9 @@ export { useBalance, useAllBalances } from './useBalance';
 export { useNotes, useNoteSelection } from './useNotes';
 export { useShield } from './useShield';
 export { useTransfer, useNoteSelector } from './useTransfer';
+export type { TransferProgressStage } from './useTransfer';
 export { useUnshield } from './useUnshield';
+export type { UnshieldProgressStage } from './useUnshield';
 export { useScanner, usePrivateBalance, useNullifierStatus } from './useScanner';
 export { usePool, useInitializePool, usePoolList } from './usePool';
 export { usePublicBalance, useSolBalance, useTokenBalances } from './usePublicBalance';
@@ -53,7 +55,7 @@ export {
   useShouldConsolidate,
   useFragmentationScore,
 } from './useConsolidation';
-export type { ConsolidationState, UseConsolidationOptions } from './useConsolidation';
+export type { ConsolidationState, UseConsolidationOptions, ConsolidationProgressStage, ConsolidationBatchInfo, ConsolidationProgressCallback } from './useConsolidation';
 
 // Auto-consolidation
 export {
@@ -61,3 +63,10 @@ export {
   useIsConsolidationRecommended,
 } from './useAutoConsolidation';
 export type { UseAutoConsolidationResult, UseAutoConsolidationOptions } from './useAutoConsolidation';
+
+// Protocol fees
+export {
+  useProtocolFees,
+  useIsFreeOperation,
+} from './useProtocolFees';
+export type { ProtocolFeeConfig, UseProtocolFeesResult } from './useProtocolFees';

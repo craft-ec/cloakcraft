@@ -29,6 +29,25 @@ interface UnshieldOption {
   recipient: PublicKey;
 }
 
+/** Progress stages for transfer operation */
+export type TransferProgressStage =
+  | 'scanning'      // Scanning for fresh notes
+  | 'preparing'     // Preparing inputs/outputs
+  | 'generating'    // Generating ZK proof
+  | 'building'      // Building transactions
+  | 'approving'     // Awaiting wallet approval
+  | 'executing'     // Executing transactions
+  | 'confirming';   // Waiting for confirmation
+
+/** Transfer options */
+interface TransferOptions {
+  inputs: DecryptedNote[];
+  outputs: TransferOutput[];
+  unshield?: UnshieldOption;
+  walletPublicKey?: PublicKey;
+  onProgress?: (stage: TransferProgressStage) => void;
+}
+
 export function useTransfer() {
   const { client, wallet, sync } = useCloakCraft();
   const [state, setState] = useState<TransferState>({
@@ -39,11 +58,30 @@ export function useTransfer() {
 
   const transfer = useCallback(
     async (
-      inputs: DecryptedNote[],
-      outputs: TransferOutput[],
+      inputsOrOptions: DecryptedNote[] | TransferOptions,
+      outputs?: TransferOutput[],
       unshield?: UnshieldOption,
       walletPublicKey?: PublicKey
     ): Promise<TransactionResult | null> => {
+      // Support both old signature and new options object
+      let inputs: DecryptedNote[];
+      let finalOutputs: TransferOutput[];
+      let finalUnshield: UnshieldOption | undefined;
+      let onProgress: ((stage: TransferProgressStage) => void) | undefined;
+
+      if (Array.isArray(inputsOrOptions)) {
+        // Old signature: (inputs, outputs, unshield, walletPublicKey)
+        inputs = inputsOrOptions;
+        finalOutputs = outputs!;
+        finalUnshield = unshield;
+      } else {
+        // New signature: (options)
+        inputs = inputsOrOptions.inputs;
+        finalOutputs = inputsOrOptions.outputs;
+        finalUnshield = inputsOrOptions.unshield;
+        onProgress = inputsOrOptions.onProgress;
+      }
+
       if (!client || !wallet) {
         setState({ isTransferring: false, error: 'Wallet not connected', result: null });
         return null;
@@ -55,6 +93,7 @@ export function useTransfer() {
       }
 
       setState({ isTransferring: true, error: null, result: null });
+      onProgress?.('scanning');
 
       // Force re-scan to get fresh notes with stealthEphemeralPubkey
       // Clear cache to ensure we get truly fresh data
@@ -93,8 +132,10 @@ export function useTransfer() {
 
       try {
         // Client's prepareAndTransfer handles all the cryptographic prep
+        // Progress is handled inside: preparing → generating → building → approving → executing → confirming
+
         const result = await client.prepareAndTransfer(
-          { inputs: matchedInputs, outputs, unshield },  // Use fresh notes
+          { inputs: matchedInputs, outputs: finalOutputs, unshield: finalUnshield, onProgress },  // Use fresh notes
           undefined // relayer - wallet adapter will be used via provider
         );
 
@@ -192,8 +233,10 @@ export function useNoteSelector(tokenMint: PublicKey) {
         feeAmount?: bigint;
       }
     ) => {
+      // Use smallest-first by default to reduce fragmentation
+      // This uses smaller notes first, creating smaller change outputs
       return selector.selectNotes(availableNotes, targetAmount, {
-        strategy: options?.strategy ?? 'greedy',
+        strategy: options?.strategy ?? 'smallest-first',
         maxInputs: options?.maxInputs ?? 2,
         feeAmount: options?.feeAmount,
       });

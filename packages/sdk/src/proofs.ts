@@ -20,6 +20,7 @@ import type {
   RemoveLiquidityParams,
   FillOrderParams,
   CancelOrderParams,
+  ConsolidationParams,
 } from '@cloakcraft/types';
 import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier';
 import { computeCommitment, generateRandomness } from './crypto/commitment';
@@ -65,6 +66,8 @@ interface NodeProverConfig {
 const CIRCUIT_FILE_MAP: Record<string, string> = {
   'transfer/1x2': 'transfer_1x2',
   'transfer/1x3': 'transfer_1x3',
+  'transfer/2x2': 'transfer_2x2',
+  'consolidate/3x1': 'consolidate_3x1',
   'adapter/1x1': 'adapter_1x1',
   'adapter/1x2': 'adapter_1x2',
   'market/order_create': 'market_order_create',
@@ -82,6 +85,8 @@ const CIRCUIT_FILE_MAP: Record<string, string> = {
 const CIRCUIT_DIR_MAP: Record<string, string> = {
   'transfer/1x2': 'transfer/1x2',
   'transfer/1x3': 'transfer/1x3',
+  'transfer/2x2': 'transfer/2x2',
+  'consolidate/3x1': 'consolidate/3x1',
   'adapter/1x1': 'adapter/1x1',
   'adapter/1x2': 'adapter/1x2',
   'market/order_create': 'market/order_create',
@@ -123,6 +128,8 @@ export class ProofGenerator {
     const circuits = circuitNames ?? [
       'transfer/1x2',
       'transfer/1x3',
+      'transfer/2x2',
+      'consolidate/3x1',
       'adapter/1x1',
       'adapter/1x2',
       'market/order_create',
@@ -218,6 +225,8 @@ export class ProofGenerator {
     const knownCircuits = [
       'transfer/1x2',
       'transfer/1x3',
+      'transfer/2x2',
+      'consolidate/3x1',
       'adapter/1x1',
       'adapter/1x2',
       'market/order_create',
@@ -239,7 +248,8 @@ export class ProofGenerator {
     params: TransferParams,
     keypair: Keypair
   ): Promise<Uint8Array> {
-    const circuitName = params.inputs.length === 1 ? 'transfer/1x2' : 'transfer/1x3';
+    // Always use transfer_1x2 - consolidate notes first if multiple inputs needed
+    const circuitName = 'transfer/1x2';
 
     if (!this.hasCircuit(circuitName)) {
       throw new Error(`Circuit not loaded: ${circuitName}`);
@@ -802,6 +812,170 @@ export class ProofGenerator {
   }
 
   // =============================================================================
+  // Consolidation Proof Generation
+  // =============================================================================
+
+  /**
+   * Generate a consolidation proof (3 inputs -> 1 output)
+   *
+   * Consolidation merges multiple notes into a single note.
+   * - No fees (consolidation is free to encourage wallet cleanup)
+   * - Supports 1-3 input notes (unused inputs are zeroed)
+   * - Single output back to self
+   */
+  async generateConsolidationProof(
+    params: ConsolidationParams,
+    keypair: Keypair
+  ): Promise<{
+    proof: Uint8Array;
+    nullifiers: Uint8Array[];
+    outputCommitment: Uint8Array;
+    outputRandomness: Uint8Array;
+    outputAmount: bigint;
+  }> {
+    const circuitName = 'consolidate/3x1';
+
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`Circuit not loaded: ${circuitName}`);
+    }
+
+    if (params.inputs.length === 0 || params.inputs.length > 3) {
+      throw new Error('Consolidation requires 1-3 input notes');
+    }
+
+    // Generate output randomness if not provided
+    const outputRandomness = params.outputRandomness ?? generateRandomness();
+
+    // Calculate total output amount
+    const outputAmount = params.inputs.reduce((sum, input) => sum + input.amount, 0n);
+
+    // Get token mint bytes
+    const tokenMintBytes = params.tokenMint.toBytes();
+
+    // Build output commitment
+    const outputNote = {
+      stealthPubX: params.outputRecipient.stealthPubkey.x,
+      tokenMint: tokenMintBytes as any,
+      amount: outputAmount,
+      randomness: outputRandomness,
+    };
+    const outputCommitment = computeCommitment(outputNote as any);
+
+    // Process each input (up to 3)
+    const processedInputs: Array<{
+      nullifier: Uint8Array;
+      stealthPubX: Uint8Array;
+      amount: bigint;
+      randomness: Uint8Array;
+      spendingKey: Uint8Array;
+      leafIndex: number;
+      merklePath: Uint8Array[];
+      merklePathIndices: number[];
+    }> = [];
+
+    for (const input of params.inputs) {
+      // Derive effective spending key for this input
+      let effectiveKey: bigint;
+      if (input.stealthEphemeralPubkey) {
+        effectiveKey = deriveStealthPrivateKey(
+          bytesToField(keypair.spending.sk),
+          input.stealthEphemeralPubkey
+        );
+      } else {
+        effectiveKey = bytesToField(keypair.spending.sk);
+      }
+      const effectiveNullifierKey = deriveNullifierKey(fieldToBytes(effectiveKey));
+
+      // Compute commitment and nullifier
+      const commitment = computeCommitment(input);
+      const nullifier = deriveSpendingNullifier(effectiveNullifierKey, commitment, input.leafIndex);
+
+      // Circuit doesn't verify merkle paths (Light Protocol verifies on-chain)
+      // Use dummy paths for circuit compatibility
+      const dummyPath = Array(32).fill(new Uint8Array(32));
+      const dummyIndices = Array(32).fill(0);
+
+      processedInputs.push({
+        nullifier,
+        stealthPubX: input.stealthPubX,
+        amount: input.amount,
+        randomness: input.randomness,
+        spendingKey: fieldToBytes(effectiveKey),
+        leafIndex: input.leafIndex,
+        merklePath: dummyPath,
+        merklePathIndices: dummyIndices,
+      });
+    }
+
+    // Pad to 3 inputs with zeros if needed
+    while (processedInputs.length < 3) {
+      processedInputs.push({
+        nullifier: new Uint8Array(32),
+        stealthPubX: new Uint8Array(32),
+        amount: 0n,
+        randomness: new Uint8Array(32),
+        spendingKey: new Uint8Array(32),
+        leafIndex: 0,
+        merklePath: Array(32).fill(new Uint8Array(32)),
+        merklePathIndices: Array(32).fill(0),
+      });
+    }
+
+    // Build witness inputs matching the circuit
+    const witnessInputs: Record<string, any> = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      nullifier_1: fieldToHex(processedInputs[0].nullifier),
+      nullifier_2: fieldToHex(processedInputs[1].nullifier),
+      nullifier_3: fieldToHex(processedInputs[2].nullifier),
+      out_commitment: fieldToHex(outputCommitment),
+      token_mint: fieldToHex(tokenMintBytes),
+
+      // Input 1 (always active)
+      in_stealth_pub_x_1: fieldToHex(processedInputs[0].stealthPubX),
+      in_amount_1: processedInputs[0].amount.toString(),
+      in_randomness_1: fieldToHex(processedInputs[0].randomness),
+      in_stealth_spending_key_1: fieldToHex(processedInputs[0].spendingKey),
+      merkle_path_1: processedInputs[0].merklePath.map(p => fieldToHex(p)),
+      merkle_path_indices_1: processedInputs[0].merklePathIndices.map(i => i.toString()),
+      leaf_index_1: processedInputs[0].leafIndex.toString(),
+
+      // Input 2 (optional - can be zeros)
+      in_stealth_pub_x_2: fieldToHex(processedInputs[1].stealthPubX),
+      in_amount_2: processedInputs[1].amount.toString(),
+      in_randomness_2: fieldToHex(processedInputs[1].randomness),
+      in_stealth_spending_key_2: fieldToHex(processedInputs[1].spendingKey),
+      merkle_path_2: processedInputs[1].merklePath.map(p => fieldToHex(p)),
+      merkle_path_indices_2: processedInputs[1].merklePathIndices.map(i => i.toString()),
+      leaf_index_2: processedInputs[1].leafIndex.toString(),
+
+      // Input 3 (optional - can be zeros)
+      in_stealth_pub_x_3: fieldToHex(processedInputs[2].stealthPubX),
+      in_amount_3: processedInputs[2].amount.toString(),
+      in_randomness_3: fieldToHex(processedInputs[2].randomness),
+      in_stealth_spending_key_3: fieldToHex(processedInputs[2].spendingKey),
+      merkle_path_3: processedInputs[2].merklePath.map(p => fieldToHex(p)),
+      merkle_path_indices_3: processedInputs[2].merklePathIndices.map(i => i.toString()),
+      leaf_index_3: processedInputs[2].leafIndex.toString(),
+
+      // Output
+      out_stealth_pub_x: fieldToHex(params.outputRecipient.stealthPubkey.x),
+      out_amount: outputAmount.toString(),
+      out_randomness: fieldToHex(outputRandomness),
+    };
+
+    const proof = await this.prove(circuitName, witnessInputs);
+
+    return {
+      proof,
+      nullifiers: processedInputs.filter(i => i.amount > 0n).map(i => i.nullifier),
+      outputCommitment,
+      outputRandomness,
+      outputAmount,
+    };
+  }
+
+  // =============================================================================
   // Market Order Proof Generation
   // =============================================================================
 
@@ -1213,16 +1387,18 @@ export class ProofGenerator {
       );
     }
 
-    // Debug: log unshield amount for proof generation
+    // Debug: log unshield and fee amounts for proof generation
     const unshieldAmountForProof = params.unshield?.amount ?? 0n;
+    const feeAmountForProof = params.fee ?? 0n;
     console.log('[buildTransferWitness] unshield_amount for proof:', unshieldAmountForProof.toString());
+    console.log('[buildTransferWitness] fee_amount for proof:', feeAmountForProof.toString());
     console.log('[buildTransferWitness] params.unshield:', params.unshield);
     console.log('[buildTransferWitness] output 1 amount:', params.outputs[0].amount.toString());
     console.log('[buildTransferWitness] output 2 amount:', out2Amount.toString());
     console.log('[buildTransferWitness] input amount:', input.amount.toString());
 
-    // Verify balance: input = out1 + out2 + unshield
-    const expectedTotal = params.outputs[0].amount + out2Amount + unshieldAmountForProof;
+    // Verify balance: input = out1 + out2 + unshield + fee
+    const expectedTotal = params.outputs[0].amount + out2Amount + unshieldAmountForProof + feeAmountForProof;
     console.log('[buildTransferWitness] Balance check: input=', input.amount.toString(),
                 'expected=', expectedTotal.toString(),
                 'match=', input.amount === expectedTotal);
@@ -1243,6 +1419,7 @@ export class ProofGenerator {
       out_commitment_2: fieldToHex(out2Commitment),
       token_mint: fieldToHex(tokenMint),
       unshield_amount: unshieldAmountForProof.toString(),
+      fee_amount: feeAmountForProof.toString(),
 
       // Private inputs (Circom circuit - no in_stealth_pub_y)
       in_stealth_pub_x: fieldToHex(input.stealthPubX),

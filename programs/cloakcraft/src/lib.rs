@@ -90,6 +90,36 @@ pub mod cloakcraft {
         pool::create_pending_with_proof(ctx, operation_id, proof, merkle_root, input_commitment, nullifier, out_commitments, output_recipients, output_amounts, output_randomness, stealth_ephemeral_pubkeys, unshield_amount, fee_amount)
     }
 
+    /// Create Pending with Proof Phase 0 - Consolidation (Append Pattern)
+    ///
+    /// Consolidates up to 3 notes into 1 using the consolidate_3x1 circuit.
+    /// This is a FREE operation (no protocol fee) - just reorganizing user's own notes.
+    ///
+    /// Flow:
+    /// Phase 0 (this): Verify ZK consolidation proof + Create PendingOperation
+    /// Phase 1: verify_commitment_exists for each input (1-3 times)
+    /// Phase 2: create_nullifier_and_pending for each input (1-3 times)
+    /// Phase 3: (skipped - no unshield for consolidation)
+    /// Phase 4: create_commitment for single output
+    /// Final: close_pending_operation
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_consolidation<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofConsolidation<'info>>,
+        operation_id: [u8; 32],
+        proof: Vec<u8>,
+        merkle_root: [u8; 32],
+        num_inputs: u8,
+        input_commitments: Vec<[u8; 32]>,
+        nullifiers: Vec<[u8; 32]>,
+        out_commitment: [u8; 32],
+        output_recipient: [u8; 32],
+        output_amount: u64,
+        output_randomness: [u8; 32],
+        stealth_ephemeral_pubkey: [u8; 64],
+    ) -> Result<()> {
+        pool::create_pending_with_proof_consolidation(ctx, operation_id, proof, merkle_root, num_inputs, input_commitments, nullifiers, out_commitment, output_recipient, output_amount, output_randomness, stealth_ephemeral_pubkey)
+    }
+
     /// Process Unshield Phase 3 - process unshield only (Transfer-specific)
     ///
     /// Must be called after create_nullifier_and_pending (Phase 2) and before create_commitment (Phase 4+).

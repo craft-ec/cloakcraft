@@ -1,4 +1,4 @@
-import { DecryptedNote, Keypair, SpendingKey, ViewingKey, Point, TransferParams, AdapterSwapParams, OrderParams, AmmSwapParams, AddLiquidityParams, RemoveLiquidityParams, FillOrderParams, CancelOrderParams, VoteParams, Groth16Proof, PoolState, AmmPoolState, ShieldParams, TransactionResult, StealthAddress, SyncStatus, CreateAggregationParams, SubmitVoteParams, SubmitDecryptionShareParams, FinalizeVotingParams, FieldElement, PoseidonHash, Note, Commitment, Nullifier, EncryptedNote, ElGamalCiphertext } from '@cloakcraft/types';
+import { DecryptedNote, Keypair, SpendingKey, ViewingKey, Point, TransferParams, AdapterSwapParams, OrderParams, AmmSwapParams, AddLiquidityParams, RemoveLiquidityParams, ConsolidationParams, FillOrderParams, CancelOrderParams, VoteParams, Groth16Proof, PoolState, AmmPoolState, ShieldParams, TransactionResult, StealthAddress, TransferProgressStage, SyncStatus, CreateAggregationParams, SubmitVoteParams, SubmitDecryptionShareParams, FinalizeVotingParams, FieldElement, PoseidonHash, Note, Commitment, Nullifier, EncryptedNote, ElGamalCiphertext } from '@cloakcraft/types';
 export * from '@cloakcraft/types';
 import * as _solana_web3_js from '@solana/web3.js';
 import { PublicKey, AccountMeta, Connection, Keypair as Keypair$1, TransactionInstruction, AddressLookupTableAccount, VersionedTransaction } from '@solana/web3.js';
@@ -528,6 +528,21 @@ declare class ProofGenerator {
         outputBRandomness: Uint8Array;
     }>;
     /**
+     * Generate a consolidation proof (3 inputs -> 1 output)
+     *
+     * Consolidation merges multiple notes into a single note.
+     * - No fees (consolidation is free to encourage wallet cleanup)
+     * - Supports 1-3 input notes (unused inputs are zeroed)
+     * - Single output back to self
+     */
+    generateConsolidationProof(params: ConsolidationParams, keypair: Keypair): Promise<{
+        proof: Uint8Array;
+        nullifiers: Uint8Array[];
+        outputCommitment: Uint8Array;
+        outputRandomness: Uint8Array;
+        outputAmount: bigint;
+    }>;
+    /**
      * Generate a fill order proof
      */
     generateFillOrderProof(params: FillOrderParams, keypair: Keypair): Promise<Uint8Array>;
@@ -817,7 +832,26 @@ declare class CloakCraftClient {
             amount: bigint;
             recipient: PublicKey;
         };
+        onProgress?: (stage: TransferProgressStage) => void;
     }, relayer?: Keypair$1): Promise<TransactionResult>;
+    /**
+     * Prepare and consolidate notes
+     *
+     * Consolidates multiple notes into a single note.
+     * This is used to reduce wallet fragmentation.
+     *
+     * @param inputs - Notes to consolidate (1-3)
+     * @param tokenMint - Token mint (all inputs must use same token)
+     * @param onProgress - Optional progress callback
+     * @returns Transaction result with signature
+     */
+    prepareAndConsolidate(inputs: DecryptedNote[], tokenMint: PublicKey, onProgress?: (stage: TransferProgressStage) => void): Promise<TransactionResult>;
+    /**
+     * Execute consolidation transaction (multi-phase)
+     *
+     * Uses the consolidate_3x1 circuit and pre-generated proof.
+     */
+    private executeConsolidation;
     /**
      * Swap through external adapter (partial privacy)
      */
@@ -1517,6 +1551,7 @@ declare const SEEDS: {
     readonly VAULT: Buffer<ArrayBuffer>;
     readonly VERIFICATION_KEY: Buffer<ArrayBuffer>;
     readonly COMMITMENT_COUNTER: Buffer<ArrayBuffer>;
+    readonly PROTOCOL_CONFIG: Buffer<ArrayBuffer>;
 };
 declare const DEVNET_V2_TREES: {
     readonly STATE_TREE: PublicKey;
@@ -1530,6 +1565,7 @@ declare const CIRCUIT_IDS: {
     readonly TRANSFER_2X3: "transfer_2x3";
     readonly TRANSFER_3X2: "transfer_3x2";
     readonly TRANSFER_3X3: "transfer_3x3";
+    readonly CONSOLIDATE_3X1: "consolidate_3x1";
     readonly SWAP: "swap_swap";
     readonly ADD_LIQUIDITY: "swap_add_liquidity";
     readonly REMOVE_LIQUIDITY: "swap_remove_liquidity";
@@ -1558,6 +1594,10 @@ declare function deriveCommitmentCounterPda(pool: PublicKey, programId?: PublicK
  * Derive verification key PDA
  */
 declare function deriveVerificationKeyPda(circuitId: string, programId?: PublicKey): [PublicKey, number];
+/**
+ * Derive protocol config PDA
+ */
+declare function deriveProtocolConfigPda(programId?: PublicKey): [PublicKey, number];
 
 /**
  * Light Protocol RPC client wrapper
@@ -1827,6 +1867,14 @@ interface TransactInstructionParams {
     unshieldAmount?: bigint;
     /** Unshield recipient token account */
     unshieldRecipient?: PublicKey;
+    /** Protocol fee amount (verified in ZK proof) */
+    feeAmount?: bigint;
+    /** Treasury wallet address (owner of treasury token account) */
+    treasuryWallet?: PublicKey;
+    /** Treasury token account for receiving fees (required if feeAmount > 0) */
+    treasuryTokenAccount?: PublicKey;
+    /** Protocol config PDA (optional, used for fee verification) */
+    protocolConfig?: PublicKey;
     /** Relayer public key */
     relayer: PublicKey;
     /** ZK proof bytes */
@@ -1885,6 +1933,80 @@ declare function computeCircuitInputs(input: TransactInput, outputs: TransactOut
     nullifier: Uint8Array;
     outputCommitments: Uint8Array[];
 };
+/**
+ * Consolidation input (prepared note with all required fields)
+ */
+interface ConsolidationInput {
+    /** Stealth public key X coordinate */
+    stealthPubX: Uint8Array;
+    /** Amount */
+    amount: bigint;
+    /** Randomness */
+    randomness: Uint8Array;
+    /** Leaf index in merkle tree */
+    leafIndex: number;
+    /** Pre-computed commitment */
+    commitment: Uint8Array;
+    /** Account hash from scanning */
+    accountHash: string;
+}
+/**
+ * Consolidation instruction parameters
+ */
+interface ConsolidationInstructionParams {
+    /** Token mint */
+    tokenMint: PublicKey;
+    /** Input notes to consolidate (2-3) */
+    inputs: ConsolidationInput[];
+    /** Pre-computed nullifiers (from ZK proof) */
+    nullifiers: Uint8Array[];
+    /** Pre-computed output commitment (from ZK proof) */
+    outputCommitment: Uint8Array;
+    /** Output randomness (from ZK proof) */
+    outputRandomness: Uint8Array;
+    /** Output amount (from ZK proof) */
+    outputAmount: bigint;
+    /** Output stealth recipient */
+    outputRecipient: {
+        stealthPubkey: {
+            x: Uint8Array;
+            y: Uint8Array;
+        };
+        ephemeralPubkey: {
+            x: Uint8Array;
+            y: Uint8Array;
+        };
+    };
+    /** Merkle root (for ZK proof - dummy, Light Protocol verifies on-chain) */
+    merkleRoot: Uint8Array;
+    /** Relayer public key */
+    relayer: PublicKey;
+    /** ZK proof bytes */
+    proof: Uint8Array;
+}
+/**
+ * Build consolidation multi-phase transaction
+ *
+ * Uses the consolidate_3x1 circuit which has different public inputs than transfer:
+ * - merkle_root
+ * - nullifier_1, nullifier_2, nullifier_3
+ * - out_commitment (single)
+ * - token_mint
+ *
+ * NO unshield or fee (consolidation is free)
+ */
+declare function buildConsolidationWithProgram(program: Program, params: ConsolidationInstructionParams, rpcUrl: string): Promise<{
+    phase0Tx: any;
+    phase1Txs: any[];
+    phase2Txs: any[];
+    operationId: Uint8Array;
+    pendingCommitments: Array<{
+        pool: PublicKey;
+        commitment: Uint8Array;
+        stealthEphemeralPubkey: Uint8Array;
+        encryptedNote: Uint8Array;
+    }>;
+}>;
 
 /**
  * Store Commitment Instruction Builder
@@ -3384,4 +3506,542 @@ declare function calculateInvariant(reserveA: bigint, reserveB: bigint): bigint;
  */
 declare function verifyInvariant(oldReserveA: bigint, oldReserveB: bigint, newReserveA: bigint, newReserveB: bigint, feeBps: number): boolean;
 
-export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, MAINNET_LIGHT_TREES, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, type PoolAnalytics, PoolAnalyticsCalculator, type PoolStats, ProofGenerator, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, SEEDS, type ScannedNote, type ShieldInstructionParams, type ShieldResult, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TokenPrice, TokenPriceFetcher, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type TransactionFilter, TransactionHistory, type TransactionRecord, TransactionStatus, TransactionType, type UserPoolPosition, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePoolWithProgram, buildRemoveLiquidityWithProgram, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateInvariant, calculateMinOutput, calculatePriceImpact, calculatePriceRatio, calculateRemoveLiquidityOutput, calculateSlippage, calculateSwapOutput, calculateTotalLiquidity, calculateUsdPriceImpact, canFitInSingleTransaction, canonicalTokenOrder, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, createAddressLookupTable, createCloakCraftALT, createNote, createPendingTransaction, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePoolPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, elgamalEncrypt, encryptNote, encryptVote, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fieldToBytes, formatAmmPool, formatApy, formatPrice, formatPriceChange, formatShare, formatTvl, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isInSubgroup, isOnCurve, lagrangeCoefficient, loadCircomArtifacts, loadWallet, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof, verifyInvariant };
+/**
+ * Protocol Fee Utilities
+ *
+ * Handles fee calculation and estimation for CloakCraft operations.
+ *
+ * Fee Operations (charged):
+ * - transfer: Private → private transfers (0.1% suggested)
+ * - unshield: Private → public withdrawals (0.25% suggested)
+ * - swap: Private AMM swaps (0.3% suggested)
+ * - remove_liquidity: LP token withdrawals (0.25% suggested)
+ *
+ * Free Operations (add value to protocol):
+ * - shield: Adding tokens to privacy pool
+ * - add_liquidity: Providing LP capital
+ * - consolidate: Reorganizing user's own notes
+ * - stake: Locking tokens for security (future)
+ * - vote: Governance participation (future)
+ */
+
+/**
+ * Fee-able operation types
+ */
+type FeeableOperation = 'transfer' | 'unshield' | 'swap' | 'remove_liquidity';
+/**
+ * Free operation types (no fees)
+ */
+type FreeOperation = 'shield' | 'add_liquidity' | 'consolidate' | 'stake' | 'vote';
+/**
+ * All operation types
+ */
+type OperationType = FeeableOperation | FreeOperation;
+/**
+ * Protocol fee configuration
+ */
+interface ProtocolFeeConfig {
+    /** Authority that can update fees */
+    authority: PublicKey;
+    /** Treasury receiving fees */
+    treasury: PublicKey;
+    /** Transfer fee in basis points (10 = 0.1%) */
+    transferFeeBps: number;
+    /** Unshield fee in basis points (25 = 0.25%) */
+    unshieldFeeBps: number;
+    /** Swap fee in basis points (30 = 0.3%) */
+    swapFeeBps: number;
+    /** Remove liquidity fee in basis points (25 = 0.25%) */
+    removeLiquidityFeeBps: number;
+    /** Whether fees are enabled */
+    feesEnabled: boolean;
+}
+/**
+ * Fee calculation result
+ */
+interface FeeCalculation {
+    /** Original amount before fees */
+    amount: bigint;
+    /** Fee amount to pay */
+    feeAmount: bigint;
+    /** Amount after fee deduction */
+    amountAfterFee: bigint;
+    /** Fee rate in basis points */
+    feeBps: number;
+    /** Whether this operation is free */
+    isFree: boolean;
+}
+/**
+ * Default fee configuration (suggested rates)
+ */
+declare const DEFAULT_FEE_CONFIG: Omit<ProtocolFeeConfig, 'authority' | 'treasury'>;
+/**
+ * Maximum fee in basis points (10%)
+ */
+declare const MAX_FEE_BPS = 1000;
+/**
+ * Basis points divisor
+ */
+declare const BPS_DIVISOR = 10000n;
+/**
+ * Check if an operation is free (no fees)
+ */
+declare function isFreeOperation(operation: OperationType): operation is FreeOperation;
+/**
+ * Check if an operation requires fees
+ */
+declare function isFeeableOperation(operation: OperationType): operation is FeeableOperation;
+/**
+ * Calculate protocol fee for an operation
+ *
+ * @param amount - The amount to calculate fee for
+ * @param operation - The operation type
+ * @param config - Protocol fee configuration (or null if not fetched)
+ * @returns Fee calculation result
+ */
+declare function calculateProtocolFee(amount: bigint, operation: OperationType, config: ProtocolFeeConfig | null): FeeCalculation;
+/**
+ * Get fee basis points for an operation
+ */
+declare function getFeeBps(operation: FeeableOperation, config: ProtocolFeeConfig): number;
+/**
+ * Calculate minimum fee required (rounds up to ensure sufficient fee)
+ *
+ * @param amount - The amount to calculate fee for
+ * @param feeBps - Fee rate in basis points
+ * @returns Minimum fee amount
+ */
+declare function calculateMinimumFee(amount: bigint, feeBps: number): bigint;
+/**
+ * Verify that a fee amount meets minimum requirements
+ *
+ * @param amount - The amount the fee is calculated from
+ * @param feeAmount - The fee amount to verify
+ * @param feeBps - Expected fee rate in basis points
+ * @returns True if fee is sufficient
+ */
+declare function verifyFeeAmount(amount: bigint, feeAmount: bigint, feeBps: number): boolean;
+/**
+ * Fetch protocol fee configuration from on-chain account
+ *
+ * @param connection - Solana connection
+ * @param programId - Program ID
+ * @returns Protocol fee config or null if not initialized
+ */
+declare function fetchProtocolFeeConfig(connection: Connection, programId?: PublicKey): Promise<ProtocolFeeConfig | null>;
+/**
+ * Format fee amount for display
+ *
+ * @param feeAmount - Fee amount in smallest units
+ * @param decimals - Token decimals
+ * @returns Formatted string
+ */
+declare function formatFeeAmount(feeAmount: bigint, decimals: number): string;
+/**
+ * Format fee rate for display
+ *
+ * @param feeBps - Fee rate in basis points
+ * @returns Formatted percentage string
+ */
+declare function formatFeeRate(feeBps: number): string;
+/**
+ * Estimate total cost including fees
+ *
+ * @param amount - The amount to transfer/withdraw
+ * @param operation - The operation type
+ * @param config - Protocol fee configuration
+ * @returns Object with breakdown
+ */
+declare function estimateTotalCost(amount: bigint, operation: OperationType, config: ProtocolFeeConfig | null): {
+    amount: bigint;
+    fee: bigint;
+    total: bigint;
+    feeRate: string;
+};
+
+/**
+ * Smart Note Selector
+ *
+ * Intelligently selects notes for transactions based on amount requirements
+ * and circuit capabilities. Supports multiple selection strategies.
+ */
+
+/**
+ * Selection strategy for note selection
+ */
+type SelectionStrategy = 'greedy' | 'exact' | 'minimize-change' | 'consolidation-aware' | 'smallest-first';
+/**
+ * Circuit type based on inputs/outputs
+ */
+type CircuitType = 'transfer_1x2' | 'transfer_2x2' | 'transfer_3x2' | 'consolidate_3x1';
+/**
+ * Result of note selection
+ */
+interface NoteSelectionResult {
+    /** Selected notes */
+    notes: DecryptedNote[];
+    /** Total amount of selected notes */
+    totalAmount: bigint;
+    /** Change amount (total - target) */
+    changeAmount: bigint;
+    /** Circuit type to use */
+    circuitType: CircuitType;
+    /** Whether consolidation is recommended before this transfer */
+    needsConsolidation: boolean;
+    /** Reason if selection failed */
+    error?: string;
+}
+/**
+ * Options for note selection
+ */
+interface NoteSelectionOptions {
+    /** Selection strategy (default: greedy) */
+    strategy?: SelectionStrategy;
+    /** Maximum number of inputs (default: 2) */
+    maxInputs?: number;
+    /** Include fee in target calculation */
+    feeAmount?: bigint;
+    /** Dust threshold - notes below this are considered dust (default: 1000 = 0.001 tokens at 6 decimals) */
+    dustThreshold?: bigint;
+}
+/**
+ * Fragmentation analysis result
+ */
+interface FragmentationReport {
+    /** Total number of notes */
+    totalNotes: number;
+    /** Number of dust notes (below threshold) */
+    dustNotes: number;
+    /** Largest note amount */
+    largestNote: bigint;
+    /** Smallest note amount */
+    smallestNote: bigint;
+    /** Total balance across all notes */
+    totalBalance: bigint;
+    /** Fragmentation score (0-100, higher = more fragmented) */
+    fragmentationScore: number;
+    /** Whether consolidation is recommended */
+    shouldConsolidate: boolean;
+}
+/**
+ * Smart Note Selector
+ *
+ * Provides intelligent note selection for transactions based on:
+ * - Amount requirements
+ * - Available circuit types
+ * - Privacy considerations
+ * - Wallet cleanup (dust consolidation)
+ */
+declare class SmartNoteSelector {
+    private dustThreshold;
+    constructor(dustThreshold?: bigint);
+    /**
+     * Select notes for a transaction
+     *
+     * @param notes - Available notes to select from
+     * @param targetAmount - Amount needed for the transaction
+     * @param options - Selection options
+     * @returns Selection result with notes, circuit type, and metadata
+     */
+    selectNotes(notes: DecryptedNote[], targetAmount: bigint, options?: NoteSelectionOptions): NoteSelectionResult;
+    /**
+     * Greedy selection - select largest notes first
+     */
+    private selectGreedy;
+    /**
+     * Exact selection - try to find exact match
+     */
+    private selectExact;
+    /**
+     * Minimize change - find combination with smallest change
+     */
+    private selectMinimizeChange;
+    /**
+     * Consolidation-aware - prefer using dust notes
+     */
+    private selectConsolidationAware;
+    /**
+     * Smallest-first selection - for consolidation operations
+     */
+    private selectSmallestFirst;
+    /**
+     * Check if we would succeed with more inputs
+     */
+    private wouldSucceedWithMoreInputs;
+    /**
+     * Get circuit type based on number of inputs
+     */
+    private getCircuitType;
+    /**
+     * Get circuit ID for the given circuit type
+     */
+    getCircuitId(circuitType: CircuitType): string;
+    /**
+     * Analyze wallet fragmentation
+     */
+    analyzeFragmentation(notes: DecryptedNote[]): FragmentationReport;
+    /**
+     * Select notes for consolidation
+     *
+     * @param notes - Available notes
+     * @param maxInputs - Maximum inputs (default: 3 for consolidate_3x1)
+     * @returns Notes to consolidate
+     */
+    selectForConsolidation(notes: DecryptedNote[], maxInputs?: number): DecryptedNote[];
+}
+declare const noteSelector: SmartNoteSelector;
+
+/**
+ * Consolidation Service
+ *
+ * Helps users manage note fragmentation by consolidating multiple notes
+ * into fewer, larger notes. This improves wallet usability and reduces
+ * the number of transactions needed for larger transfers.
+ */
+
+/**
+ * Consolidation suggestion
+ */
+interface ConsolidationSuggestion {
+    /** Notes recommended for consolidation */
+    notesToConsolidate: DecryptedNote[];
+    /** Total amount after consolidation */
+    resultingAmount: bigint;
+    /** Number of notes reduced */
+    notesReduced: number;
+    /** Priority (higher = more important) */
+    priority: 'low' | 'medium' | 'high';
+    /** Reason for suggestion */
+    reason: string;
+}
+/**
+ * Consolidation result
+ */
+interface ConsolidationResult {
+    /** Whether consolidation was successful */
+    success: boolean;
+    /** New consolidated note (if successful) */
+    newNote?: DecryptedNote;
+    /** Notes that were consolidated */
+    consolidatedNotes: DecryptedNote[];
+    /** Transaction signature */
+    signature?: string;
+    /** Error message (if failed) */
+    error?: string;
+}
+/**
+ * Consolidation batch
+ */
+interface ConsolidationBatch {
+    /** Notes in this batch */
+    notes: DecryptedNote[];
+    /** Total amount */
+    totalAmount: bigint;
+    /** Batch number (for multi-batch consolidation) */
+    batchNumber: number;
+}
+/**
+ * Options for consolidation
+ */
+interface ConsolidationOptions {
+    /** Target number of notes after consolidation (default: 1) */
+    targetNoteCount?: number;
+    /** Maximum notes to consolidate per transaction (default: 3) */
+    maxNotesPerBatch?: number;
+    /** Dust threshold for prioritizing small notes (default: 1000) */
+    dustThreshold?: bigint;
+    /** Output stealth pubkey (required for creating new note) */
+    outputStealthPubkey?: Point;
+    /** Output ephemeral pubkey (required for stealth addresses) */
+    outputEphemeralPubkey?: Point;
+}
+/**
+ * Consolidation Service
+ *
+ * Provides tools for analyzing and executing note consolidation:
+ * - Analyze fragmentation level
+ * - Suggest consolidation opportunities
+ * - Plan multi-batch consolidation
+ * - Execute consolidation transactions
+ */
+declare class ConsolidationService {
+    private noteSelector;
+    private dustThreshold;
+    constructor(dustThreshold?: bigint);
+    /**
+     * Analyze note fragmentation
+     *
+     * @param notes - Notes to analyze
+     * @returns Fragmentation report
+     */
+    analyzeNotes(notes: DecryptedNote[]): FragmentationReport;
+    /**
+     * Suggest consolidation opportunities
+     *
+     * @param notes - Available notes
+     * @param options - Consolidation options
+     * @returns Array of consolidation suggestions
+     */
+    suggestConsolidation(notes: DecryptedNote[], options?: ConsolidationOptions): ConsolidationSuggestion[];
+    /**
+     * Plan consolidation into batches
+     *
+     * For many notes, multiple consolidation transactions may be needed.
+     * This method plans the batches to minimize the number of transactions.
+     *
+     * @param notes - Notes to consolidate
+     * @param options - Consolidation options
+     * @returns Array of consolidation batches
+     */
+    planConsolidation(notes: DecryptedNote[], options?: ConsolidationOptions): ConsolidationBatch[];
+    /**
+     * Get optimal notes for a single consolidation transaction
+     *
+     * @param notes - Available notes
+     * @param maxInputs - Maximum inputs (default: 3)
+     * @returns Notes to consolidate in this batch
+     */
+    selectForConsolidation(notes: DecryptedNote[], maxInputs?: number): DecryptedNote[];
+    /**
+     * Check if consolidation is recommended
+     *
+     * @param notes - Notes to check
+     * @returns Whether consolidation is recommended
+     */
+    shouldConsolidate(notes: DecryptedNote[]): boolean;
+    /**
+     * Get consolidation summary for UI
+     *
+     * @param notes - Notes to analyze
+     * @returns Summary object for display
+     */
+    getConsolidationSummary(notes: DecryptedNote[]): {
+        totalNotes: number;
+        dustNotes: number;
+        totalBalance: bigint;
+        shouldConsolidate: boolean;
+        estimatedBatches: number;
+        message: string;
+    };
+    /**
+     * Estimate gas cost for consolidation
+     *
+     * @param numInputs - Number of input notes
+     * @returns Estimated cost in lamports
+     */
+    estimateConsolidationCost(numInputs: number): bigint;
+}
+declare const consolidationService: ConsolidationService;
+
+/**
+ * Auto-consolidation configuration
+ */
+interface AutoConsolidationConfig {
+    /** Enable auto-consolidation */
+    enabled: boolean;
+    /** Fragmentation score threshold to trigger consolidation (0-100, default: 60) */
+    fragmentationThreshold?: number;
+    /** Maximum number of notes before triggering consolidation (default: 8) */
+    maxNoteCount?: number;
+    /** Maximum dust notes before triggering consolidation (default: 3) */
+    maxDustNotes?: number;
+    /** Dust threshold in smallest units (default: 1000) */
+    dustThreshold?: bigint;
+    /** Minimum delay between consolidation checks in ms (default: 60000) */
+    checkIntervalMs?: number;
+    /** Callback when consolidation is recommended */
+    onConsolidationRecommended?: (report: FragmentationReport) => void;
+    /** Callback when consolidation starts */
+    onConsolidationStart?: () => void;
+    /** Callback when consolidation completes */
+    onConsolidationComplete?: (success: boolean, error?: string) => void;
+}
+/**
+ * Auto-consolidation state
+ */
+interface AutoConsolidationState {
+    /** Whether auto-consolidation is enabled */
+    enabled: boolean;
+    /** Last check timestamp */
+    lastCheckAt: number | null;
+    /** Whether consolidation is currently running */
+    isConsolidating: boolean;
+    /** Last fragmentation report */
+    lastReport: FragmentationReport | null;
+    /** Whether consolidation is currently recommended */
+    isRecommended: boolean;
+}
+/**
+ * Auto-Consolidator class
+ *
+ * Monitors note fragmentation and triggers consolidation when needed.
+ * Can be run in background mode or manually triggered.
+ */
+declare class AutoConsolidator {
+    private config;
+    private service;
+    private state;
+    private checkInterval;
+    private noteProvider;
+    constructor(config?: AutoConsolidationConfig);
+    /**
+     * Set the note provider function
+     *
+     * The provider is called periodically to get fresh notes for analysis.
+     */
+    setNoteProvider(provider: () => DecryptedNote[]): void;
+    /**
+     * Update configuration
+     */
+    updateConfig(config: Partial<AutoConsolidationConfig>): void;
+    /**
+     * Start background monitoring
+     */
+    start(): void;
+    /**
+     * Stop background monitoring
+     */
+    stop(): void;
+    /**
+     * Perform a manual check
+     */
+    check(): FragmentationReport | null;
+    /**
+     * Check if consolidation should be triggered
+     */
+    private shouldConsolidate;
+    /**
+     * Get current state
+     */
+    getState(): AutoConsolidationState;
+    /**
+     * Get the last fragmentation report
+     */
+    getLastReport(): FragmentationReport | null;
+    /**
+     * Check if consolidation is currently recommended
+     */
+    isConsolidationRecommended(): boolean;
+    /**
+     * Get consolidation suggestions based on current notes
+     */
+    getSuggestions(): ConsolidationSuggestion[];
+    /**
+     * Estimate the cost of consolidation
+     */
+    estimateCost(): bigint;
+}
+/**
+ * Get or create the global auto-consolidator instance
+ */
+declare function getAutoConsolidator(config?: AutoConsolidationConfig): AutoConsolidator;
+/**
+ * Enable auto-consolidation globally
+ */
+declare function enableAutoConsolidation(config?: Omit<AutoConsolidationConfig, 'enabled'>): AutoConsolidator;
+/**
+ * Disable auto-consolidation globally
+ */
+declare function disableAutoConsolidation(): void;
+
+export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, type AutoConsolidationConfig, type AutoConsolidationState, AutoConsolidator, BPS_DIVISOR, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CircuitType, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, type ConsolidationBatch, type ConsolidationInput, type ConsolidationInstructionParams, type ConsolidationOptions, type ConsolidationResult, ConsolidationService, type ConsolidationSuggestion, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEFAULT_FEE_CONFIG, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FeeCalculation, type FeeableOperation, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, type FragmentationReport, type FreeOperation, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, MAINNET_LIGHT_TREES, MAX_FEE_BPS, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, type NoteSelectionOptions, type NoteSelectionResult, type OperationType, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, type PoolAnalytics, PoolAnalyticsCalculator, type PoolStats, ProofGenerator, type ProtocolFeeConfig, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, SEEDS, type ScannedNote, type SelectionStrategy, type ShieldInstructionParams, type ShieldResult, SmartNoteSelector, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TokenPrice, TokenPriceFetcher, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type TransactionFilter, TransactionHistory, type TransactionRecord, TransactionStatus, TransactionType, type UserPoolPosition, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildConsolidationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePoolWithProgram, buildRemoveLiquidityWithProgram, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateInvariant, calculateMinOutput, calculateMinimumFee, calculatePriceImpact, calculatePriceRatio, calculateProtocolFee, calculateRemoveLiquidityOutput, calculateSlippage, calculateSwapOutput, calculateTotalLiquidity, calculateUsdPriceImpact, canFitInSingleTransaction, canonicalTokenOrder, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, consolidationService, createAddressLookupTable, createCloakCraftALT, createNote, createPendingTransaction, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePoolPda, deriveProtocolConfigPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, disableAutoConsolidation, elgamalEncrypt, enableAutoConsolidation, encryptNote, encryptVote, estimateTotalCost, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fetchProtocolFeeConfig, fieldToBytes, formatAmmPool, formatApy, formatFeeAmount, formatFeeRate, formatPrice, formatPriceChange, formatShare, formatTvl, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getAutoConsolidator, getFeeBps, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isFeeableOperation, isFreeOperation, isInSubgroup, isOnCurve, lagrangeCoefficient, loadCircomArtifacts, loadWallet, noteSelector, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof, verifyFeeAmount, verifyInvariant };

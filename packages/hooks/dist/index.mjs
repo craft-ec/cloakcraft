@@ -83,7 +83,7 @@ function CloakCraftProvider({
   useEffect(() => {
     if (wallet && isInitialized && !isInitializing && !isProverReady) {
       console.log("[CloakCraft] Initializing prover...");
-      client.initializeProver(["transfer/1x2", "transfer/1x3"]).then(() => {
+      client.initializeProver(["transfer/1x2"]).then(() => {
         console.log("[CloakCraft] Prover initialized successfully");
         setIsProverReady(true);
       }).catch((err) => {
@@ -487,7 +487,8 @@ function useShield() {
 }
 
 // src/useTransfer.ts
-import { useState as useState6, useCallback as useCallback6 } from "react";
+import { useState as useState6, useCallback as useCallback6, useMemo as useMemo4 } from "react";
+import { SmartNoteSelector } from "@cloakcraft/sdk";
 function useTransfer() {
   const { client, wallet, sync } = useCloakCraft();
   const [state, setState] = useState6({
@@ -496,7 +497,21 @@ function useTransfer() {
     result: null
   });
   const transfer = useCallback6(
-    async (inputs, outputs, unshield, walletPublicKey) => {
+    async (inputsOrOptions, outputs, unshield, walletPublicKey) => {
+      let inputs;
+      let finalOutputs;
+      let finalUnshield;
+      let onProgress;
+      if (Array.isArray(inputsOrOptions)) {
+        inputs = inputsOrOptions;
+        finalOutputs = outputs;
+        finalUnshield = unshield;
+      } else {
+        inputs = inputsOrOptions.inputs;
+        finalOutputs = inputsOrOptions.outputs;
+        finalUnshield = inputsOrOptions.unshield;
+        onProgress = inputsOrOptions.onProgress;
+      }
       if (!client || !wallet) {
         setState({ isTransferring: false, error: "Wallet not connected", result: null });
         return null;
@@ -506,6 +521,7 @@ function useTransfer() {
         return null;
       }
       setState({ isTransferring: true, error: null, result: null });
+      onProgress?.("scanning");
       let freshNotes;
       try {
         const tokenMint = inputs[0]?.tokenMint;
@@ -537,7 +553,7 @@ function useTransfer() {
       }
       try {
         const result = await client.prepareAndTransfer(
-          { inputs: matchedInputs, outputs, unshield },
+          { inputs: matchedInputs, outputs: finalOutputs, unshield: finalUnshield, onProgress },
           // Use fresh notes
           void 0
           // relayer - wallet adapter will be used via provider
@@ -568,32 +584,43 @@ function useTransfer() {
 function useNoteSelector(tokenMint) {
   const { notes } = useCloakCraft();
   const [selected, setSelected] = useState6([]);
-  const availableNotes = notes.filter(
-    (note) => note.tokenMint && note.tokenMint.equals(tokenMint)
+  const selector = useMemo4(() => new SmartNoteSelector(), []);
+  const availableNotes = useMemo4(
+    () => notes.filter((note) => note.tokenMint && note.tokenMint.equals(tokenMint)),
+    [notes, tokenMint]
   );
   const selectNotesForAmount = useCallback6(
-    (targetAmount) => {
-      let total = 0n;
-      const selectedNotes = [];
-      const sorted = [...availableNotes].sort(
-        (a, b) => a.amount > b.amount ? -1 : a.amount < b.amount ? 1 : 0
-      );
-      for (const note of sorted) {
-        if (total >= targetAmount) break;
-        selectedNotes.push(note);
-        total += note.amount;
+    (targetAmount, options) => {
+      const result = selector.selectNotes(availableNotes, targetAmount, {
+        strategy: options?.strategy ?? "greedy",
+        maxInputs: options?.maxInputs ?? 2,
+        feeAmount: options?.feeAmount
+      });
+      if (result.error) {
+        throw new Error(result.error);
       }
-      if (total < targetAmount) {
-        throw new Error(`Insufficient balance. Have ${total}, need ${targetAmount}`);
-      }
-      setSelected(selectedNotes);
-      return selectedNotes;
+      setSelected(result.notes);
+      return result.notes;
     },
-    [availableNotes]
+    [availableNotes, selector]
+  );
+  const getSelectionResult = useCallback6(
+    (targetAmount, options) => {
+      return selector.selectNotes(availableNotes, targetAmount, {
+        strategy: options?.strategy ?? "smallest-first",
+        maxInputs: options?.maxInputs ?? 2,
+        feeAmount: options?.feeAmount
+      });
+    },
+    [availableNotes, selector]
   );
   const clearSelection = useCallback6(() => {
     setSelected([]);
   }, []);
+  const fragmentation = useMemo4(
+    () => selector.analyzeFragmentation(availableNotes),
+    [availableNotes, selector]
+  );
   const totalAvailable = availableNotes.reduce((sum, n) => sum + n.amount, 0n);
   const totalSelected = selected.reduce((sum, n) => sum + n.amount, 0n);
   return {
@@ -602,7 +629,10 @@ function useNoteSelector(tokenMint) {
     totalAvailable,
     totalSelected,
     selectNotesForAmount,
-    clearSelection
+    getSelectionResult,
+    clearSelection,
+    fragmentation,
+    shouldConsolidate: fragmentation.shouldConsolidate
   };
 }
 
@@ -626,8 +656,9 @@ function useUnshield() {
         setState({ isUnshielding: false, error: "Program not set. Call setProgram() first.", result: null });
         return null;
       }
-      const { inputs, amount, recipient, isWalletAddress } = options;
+      const { inputs, amount, recipient, isWalletAddress, onProgress } = options;
       setState({ isUnshielding: true, error: null, result: null });
+      onProgress?.("scanning");
       let recipientTokenAccount = recipient;
       if (isWalletAddress && inputs[0]?.tokenMint) {
         try {
@@ -691,6 +722,7 @@ function useUnshield() {
         return null;
       }
       try {
+        onProgress?.("preparing");
         const change = totalInput - amount;
         console.log("[Unshield] Total input:", totalInput.toString());
         console.log("[Unshield] Amount to unshield:", amount.toString());
@@ -732,7 +764,9 @@ function useUnshield() {
             inputs: matchedInputs,
             // Use fresh notes with stealthEphemeralPubkey
             outputs,
-            unshield: { amount, recipient: recipientTokenAccount }
+            unshield: { amount, recipient: recipientTokenAccount },
+            onProgress
+            // Pass progress callback to client
           },
           void 0
           // relayer - wallet adapter will be used via provider
@@ -1035,7 +1069,7 @@ function usePoolList() {
 }
 
 // src/usePublicBalance.ts
-import { useState as useState10, useCallback as useCallback10, useEffect as useEffect5, useMemo as useMemo4 } from "react";
+import { useState as useState10, useCallback as useCallback10, useEffect as useEffect5, useMemo as useMemo5 } from "react";
 import { getAssociatedTokenAddressSync as getAssociatedTokenAddressSync2 } from "@solana/spl-token";
 function usePublicBalance(tokenMint, owner) {
   const { client } = useCloakCraft();
@@ -1124,7 +1158,7 @@ function useTokenBalances(tokenMints, owner) {
   const [balances, setBalances] = useState10(/* @__PURE__ */ new Map());
   const [isLoading, setIsLoading] = useState10(false);
   const [error, setError] = useState10(null);
-  const mintsKey = useMemo4(
+  const mintsKey = useMemo5(
     () => tokenMints.map((m) => m.toBase58()).join(","),
     [tokenMints]
   );
@@ -1565,7 +1599,7 @@ function useRemoveLiquidity() {
 }
 
 // src/useTransactionHistory.ts
-import { useState as useState13, useEffect as useEffect8, useCallback as useCallback13, useMemo as useMemo5, useRef as useRef2 } from "react";
+import { useState as useState13, useEffect as useEffect8, useCallback as useCallback13, useMemo as useMemo6, useRef as useRef2 } from "react";
 import {
   TransactionHistory,
   TransactionStatus,
@@ -1578,7 +1612,7 @@ function useTransactionHistory(filter) {
   const [isLoading, setIsLoading] = useState13(true);
   const [error, setError] = useState13(null);
   const [history, setHistory] = useState13(null);
-  const filterKey = useMemo5(
+  const filterKey = useMemo6(
     () => JSON.stringify(filter ?? {}),
     [filter?.type, filter?.status, filter?.limit, filter?.tokenMint, filter?.after?.getTime(), filter?.before?.getTime()]
   );
@@ -1692,7 +1726,7 @@ function useTransactionHistory(filter) {
       setError(err instanceof Error ? err.message : "Failed to clear history");
     }
   }, [history]);
-  const summary = useMemo5(() => {
+  const summary = useMemo6(() => {
     let pending = 0;
     let confirmed = 0;
     let failed = 0;
@@ -1735,7 +1769,7 @@ function useRecentTransactions(limit = 5) {
 }
 
 // src/useTokenPrices.ts
-import { useState as useState14, useEffect as useEffect9, useCallback as useCallback14, useMemo as useMemo6, useRef as useRef3 } from "react";
+import { useState as useState14, useEffect as useEffect9, useCallback as useCallback14, useMemo as useMemo7, useRef as useRef3 } from "react";
 import {
   TokenPriceFetcher
 } from "@cloakcraft/sdk";
@@ -1754,7 +1788,7 @@ function useTokenPrices(mints, refreshInterval) {
   const [lastUpdated, setLastUpdated] = useState14(null);
   const [isAvailable, setIsAvailable] = useState14(true);
   const fetcher = useRef3(getPriceFetcher());
-  const mintStrings = useMemo6(
+  const mintStrings = useMemo7(
     () => mints.map((m) => typeof m === "string" ? m : m.toBase58()),
     [mints]
   );
@@ -1806,7 +1840,7 @@ function useTokenPrices(mints, refreshInterval) {
     },
     [getPrice]
   );
-  const solPrice = useMemo6(() => {
+  const solPrice = useMemo7(() => {
     const sol = prices.get("So11111111111111111111111111111111111111112");
     return sol?.priceUsd ?? 0;
   }, [prices]);
@@ -1824,12 +1858,12 @@ function useTokenPrices(mints, refreshInterval) {
   };
 }
 function useTokenPrice(mint) {
-  const mints = useMemo6(
+  const mints = useMemo7(
     () => mint ? [mint] : [],
     [mint]
   );
   const { prices, isLoading, error, refresh } = useTokenPrices(mints);
-  const price = useMemo6(() => {
+  const price = useMemo7(() => {
     if (!mint) return null;
     const mintStr = typeof mint === "string" ? mint : mint.toBase58();
     return prices.get(mintStr) ?? null;
@@ -1855,12 +1889,12 @@ function useSolPrice(refreshInterval = 6e4) {
   };
 }
 function usePortfolioValue(balances) {
-  const mints = useMemo6(
+  const mints = useMemo7(
     () => balances.map((b) => b.mint),
     [balances]
   );
   const { prices, isLoading, error } = useTokenPrices(mints);
-  const totalValue = useMemo6(() => {
+  const totalValue = useMemo7(() => {
     let total = 0;
     for (const balance of balances) {
       const mintStr = typeof balance.mint === "string" ? balance.mint : balance.mint.toBase58();
@@ -1872,7 +1906,7 @@ function usePortfolioValue(balances) {
     }
     return total;
   }, [balances, prices]);
-  const breakdown = useMemo6(() => {
+  const breakdown = useMemo7(() => {
     return balances.map((balance) => {
       const mintStr = typeof balance.mint === "string" ? balance.mint : balance.mint.toBase58();
       const price = prices.get(mintStr);
@@ -1898,7 +1932,7 @@ function usePortfolioValue(balances) {
 }
 
 // src/usePoolAnalytics.ts
-import { useState as useState15, useEffect as useEffect10, useCallback as useCallback15, useMemo as useMemo7, useRef as useRef4 } from "react";
+import { useState as useState15, useEffect as useEffect10, useCallback as useCallback15, useMemo as useMemo8, useRef as useRef4 } from "react";
 import {
   PoolAnalyticsCalculator,
   formatTvl
@@ -2043,19 +2077,487 @@ function useUserPosition(pool, lpBalance, tokenADecimals = 9, tokenBDecimals = 9
 }
 function useImpermanentLoss(initialPriceRatio, currentPriceRatio) {
   const calculator = useRef4(getCalculator());
-  const impermanentLoss = useMemo7(() => {
+  const impermanentLoss = useMemo8(() => {
     return calculator.current.calculateImpermanentLoss(
       initialPriceRatio,
       currentPriceRatio
     );
   }, [initialPriceRatio, currentPriceRatio]);
-  const formattedLoss = useMemo7(() => {
+  const formattedLoss = useMemo8(() => {
     return `${impermanentLoss.toFixed(2)}%`;
   }, [impermanentLoss]);
   return {
     impermanentLoss,
     formattedLoss
   };
+}
+
+// src/useConsolidation.ts
+import { useState as useState16, useCallback as useCallback16, useMemo as useMemo9, useRef as useRef5 } from "react";
+import {
+  ConsolidationService
+} from "@cloakcraft/sdk";
+function useConsolidation(options) {
+  const { notes, sync, client, wallet, isProverReady } = useCloakCraft();
+  const { tokenMint, dustThreshold = 1000n, maxNotesPerBatch = 3 } = options;
+  const [state, setState] = useState16({
+    isAnalyzing: false,
+    isConsolidating: false,
+    currentBatch: 0,
+    totalBatches: 0,
+    error: null
+  });
+  const isConsolidatingRef = useRef5(false);
+  const service = useMemo9(
+    () => new ConsolidationService(dustThreshold),
+    [dustThreshold]
+  );
+  const tokenNotes = useMemo9(
+    () => notes.filter((n) => n.tokenMint.equals(tokenMint)),
+    [notes, tokenMint]
+  );
+  const fragmentationReport = useMemo9(
+    () => service.analyzeNotes(tokenNotes),
+    [service, tokenNotes]
+  );
+  const suggestions = useMemo9(
+    () => service.suggestConsolidation(tokenNotes, { maxNotesPerBatch }),
+    [service, tokenNotes, maxNotesPerBatch]
+  );
+  const consolidationPlan = useMemo9(
+    () => service.planConsolidation(tokenNotes, { maxNotesPerBatch }),
+    [service, tokenNotes, maxNotesPerBatch]
+  );
+  const summary = useMemo9(
+    () => service.getConsolidationSummary(tokenNotes),
+    [service, tokenNotes]
+  );
+  const consolidate = useCallback16(async (onProgress, targetAmount, maxInputs = 2) => {
+    if (isConsolidatingRef.current) {
+      console.log("[useConsolidation] Already consolidating, skipping...");
+      return;
+    }
+    if (!wallet || !client || !isProverReady) {
+      setState((s) => ({
+        ...s,
+        error: "Wallet or prover not ready"
+      }));
+      return;
+    }
+    if (tokenNotes.length <= 1) {
+      setState((s) => ({
+        ...s,
+        error: "Nothing to consolidate"
+      }));
+      return;
+    }
+    isConsolidatingRef.current = true;
+    let estimatedBatches;
+    if (targetAmount !== void 0) {
+      const sortedNotes = [...tokenNotes].sort((a, b) => Number(a.amount - b.amount));
+      let sum = 0n;
+      let notesNeeded = 0;
+      for (const note of sortedNotes) {
+        sum += note.amount;
+        notesNeeded++;
+        if (sum >= targetAmount) break;
+      }
+      if (notesNeeded <= maxInputs) {
+        estimatedBatches = 0;
+      } else {
+        estimatedBatches = Math.ceil((notesNeeded - maxInputs) / 2);
+      }
+    } else {
+      estimatedBatches = Math.ceil(Math.log(tokenNotes.length) / Math.log(3));
+    }
+    setState({
+      isAnalyzing: false,
+      isConsolidating: true,
+      currentBatch: 0,
+      totalBatches: estimatedBatches,
+      error: null
+    });
+    try {
+      console.log("[useConsolidation] Starting recursive consolidation...", {
+        noteCount: tokenNotes.length,
+        notesForTarget: targetAmount !== void 0 ? "calculated" : "all",
+        estimatedBatches
+      });
+      let batchNumber = 0;
+      let currentTotalBatches = estimatedBatches;
+      const maxIterations = 10;
+      while (batchNumber < maxIterations) {
+        console.log("[useConsolidation] Fetching fresh notes from client...");
+        client.clearScanCache();
+        const freshNotes = await client.scanNotes(tokenMint);
+        const currentNotes = freshNotes.filter((n) => n.tokenMint.equals(tokenMint));
+        console.log(`[useConsolidation] Fresh notes for token: ${currentNotes.length}`);
+        await sync(tokenMint, true);
+        if (currentNotes.length <= 1) {
+          console.log("[useConsolidation] Consolidation complete - only 1 note remaining");
+          break;
+        }
+        const sortedBySmallest = [...currentNotes].sort((a, b) => Number(a.amount - b.amount));
+        let notesToConsolidate;
+        if (targetAmount !== void 0) {
+          let sum = 0n;
+          let notesNeeded = 0;
+          for (const note of sortedBySmallest) {
+            sum += note.amount;
+            notesNeeded++;
+            if (sum >= targetAmount) break;
+          }
+          if (notesNeeded <= maxInputs && sum >= targetAmount) {
+            console.log(`[useConsolidation] Target achievable with ${notesNeeded} smallest notes (max ${maxInputs}), stopping early`);
+            break;
+          }
+          const notesForTarget = sortedBySmallest.slice(0, notesNeeded);
+          notesToConsolidate = notesForTarget.slice(0, Math.min(3, notesForTarget.length));
+          console.log(`[useConsolidation] Need ${notesNeeded} notes for target, consolidating ${notesToConsolidate.length} smallest...`);
+        } else {
+          notesToConsolidate = sortedBySmallest.slice(0, Math.min(3, sortedBySmallest.length));
+        }
+        if (notesToConsolidate.length < 2) {
+          console.log("[useConsolidation] Not enough notes to consolidate");
+          break;
+        }
+        batchNumber++;
+        const remainingAfterBatch = currentNotes.length - notesToConsolidate.length + 1;
+        const willStopAfterBatch = targetAmount !== void 0 && remainingAfterBatch <= maxInputs;
+        const additionalBatches = willStopAfterBatch ? 0 : remainingAfterBatch > 1 ? Math.ceil(Math.log(remainingAfterBatch) / Math.log(3)) : 0;
+        currentTotalBatches = Math.max(currentTotalBatches, batchNumber + additionalBatches);
+        console.log(`[useConsolidation] Processing batch ${batchNumber} of ${currentTotalBatches}...`, {
+          notesToConsolidate: notesToConsolidate.length,
+          remainingNotes: currentNotes.length
+        });
+        setState((s) => ({
+          ...s,
+          currentBatch: batchNumber,
+          totalBatches: currentTotalBatches
+        }));
+        const batchInfo = { current: batchNumber, total: currentTotalBatches };
+        const wrappedOnProgress = onProgress ? (stage) => onProgress(stage, batchInfo) : void 0;
+        const result = await client.prepareAndConsolidate(notesToConsolidate, tokenMint, wrappedOnProgress);
+        console.log(`[useConsolidation] Batch ${batchNumber} completed:`, result.signature);
+        onProgress?.("syncing", batchInfo);
+        console.log("[useConsolidation] Waiting for indexer sync...");
+        await new Promise((resolve) => setTimeout(resolve, 5e3));
+      }
+      await sync(tokenMint, true);
+      setState((s) => ({
+        ...s,
+        isConsolidating: false,
+        currentBatch: batchNumber,
+        error: null
+      }));
+      console.log("[useConsolidation] Consolidation complete!");
+    } catch (err) {
+      console.error("[useConsolidation] Consolidation failed:", err);
+      setState((s) => ({
+        ...s,
+        isConsolidating: false,
+        error: err instanceof Error ? err.message : "Consolidation failed"
+      }));
+      throw err;
+    } finally {
+      isConsolidatingRef.current = false;
+    }
+  }, [wallet, client, isProverReady, tokenNotes, sync, tokenMint]);
+  const consolidateBatch = useCallback16(async (batchIndex) => {
+    if (!wallet || !client || !isProverReady) {
+      setState((s) => ({
+        ...s,
+        error: "Wallet or prover not ready"
+      }));
+      return;
+    }
+    const batch = consolidationPlan[batchIndex];
+    if (!batch) {
+      setState((s) => ({
+        ...s,
+        error: "Invalid batch index"
+      }));
+      return;
+    }
+    setState((s) => ({
+      ...s,
+      isConsolidating: true,
+      currentBatch: batchIndex,
+      error: null
+    }));
+    try {
+      console.log(`[useConsolidation] Consolidating batch ${batchIndex + 1}...`, batch);
+      const batchNotes = batch.notes.slice(0, 3);
+      if (batchNotes.length === 0) {
+        throw new Error("Empty batch");
+      }
+      const result = await client.prepareAndConsolidate(batchNotes, tokenMint);
+      console.log(`[useConsolidation] Batch ${batchIndex + 1} completed:`, result.signature);
+      await sync(tokenMint, true);
+      setState((s) => ({
+        ...s,
+        isConsolidating: false,
+        currentBatch: batchIndex + 1
+      }));
+    } catch (err) {
+      console.error("[useConsolidation] Batch consolidation failed:", err);
+      setState((s) => ({
+        ...s,
+        isConsolidating: false,
+        error: err instanceof Error ? err.message : "Batch consolidation failed"
+      }));
+    }
+  }, [wallet, client, isProverReady, consolidationPlan, tokenMint, sync]);
+  const estimatedCost = useMemo9(() => {
+    return service.estimateConsolidationCost(
+      consolidationPlan.reduce((sum, batch) => sum + batch.notes.length, 0)
+    );
+  }, [service, consolidationPlan]);
+  return {
+    // State
+    ...state,
+    // Analysis
+    fragmentationReport,
+    suggestions,
+    consolidationPlan,
+    summary,
+    // Data
+    tokenNotes,
+    noteCount: tokenNotes.length,
+    shouldConsolidate: fragmentationReport.shouldConsolidate,
+    // Costs
+    estimatedCost,
+    // Actions
+    consolidate,
+    consolidateBatch,
+    // Helpers
+    canConsolidate: wallet !== null && isProverReady && tokenNotes.length > 1
+  };
+}
+function useShouldConsolidate(tokenMint) {
+  const { notes } = useCloakCraft();
+  const service = useMemo9(() => new ConsolidationService(), []);
+  return useMemo9(() => {
+    const tokenNotes = notes.filter((n) => n.tokenMint.equals(tokenMint));
+    return service.shouldConsolidate(tokenNotes);
+  }, [notes, tokenMint, service]);
+}
+function useFragmentationScore(tokenMint) {
+  const { notes } = useCloakCraft();
+  const service = useMemo9(() => new ConsolidationService(), []);
+  return useMemo9(() => {
+    const tokenNotes = notes.filter((n) => n.tokenMint.equals(tokenMint));
+    const report = service.analyzeNotes(tokenNotes);
+    return report.fragmentationScore;
+  }, [notes, tokenMint, service]);
+}
+
+// src/useAutoConsolidation.ts
+import { useState as useState17, useEffect as useEffect11, useCallback as useCallback17, useMemo as useMemo10 } from "react";
+import {
+  AutoConsolidator
+} from "@cloakcraft/sdk";
+function useAutoConsolidation(options) {
+  const { notes } = useCloakCraft();
+  const {
+    tokenMint,
+    initialEnabled = false,
+    fragmentationThreshold = 60,
+    maxNoteCount = 8,
+    maxDustNotes = 3,
+    dustThreshold = 1000n,
+    checkIntervalMs = 6e4
+  } = options;
+  const tokenNotes = useMemo10(
+    () => notes.filter((n) => n.tokenMint.equals(tokenMint)),
+    [notes, tokenMint]
+  );
+  const [consolidator] = useState17(() => new AutoConsolidator({
+    enabled: initialEnabled,
+    fragmentationThreshold,
+    maxNoteCount,
+    maxDustNotes,
+    dustThreshold,
+    checkIntervalMs
+  }));
+  const [state, setState] = useState17(
+    consolidator.getState()
+  );
+  const [estimatedCost, setEstimatedCost] = useState17(0n);
+  useEffect11(() => {
+    consolidator.setNoteProvider(() => tokenNotes);
+  }, [consolidator, tokenNotes]);
+  useEffect11(() => {
+    consolidator.updateConfig({
+      onConsolidationRecommended: () => {
+        setState(consolidator.getState());
+      }
+    });
+  }, [consolidator]);
+  useEffect11(() => {
+    const interval = setInterval(() => {
+      setState(consolidator.getState());
+      setEstimatedCost(consolidator.estimateCost());
+    }, 5e3);
+    return () => clearInterval(interval);
+  }, [consolidator]);
+  const enable = useCallback17(() => {
+    consolidator.start();
+    setState(consolidator.getState());
+  }, [consolidator]);
+  const disable = useCallback17(() => {
+    consolidator.stop();
+    setState(consolidator.getState());
+  }, [consolidator]);
+  const toggle = useCallback17(() => {
+    if (consolidator.getState().enabled) {
+      consolidator.stop();
+    } else {
+      consolidator.start();
+    }
+    setState(consolidator.getState());
+  }, [consolidator]);
+  const checkNow = useCallback17(() => {
+    consolidator.check();
+    setState(consolidator.getState());
+    setEstimatedCost(consolidator.estimateCost());
+  }, [consolidator]);
+  useEffect11(() => {
+    return () => {
+      consolidator.stop();
+    };
+  }, [consolidator]);
+  return {
+    state,
+    isEnabled: state.enabled,
+    isRecommended: state.isRecommended,
+    lastReport: state.lastReport,
+    enable,
+    disable,
+    toggle,
+    checkNow,
+    estimatedCost
+  };
+}
+function useIsConsolidationRecommended(tokenMint) {
+  const { notes } = useCloakCraft();
+  const [consolidator] = useState17(() => new AutoConsolidator());
+  const tokenNotes = useMemo10(
+    () => notes.filter((n) => n.tokenMint.equals(tokenMint)),
+    [notes, tokenMint]
+  );
+  useEffect11(() => {
+    consolidator.setNoteProvider(() => tokenNotes);
+  }, [consolidator, tokenNotes]);
+  const [isRecommended, setIsRecommended] = useState17(false);
+  useEffect11(() => {
+    consolidator.check();
+    setIsRecommended(consolidator.isConsolidationRecommended());
+  }, [consolidator, tokenNotes]);
+  return isRecommended;
+}
+
+// src/useProtocolFees.ts
+import { useState as useState18, useEffect as useEffect12, useCallback as useCallback18, useMemo as useMemo11 } from "react";
+import { PublicKey as PublicKey3 } from "@solana/web3.js";
+import { deriveProtocolConfigPda, PROGRAM_ID } from "@cloakcraft/sdk";
+var DEFAULT_FEES = {
+  transferFeeBps: 10,
+  // 0.1%
+  unshieldFeeBps: 25,
+  // 0.25%
+  swapFeeBps: 30,
+  // 0.3%
+  removeLiquidityFeeBps: 25,
+  // 0.25%
+  feesEnabled: true
+};
+function useProtocolFees() {
+  const { client, isProgramReady } = useCloakCraft();
+  const [config, setConfig] = useState18(null);
+  const [isLoading, setIsLoading] = useState18(true);
+  const [error, setError] = useState18(null);
+  const fetchConfig = useCallback18(async () => {
+    if (!client || !isProgramReady) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const program = client.getProgram();
+      if (!program) {
+        throw new Error("Program not initialized");
+      }
+      const [configPda] = deriveProtocolConfigPda(PROGRAM_ID);
+      const accountInfo = await program.provider.connection.getAccountInfo(configPda);
+      if (!accountInfo) {
+        console.log("[useProtocolFees] Protocol config not found, using defaults");
+        setConfig(null);
+        setIsLoading(false);
+        return;
+      }
+      const data = accountInfo.data;
+      const authority = new PublicKey3(data.subarray(8, 40));
+      const treasury = new PublicKey3(data.subarray(40, 72));
+      const transferFeeBps = data.readUInt16LE(72);
+      const unshieldFeeBps = data.readUInt16LE(74);
+      const swapFeeBps = data.readUInt16LE(76);
+      const removeLiquidityFeeBps = data.readUInt16LE(78);
+      const feesEnabled = data[80] !== 0;
+      setConfig({
+        authority,
+        treasury,
+        transferFeeBps,
+        unshieldFeeBps,
+        swapFeeBps,
+        removeLiquidityFeeBps,
+        feesEnabled
+      });
+    } catch (err) {
+      console.error("[useProtocolFees] Failed to fetch config:", err);
+      setError(err instanceof Error ? err.message : "Failed to load fee config");
+      setConfig(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [client, isProgramReady]);
+  useEffect12(() => {
+    fetchConfig();
+  }, [fetchConfig]);
+  const calculateFee = useCallback18(
+    (amount, operation) => {
+      const cfg = config ?? {
+        ...DEFAULT_FEES,
+        authority: PublicKey3.default,
+        treasury: PublicKey3.default
+      };
+      if (!cfg.feesEnabled) {
+        return 0n;
+      }
+      const bps = {
+        transfer: cfg.transferFeeBps,
+        unshield: cfg.unshieldFeeBps,
+        swap: cfg.swapFeeBps,
+        remove_liquidity: cfg.removeLiquidityFeeBps
+      }[operation];
+      return amount * BigInt(bps) / 10000n;
+    },
+    [config]
+  );
+  return {
+    config,
+    isLoading,
+    error,
+    refresh: fetchConfig,
+    calculateFee
+  };
+}
+function useIsFreeOperation(operation) {
+  return useMemo11(() => {
+    const freeOperations = ["shield", "add_liquidity", "consolidate"];
+    return freeOperations.includes(operation);
+  }, [operation]);
 }
 export {
   CloakCraftProvider,
@@ -2070,11 +2572,16 @@ export {
   useAddLiquidity,
   useAllBalances,
   useAmmPools,
+  useAutoConsolidation,
   useBalance,
   useCloakCraft,
+  useConsolidation,
+  useFragmentationScore,
   useImpermanentLoss,
   useInitializeAmmPool,
   useInitializePool,
+  useIsConsolidationRecommended,
+  useIsFreeOperation,
   useNoteSelection,
   useNoteSelector,
   useNotes,
@@ -2086,11 +2593,13 @@ export {
   usePoolStats,
   usePortfolioValue,
   usePrivateBalance,
+  useProtocolFees,
   usePublicBalance,
   useRecentTransactions,
   useRemoveLiquidity,
   useScanner,
   useShield,
+  useShouldConsolidate,
   useSolBalance,
   useSolPrice,
   useSwap,

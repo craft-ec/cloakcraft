@@ -10,11 +10,13 @@ import {
   Transaction,
   Keypair as SolanaKeypair,
 } from '@solana/web3.js';
+import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { Program } from '@coral-xyz/anchor';
 
 import type {
   ShieldParams,
   TransferParams,
+  TransferProgressStage,
   AdapterSwapParams,
   OrderParams,
   TransactionResult,
@@ -43,7 +45,7 @@ import { computeCommitment, generateRandomness, createNote } from './crypto/comm
 import { derivePublicKey } from './crypto/babyjubjub';
 import { poseidonHash, fieldToBytes, bytesToField, initPoseidon } from './crypto/poseidon';
 import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier';
-import { deriveStealthPrivateKey } from './crypto/stealth';
+import { deriveStealthPrivateKey, generateStealthAddress } from './crypto/stealth';
 import {
   encryptVote,
   serializeEncryptedVote,
@@ -61,6 +63,7 @@ import {
 import {
   buildShieldWithProgram,
   buildTransactWithProgram,
+  buildConsolidationWithProgram,
   storeCommitments,
   initializePool as initPool,
   buildInitializeAmmPoolWithProgram,
@@ -77,6 +80,7 @@ import {
   derivePoolPda,
   deriveOrderPda,
   deriveAggregationPda,
+  deriveProtocolConfigPda,
   CIRCUIT_IDS,
 } from './instructions';
 import {
@@ -681,8 +685,8 @@ export class CloakCraftClient {
       throw new Error('No program set. Call setProgram() first.');
     }
 
-    // Ensure the required circuit is loaded
-    const circuitName = params.inputs.length === 1 ? 'transfer/1x2' : 'transfer/1x3';
+    // Always use transfer_1x2 - consolidate notes first if multiple inputs needed
+    const circuitName = 'transfer/1x2';
     if (!this.proofGenerator.hasCircuit(circuitName)) {
       throw new Error(`Prover not initialized. Call initializeProver(['${circuitName}']) first.`);
     }
@@ -709,10 +713,12 @@ export class CloakCraftClient {
     const baseLeafIndex = counterAccount.data.readBigUInt64LE(40);
 
     // Generate proof client-side (all private data stays local)
+    params.onProgress?.('generating');
     const proof = await this.proofGenerator.generateTransferProof(
       params,
       this.wallet.keypair
     );
+    params.onProgress?.('building');
 
     // Require accountHash for commitment existence proof
     const accountHash = params.inputs[0].accountHash;
@@ -759,6 +765,31 @@ export class CloakCraftClient {
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
 
+    // Get protocol config and treasury token account if there's a fee
+    let protocolConfig: PublicKey | undefined;
+    let treasuryWallet: PublicKey | undefined;
+    let treasuryTokenAccount: PublicKey | undefined;
+
+    if (params.fee && params.fee > 0n) {
+      const [configPda] = deriveProtocolConfigPda(this.programId);
+      protocolConfig = configPda;
+
+      // Fetch the treasury wallet from protocol config
+      const { fetchProtocolFeeConfig } = await import('./fees');
+      const feeConfig = await fetchProtocolFeeConfig(this.connection, this.programId);
+      if (feeConfig?.treasury) {
+        treasuryWallet = feeConfig.treasury;
+        // Derive the treasury's token account for this token
+        treasuryTokenAccount = getAssociatedTokenAddressSync(
+          tokenMint,
+          treasuryWallet,
+          true // allowOwnerOffCurve
+        );
+        console.log('[Transfer] Treasury wallet:', treasuryWallet.toBase58());
+        console.log('[Transfer] Treasury token account:', treasuryTokenAccount.toBase58());
+      }
+    }
+
     const instructionParams = {
       tokenMint,
       input: {
@@ -781,13 +812,17 @@ export class CloakCraftClient {
       merklePathIndices: params.merkleIndices,
       unshieldAmount: params.unshield?.amount,
       unshieldRecipient: params.unshield?.recipient,
+      feeAmount: params.fee,
+      protocolConfig,
+      treasuryWallet,
+      treasuryTokenAccount,
       relayer: relayerPubkey,
       proof,
       nullifier,
       inputCommitment,
     };
 
-    const circuitId = circuitName === 'transfer/1x2' ? 'transfer_1x2' : 'transfer_1x3';
+    const circuitId = 'transfer_1x2';
 
     console.log('[Transfer] === Starting Multi-Phase Transfer ===');
     console.log('[Transfer] Circuit:', circuitName);
@@ -797,6 +832,13 @@ export class CloakCraftClient {
     console.log('[Transfer] Unshield:', instructionParams.unshieldAmount?.toString() || 'none');
     if (instructionParams.unshieldRecipient) {
       console.log('[Transfer] Unshield recipient:', instructionParams.unshieldRecipient.toBase58());
+    }
+    console.log('[Transfer] Fee:', instructionParams.feeAmount?.toString() || '0');
+    if (protocolConfig) {
+      console.log('[Transfer] Protocol config:', protocolConfig.toBase58());
+    }
+    if (treasuryTokenAccount) {
+      console.log('[Transfer] Treasury token account:', treasuryTokenAccount.toBase58());
     }
 
     // Multi-phase execution with ALT compression
@@ -915,6 +957,7 @@ export class CloakCraftClient {
 
     // Sign all transactions at once (ONE wallet popup)
     console.log('[Transfer] Requesting signature for all transactions...');
+    params.onProgress?.('approving');
     let signedTransactions;
     if (relayer) {
       signedTransactions = transactions.map(tx => {
@@ -932,6 +975,7 @@ export class CloakCraftClient {
       throw new Error('No signing method available');
     }
     console.log(`[Transfer] All ${signedTransactions.length} transactions signed!`);
+    params.onProgress?.('executing');
 
     // Execute signed transactions sequentially
     console.log('[Transfer] Executing signed transactions sequentially...');
@@ -955,6 +999,7 @@ export class CloakCraftClient {
       }
     }
 
+    params.onProgress?.('confirming');
     return {
       signature: phase1Signature,
       slot: 0,
@@ -1042,6 +1087,7 @@ export class CloakCraftClient {
       inputs: DecryptedNote[];
       outputs: Array<{ recipient: StealthAddress; amount: bigint }>;
       unshield?: { amount: bigint; recipient: PublicKey };
+      onProgress?: (stage: TransferProgressStage) => void;
     },
     relayer?: SolanaKeypair
   ): Promise<TransactionResult> {
@@ -1074,17 +1120,404 @@ export class CloakCraftClient {
     const dummyIndices = Array(32).fill(0);
 
 
+    // Calculate protocol fee from on-chain config
+    const { fetchProtocolFeeConfig, calculateProtocolFee } = await import('./fees');
+    const feeConfig = await fetchProtocolFeeConfig(this.connection, this.programId);
+
+    // Determine operation type for fee calculation
+    const operationType = request.unshield ? 'unshield' : 'transfer';
+
+    // Calculate total input amount
+    const totalInputAmount = preparedInputs.reduce((sum, input) => sum + input.amount, 0n);
+
+    // For fee calculation, use the "value being moved" - unshield amount or transfer amount
+    // Fee is based on what the user is extracting/sending, not the total input
+    const feeableAmount = request.unshield?.amount ?? request.outputs[0]?.amount ?? 0n;
+    const feeCalc = calculateProtocolFee(feeableAmount, operationType, feeConfig);
+
+    console.log('[prepareAndTransfer] Fee calculation:', {
+      operationType,
+      feeableAmount: feeableAmount.toString(),
+      feeAmount: feeCalc.feeAmount.toString(),
+      feeBps: feeCalc.feeBps,
+      feesEnabled: feeConfig?.feesEnabled ?? false,
+      totalInput: totalInputAmount.toString(),
+    });
+
+    // Adjust amounts to account for fee
+    // Balance equation: input = out_1 + out_2 + unshield + fee
+    let adjustedOutputs = preparedOutputs;
+    let adjustedUnshield = request.unshield;
+
+    if (feeCalc.feeAmount > 0n) {
+      if (request.unshield && request.unshield.amount > 0n) {
+        // For unshield: fee is deducted from the unshield amount (user receives less)
+        // This is standard - withdrawal fees reduce what you receive
+        if (request.unshield.amount < feeCalc.feeAmount) {
+          throw new Error(
+            `Insufficient unshield amount to pay protocol fee. Unshield: ${request.unshield.amount}, Fee: ${feeCalc.feeAmount}.`
+          );
+        }
+
+        adjustedUnshield = {
+          ...request.unshield,
+          amount: request.unshield.amount - feeCalc.feeAmount,
+        };
+
+        console.log('[prepareAndTransfer] Adjusted unshield for fee:', {
+          originalAmount: request.unshield.amount.toString(),
+          adjustedAmount: adjustedUnshield.amount.toString(),
+          feeDeducted: feeCalc.feeAmount.toString(),
+        });
+      } else if (preparedOutputs.length > 0) {
+        // For transfer: fee is deducted from the change output
+        // Find the change output (last output if multiple, or first if single)
+        const changeOutputIndex = preparedOutputs.length > 1 ? 1 : 0;
+        const changeOutput = preparedOutputs[changeOutputIndex];
+
+        // Verify there's enough change to cover the fee
+        if (changeOutput.amount < feeCalc.feeAmount) {
+          throw new Error(
+            `Insufficient balance to pay protocol fee. Change: ${changeOutput.amount}, Fee: ${feeCalc.feeAmount}. ` +
+            `Please use a larger input amount or reduce the transfer amount.`
+          );
+        }
+
+        // Create new output with fee deducted from change
+        const adjustedChangeOutput = {
+          ...changeOutput,
+          amount: changeOutput.amount - feeCalc.feeAmount,
+        };
+
+        // Recompute commitment for adjusted change output
+        const adjustedNote = {
+          stealthPubX: adjustedChangeOutput.stealthPubX,
+          tokenMint,
+          amount: adjustedChangeOutput.amount,
+          randomness: adjustedChangeOutput.randomness,
+        };
+        adjustedChangeOutput.commitment = computeCommitment(adjustedNote as any);
+
+        // Replace the change output with adjusted version
+        adjustedOutputs = [...preparedOutputs];
+        adjustedOutputs[changeOutputIndex] = adjustedChangeOutput;
+
+        console.log('[prepareAndTransfer] Adjusted change output for fee:', {
+          originalAmount: changeOutput.amount.toString(),
+          adjustedAmount: adjustedChangeOutput.amount.toString(),
+          feeDeducted: feeCalc.feeAmount.toString(),
+        });
+      }
+    }
+
     // Build full TransferParams
+    request.onProgress?.('preparing');
     const params: TransferParams = {
       inputs: preparedInputs,
       merkleRoot: commitment,
       merklePath: dummyPath,
       merkleIndices: dummyIndices,
-      outputs: preparedOutputs,
-      unshield: request.unshield,
+      outputs: adjustedOutputs,
+      unshield: adjustedUnshield,
+      fee: feeCalc.feeAmount,
+      onProgress: request.onProgress,
     };
 
     return this.transfer(params, relayer);
+  }
+
+  /**
+   * Prepare and consolidate notes
+   *
+   * Consolidates multiple notes into a single note.
+   * This is used to reduce wallet fragmentation.
+   *
+   * @param inputs - Notes to consolidate (1-3)
+   * @param tokenMint - Token mint (all inputs must use same token)
+   * @param onProgress - Optional progress callback
+   * @returns Transaction result with signature
+   */
+  async prepareAndConsolidate(
+    inputs: DecryptedNote[],
+    tokenMint: PublicKey,
+    onProgress?: (stage: TransferProgressStage) => void
+  ): Promise<TransactionResult> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+
+    if (!this.program) {
+      throw new Error('Program not set. Call setProgram() first.');
+    }
+
+    if (inputs.length === 0 || inputs.length > 3) {
+      throw new Error('Consolidation requires 1-3 input notes');
+    }
+
+    onProgress?.('preparing');
+    console.log(`[prepareAndConsolidate] Consolidating ${inputs.length} notes...`);
+
+    // Force re-scan to get fresh notes with stealthEphemeralPubkey
+    this.clearScanCache();
+    const freshNotes = await this.scanNotes(tokenMint);
+
+    // Find matching fresh notes for the input commitments
+    const matchedInputs: DecryptedNote[] = [];
+    for (const input of inputs) {
+      const fresh = freshNotes.find(n =>
+        n.commitment && input.commitment &&
+        Buffer.from(n.commitment).toString('hex') === Buffer.from(input.commitment).toString('hex')
+      );
+      if (fresh) {
+        matchedInputs.push(fresh);
+      } else {
+        throw new Error('Selected note not found in pool. It may have been spent or not yet synced.');
+      }
+    }
+
+    // Prepare inputs with all required fields
+    const preparedInputs = await this.prepareInputs(matchedInputs);
+
+    // Generate stealth address for output (back to self)
+    const { stealthAddress } = generateStealthAddress(this.wallet.keypair.publicKey);
+
+    // Use commitment as merkle_root with dummy path
+    // The circuit doesn't verify merkle path (it's for ABI compatibility only)
+    const commitment = preparedInputs[0].commitment;
+
+    // Build consolidation params
+    const consolidationParams = {
+      inputs: preparedInputs,
+      merkleRoot: commitment,
+      tokenMint,
+      outputRecipient: stealthAddress,
+    };
+
+    // Generate consolidation proof
+    onProgress?.('generating');
+    console.log('[prepareAndConsolidate] Generating consolidation proof...');
+    const proofResult = await this.proofGenerator.generateConsolidationProof(
+      consolidationParams,
+      this.wallet.keypair
+    );
+
+    console.log(`[prepareAndConsolidate] Proof generated. Output amount: ${proofResult.outputAmount}`);
+    console.log(`[prepareAndConsolidate] Nullifiers: ${proofResult.nullifiers.length}`);
+
+    // Build and execute multi-phase transaction
+    // Similar to transfer, but using consolidation circuit
+    onProgress?.('building');
+    const result = await this.executeConsolidation(
+      preparedInputs,
+      proofResult,
+      tokenMint,
+      stealthAddress,
+      onProgress
+    );
+
+    // Sync notes after consolidation (clear cache and rescan)
+    onProgress?.('confirming');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    this.clearScanCache();
+    await this.scanNotes(tokenMint);
+
+    return result;
+  }
+
+  /**
+   * Execute consolidation transaction (multi-phase)
+   *
+   * Uses the consolidate_3x1 circuit and pre-generated proof.
+   */
+  private async executeConsolidation(
+    inputs: PreparedInput[],
+    proofResult: {
+      proof: Uint8Array;
+      nullifiers: Uint8Array[];
+      outputCommitment: Uint8Array;
+      outputRandomness: Uint8Array;
+      outputAmount: bigint;
+    },
+    tokenMint: PublicKey,
+    outputRecipient: StealthAddress,
+    onProgress?: (stage: TransferProgressStage) => void
+  ): Promise<TransactionResult> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+    if (!this.program) {
+      throw new Error('No program set');
+    }
+
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const relayerPubkey = await this.getRelayerPubkey();
+
+    // Validate all inputs have accountHash
+    for (let i = 0; i < inputs.length; i++) {
+      if (!inputs[i].accountHash) {
+        throw new Error(`Input note ${i} missing accountHash`);
+      }
+    }
+
+    console.log('[Consolidation] === Starting Multi-Phase Consolidation ===');
+    console.log('[Consolidation] Token:', tokenMint.toBase58());
+    console.log('[Consolidation] Inputs:', inputs.length);
+    console.log('[Consolidation] Output amount:', proofResult.outputAmount.toString());
+
+    // Build consolidation instruction parameters
+    const consolidationParams = {
+      tokenMint,
+      inputs: inputs.map(input => ({
+        stealthPubX: input.stealthPubX,
+        amount: input.amount,
+        randomness: input.randomness,
+        leafIndex: input.leafIndex,
+        commitment: input.commitment,
+        accountHash: input.accountHash!,
+      })),
+      nullifiers: proofResult.nullifiers,
+      outputCommitment: proofResult.outputCommitment,
+      outputRandomness: proofResult.outputRandomness,
+      outputAmount: proofResult.outputAmount,
+      outputRecipient,
+      merkleRoot: inputs[0].commitment, // Dummy - Light Protocol verifies on-chain
+      relayer: relayerPubkey,
+      proof: proofResult.proof,
+    };
+
+    // Build multi-phase transactions using consolidation-specific builder
+    let phase0Tx, phase1Txs, phase2Txs, operationId, pendingCommitments;
+    try {
+      const buildResult = await buildConsolidationWithProgram(
+        this.program,
+        consolidationParams,
+        heliusRpcUrl
+      );
+      phase0Tx = buildResult.phase0Tx;
+      phase1Txs = buildResult.phase1Txs;
+      phase2Txs = buildResult.phase2Txs;
+      operationId = buildResult.operationId;
+      pendingCommitments = buildResult.pendingCommitments;
+      console.log('[Consolidation] Phase transactions built successfully');
+      console.log(`[Consolidation] Phase 0: 1, Phase 1: ${phase1Txs.length}, Phase 2: ${phase2Txs.length}`);
+    } catch (error: any) {
+      console.error('[Consolidation] FAILED to build phase transactions:', error);
+      throw error;
+    }
+
+    // Import generic builders
+    const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
+
+    // Build all transactions
+    const transactionBuilders: { name: string; builder: any }[] = [];
+
+    // Phase 0: Create pending with consolidation proof
+    transactionBuilders.push({ name: 'Phase 0 (Create Pending)', builder: phase0Tx });
+
+    // Phase 1: Verify commitment exists (for each input)
+    for (let i = 0; i < phase1Txs.length; i++) {
+      transactionBuilders.push({ name: `Phase 1.${i} (Verify Commitment ${i})`, builder: phase1Txs[i] });
+    }
+
+    // Phase 2: Create nullifier (for each input)
+    for (let i = 0; i < phase2Txs.length; i++) {
+      transactionBuilders.push({ name: `Phase 2.${i} (Create Nullifier ${i})`, builder: phase2Txs[i] });
+    }
+
+    // Phase 3: Skipped for consolidation (no unshield, no fees)
+
+    // Phase 4+: Create output commitment (single for consolidation)
+    for (let i = 0; i < pendingCommitments.length; i++) {
+      const pc = pendingCommitments[i];
+      const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
+        this.program,
+        {
+          operationId,
+          commitmentIndex: i,
+          pool: pc.pool,
+          relayer: relayerPubkey,
+          stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+          encryptedNote: pc.encryptedNote,
+          commitment: pc.commitment,
+        },
+        heliusRpcUrl
+      );
+      transactionBuilders.push({ name: `Phase 4 (Commitment ${i})`, builder: commitmentTx });
+    }
+
+    // Final: Close pending operation
+    const { tx: closeTx } = await buildClosePendingOperationWithProgram(
+      this.program,
+      operationId,
+      relayerPubkey
+    );
+    transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
+
+    console.log(`[Consolidation] Built ${transactionBuilders.length} transactions total`);
+
+    // Get ALTs for address compression
+    const lookupTables = await this.getAddressLookupTables();
+
+    // Build versioned transactions
+    const { VersionedTransaction, TransactionMessage } = await import('@solana/web3.js');
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+
+    const transactions = await Promise.all(
+      transactionBuilders.map(async ({ name, builder }) => {
+        const mainIx = await builder.instruction();
+        const preIxs = builder._preInstructions || [];
+        const allInstructions = [...preIxs, mainIx];
+
+        return new VersionedTransaction(
+          new TransactionMessage({
+            payerKey: relayerPubkey,
+            recentBlockhash: blockhash,
+            instructions: allInstructions,
+          }).compileToV0Message(lookupTables)
+        );
+      })
+    );
+
+    // Sign all transactions
+    console.log('[Consolidation] Requesting signature for all transactions...');
+    onProgress?.('approving');
+    let signedTransactions;
+    if (this.program?.provider?.wallet) {
+      const wallet = this.program.provider.wallet;
+      if (typeof wallet.signAllTransactions === 'function') {
+        signedTransactions = await wallet.signAllTransactions(transactions);
+      } else {
+        throw new Error('Wallet does not support batch signing');
+      }
+    } else {
+      throw new Error('No signing method available');
+    }
+    console.log(`[Consolidation] All ${signedTransactions.length} transactions signed!`);
+    onProgress?.('executing');
+
+    // Execute transactions sequentially
+    let finalSignature = '';
+    for (let i = 0; i < signedTransactions.length; i++) {
+      const tx = signedTransactions[i];
+      const name = transactionBuilders[i].name;
+
+      console.log(`[Consolidation] Sending ${name}...`);
+      const signature = await this.connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
+
+      await this.connection.confirmTransaction(signature, 'confirmed');
+      console.log(`[Consolidation] ${name} confirmed: ${signature}`);
+      finalSignature = signature;
+    }
+
+    console.log('[Consolidation] === Consolidation Complete ===');
+
+    return {
+      signature: finalSignature,
+      slot: 0, // Could fetch from confirmation if needed
+    };
   }
 
   /**

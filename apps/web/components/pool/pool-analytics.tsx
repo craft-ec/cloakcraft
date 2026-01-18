@@ -1,14 +1,16 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { PublicKey } from '@solana/web3.js';
+import { useConnection } from '@solana/wallet-adapter-react';
+import { getAccount } from '@solana/spl-token';
 import {
   usePoolAnalytics,
   usePoolStats,
   useUserPosition,
-  formatTvl,
   formatShare,
 } from '@cloakcraft/hooks';
+import { deriveVaultPda, PROGRAM_ID } from '@cloakcraft/sdk';
 import type { PoolStats } from '@cloakcraft/hooks';
 import type { AmmPoolState } from '@cloakcraft/sdk';
 import {
@@ -17,28 +19,150 @@ import {
   BarChart3,
   PieChart,
   RefreshCw,
-  DollarSign,
+  Coins,
   Percent,
+  Lock,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatAmount, formatUsd, cn } from '@/lib/utils';
-import { getTokenInfo } from '@/lib/constants';
+import { formatAmount, cn } from '@/lib/utils';
+import { getTokenInfo, SUPPORTED_TOKENS } from '@/lib/constants';
 
 /**
- * Overall protocol analytics card
+ * Protocol Stats - Total tokens locked in privacy vaults
  */
-export function ProtocolAnalytics({ className }: { className?: string }) {
-  const { analytics, totalTvl, formattedTvl, poolCount, isLoading, refresh } =
-    usePoolAnalytics();
+export function ProtocolStats({ className }: { className?: string }) {
+  const { connection } = useConnection();
+  const [vaultBalances, setVaultBalances] = useState<Array<{ symbol: string; amount: bigint; decimals: number }>>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchVaultBalances = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const balances: Array<{ symbol: string; amount: bigint; decimals: number }> = [];
+
+      for (const token of SUPPORTED_TOKENS) {
+        try {
+          const [vaultPda] = deriveVaultPda(token.mint, PROGRAM_ID);
+          const vaultAccount = await getAccount(connection, vaultPda);
+          if (vaultAccount.amount > 0n) {
+            balances.push({
+              symbol: token.symbol,
+              amount: vaultAccount.amount,
+              decimals: token.decimals,
+            });
+          }
+        } catch {
+          // Vault doesn't exist or no balance - skip
+        }
+      }
+
+      setVaultBalances(balances);
+    } catch (err) {
+      console.error('Failed to fetch vault balances:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [connection]);
+
+  useEffect(() => {
+    fetchVaultBalances();
+  }, [fetchVaultBalances]);
+
+  const totalTokens = vaultBalances.length;
 
   return (
     <Card className={className}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
         <CardTitle className="text-lg flex items-center gap-2">
-          <BarChart3 className="h-5 w-5" />
+          <Lock className="h-5 w-5" />
           Protocol Stats
+        </CardTitle>
+        <Button variant="ghost" size="icon" onClick={fetchVaultBalances} disabled={isLoading}>
+          <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-2">
+            <StatSkeleton />
+            <StatSkeleton />
+          </div>
+        ) : vaultBalances.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No tokens shielded yet.</p>
+        ) : (
+          <div className="space-y-4">
+            <StatCard
+              label="Tokens Shielded"
+              value={totalTokens.toString()}
+              icon={<Coins className="h-4 w-4" />}
+            />
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-muted-foreground">Total Locked</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {vaultBalances.map((token) => (
+                  <div key={token.symbol} className="rounded-lg bg-muted p-3">
+                    <p className="text-sm text-muted-foreground">{token.symbol}</p>
+                    <p className="font-mono font-medium">
+                      {formatAmount(token.amount, token.decimals)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Liquidity Pool Stats - AMM pool data
+ */
+export function LiquidityPoolStats({ className }: { className?: string }) {
+  const { poolStats, poolCount, isLoading, refresh } = usePoolAnalytics();
+
+  // Calculate total tokens in AMM pools per token type
+  const tokensInPools = useMemo(() => {
+    const totals = new Map<string, { amount: bigint; symbol: string; decimals: number }>();
+
+    for (const pool of poolStats) {
+      // Token A
+      const tokenAInfo = getTokenInfo(new PublicKey(pool.tokenAMint));
+      const tokenAKey = pool.tokenAMint;
+      const existingA = totals.get(tokenAKey);
+      totals.set(tokenAKey, {
+        amount: (existingA?.amount ?? 0n) + pool.reserveA,
+        symbol: tokenAInfo?.symbol ?? 'Unknown',
+        decimals: tokenAInfo?.decimals ?? 9,
+      });
+
+      // Token B
+      const tokenBInfo = getTokenInfo(new PublicKey(pool.tokenBMint));
+      const tokenBKey = pool.tokenBMint;
+      const existingB = totals.get(tokenBKey);
+      totals.set(tokenBKey, {
+        amount: (existingB?.amount ?? 0n) + pool.reserveB,
+        symbol: tokenBInfo?.symbol ?? 'Unknown',
+        decimals: tokenBInfo?.decimals ?? 9,
+      });
+    }
+
+    return Array.from(totals.values()).filter(t => t.amount > 0n);
+  }, [poolStats]);
+
+  if (poolCount === 0 && !isLoading) {
+    return null; // Hide if no AMM pools
+  }
+
+  return (
+    <Card className={className}>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Droplets className="h-5 w-5" />
+          Liquidity Pools
         </CardTitle>
         <Button variant="ghost" size="icon" onClick={refresh} disabled={isLoading}>
           <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
@@ -51,21 +175,43 @@ export function ProtocolAnalytics({ className }: { className?: string }) {
             <StatSkeleton />
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-4">
-            <StatCard
-              label="Total Value Locked"
-              value={formattedTvl}
-              icon={<DollarSign className="h-4 w-4" />}
-            />
+          <div className="space-y-4">
             <StatCard
               label="Active Pools"
               value={poolCount.toString()}
-              icon={<Droplets className="h-4 w-4" />}
+              icon={<BarChart3 className="h-4 w-4" />}
             />
+            {tokensInPools.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-muted-foreground">Pool Reserves</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {tokensInPools.map((token) => (
+                    <div key={token.symbol} className="rounded-lg bg-muted p-3">
+                      <p className="text-sm text-muted-foreground">{token.symbol}</p>
+                      <p className="font-mono font-medium">
+                        {formatAmount(token.amount, token.decimals)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Combined Protocol Analytics - shows both privacy vault stats and AMM pool stats
+ */
+export function ProtocolAnalytics({ className }: { className?: string }) {
+  return (
+    <div className={cn('space-y-6', className)}>
+      <ProtocolStats />
+      <LiquidityPoolStats />
+    </div>
   );
 }
 
@@ -114,24 +260,15 @@ export function PoolStatsCard({
           <div className="grid grid-cols-2 gap-4">
             <StatSkeleton />
             <StatSkeleton />
-            <StatSkeleton />
-            <StatSkeleton />
           </div>
         ) : stats ? (
           <div className="space-y-4">
-            {/* TVL */}
-            <div className="grid grid-cols-2 gap-4">
-              <StatCard
-                label="Total Value Locked"
-                value={formatTvl(stats.tvlUsd)}
-                icon={<DollarSign className="h-4 w-4" />}
-              />
-              <StatCard
-                label="Fee"
-                value={`${stats.feeBps / 100}%`}
-                icon={<Percent className="h-4 w-4" />}
-              />
-            </div>
+            {/* Fee */}
+            <StatCard
+              label="Swap Fee"
+              value={`${stats.feeBps / 100}%`}
+              icon={<Percent className="h-4 w-4" />}
+            />
 
             {/* Reserves */}
             <div className="space-y-2">
@@ -142,17 +279,11 @@ export function PoolStatsCard({
                   <p className="font-mono font-medium">
                     {formatAmount(stats.reserveA, tokenADecimals)}
                   </p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatUsd(stats.tokenAValueUsd)}
-                  </p>
                 </div>
                 <div className="rounded-lg bg-muted p-3">
                   <p className="text-sm text-muted-foreground">{tokenBInfo?.symbol}</p>
                   <p className="font-mono font-medium">
                     {formatAmount(stats.reserveB, tokenBDecimals)}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatUsd(stats.tokenBValueUsd)}
                   </p>
                 </div>
               </div>
@@ -179,20 +310,11 @@ export function PoolStatsCard({
 
             {/* LP Token Info */}
             <div className="space-y-2">
-              <p className="text-sm font-medium text-muted-foreground">LP Token</p>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-lg bg-muted p-3">
-                  <p className="text-sm text-muted-foreground">Total Supply</p>
-                  <p className="font-mono font-medium">
-                    {formatAmount(stats.lpSupply, 9)}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-muted p-3">
-                  <p className="text-sm text-muted-foreground">LP Token Price</p>
-                  <p className="font-mono font-medium">
-                    {formatUsd(stats.lpTokenPriceUsd)}
-                  </p>
-                </div>
+              <p className="text-sm font-medium text-muted-foreground">LP Token Supply</p>
+              <div className="rounded-lg bg-muted p-3">
+                <p className="font-mono font-medium">
+                  {formatAmount(stats.lpSupply, 9)}
+                </p>
               </div>
             </div>
           </div>
@@ -259,19 +381,12 @@ export function UserPositionCard({
           </div>
         ) : position ? (
           <div className="space-y-4">
-            {/* Position Value */}
-            <div className="grid grid-cols-2 gap-4">
-              <StatCard
-                label="Position Value"
-                value={formatUsd(position.valueUsd)}
-                icon={<DollarSign className="h-4 w-4" />}
-              />
-              <StatCard
-                label="Pool Share"
-                value={formatShare(position.sharePercent)}
-                icon={<PieChart className="h-4 w-4" />}
-              />
-            </div>
+            {/* Pool Share */}
+            <StatCard
+              label="Pool Share"
+              value={formatShare(position.sharePercent)}
+              icon={<PieChart className="h-4 w-4" />}
+            />
 
             {/* Underlying Assets */}
             <div className="space-y-2">
@@ -333,8 +448,8 @@ export function PoolList({ className }: { className?: string }) {
             {/* Header - hidden on mobile */}
             <div className="hidden sm:grid grid-cols-4 gap-4 text-sm text-muted-foreground px-2">
               <span>Pool</span>
-              <span className="text-right">TVL</span>
-              <span className="text-right">Volume 24h</span>
+              <span className="text-right">Token A</span>
+              <span className="text-right">Token B</span>
               <span className="text-right">Fee</span>
             </div>
             {/* Rows */}
@@ -373,9 +488,9 @@ function PoolRow({ stats }: { stats: PoolStats }) {
           </span>
           <span className="text-xs bg-muted px-2 py-0.5 rounded">{stats.feeBps / 100}% fee</span>
         </div>
-        <div className="flex items-center justify-between text-muted-foreground">
-          <span>TVL</span>
-          <span className="font-mono">{formatTvl(stats.tvlUsd)}</span>
+        <div className="flex items-center justify-between text-muted-foreground text-xs">
+          <span>{formatAmount(stats.reserveA, tokenAInfo?.decimals ?? 9)} {tokenAInfo?.symbol}</span>
+          <span>{formatAmount(stats.reserveB, tokenBInfo?.decimals ?? 9)} {tokenBInfo?.symbol}</span>
         </div>
       </div>
       {/* Desktop layout - grid */}
@@ -383,8 +498,12 @@ function PoolRow({ stats }: { stats: PoolStats }) {
         <div className="font-medium">
           {tokenAInfo?.symbol || 'Unknown'} / {tokenBInfo?.symbol || 'Unknown'}
         </div>
-        <div className="text-right font-mono">{formatTvl(stats.tvlUsd)}</div>
-        <div className="text-right font-mono text-muted-foreground">--</div>
+        <div className="text-right font-mono text-sm">
+          {formatAmount(stats.reserveA, tokenAInfo?.decimals ?? 9)}
+        </div>
+        <div className="text-right font-mono text-sm">
+          {formatAmount(stats.reserveB, tokenBInfo?.decimals ?? 9)}
+        </div>
         <div className="text-right">{stats.feeBps / 100}%</div>
       </div>
     </div>

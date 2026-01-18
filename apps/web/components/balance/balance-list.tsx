@@ -2,13 +2,13 @@
 
 import { useMemo } from 'react';
 import { useWallet as useSolanaWallet } from '@solana/wallet-adapter-react';
-import { useSolBalance, useTokenBalances, useCloakCraft } from '@cloakcraft/hooks';
+import { useSolBalance, useTokenBalances, useCloakCraft, useAmmPools } from '@cloakcraft/hooks';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TokenBalance, TokenBalanceSkeleton } from './token-balance';
 import { RefreshCw, Eye, EyeOff } from 'lucide-react';
-import { SUPPORTED_TOKENS, getTokenDecimals } from '@/lib/constants';
+import { SUPPORTED_TOKENS, getTokenDecimals, getTokenInfo } from '@/lib/constants';
 import { formatAmount } from '@/lib/utils';
 
 export function PublicBalanceList() {
@@ -87,9 +87,10 @@ export function PublicBalanceList() {
 
 export function PrivateBalanceList() {
   const { notes, isSyncing, sync, isConnected } = useCloakCraft();
+  const { pools } = useAmmPools();
 
-  // Group notes by token mint and sum balances
-  const privateBalances = useMemo(() => {
+  // Group notes by token mint and sum balances, separating normal tokens from LP tokens
+  const { normalTokens, lpTokens } = useMemo(() => {
     const balanceMap = new Map<string, bigint>();
 
     for (const note of notes) {
@@ -100,17 +101,51 @@ export function PrivateBalanceList() {
       }
     }
 
-    return Array.from(balanceMap.entries()).map(([mint, balance]) => {
+    const normal: Array<{ mint: string; symbol: string; name?: string; decimals: number; balance: bigint }> = [];
+    const lp: Array<{ mint: string; symbol: string; name?: string; decimals: number; balance: bigint }> = [];
+
+    for (const [mint, balance] of balanceMap.entries()) {
       const tokenInfo = SUPPORTED_TOKENS.find((t) => t.mint.toBase58() === mint);
-      return {
-        mint,
-        symbol: tokenInfo?.symbol ?? 'Unknown',
-        name: tokenInfo?.name,
-        decimals: tokenInfo?.decimals ?? 9,
-        balance,
-      };
-    });
-  }, [notes]);
+
+      if (tokenInfo) {
+        // Known token from SUPPORTED_TOKENS
+        normal.push({
+          mint,
+          symbol: tokenInfo.symbol,
+          name: tokenInfo.name,
+          decimals: tokenInfo.decimals,
+          balance,
+        });
+      } else {
+        // Unknown token - check if it's an LP token from a pool
+        const pool = pools.find((p) => p.lpMint.toBase58() === mint);
+        if (pool) {
+          const tokenAInfo = getTokenInfo(pool.tokenAMint);
+          const tokenBInfo = getTokenInfo(pool.tokenBMint);
+          const tokenASymbol = tokenAInfo?.symbol ?? 'Token A';
+          const tokenBSymbol = tokenBInfo?.symbol ?? 'Token B';
+          lp.push({
+            mint,
+            symbol: `${tokenASymbol}/${tokenBSymbol} LP`,
+            name: `${tokenASymbol}/${tokenBSymbol} Liquidity`,
+            decimals: 9, // LP tokens typically use 9 decimals
+            balance,
+          });
+        } else {
+          // Unknown LP token (pool not loaded yet)
+          lp.push({
+            mint,
+            symbol: 'LP',
+            name: 'Liquidity Pool Token',
+            decimals: 9,
+            balance,
+          });
+        }
+      }
+    }
+
+    return { normalTokens: normal, lpTokens: lp };
+  }, [notes, pools]);
 
   const handleRefresh = () => {
     sync(undefined, true);
@@ -134,6 +169,8 @@ export function PrivateBalanceList() {
     );
   }
 
+  const hasTokens = normalTokens.length > 0 || lpTokens.length > 0;
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
@@ -146,27 +183,50 @@ export function PrivateBalanceList() {
         </Button>
       </CardHeader>
       <CardContent className="space-y-4">
-        {isSyncing && privateBalances.length === 0 ? (
+        {isSyncing && !hasTokens ? (
           <>
             <TokenBalanceSkeleton />
             <TokenBalanceSkeleton />
           </>
-        ) : privateBalances.length === 0 ? (
+        ) : !hasTokens ? (
           <p className="text-sm text-muted-foreground">
             No private balances. Shield tokens to get started.
           </p>
         ) : (
-          privateBalances.map((balance) => (
-            <TokenBalance
-              key={balance.mint}
-              symbol={balance.symbol}
-              name={balance.name}
-              balance={balance.balance}
-              decimals={balance.decimals}
-              mint={balance.mint}
-              isPrivate
-            />
-          ))
+          <>
+            {/* Normal Tokens */}
+            {normalTokens.map((balance) => (
+              <TokenBalance
+                key={balance.mint}
+                symbol={balance.symbol}
+                name={balance.name}
+                balance={balance.balance}
+                decimals={balance.decimals}
+                mint={balance.mint}
+                isPrivate
+              />
+            ))}
+
+            {/* LP Tokens - show in separate section if any */}
+            {lpTokens.length > 0 && (
+              <>
+                <div className="border-t pt-4 mt-4">
+                  <p className="text-sm font-medium text-muted-foreground mb-3">LP Tokens</p>
+                  {lpTokens.map((balance) => (
+                    <TokenBalance
+                      key={balance.mint}
+                      symbol={balance.symbol}
+                      name={balance.name}
+                      balance={balance.balance}
+                      decimals={balance.decimals}
+                      mint={balance.mint}
+                      isPrivate
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </>
         )}
       </CardContent>
     </Card>

@@ -235,6 +235,15 @@ export interface TransferOutput {
   randomness: FieldElement;
 }
 
+/** Progress stages for transfer operation */
+export type TransferProgressStage =
+  | 'preparing'     // Preparing inputs/outputs
+  | 'generating'    // Generating ZK proof
+  | 'building'      // Building transactions
+  | 'approving'     // Awaiting wallet approval
+  | 'executing'     // Executing transactions
+  | 'confirming';   // Waiting for confirmation
+
 /** Transfer transaction parameters */
 export interface TransferParams {
   /** Input notes with derived Y-coordinate */
@@ -252,6 +261,10 @@ export interface TransferParams {
     amount: bigint;
     recipient: PublicKey;
   };
+  /** Protocol fee amount (required for proof generation) */
+  fee?: bigint;
+  /** Optional progress callback for UI updates */
+  onProgress?: (stage: TransferProgressStage) => void;
 }
 
 // =============================================================================
@@ -342,6 +355,26 @@ export interface RemoveLiquidityParams {
   outputAAmount: bigint;
   /** Expected Token B output amount */
   outputBAmount: bigint;
+}
+
+// =============================================================================
+// Consolidation Types
+// =============================================================================
+
+/** Consolidation parameters for merging multiple notes into one */
+export interface ConsolidationParams {
+  /** Input notes to consolidate (1-3 notes) */
+  inputs: PreparedInput[];
+  /** Merkle root (for Light Protocol verification) */
+  merkleRoot: MerkleRoot;
+  /** Token mint (all inputs must have same mint) */
+  tokenMint: PublicKey;
+  /** Output stealth address (to self) */
+  outputRecipient: StealthAddress;
+  /** Pre-computed output commitment */
+  outputCommitment?: Commitment;
+  /** Output randomness (generated if not provided) */
+  outputRandomness?: Uint8Array;
 }
 
 // =============================================================================

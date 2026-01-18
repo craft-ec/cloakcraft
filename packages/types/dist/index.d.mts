@@ -194,6 +194,8 @@ interface TransferOutput {
     /** Randomness for commitment */
     randomness: FieldElement;
 }
+/** Progress stages for transfer operation */
+type TransferProgressStage = 'preparing' | 'generating' | 'building' | 'approving' | 'executing' | 'confirming';
 /** Transfer transaction parameters */
 interface TransferParams {
     /** Input notes with derived Y-coordinate */
@@ -211,6 +213,10 @@ interface TransferParams {
         amount: bigint;
         recipient: PublicKey;
     };
+    /** Protocol fee amount (required for proof generation) */
+    fee?: bigint;
+    /** Optional progress callback for UI updates */
+    onProgress?: (stage: TransferProgressStage) => void;
 }
 /** AMM Swap parameters */
 interface AmmSwapParams {
@@ -294,6 +300,21 @@ interface RemoveLiquidityParams {
     outputAAmount: bigint;
     /** Expected Token B output amount */
     outputBAmount: bigint;
+}
+/** Consolidation parameters for merging multiple notes into one */
+interface ConsolidationParams {
+    /** Input notes to consolidate (1-3 notes) */
+    inputs: PreparedInput[];
+    /** Merkle root (for Light Protocol verification) */
+    merkleRoot: MerkleRoot;
+    /** Token mint (all inputs must have same mint) */
+    tokenMint: PublicKey;
+    /** Output stealth address (to self) */
+    outputRecipient: StealthAddress;
+    /** Pre-computed output commitment */
+    outputCommitment?: Commitment;
+    /** Output randomness (generated if not provided) */
+    outputRandomness?: Uint8Array;
 }
 /** Adapter swap parameters */
 interface AdapterSwapParams {
@@ -603,4 +624,4 @@ interface SyncStatus {
     isSynced: boolean;
 }
 
-export { type AdapterProofInputs, type AdapterSwapParams, type AddLiquidityParams, type AggregationState, AggregationStatus, type AmmPoolState, type AmmSwapParams, type CancelOrderParams, type Commitment, type CreateAggregationParams, type DecryptedNote, type DecryptionShare, type ElGamalCiphertext, type EncryptedNote, type EncryptedVote, type FieldElement, type FillOrderParams, type FinalizeVotingParams, type Groth16Proof, type Keypair, type MerkleProof, type MerkleRoot, type Note, type NoteCreatedEvent, type NoteSpentEvent, type Nullifier, type OrderCreatedEvent, type OrderFilledEvent, type OrderParams, type OrderState, OrderStatus, type OrderTerms, type Point, type PoolState, type PoseidonHash, type PreparedInput, type RemoveLiquidityParams, type ShieldParams, type SpendingKey, type StealthAddress, type SubmitDecryptionShareParams, type SubmitVoteParams, type SyncStatus, type TransactionResult, type TransferOutput, type TransferParams, type TransferProofInputs, type ViewingKey, type VoteParams, type VoteProofInputs, type VoteSubmittedEvent };
+export { type AdapterProofInputs, type AdapterSwapParams, type AddLiquidityParams, type AggregationState, AggregationStatus, type AmmPoolState, type AmmSwapParams, type CancelOrderParams, type Commitment, type ConsolidationParams, type CreateAggregationParams, type DecryptedNote, type DecryptionShare, type ElGamalCiphertext, type EncryptedNote, type EncryptedVote, type FieldElement, type FillOrderParams, type FinalizeVotingParams, type Groth16Proof, type Keypair, type MerkleProof, type MerkleRoot, type Note, type NoteCreatedEvent, type NoteSpentEvent, type Nullifier, type OrderCreatedEvent, type OrderFilledEvent, type OrderParams, type OrderState, OrderStatus, type OrderTerms, type Point, type PoolState, type PoseidonHash, type PreparedInput, type RemoveLiquidityParams, type ShieldParams, type SpendingKey, type StealthAddress, type SubmitDecryptionShareParams, type SubmitVoteParams, type SyncStatus, type TransactionResult, type TransferOutput, type TransferParams, type TransferProgressStage, type TransferProofInputs, type ViewingKey, type VoteParams, type VoteProofInputs, type VoteSubmittedEvent };

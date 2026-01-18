@@ -17,6 +17,16 @@ interface UnshieldState {
   result: TransactionResult | null;
 }
 
+/** Progress stages for unshield operation */
+export type UnshieldProgressStage =
+  | 'scanning'      // Scanning for fresh notes
+  | 'preparing'     // Preparing inputs/outputs
+  | 'generating'    // Generating ZK proof
+  | 'building'      // Building transactions
+  | 'approving'     // Awaiting wallet approval
+  | 'executing'     // Executing transactions
+  | 'confirming';   // Waiting for confirmation
+
 interface UnshieldOptions {
   /** Notes to spend */
   inputs: DecryptedNote[];
@@ -28,6 +38,8 @@ interface UnshieldOptions {
   walletPublicKey?: PublicKey;
   /** If true, recipient is a wallet address and token account will be derived */
   isWalletAddress?: boolean;
+  /** Optional progress callback */
+  onProgress?: (stage: UnshieldProgressStage) => void;
 }
 
 export function useUnshield() {
@@ -52,9 +64,10 @@ export function useUnshield() {
         return null;
       }
 
-      const { inputs, amount, recipient, isWalletAddress } = options;
+      const { inputs, amount, recipient, isWalletAddress, onProgress } = options;
 
       setState({ isUnshielding: true, error: null, result: null });
+      onProgress?.('scanning');
 
       // Derive token account from wallet address if needed
       let recipientTokenAccount = recipient;
@@ -131,6 +144,8 @@ export function useUnshield() {
       }
 
       try {
+        onProgress?.('preparing');
+
         // Calculate change (if any)
         const change = totalInput - amount;
         console.log('[Unshield] Total input:', totalInput.toString());
@@ -178,12 +193,16 @@ export function useUnshield() {
         console.log('[Unshield] Recipient token account:', recipientTokenAccount.toBase58());
 
         // Execute transfer with unshield using FRESH notes
+        // Progress is handled inside prepareAndTransfer → transfer:
+        // preparing → generating → building → approving → executing → confirming
         console.log('[Unshield] Calling prepareAndTransfer...');
+
         const result = await client.prepareAndTransfer(
           {
             inputs: matchedInputs,  // Use fresh notes with stealthEphemeralPubkey
             outputs,
             unshield: { amount, recipient: recipientTokenAccount },
+            onProgress,  // Pass progress callback to client
           },
           undefined // relayer - wallet adapter will be used via provider
         );

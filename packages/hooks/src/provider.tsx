@@ -151,7 +151,7 @@ export function CloakCraftProvider({
     if (wallet && isInitialized && !isInitializing && !isProverReady) {
       // Load transfer circuits for unshield/transfer operations
       console.log('[CloakCraft] Initializing prover...');
-      client.initializeProver(['transfer/1x2', 'transfer/1x3'])
+      client.initializeProver(['transfer/1x2'])
         .then(() => {
           console.log('[CloakCraft] Prover initialized successfully');
           setIsProverReady(true);

@@ -15,6 +15,10 @@ import {
   useTokenBalances,
   usePool,
   useInitializePool,
+  useShouldConsolidate,
+  useProtocolFees,
+  useConsolidation,
+  type UnshieldProgressStage,
 } from '@cloakcraft/hooks';
 import { generateStealthAddress } from '@cloakcraft/sdk';
 import {
@@ -51,6 +55,14 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TransactionStatus } from '@/components/operations/transaction-status';
+import {
+  TransactionOverlay,
+  TransactionStep,
+  ConsolidationPrompt,
+  FeeBreakdown,
+  useFeeBreakdown,
+  FreeOperationBadge,
+} from '@/components/operations';
 import { SUPPORTED_TOKENS, TokenInfo } from '@/lib/constants';
 import { formatAmount, parseAmount, isValidPublicKey } from '@/lib/utils';
 
@@ -398,8 +410,11 @@ function ShieldTab({
             )}
 
             {parsedAmount > 0n && selectedToken && poolExists && !validationError && (
-              <div className="rounded-lg bg-muted p-4 space-y-2">
-                <p className="text-sm font-medium">You will receive</p>
+              <div className="rounded-lg bg-muted p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium">You will receive</p>
+                  <FreeOperationBadge />
+                </div>
                 <p className="text-lg font-mono">
                   {formatAmount(parsedAmount, selectedToken.decimals)} {selectedToken.symbol}
                 </p>
@@ -452,18 +467,24 @@ function PrivateTransferTab({
   client: any;
   notes: any[];
 }) {
+  const { sync } = useCloakCraft();
   const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
   const [amount, setAmount] = useState('');
   const [recipientPubkey, setRecipientPubkey] = useState('');
-  const [txStatus, setTxStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [overlaySteps, setOverlaySteps] = useState<TransactionStep[]>([]);
+  const [overlayStatus, setOverlayStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
   const [txSignature, setTxSignature] = useState<string | undefined>();
-  const [txError, setTxError] = useState<string | undefined>();
 
   const { transfer, isTransferring, error: transferError } = useTransfer();
+  const { config: protocolFees } = useProtocolFees();
+  const { consolidate, isConsolidating } = useConsolidation({ tokenMint: selectedToken?.mint || SUPPORTED_TOKENS[0]?.mint });
 
-  const { totalAvailable, selectNotesForAmount } = useNoteSelector(
+  const { totalAvailable, selectNotesForAmount, getSelectionResult } = useNoteSelector(
     selectedToken?.mint || SUPPORTED_TOKENS[0]?.mint
   );
+
+  const shouldConsolidate = useShouldConsolidate(selectedToken?.mint || SUPPORTED_TOKENS[0]?.mint);
 
   const tokensWithBalance = useMemo(() => {
     const balanceMap = new Map<string, bigint>();
@@ -494,6 +515,15 @@ function PrivateTransferTab({
       return 0n;
     }
   }, [amount, selectedToken]);
+
+  // Fee calculation for display - transfer fee is typically 0.1%
+  const feeBreakdown = useFeeBreakdown({
+    amount: parsedAmount,
+    feeRateBps: protocolFees?.transferFeeBps ?? 10,
+    feesEnabled: protocolFees?.feesEnabled ?? true,
+    symbol: selectedToken?.symbol ?? '',
+    decimals: selectedToken?.decimals ?? 9,
+  });
 
   const parseRecipientPublicKey = useCallback(
     (hex: string): { x: Uint8Array; y: Uint8Array } | null => {
@@ -531,22 +561,117 @@ function PrivateTransferTab({
     isProgramReady &&
     isProverReady &&
     !isTransferring &&
-    txStatus !== 'pending' &&
+    overlayStatus !== 'pending' &&
     tokensWithBalance.length > 0;
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit || !selectedToken || !recipientPoint || !wallet || !client?.getProgram()) return;
 
-    setTxStatus('pending');
-    setTxError(undefined);
+    // Check if consolidation is needed first
+    // Use maxInputs: 1 because transfer_1x2 circuit only supports 1 input
+    let selectionResult = getSelectionResult(parsedAmount, { maxInputs: 1 });
+
+    // Build initial steps based on whether consolidation is needed
+    const steps: TransactionStep[] = [];
+
+    if (selectionResult.needsConsolidation) {
+      steps.push(
+        { id: 'consolidate-prepare-1', name: 'Preparing consolidation', description: 'Analyzing fragmented notes...', status: 'active' },
+        { id: 'consolidate-approve-1', name: 'Consolidating notes', description: 'Approve in wallet...', status: 'pending' },
+        { id: 'consolidate-confirm-1', name: 'Confirming consolidation', description: 'Waiting for confirmation...', status: 'pending' },
+      );
+    }
+
+    steps.push(
+      { id: 'prepare', name: 'Preparing transfer', description: 'Selecting notes...', status: selectionResult.needsConsolidation ? 'pending' : 'active' },
+      { id: 'proof', name: 'Generating proof', description: 'Creating zero-knowledge proof...', status: 'pending' },
+      { id: 'submit', name: 'Sending transfer', description: 'Approve in wallet...', status: 'pending' },
+      { id: 'confirm', name: 'Confirming', description: 'Waiting for confirmation...', status: 'pending' },
+    );
+
+    setOverlaySteps(steps);
+    setOverlayStatus('pending');
+    setShowOverlay(true);
     setTxSignature(undefined);
 
     try {
-      let selectedNotes;
-      try {
-        selectedNotes = selectNotesForAmount(parsedAmount);
-      } catch (err) {
-        throw new Error(err instanceof Error ? err.message : 'Insufficient balance');
+      let selectedNotes = selectionResult.notes;
+
+      // If consolidation is needed, call consolidate() once (it handles all batches internally)
+      // Pass targetAmount so it stops early when we have enough notes for the transaction
+      if (selectionResult.needsConsolidation) {
+        await consolidate((stage, batchInfo) => {
+          // Update overlay steps based on consolidation progress stage
+          const batchLabel = batchInfo && batchInfo.total > 1 ? ` (batch ${batchInfo.current}/${batchInfo.total})` : '';
+
+          if (stage === 'preparing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-prepare-1' ? { ...s, status: 'active', description: `Preparing notes${batchLabel}...` } : s
+            ));
+          } else if (stage === 'generating') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-prepare-1' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Generating proof${batchLabel}...` } : s
+            ));
+          } else if (stage === 'building') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Building transactions${batchLabel}...` } : s
+            ));
+          } else if (stage === 'approving') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Approve in wallet${batchLabel}...` } : s
+            ));
+          } else if (stage === 'executing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Executing transactions${batchLabel}...` } : s
+            ));
+          } else if (stage === 'confirming') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-confirm-1' ? { ...s, status: 'active', description: `Confirming${batchLabel}...` } : s
+            ));
+          } else if (stage === 'syncing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-confirm-1' ? { ...s, status: 'active', description: `Syncing notes${batchLabel}...` } : s
+            ));
+          }
+        }, parsedAmount, 1);  // maxInputs=1 because transfer_1x2 needs a single note
+
+        // Mark consolidation done
+        setOverlaySteps(prev => prev.map(s =>
+          s.id === 'consolidate-confirm-1' ? { ...s, status: 'completed' } :
+          s.id === 'prepare' ? { ...s, status: 'active' } : s
+        ));
+
+        // Get fresh notes directly from client (bypasses React state)
+        // This is the same approach used by useConsolidation internally
+        console.log('[Transfer] Fetching fresh notes from client after consolidation...');
+        client.clearScanCache();
+        const freshNotes = await client.scanNotes(selectedToken.mint);
+        const tokenNotes = freshNotes.filter((n: any) => n.tokenMint.equals(selectedToken.mint));
+        console.log(`[Transfer] Fresh notes for token: ${tokenNotes.length}`);
+
+        if (tokenNotes.length === 0) {
+          throw new Error('No notes found after consolidation');
+        }
+
+        // For transfer_1x2, we need a SINGLE note that covers the amount
+        // Sort by amount descending and find the first note >= parsedAmount
+        const sortedNotes = [...tokenNotes].sort((a: any, b: any) => Number(b.amount - a.amount));
+        const singleNote = sortedNotes.find((n: any) => n.amount >= parsedAmount);
+        if (!singleNote) {
+          throw new Error('No single note large enough after consolidation. Try consolidating more notes.');
+        }
+        selectedNotes = [singleNote];
+
+        // Also trigger a background sync to update React state
+        sync(selectedToken.mint, true);
+      } else {
+        // No consolidation needed, use the original selection
+        if (selectionResult.error) {
+          throw new Error(selectionResult.error);
+        }
+        selectedNotes = selectionResult.notes;
       }
 
       const { stealthAddress } = generateStealthAddress(recipientPoint);
@@ -562,21 +687,64 @@ function PrivateTransferTab({
         outputs.push({ recipient: changeAddress, amount: change });
       }
 
-      const result = await transfer(selectedNotes, outputs, undefined, publicKey ?? undefined);
+      const result = await transfer({
+        inputs: selectedNotes,
+        outputs,
+        onProgress: (stage) => {
+          // Update overlay steps based on progress stage
+          if (stage === 'preparing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'prepare' ? { ...s, status: 'active', description: 'Preparing inputs and outputs...' } : s
+            ));
+          } else if (stage === 'generating') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'prepare' ? { ...s, status: 'completed' } :
+              s.id === 'proof' ? { ...s, status: 'active' } : s
+            ));
+          } else if (stage === 'building') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'proof' ? { ...s, status: 'completed' } :
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Building transactions...' } : s
+            ));
+          } else if (stage === 'approving') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Approve in wallet...' } : s
+            ));
+          } else if (stage === 'executing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Executing transactions...' } : s
+            ));
+          } else if (stage === 'confirming') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'completed' } :
+              s.id === 'confirm' ? { ...s, status: 'active' } : s
+            ));
+          }
+        },
+      });
 
       if (result) {
+        // Mark all as completed
+        setOverlaySteps(prev => prev.map(s => ({
+          ...s,
+          status: 'completed' as const,
+          signature: s.id === 'submit' ? result.signature : undefined
+        })));
         setTxSignature(result.signature);
-        setTxStatus('success');
+        setOverlayStatus('success');
         setAmount('');
         setRecipientPubkey('');
         toast.success('Transfer sent successfully');
       } else {
-        setTxStatus('error');
-        setTxError(transferError || 'Transfer failed');
+        throw new Error(transferError || 'Transfer failed');
       }
     } catch (error) {
-      setTxStatus('error');
-      setTxError(error instanceof Error ? error.message : 'Unknown error');
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      setOverlaySteps(prev => {
+        const activeIndex = prev.findIndex(s => s.status === 'active');
+        return prev.map((s, i) => i === activeIndex ? { ...s, status: 'error', error: errorMsg } : s);
+      });
+      setOverlayStatus('error');
     }
   }, [
     canSubmit,
@@ -585,17 +753,20 @@ function PrivateTransferTab({
     wallet,
     client,
     parsedAmount,
-    selectNotesForAmount,
+    getSelectionResult,
+    consolidate,
     transfer,
     publicKey,
     transferError,
+    sync,
   ]);
 
-  const handleReset = useCallback(() => {
-    setTxStatus('idle');
-    setTxSignature(undefined);
-    setTxError(undefined);
-  }, []);
+  const handleCloseOverlay = useCallback(() => {
+    setShowOverlay(false);
+    if (overlayStatus === 'success' || overlayStatus === 'error') {
+      setOverlayStatus('idle');
+    }
+  }, [overlayStatus]);
 
   return (
     <Card>
@@ -629,7 +800,7 @@ function PrivateTransferTab({
                     setAmount('');
                   }
                 }}
-                disabled={isTransferring || txStatus === 'pending'}
+                disabled={isTransferring || overlayStatus === 'pending'}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select token" />
@@ -652,6 +823,15 @@ function PrivateTransferTab({
           )}
         </div>
 
+        {/* Consolidation recommendation */}
+        {selectedToken && shouldConsolidate && (
+          <ConsolidationPrompt
+            tokenMint={selectedToken.mint}
+            tokenSymbol={selectedToken.symbol}
+            variant="alert"
+          />
+        )}
+
         {tokensWithBalance.length > 0 && (
           <>
             <div className="space-y-2">
@@ -668,7 +848,7 @@ function PrivateTransferTab({
                       setAmount(value);
                     }
                   }}
-                  disabled={isTransferring || txStatus === 'pending'}
+                  disabled={isTransferring || overlayStatus === 'pending'}
                 />
                 <Button
                   type="button"
@@ -680,7 +860,7 @@ function PrivateTransferTab({
                       setAmount(formatAmount(totalAvailable, selectedToken.decimals));
                     }
                   }}
-                  disabled={isTransferring || txStatus === 'pending'}
+                  disabled={isTransferring || overlayStatus === 'pending'}
                 >
                   MAX
                 </Button>
@@ -693,7 +873,7 @@ function PrivateTransferTab({
                 value={recipientPubkey}
                 onChange={(e) => setRecipientPubkey(e.target.value)}
                 placeholder="Paste the recipient's stealth public key (128 hex characters)"
-                disabled={isTransferring || txStatus === 'pending'}
+                disabled={isTransferring || overlayStatus === 'pending'}
                 className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
               <div className="flex items-start gap-2 text-xs text-muted-foreground">
@@ -703,6 +883,14 @@ function PrivateTransferTab({
                 </span>
               </div>
             </div>
+
+            {/* Fee breakdown */}
+            {feeBreakdown && parsedAmount > 0n && !validationError && (
+              <FeeBreakdown
+                data={feeBreakdown}
+                totalLabel="Recipient receives"
+              />
+            )}
 
             {validationError && amount && recipientPubkey && (
               <p className="text-sm text-destructive">{validationError}</p>
@@ -715,20 +903,24 @@ function PrivateTransferTab({
             <p className="text-yellow-600">Loading ZK prover for transfers...</p>
           </div>
         )}
-
-        <TransactionStatus
-          status={txStatus}
-          signature={txSignature}
-          error={txError}
-          onReset={handleReset}
-        />
       </CardContent>
 
       <CardFooter>
         <Button className="w-full" onClick={handleSubmit} disabled={!canSubmit}>
-          {isTransferring || txStatus === 'pending' ? 'Transferring...' : 'Send Private Transfer'}
+          {isTransferring || overlayStatus === 'pending' ? 'Transferring...' : 'Send Private Transfer'}
         </Button>
       </CardFooter>
+
+      {/* Transaction Overlay */}
+      <TransactionOverlay
+        isOpen={showOverlay}
+        onClose={handleCloseOverlay}
+        title="Private Transfer"
+        steps={overlaySteps}
+        status={overlayStatus}
+        finalSignature={txSignature}
+        onRetry={handleSubmit}
+      />
     </Card>
   );
 }
@@ -745,15 +937,19 @@ function UnshieldTab({
   isProverReady: boolean;
   notes: any[];
 }) {
+  const { sync, client } = useCloakCraft();
   const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
   const [amount, setAmount] = useState('');
   const [recipientAddress, setRecipientAddress] = useState('');
   const [useSelfRecipient, setUseSelfRecipient] = useState(true);
-  const [txStatus, setTxStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [overlaySteps, setOverlaySteps] = useState<TransactionStep[]>([]);
+  const [overlayStatus, setOverlayStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
   const [txSignature, setTxSignature] = useState<string | undefined>();
-  const [txError, setTxError] = useState<string | undefined>();
 
   const { unshield, isUnshielding, error: unshieldError } = useUnshield();
+  const { config: protocolFees } = useProtocolFees();
+  const { consolidate, isConsolidating } = useConsolidation({ tokenMint: selectedToken?.mint || SUPPORTED_TOKENS[0]?.mint });
 
   const tokensWithPrivateBalance = useMemo(() => {
     const balanceMap = new Map<string, bigint>();
@@ -770,9 +966,11 @@ function UnshieldTab({
     });
   }, [notes]);
 
-  const { totalAvailable, selectNotesForAmount } = useNoteSelector(
+  const { totalAvailable, selectNotesForAmount, getSelectionResult } = useNoteSelector(
     selectedToken?.mint || SUPPORTED_TOKENS[0]?.mint
   );
+
+  const shouldConsolidate = useShouldConsolidate(selectedToken?.mint || SUPPORTED_TOKENS[0]?.mint);
 
   useEffect(() => {
     if (tokensWithPrivateBalance.length > 0 && !selectedToken) {
@@ -795,6 +993,15 @@ function UnshieldTab({
     }
   }, [amount, selectedToken]);
 
+  // Fee calculation for display - unshield fee is typically 0.25%
+  const feeBreakdown = useFeeBreakdown({
+    amount: parsedAmount,
+    feeRateBps: protocolFees?.unshieldFeeBps ?? 25,
+    feesEnabled: protocolFees?.feesEnabled ?? true,
+    symbol: selectedToken?.symbol ?? '',
+    decimals: selectedToken?.decimals ?? 9,
+  });
+
   const validationError = useMemo(() => {
     if (!selectedToken) return 'Select a token';
     if (!amount || parsedAmount === 0n) return 'Enter an amount';
@@ -809,22 +1016,117 @@ function UnshieldTab({
     isProgramReady &&
     isProverReady &&
     !isUnshielding &&
-    txStatus !== 'pending' &&
+    overlayStatus !== 'pending' &&
     tokensWithPrivateBalance.length > 0;
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit || !selectedToken) return;
 
-    setTxStatus('pending');
-    setTxError(undefined);
+    // Check if consolidation is needed first
+    // Use maxInputs: 1 because transfer_1x2 circuit only supports 1 input
+    let selectionResult = getSelectionResult(parsedAmount, { maxInputs: 1 });
+
+    // Build initial steps based on whether consolidation is needed
+    const steps: TransactionStep[] = [];
+
+    if (selectionResult.needsConsolidation) {
+      steps.push(
+        { id: 'consolidate-prepare-1', name: 'Preparing consolidation', description: 'Analyzing fragmented notes...', status: 'active' },
+        { id: 'consolidate-approve-1', name: 'Consolidating notes', description: 'Approve in wallet...', status: 'pending' },
+        { id: 'consolidate-confirm-1', name: 'Confirming consolidation', description: 'Waiting for confirmation...', status: 'pending' },
+      );
+    }
+
+    steps.push(
+      { id: 'prepare', name: 'Preparing unshield', description: 'Selecting notes...', status: selectionResult.needsConsolidation ? 'pending' : 'active' },
+      { id: 'proof', name: 'Generating proof', description: 'Creating zero-knowledge proof...', status: 'pending' },
+      { id: 'submit', name: 'Withdrawing tokens', description: 'Approve in wallet...', status: 'pending' },
+      { id: 'confirm', name: 'Confirming', description: 'Waiting for confirmation...', status: 'pending' },
+    );
+
+    setOverlaySteps(steps);
+    setOverlayStatus('pending');
+    setShowOverlay(true);
     setTxSignature(undefined);
 
     try {
-      let selectedNotes;
-      try {
-        selectedNotes = selectNotesForAmount(parsedAmount);
-      } catch (err) {
-        throw new Error(err instanceof Error ? err.message : 'Insufficient balance');
+      let selectedNotes = selectionResult.notes;
+
+      // If consolidation is needed, call consolidate() once (it handles all batches internally)
+      // Pass targetAmount so it stops early when we have enough notes for the transaction
+      if (selectionResult.needsConsolidation) {
+        await consolidate((stage, batchInfo) => {
+          // Update overlay steps based on consolidation progress stage
+          const batchLabel = batchInfo && batchInfo.total > 1 ? ` (batch ${batchInfo.current}/${batchInfo.total})` : '';
+
+          if (stage === 'preparing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-prepare-1' ? { ...s, status: 'active', description: `Preparing notes${batchLabel}...` } : s
+            ));
+          } else if (stage === 'generating') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-prepare-1' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Generating proof${batchLabel}...` } : s
+            ));
+          } else if (stage === 'building') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Building transactions${batchLabel}...` } : s
+            ));
+          } else if (stage === 'approving') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Approve in wallet${batchLabel}...` } : s
+            ));
+          } else if (stage === 'executing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Executing transactions${batchLabel}...` } : s
+            ));
+          } else if (stage === 'confirming') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-confirm-1' ? { ...s, status: 'active', description: `Confirming${batchLabel}...` } : s
+            ));
+          } else if (stage === 'syncing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-confirm-1' ? { ...s, status: 'active', description: `Syncing notes${batchLabel}...` } : s
+            ));
+          }
+        }, parsedAmount, 1);  // maxInputs=1 because transfer_1x2 needs a single note
+
+        // Mark consolidation done
+        setOverlaySteps(prev => prev.map(s =>
+          s.id === 'consolidate-confirm-1' ? { ...s, status: 'completed' } :
+          s.id === 'prepare' ? { ...s, status: 'active' } : s
+        ));
+
+        // Get fresh notes directly from client (bypasses React state)
+        // This is the same approach used by useConsolidation internally
+        console.log('[Unshield] Fetching fresh notes from client after consolidation...');
+        client!.clearScanCache();
+        const freshNotes = await client!.scanNotes(selectedToken.mint);
+        const tokenNotes = freshNotes.filter((n: any) => n.tokenMint.equals(selectedToken.mint));
+        console.log(`[Unshield] Fresh notes for token: ${tokenNotes.length}`);
+
+        if (tokenNotes.length === 0) {
+          throw new Error('No notes found after consolidation');
+        }
+
+        // For transfer_1x2, we need a SINGLE note that covers the amount
+        // Sort by amount descending and find the first note >= parsedAmount
+        const sortedNotes = [...tokenNotes].sort((a: any, b: any) => Number(b.amount - a.amount));
+        const singleNote = sortedNotes.find((n: any) => n.amount >= parsedAmount);
+        if (!singleNote) {
+          throw new Error('No single note large enough after consolidation. Try consolidating more notes.');
+        }
+        selectedNotes = [singleNote];
+
+        // Also trigger a background sync to update React state
+        sync(selectedToken.mint, true);
+      } else {
+        // No consolidation needed, use the original selection
+        if (selectionResult.error) {
+          throw new Error(selectionResult.error);
+        }
+        selectedNotes = selectionResult.notes;
       }
 
       const recipientPubkey = new PublicKey(recipientAddress);
@@ -835,37 +1137,81 @@ function UnshieldTab({
         recipient: recipientPubkey,
         isWalletAddress: true,
         walletPublicKey: solanaPublicKey ?? undefined,
+        onProgress: (stage) => {
+          // Update overlay steps based on progress stage
+          if (stage === 'preparing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'prepare' ? { ...s, status: 'active', description: 'Preparing inputs and outputs...' } : s
+            ));
+          } else if (stage === 'generating') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'prepare' ? { ...s, status: 'completed' } :
+              s.id === 'proof' ? { ...s, status: 'active' } : s
+            ));
+          } else if (stage === 'building') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'proof' ? { ...s, status: 'completed' } :
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Building transactions...' } : s
+            ));
+          } else if (stage === 'approving') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Approve in wallet...' } : s
+            ));
+          } else if (stage === 'executing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Executing transactions...' } : s
+            ));
+          } else if (stage === 'confirming') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'completed' } :
+              s.id === 'confirm' ? { ...s, status: 'active' } : s
+            ));
+          }
+        },
       });
 
       if (result) {
+        // Mark all as completed
+        setOverlaySteps(prev => prev.map(s => ({
+          ...s,
+          status: 'completed' as const,
+          signature: s.id === 'submit' ? result.signature : undefined
+        })));
         setTxSignature(result.signature);
-        setTxStatus('success');
+        setOverlayStatus('success');
         setAmount('');
         toast.success('Tokens unshielded successfully');
       } else {
-        setTxStatus('error');
-        setTxError(unshieldError || 'Unshield failed');
+        throw new Error(unshieldError || 'Unshield failed');
       }
     } catch (error) {
-      setTxStatus('error');
-      setTxError(error instanceof Error ? error.message : 'Unknown error');
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      setOverlaySteps(prev => {
+        const activeIndex = prev.findIndex(s => s.status === 'active');
+        return prev.map((s, i) => i === activeIndex ? { ...s, status: 'error', error: errorMsg } : s);
+      });
+      setOverlayStatus('error');
     }
   }, [
     canSubmit,
     selectedToken,
     parsedAmount,
-    selectNotesForAmount,
+    getSelectionResult,
+    consolidate,
     recipientAddress,
     unshield,
     solanaPublicKey,
     unshieldError,
+    sync,
+    client,
   ]);
 
-  const handleReset = useCallback(() => {
-    setTxStatus('idle');
-    setTxSignature(undefined);
-    setTxError(undefined);
-  }, []);
+  const handleCloseOverlay = useCallback(() => {
+    setShowOverlay(false);
+    if (overlayStatus === 'success' || overlayStatus === 'error') {
+      setOverlayStatus('idle');
+    }
+  }, [overlayStatus]);
 
   return (
     <Card>
@@ -899,7 +1245,7 @@ function UnshieldTab({
                     setAmount('');
                   }
                 }}
-                disabled={isUnshielding || txStatus === 'pending'}
+                disabled={isUnshielding || overlayStatus === 'pending'}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select token" />
@@ -922,6 +1268,15 @@ function UnshieldTab({
           )}
         </div>
 
+        {/* Consolidation recommendation */}
+        {selectedToken && shouldConsolidate && (
+          <ConsolidationPrompt
+            tokenMint={selectedToken.mint}
+            tokenSymbol={selectedToken.symbol}
+            variant="alert"
+          />
+        )}
+
         {tokensWithPrivateBalance.length > 0 && (
           <>
             <div className="space-y-2">
@@ -938,7 +1293,7 @@ function UnshieldTab({
                       setAmount(value);
                     }
                   }}
-                  disabled={isUnshielding || txStatus === 'pending'}
+                  disabled={isUnshielding || overlayStatus === 'pending'}
                 />
                 <Button
                   type="button"
@@ -950,7 +1305,7 @@ function UnshieldTab({
                       setAmount(formatAmount(totalAvailable, selectedToken.decimals));
                     }
                   }}
-                  disabled={isUnshielding || txStatus === 'pending'}
+                  disabled={isUnshielding || overlayStatus === 'pending'}
                 >
                   MAX
                 </Button>
@@ -970,7 +1325,7 @@ function UnshieldTab({
                       setRecipientAddress(solanaPublicKey.toBase58());
                     }
                   }}
-                  disabled={isUnshielding || txStatus === 'pending'}
+                  disabled={isUnshielding || overlayStatus === 'pending'}
                 >
                   My Wallet
                 </Button>
@@ -982,7 +1337,7 @@ function UnshieldTab({
                     setUseSelfRecipient(false);
                     setRecipientAddress('');
                   }}
-                  disabled={isUnshielding || txStatus === 'pending'}
+                  disabled={isUnshielding || overlayStatus === 'pending'}
                 >
                   Custom Address
                 </Button>
@@ -996,7 +1351,7 @@ function UnshieldTab({
                 placeholder="Enter Solana wallet address"
                 value={recipientAddress}
                 onChange={(e) => setRecipientAddress(e.target.value)}
-                disabled={useSelfRecipient || isUnshielding || txStatus === 'pending'}
+                disabled={useSelfRecipient || isUnshielding || overlayStatus === 'pending'}
                 className="font-mono text-sm"
               />
               <div className="flex items-start gap-2 text-xs text-muted-foreground">
@@ -1007,18 +1362,16 @@ function UnshieldTab({
               </div>
             </div>
 
-            {validationError && amount && (
-              <p className="text-sm text-destructive">{validationError}</p>
+            {/* Fee breakdown */}
+            {feeBreakdown && parsedAmount > 0n && !validationError && (
+              <FeeBreakdown
+                data={feeBreakdown}
+                totalLabel="You receive"
+              />
             )}
 
-            {parsedAmount > 0n && selectedToken && !validationError && (
-              <div className="rounded-lg bg-muted p-4 space-y-2">
-                <p className="text-sm font-medium">You will receive</p>
-                <p className="text-lg font-mono">
-                  {formatAmount(parsedAmount, selectedToken.decimals)} {selectedToken.symbol}
-                </p>
-                <p className="text-xs text-muted-foreground">in your public wallet</p>
-              </div>
+            {validationError && amount && (
+              <p className="text-sm text-destructive">{validationError}</p>
             )}
           </>
         )}
@@ -1028,20 +1381,30 @@ function UnshieldTab({
             <p className="text-yellow-600">Loading ZK prover...</p>
           </div>
         )}
-
-        <TransactionStatus
-          status={txStatus}
-          signature={txSignature}
-          error={txError}
-          onReset={handleReset}
-        />
       </CardContent>
 
       <CardFooter>
         <Button className="w-full" onClick={handleSubmit} disabled={!canSubmit}>
-          {isUnshielding || txStatus === 'pending' ? 'Unshielding...' : 'Unshield Tokens'}
+          {isUnshielding || overlayStatus === 'pending' ? 'Unshielding...' : 'Unshield Tokens'}
         </Button>
       </CardFooter>
+
+      {/* Transaction Overlay */}
+      <TransactionOverlay
+        isOpen={showOverlay}
+        onClose={handleCloseOverlay}
+        title="Unshield Tokens"
+        steps={overlaySteps}
+        status={overlayStatus}
+        finalSignature={txSignature}
+        feeBreakdown={feeBreakdown ? {
+          amount: feeBreakdown.amount,
+          protocolFee: feeBreakdown.protocolFee,
+          total: feeBreakdown.total,
+          symbol: feeBreakdown.symbol,
+        } : undefined}
+        onRetry={handleSubmit}
+      />
     </Card>
   );
 }

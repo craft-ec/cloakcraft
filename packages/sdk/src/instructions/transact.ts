@@ -8,8 +8,13 @@ import {
   PublicKey,
   TransactionInstruction,
   ComputeBudgetProgram,
+  SystemProgram,
 } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import {
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountIdempotentInstruction,
+} from '@solana/spl-token';
 import { Program, BN } from '@coral-xyz/anchor';
 import type { Point } from '@cloakcraft/types';
 
@@ -82,6 +87,8 @@ export interface TransactInstructionParams {
   unshieldRecipient?: PublicKey;
   /** Protocol fee amount (verified in ZK proof) */
   feeAmount?: bigint;
+  /** Treasury wallet address (owner of treasury token account) */
+  treasuryWallet?: PublicKey;
   /** Treasury token account for receiving fees (required if feeAmount > 0) */
   treasuryTokenAccount?: PublicKey;
   /** Protocol config PDA (optional, used for fee verification) */
@@ -503,6 +510,28 @@ export async function buildTransactWithProgram(
       tokenProgram: TOKEN_PROGRAM_ID,
     };
 
+    // Build pre-instructions for Phase 3
+    const phase3PreInstructions: TransactionInstruction[] = [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 }), // Increased for fee transfer
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ];
+
+    // Add create treasury ATA instruction if treasury wallet is provided
+    // This uses idempotent version which succeeds whether or not account exists
+    if (params.treasuryWallet && params.treasuryTokenAccount && params.feeAmount && params.feeAmount > 0n) {
+      console.log('[Phase 3] Adding create treasury ATA instruction (idempotent)');
+      phase3PreInstructions.push(
+        createAssociatedTokenAccountIdempotentInstruction(
+          params.relayer,           // payer
+          params.treasuryTokenAccount, // associated token account
+          params.treasuryWallet,    // owner
+          params.tokenMint,         // mint
+          TOKEN_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        )
+      );
+    }
+
     phase3Tx = await program.methods
       .processUnshield(
         Array.from(operationId),
@@ -510,10 +539,7 @@ export async function buildTransactWithProgram(
       )
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .accounts(phase3Accounts as any)
-      .preInstructions([
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 }), // Increased for fee transfer
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
-      ]);
+      .preInstructions(phase3PreInstructions);
     console.log('[Phase 3] Transaction builder created');
   }
 
@@ -575,4 +601,295 @@ export function computeCircuitInputs(
   });
 
   return { inputCommitment, nullifier, outputCommitments };
+}
+
+/**
+ * Consolidation input (prepared note with all required fields)
+ */
+export interface ConsolidationInput {
+  /** Stealth public key X coordinate */
+  stealthPubX: Uint8Array;
+  /** Amount */
+  amount: bigint;
+  /** Randomness */
+  randomness: Uint8Array;
+  /** Leaf index in merkle tree */
+  leafIndex: number;
+  /** Pre-computed commitment */
+  commitment: Uint8Array;
+  /** Account hash from scanning */
+  accountHash: string;
+}
+
+/**
+ * Consolidation instruction parameters
+ */
+export interface ConsolidationInstructionParams {
+  /** Token mint */
+  tokenMint: PublicKey;
+  /** Input notes to consolidate (2-3) */
+  inputs: ConsolidationInput[];
+  /** Pre-computed nullifiers (from ZK proof) */
+  nullifiers: Uint8Array[];
+  /** Pre-computed output commitment (from ZK proof) */
+  outputCommitment: Uint8Array;
+  /** Output randomness (from ZK proof) */
+  outputRandomness: Uint8Array;
+  /** Output amount (from ZK proof) */
+  outputAmount: bigint;
+  /** Output stealth recipient */
+  outputRecipient: {
+    stealthPubkey: { x: Uint8Array; y: Uint8Array };
+    ephemeralPubkey: { x: Uint8Array; y: Uint8Array };
+  };
+  /** Merkle root (for ZK proof - dummy, Light Protocol verifies on-chain) */
+  merkleRoot: Uint8Array;
+  /** Relayer public key */
+  relayer: PublicKey;
+  /** ZK proof bytes */
+  proof: Uint8Array;
+}
+
+/**
+ * Build consolidation multi-phase transaction
+ *
+ * Uses the consolidate_3x1 circuit which has different public inputs than transfer:
+ * - merkle_root
+ * - nullifier_1, nullifier_2, nullifier_3
+ * - out_commitment (single)
+ * - token_mint
+ *
+ * NO unshield or fee (consolidation is free)
+ */
+export async function buildConsolidationWithProgram(
+  program: Program,
+  params: ConsolidationInstructionParams,
+  rpcUrl: string
+): Promise<{
+  phase0Tx: any;
+  phase1Txs: any[];
+  phase2Txs: any[];
+  operationId: Uint8Array;
+  pendingCommitments: Array<{
+    pool: PublicKey;
+    commitment: Uint8Array;
+    stealthEphemeralPubkey: Uint8Array;
+    encryptedNote: Uint8Array;
+  }>;
+}> {
+  const programId = program.programId;
+  const lightProtocol = new LightProtocol(rpcUrl, programId);
+  const circuitId = 'consolidate_3x1';
+
+  // Validate inputs
+  if (params.inputs.length < 2 || params.inputs.length > 3) {
+    throw new Error('Consolidation requires 2-3 input notes');
+  }
+
+  // Derive PDAs
+  const [poolPda] = derivePoolPda(params.tokenMint, programId);
+  const [vkPda] = deriveVerificationKeyPda(circuitId, programId);
+
+  // Generate operation ID
+  const { generateOperationId, derivePendingOperationPda } = await import('./swap');
+  const operationId = generateOperationId(
+    params.nullifiers[0],
+    params.outputCommitment,
+    Date.now()
+  );
+  const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
+
+  console.log(`[Consolidation Phase 0] Generated operation ID: ${Buffer.from(operationId).toString('hex').slice(0, 16)}...`);
+  console.log(`[Consolidation Phase 0] Num inputs: ${params.inputs.length}`);
+  console.log(`[Consolidation Phase 0] Nullifiers: ${params.nullifiers.length}`);
+
+  // Prepare output
+  const stealthEphemeralPubkey = new Uint8Array(64);
+  stealthEphemeralPubkey.set(params.outputRecipient.ephemeralPubkey.x, 0);
+  stealthEphemeralPubkey.set(params.outputRecipient.ephemeralPubkey.y, 32);
+
+  // Build encrypted note for output
+  const outputNote = {
+    stealthPubX: params.outputRecipient.stealthPubkey.x,
+    tokenMint: params.tokenMint,
+    amount: params.outputAmount,
+    randomness: params.outputRandomness,
+  };
+  const encrypted = encryptNote(outputNote, params.outputRecipient.stealthPubkey);
+  const encryptedNote = Buffer.from(serializeEncryptedNote(encrypted));
+
+  // Pending commitments (single output for consolidation)
+  const pendingCommitments = [{
+    pool: poolPda,
+    commitment: params.outputCommitment,
+    stealthEphemeralPubkey,
+    encryptedNote: new Uint8Array(encryptedNote),
+  }];
+
+  // Fetch Light Protocol proofs for each input
+  const { SystemAccountMetaConfig, PackedAccounts } = await import('@lightprotocol/stateless.js');
+  const { DEVNET_V2_TREES } = await import('./constants');
+  const systemConfig = SystemAccountMetaConfig.new(lightProtocol.programId);
+  const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
+
+  // Add output queue and address tree
+  const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES.OUTPUT_QUEUE);
+  const addressTree = DEVNET_V2_TREES.ADDRESS_TREE;
+  const addressTreeIndex = packedAccounts.insertOrGet(addressTree);
+
+  // Get proofs for all inputs
+  const inputProofs = await Promise.all(
+    params.inputs.map(async (input, i) => {
+      console.log(`[Consolidation] Fetching proof for input ${i}: ${input.accountHash}`);
+      const commitmentProof = await lightProtocol.getInclusionProofByHash(input.accountHash);
+
+      // Add tree and queue for this input
+      const commitmentTree = new PublicKey(commitmentProof.treeInfo.tree);
+      const commitmentQueue = new PublicKey(commitmentProof.treeInfo.queue);
+      const treeIndex = packedAccounts.insertOrGet(commitmentTree);
+      const queueIndex = packedAccounts.insertOrGet(commitmentQueue);
+
+      if (commitmentProof.treeInfo.cpiContext) {
+        packedAccounts.insertOrGet(new PublicKey(commitmentProof.treeInfo.cpiContext));
+      }
+
+      return {
+        commitmentProof,
+        treeIndex,
+        queueIndex,
+      };
+    })
+  );
+
+  // Get nullifier non-inclusion proof for first nullifier (we need any valid proof for Light accounts)
+  const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, params.nullifiers[0]);
+  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
+
+  const { remainingAccounts: finalRemainingAccounts } = packedAccounts.toAccountMetas();
+
+  // ====================================================================
+  // PHASE 0: Create Pending with Consolidation Proof
+  // ====================================================================
+  const phase0Tx = await program.methods
+    .createPendingWithProofConsolidation(
+      Array.from(operationId),
+      Buffer.from(params.proof),
+      Array.from(params.merkleRoot),
+      params.inputs.length, // num_inputs
+      params.inputs.map(i => Array.from(i.commitment)), // input_commitments
+      params.nullifiers.map(n => Array.from(n)), // nullifiers
+      Array.from(params.outputCommitment), // out_commitment
+      Array.from(params.outputRecipient.stealthPubkey.x), // output_recipient
+      new BN(params.outputAmount.toString()), // output_amount
+      Array.from(params.outputRandomness), // output_randomness
+      Array.from(stealthEphemeralPubkey) // stealth_ephemeral_pubkey
+    )
+    .accountsStrict({
+      pool: poolPda,
+      verificationKey: vkPda,
+      pendingOperation: pendingOpPda,
+      relayer: params.relayer,
+      systemProgram: new PublicKey('11111111111111111111111111111111'),
+    })
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 450_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+    ]);
+
+  // ====================================================================
+  // PHASE 1: Verify Commitment Exists (for each input)
+  // ====================================================================
+  const phase1Txs = await Promise.all(
+    params.inputs.map(async (input, i) => {
+      const proof = inputProofs[i];
+      const lightParams = {
+        commitmentAccountHash: Array.from(new PublicKey(input.accountHash).toBytes()),
+        commitmentMerkleContext: {
+          merkleTreePubkeyIndex: proof.treeIndex,
+          queuePubkeyIndex: proof.queueIndex,
+          leafIndex: proof.commitmentProof.leafIndex,
+          rootIndex: proof.commitmentProof.rootIndex,
+        },
+        commitmentInclusionProof: LightProtocol.convertCompressedProof(proof.commitmentProof),
+        commitmentAddressTreeInfo: {
+          addressMerkleTreePubkeyIndex: addressTreeIndex,
+          addressQueuePubkeyIndex: addressTreeIndex,
+          rootIndex: nullifierProof.rootIndices[0] ?? 0,
+        },
+      };
+
+      return program.methods
+        .verifyCommitmentExists(
+          Array.from(operationId),
+          i, // commitment_index
+          lightParams
+        )
+        .accountsStrict({
+          pool: poolPda,
+          pendingOperation: pendingOpPda,
+          relayer: params.relayer,
+        })
+        .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+          pubkey: acc.pubkey,
+          isSigner: acc.isSigner,
+          isWritable: acc.isWritable,
+        })))
+        .preInstructions([
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+        ]);
+    })
+  );
+
+  // ====================================================================
+  // PHASE 2: Create Nullifier (for each input)
+  // ====================================================================
+  const phase2Txs = await Promise.all(
+    params.inputs.map(async (input, i) => {
+      // Get nullifier non-inclusion proof for this specific nullifier
+      const nullifierAddr = lightProtocol.deriveNullifierAddress(poolPda, params.nullifiers[i]);
+      const nullProof = await lightProtocol.getValidityProof([nullifierAddr]);
+
+      const lightParams = {
+        proof: LightProtocol.convertCompressedProof(nullProof),
+        addressTreeInfo: {
+          addressMerkleTreePubkeyIndex: addressTreeIndex,
+          addressQueuePubkeyIndex: addressTreeIndex,
+          rootIndex: nullProof.rootIndices[0] ?? 0,
+        },
+        outputTreeIndex,
+      };
+
+      return program.methods
+        .createNullifierAndPending(
+          Array.from(operationId),
+          i, // nullifier_index
+          lightParams
+        )
+        .accountsStrict({
+          pool: poolPda,
+          pendingOperation: pendingOpPda,
+          relayer: params.relayer,
+        })
+        .remainingAccounts(finalRemainingAccounts.map((acc: any) => ({
+          pubkey: acc.pubkey,
+          isSigner: acc.isSigner,
+          isWritable: acc.isWritable,
+        })))
+        .preInstructions([
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
+        ]);
+    })
+  );
+
+  console.log(`[Consolidation] Built Phase 0 + ${phase1Txs.length} Phase 1 + ${phase2Txs.length} Phase 2 transactions`);
+
+  return {
+    phase0Tx,
+    phase1Txs,
+    phase2Txs,
+    operationId,
+    pendingCommitments,
+  };
 }
