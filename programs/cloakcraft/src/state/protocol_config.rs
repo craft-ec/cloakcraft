@@ -27,9 +27,10 @@ pub struct ProtocolConfig {
     /// Applied to private → public withdrawals
     pub unshield_fee_bps: u16,
 
-    /// Swap fee in basis points (e.g., 30 = 0.3%)
-    /// Applied to private AMM swaps
-    pub swap_fee_bps: u16,
+    /// Protocol's share of LP swap fees in basis points (e.g., 2000 = 20%)
+    /// Protocol fee = LP fee * swap_fee_share_bps / 10000
+    /// Example: 0.3% LP fee * 20% = 0.06% protocol fee
+    pub swap_fee_share_bps: u16,
 
     /// Remove liquidity fee in basis points (e.g., 25 = 0.25%)
     /// Applied to LP token withdrawals
@@ -52,7 +53,7 @@ impl Default for ProtocolConfig {
             treasury: Pubkey::default(),
             transfer_fee_bps: 0,
             unshield_fee_bps: 0,
-            swap_fee_bps: 0,
+            swap_fee_share_bps: 0,
             remove_liquidity_fee_bps: 0,
             fees_enabled: false,
             bump: 0,
@@ -68,7 +69,7 @@ impl ProtocolConfig {
         + 32  // treasury
         + 2   // transfer_fee_bps
         + 2   // unshield_fee_bps
-        + 2   // swap_fee_bps
+        + 2   // swap_fee_share_bps
         + 2   // remove_liquidity_fee_bps
         + 1   // fees_enabled
         + 1   // bump
@@ -97,14 +98,22 @@ impl ProtocolConfig {
         (fee, amount.saturating_sub(fee))
     }
 
-    /// Calculate fee amount from swap amount
-    /// Returns (fee_amount, amount_after_fee)
-    pub fn calculate_swap_fee(&self, amount: u64) -> (u64, u64) {
-        if !self.fees_enabled || self.swap_fee_bps == 0 {
-            return (0, amount);
+    /// Calculate protocol fee from swap as percentage of LP fee
+    /// Protocol fee = (swap_amount * lp_fee_bps * swap_fee_share_bps) / (10000 * 10000)
+    /// Returns (protocol_fee_amount, lp_fee_remaining)
+    pub fn calculate_swap_fee(&self, swap_amount: u64, lp_fee_bps: u16) -> (u64, u64) {
+        if !self.fees_enabled || self.swap_fee_share_bps == 0 || lp_fee_bps == 0 {
+            // No protocol fee, all LP fee stays in pool
+            let lp_fee = self.calculate_fee(swap_amount, lp_fee_bps);
+            return (0, lp_fee);
         }
-        let fee = self.calculate_fee(amount, self.swap_fee_bps);
-        (fee, amount.saturating_sub(fee))
+        // Calculate total LP fee first
+        let total_lp_fee = self.calculate_fee(swap_amount, lp_fee_bps);
+        // Protocol takes swap_fee_share_bps% of the LP fee
+        let protocol_fee = self.calculate_fee(total_lp_fee, self.swap_fee_share_bps);
+        // Remaining LP fee stays in pool
+        let lp_fee_remaining = total_lp_fee.saturating_sub(protocol_fee);
+        (protocol_fee, lp_fee_remaining)
     }
 
     /// Calculate fee amount from remove liquidity amount
@@ -117,8 +126,8 @@ impl ProtocolConfig {
         (fee, amount.saturating_sub(fee))
     }
 
-    /// Internal fee calculation: (amount * fee_bps) / 10000
-    fn calculate_fee(&self, amount: u64, fee_bps: u16) -> u64 {
+    /// Fee calculation: (amount * fee_bps) / 10000
+    pub fn calculate_fee(&self, amount: u64, fee_bps: u16) -> u64 {
         // Use u128 to avoid overflow during multiplication
         let fee = (amount as u128)
             .checked_mul(fee_bps as u128)

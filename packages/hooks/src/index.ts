@@ -16,6 +16,7 @@ export { usePool, useInitializePool, usePoolList } from './usePool';
 export { usePublicBalance, useSolBalance, useTokenBalances } from './usePublicBalance';
 export { useOrders } from './useOrders';
 export { useSwap, useAmmPools, useSwapQuote, useInitializeAmmPool, useAddLiquidity, useRemoveLiquidity } from './useSwap';
+export type { SwapProgressStage, AddLiquidityProgressStage, RemoveLiquidityProgressStage } from './useSwap';
 
 // Transaction history
 export {

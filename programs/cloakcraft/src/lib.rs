@@ -84,10 +84,11 @@ pub mod cloakcraft {
         output_amounts: Vec<u64>,
         output_randomness: Vec<[u8; 32]>,
         stealth_ephemeral_pubkeys: Vec<[u8; 64]>,
+        transfer_amount: u64,
         unshield_amount: u64,
         fee_amount: u64,
     ) -> Result<()> {
-        pool::create_pending_with_proof(ctx, operation_id, proof, merkle_root, input_commitment, nullifier, out_commitments, output_recipients, output_amounts, output_randomness, stealth_ephemeral_pubkeys, unshield_amount, fee_amount)
+        pool::create_pending_with_proof(ctx, operation_id, proof, merkle_root, input_commitment, nullifier, out_commitments, output_recipients, output_amounts, output_randomness, stealth_ephemeral_pubkeys, transfer_amount, unshield_amount, fee_amount)
     }
 
     /// Create Pending with Proof Phase 0 - Consolidation (Append Pattern)
@@ -584,12 +585,12 @@ pub mod cloakcraft {
     /// Initialize protocol configuration with fee rates
     ///
     /// Creates the global ProtocolConfig account. Can only be called once.
-    /// Fee rates are in basis points (10 = 0.1%, 100 = 1%, 1000 = 10% max).
+    /// Fee rates are in basis points. swap_fee_share_bps is protocol's share of LP fees (2000 = 20%).
     pub fn initialize_protocol_config(
         ctx: Context<InitializeProtocolConfig>,
         transfer_fee_bps: u16,
         unshield_fee_bps: u16,
-        swap_fee_bps: u16,
+        swap_fee_share_bps: u16,
         remove_liquidity_fee_bps: u16,
         fees_enabled: bool,
     ) -> Result<()> {
@@ -597,7 +598,7 @@ pub mod cloakcraft {
             ctx,
             transfer_fee_bps,
             unshield_fee_bps,
-            swap_fee_bps,
+            swap_fee_share_bps,
             remove_liquidity_fee_bps,
             fees_enabled,
         )
@@ -611,7 +612,7 @@ pub mod cloakcraft {
         ctx: Context<UpdateProtocolFees>,
         transfer_fee_bps: Option<u16>,
         unshield_fee_bps: Option<u16>,
-        swap_fee_bps: Option<u16>,
+        swap_fee_share_bps: Option<u16>,
         remove_liquidity_fee_bps: Option<u16>,
         fees_enabled: Option<bool>,
     ) -> Result<()> {
@@ -619,7 +620,7 @@ pub mod cloakcraft {
             ctx,
             transfer_fee_bps,
             unshield_fee_bps,
-            swap_fee_bps,
+            swap_fee_share_bps,
             remove_liquidity_fee_bps,
             fees_enabled,
         )

@@ -80,6 +80,7 @@ template Transfer1x2() {
     signal input out_commitment_1;      // Output 1 commitment (recipient)
     signal input out_commitment_2;      // Output 2 commitment (change)
     signal input token_mint;            // Token being transferred
+    signal input transfer_amount;       // Amount transferred to recipient (public for fee calculation)
     signal input unshield_amount;       // Amount being withdrawn to public (0 for private transfer)
     signal input fee_amount;            // Protocol fee amount (verified on-chain)
 
@@ -154,7 +155,14 @@ template Transfer1x2() {
     out_commitment_2 === out_commit_2.out;
 
     // ========================================================================
-    // 4. Balance Check (with protocol fee)
+    // 4. Verify Transfer Amount (public input matches private output)
+    // ========================================================================
+    // This constraint ensures the public transfer_amount matches what's actually
+    // being transferred, enabling on-chain fee verification
+    transfer_amount === out_amount_1;
+
+    // ========================================================================
+    // 5. Balance Check (with protocol fee)
     // ========================================================================
     // input = output_1 + output_2 + unshield + fee
     signal total_out;
@@ -195,6 +203,7 @@ component main {public [
     out_commitment_1,
     out_commitment_2,
     token_mint,
+    transfer_amount,
     unshield_amount,
     fee_amount
 ]} = Transfer1x2();

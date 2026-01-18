@@ -14,6 +14,7 @@ import {
   SystemProgram,
   SYSVAR_RENT_PUBKEY,
 } from '@solana/web3.js';
+import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { Program, BN } from '@coral-xyz/anchor';
 import type { StealthAddress } from '@cloakcraft/types';
 
@@ -194,6 +195,12 @@ export interface SwapInstructionParams {
   outputTokenMint: PublicKey;
   /** AMM pool state */
   ammPool: PublicKey;
+  /** Input token vault (for protocol fee transfer) */
+  inputVault: PublicKey;
+  /** Protocol config PDA (required - enforces fee collection) */
+  protocolConfig: PublicKey;
+  /** Treasury ATA for input token (required if fees enabled and > 0) */
+  treasuryAta?: PublicKey;
   /** Relayer public key */
   relayer: PublicKey;
   /** ZK proof bytes */
@@ -500,20 +507,30 @@ export async function buildSwapWithProgram(
 
   console.log('[Swap Phase 3] Building executeSwap...');
 
-  // Phase 3: Execute Swap (AMM state update)
+  // Phase 3: Execute Swap (AMM state update + protocol fee transfer)
+  const phase3Accounts: Record<string, PublicKey> = {
+    inputPool: params.inputPool,
+    outputPool: params.outputPool,
+    ammPool: params.ammPool,
+    inputVault: params.inputVault,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer,
+    protocolConfig: params.protocolConfig, // Required
+    tokenProgram: TOKEN_PROGRAM_ID,
+  };
+
+  // Treasury ATA only needed if fees are enabled
+  if (params.treasuryAta) {
+    phase3Accounts.treasuryAta = params.treasuryAta;
+  }
+
   const phase3Tx = await program.methods
     .executeSwap(
       Array.from(operationId)
     )
-    .accountsStrict({
-      inputPool: params.inputPool,
-      outputPool: params.outputPool,
-      ammPool: params.ammPool,
-      pendingOperation: pendingOpPda,
-      relayer: params.relayer,
-    })
+    .accounts(phase3Accounts)
     .preInstructions([
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 100_000 }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 }),
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
     ]);
 

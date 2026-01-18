@@ -24,6 +24,15 @@ interface SwapState {
   result: TransactionResult | null;
 }
 
+/** Progress stages for swap operation */
+export type SwapProgressStage =
+  | 'preparing'     // Preparing inputs/outputs
+  | 'generating'    // Generating ZK proof
+  | 'building'      // Building transactions
+  | 'approving'     // Awaiting wallet approval
+  | 'executing'     // Executing transactions
+  | 'confirming';   // Waiting for confirmation
+
 interface SwapOptions {
   /** Input note to spend */
   input: DecryptedNote;
@@ -35,6 +44,8 @@ interface SwapOptions {
   swapAmount: bigint;
   /** Slippage tolerance in basis points (e.g., 50 = 0.5%) */
   slippageBps?: number;
+  /** Optional progress callback */
+  onProgress?: (stage: SwapProgressStage) => void;
 }
 
 export function useSwap() {
@@ -60,7 +71,9 @@ export function useSwap() {
       setState({ isSwapping: true, error: null, result: null });
 
       try {
-        const { input, pool, swapDirection, swapAmount, slippageBps = 50 } = options;
+        const { input, pool, swapDirection, swapAmount, slippageBps = 50, onProgress } = options;
+
+        onProgress?.('preparing');
 
         // Calculate output amount from AMM
         const reserveIn = swapDirection === 'aToB' ? pool.reserveA : pool.reserveB;
@@ -115,7 +128,10 @@ export function useSwap() {
           merkleRoot,
           merklePath: dummyPath,
           merkleIndices: dummyIndices,
+          onProgress,
         });
+
+        onProgress?.('confirming');
 
         // Wait for indexer to pick up new compressed accounts
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -289,6 +305,15 @@ export function useInitializeAmmPool() {
   };
 }
 
+/** Progress stages for add liquidity operation */
+export type AddLiquidityProgressStage =
+  | 'preparing'     // Preparing inputs/outputs
+  | 'generating'    // Generating ZK proof
+  | 'building'      // Building transactions
+  | 'approving'     // Awaiting wallet approval
+  | 'executing'     // Executing transactions
+  | 'confirming';   // Waiting for confirmation
+
 /**
  * Hook for adding liquidity
  */
@@ -312,6 +337,7 @@ export function useAddLiquidity() {
       amountA: bigint;
       amountB: bigint;
       slippageBps?: number;
+      onProgress?: (stage: AddLiquidityProgressStage) => void;
     }): Promise<TransactionResult | null> => {
       if (!client || !wallet) {
         setState({ isAdding: false, error: 'Wallet not connected', result: null });
@@ -326,7 +352,9 @@ export function useAddLiquidity() {
       setState({ isAdding: true, error: null, result: null });
 
       try {
-        const { pool, inputA, inputB, amountA, amountB, slippageBps = 50 } = options;
+        const { pool, inputA, inputB, amountA, amountB, slippageBps = 50, onProgress } = options;
+
+        onProgress?.('preparing');
 
         // Calculate LP tokens to receive
         const { depositA, depositB, lpAmount } = calculateAddLiquidityAmounts(
@@ -375,7 +403,10 @@ export function useAddLiquidity() {
           lpRecipient,
           changeARecipient,
           changeBRecipient,
+          onProgress,
         });
+
+        onProgress?.('confirming');
 
         // Wait for indexer to pick up new compressed accounts
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -407,6 +438,15 @@ export function useAddLiquidity() {
   };
 }
 
+/** Progress stages for remove liquidity operation */
+export type RemoveLiquidityProgressStage =
+  | 'preparing'     // Preparing inputs/outputs
+  | 'generating'    // Generating ZK proof
+  | 'building'      // Building transactions
+  | 'approving'     // Awaiting wallet approval
+  | 'executing'     // Executing transactions
+  | 'confirming';   // Waiting for confirmation
+
 /**
  * Hook for removing liquidity
  */
@@ -428,6 +468,7 @@ export function useRemoveLiquidity() {
       lpInput: DecryptedNote;
       lpAmount: bigint;
       slippageBps?: number;
+      onProgress?: (stage: RemoveLiquidityProgressStage) => void;
     }): Promise<TransactionResult | null> => {
       if (!client || !wallet) {
         setState({ isRemoving: false, error: 'Wallet not connected', result: null });
@@ -442,7 +483,9 @@ export function useRemoveLiquidity() {
       setState({ isRemoving: true, error: null, result: null });
 
       try {
-        const { pool, lpInput, lpAmount, slippageBps = 50 } = options;
+        const { pool, lpInput, lpAmount, slippageBps = 50, onProgress } = options;
+
+        onProgress?.('preparing');
 
         // Calculate output amounts
         const { outputA, outputB } = calculateRemoveLiquidityOutput(
@@ -505,7 +548,10 @@ export function useRemoveLiquidity() {
           newPoolStateHash,
           merklePath: dummyPath,
           merklePathIndices: dummyIndices,
+          onProgress,
         });
+
+        onProgress?.('confirming');
 
         // Wait for indexer to pick up new compressed accounts
         await new Promise(resolve => setTimeout(resolve, 2000));

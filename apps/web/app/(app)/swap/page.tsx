@@ -470,6 +470,7 @@ function SwapTab({
   isProverReady: boolean;
   notes: any[];
 }) {
+  const { client, sync } = useCloakCraft();
   const { pools, isLoading: poolsLoading, refresh: refreshPools } = useAmmPools();
   const { swap, isSwapping, error: swapError } = useSwap();
   const { config: protocolFees } = useProtocolFees();
@@ -513,10 +514,18 @@ function SwapTab({
     }
   }, [amount, inputToken]);
 
-  // Fee calculation for display - swap fee is typically 0.3%
+  // Fee calculation for display - protocol takes swapFeeShareBps% of pool's LP fee
+  // e.g., if pool LP fee is 30 bps (0.3%) and protocol share is 2000 bps (20%),
+  // effective protocol fee = 30 * 2000 / 10000 = 6 bps (0.06%)
+  const effectiveSwapFeeBps = useMemo(() => {
+    const poolFeeBps = selectedPool?.feeBps ?? 30; // Pool's LP fee
+    const protocolShareBps = protocolFees?.swapFeeShareBps ?? 2000; // Protocol's share of LP fee
+    return Math.floor((poolFeeBps * protocolShareBps) / 10000);
+  }, [selectedPool?.feeBps, protocolFees?.swapFeeShareBps]);
+
   const feeBreakdown = useFeeBreakdown({
     amount: parsedAmount,
-    feeRateBps: protocolFees?.swapFeeBps ?? 30,
+    feeRateBps: effectiveSwapFeeBps,
     feesEnabled: protocolFees?.feesEnabled ?? true,
     symbol: inputToken?.symbol ?? '',
     decimals: inputToken?.decimals ?? 9,
@@ -576,10 +585,10 @@ function SwapTab({
   }, []);
 
   const handleSubmit = useCallback(async () => {
-    if (!canSubmit || !selectedPool || !inputToken) return;
+    if (!canSubmit || !selectedPool || !inputToken || !client) return;
 
-    // Check if consolidation is needed first
-    let selectionResult = getSelectionResult(parsedAmount);
+    // Check if consolidation is needed first (maxInputs=1 for swap)
+    let selectionResult = getSelectionResult(parsedAmount, { maxInputs: 1 });
 
     // Build initial steps based on whether consolidation is needed
     const steps: TransactionStep[] = [];
@@ -606,109 +615,138 @@ function SwapTab({
 
     try {
       let selectedNotes = selectionResult.notes;
-      let consolidationRound = 1;
-      const maxConsolidationRounds = 10; // Safety limit
 
-      // Keep consolidating until notes are sufficiently merged
-      while (selectionResult.needsConsolidation && consolidationRound <= maxConsolidationRounds) {
-        const prepareId = `consolidate-prepare-${consolidationRound}`;
-        const approveId = `consolidate-approve-${consolidationRound}`;
-        const confirmId = `consolidate-confirm-${consolidationRound}`;
+      // If consolidation is needed, call consolidate() once (it handles all batches internally)
+      if (selectionResult.needsConsolidation) {
+        await consolidate((stage, batchInfo) => {
+          const batchLabel = batchInfo && batchInfo.total > 1 ? ` (batch ${batchInfo.current}/${batchInfo.total})` : '';
 
-        // Update to consolidation approval step
+          if (stage === 'preparing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-prepare-1' ? { ...s, status: 'active', description: `Preparing notes${batchLabel}...` } : s
+            ));
+          } else if (stage === 'generating') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-prepare-1' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Generating proof${batchLabel}...` } : s
+            ));
+          } else if (stage === 'building') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Building transactions${batchLabel}...` } : s
+            ));
+          } else if (stage === 'approving') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Approve in wallet${batchLabel}...` } : s
+            ));
+          } else if (stage === 'executing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'active', description: `Executing transactions${batchLabel}...` } : s
+            ));
+          } else if (stage === 'confirming') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-approve-1' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-confirm-1' ? { ...s, status: 'active', description: `Confirming${batchLabel}...` } : s
+            ));
+          } else if (stage === 'syncing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-confirm-1' ? { ...s, status: 'active', description: `Syncing notes${batchLabel}...` } : s
+            ));
+          }
+        }, parsedAmount, 1);  // maxInputs=1 for swap
+
+        // Mark consolidation done
         setOverlaySteps(prev => prev.map(s =>
-          s.id === prepareId ? { ...s, status: 'completed' } :
-          s.id === approveId ? { ...s, status: 'active' } : s
+          s.id === 'consolidate-confirm-1' ? { ...s, status: 'completed' } :
+          s.id === 'prepare' ? { ...s, status: 'active' } : s
         ));
 
-        await consolidate();
+        // Get fresh notes directly from client (bypasses React state)
+        console.log('[Swap] Fetching fresh notes from client after consolidation...');
+        client.clearScanCache();
+        const freshNotes = await client.scanNotes(inputToken.mint);
+        const tokenNotes = freshNotes.filter((n: any) => n.tokenMint.equals(inputToken.mint));
+        console.log(`[Swap] Fresh notes for token: ${tokenNotes.length}`);
 
-        // Update to consolidation confirmation step
-        setOverlaySteps(prev => prev.map(s =>
-          s.id === approveId ? { ...s, status: 'completed' } :
-          s.id === confirmId ? { ...s, status: 'active' } : s
-        ));
-
-        // Wait for notes to sync after consolidation
-        await new Promise(resolve => setTimeout(resolve, 3000));
-
-        // Check if more consolidation is needed
-        selectionResult = getSelectionResult(parsedAmount);
-
-        if (selectionResult.needsConsolidation && consolidationRound < maxConsolidationRounds) {
-          // Add more consolidation steps for the next round
-          const nextRound = consolidationRound + 1;
-          setOverlaySteps(prev => {
-            // Mark current consolidation confirm as completed
-            const updated = prev.map(s =>
-              s.id === confirmId ? { ...s, status: 'completed' as const } : s
-            );
-            // Insert new consolidation steps before the 'prepare' step
-            const prepareIndex = updated.findIndex(s => s.id === 'prepare');
-            const newSteps: TransactionStep[] = [
-              { id: `consolidate-prepare-${nextRound}`, name: `Consolidation round ${nextRound}`, description: 'More consolidation needed...', status: 'active' },
-              { id: `consolidate-approve-${nextRound}`, name: 'Consolidating notes', description: 'Approve in wallet...', status: 'pending' },
-              { id: `consolidate-confirm-${nextRound}`, name: 'Confirming consolidation', description: 'Waiting for confirmation...', status: 'pending' },
-            ];
-            return [
-              ...updated.slice(0, prepareIndex),
-              ...newSteps,
-              ...updated.slice(prepareIndex),
-            ];
-          });
-        } else {
-          // Mark consolidation done, move to swap preparation
-          setOverlaySteps(prev => prev.map(s =>
-            s.id === confirmId ? { ...s, status: 'completed' } :
-            s.id === 'prepare' ? { ...s, status: 'active' } : s
-          ));
+        if (tokenNotes.length === 0) {
+          throw new Error('No notes found after consolidation');
         }
 
-        consolidationRound++;
+        // For swap, we need a SINGLE note that covers the amount
+        const sortedNotes = [...tokenNotes].sort((a: any, b: any) => Number(b.amount - a.amount));
+        const singleNote = sortedNotes.find((n: any) => n.amount >= parsedAmount);
+        if (!singleNote) {
+          throw new Error('No single note large enough after consolidation. Try consolidating more notes.');
+        }
+        selectedNotes = [singleNote];
+
+        // Also trigger a background sync to update React state
+        sync(inputToken.mint, true);
+      } else {
+        // No consolidation needed, use the original selection
+        if (selectionResult.error) {
+          throw new Error(selectionResult.error);
+        }
+        selectedNotes = selectionResult.notes;
       }
 
-      // Final check - if still needs consolidation after max rounds, throw error
-      if (selectionResult.needsConsolidation) {
-        throw new Error('Unable to consolidate notes after multiple attempts. Please try again later.');
-      }
-
-      if (selectionResult.error) {
-        throw new Error(selectionResult.error);
-      }
-      selectedNotes = selectionResult.notes;
-
-      // Update to proof generation step
-      setOverlaySteps(prev => prev.map(s =>
-        s.id === 'prepare' ? { ...s, status: 'completed' } :
-        s.id === 'proof' ? { ...s, status: 'active' } : s
-      ));
-
-      // Use first note as input (simplification - could combine multiple)
+      // Use first note as input
       const input = selectedNotes[0];
       if (!input) {
         throw new Error('No notes selected');
       }
 
-      // Update to submit step
-      setOverlaySteps(prev => prev.map(s =>
-        s.id === 'proof' ? { ...s, status: 'completed' } :
-        s.id === 'submit' ? { ...s, status: 'active' } : s
-      ));
-
+      // Start the swap operation with progress callback
       const result = await swap({
         input,
         pool: selectedPool,
         swapDirection,
         swapAmount: parsedAmount,
         slippageBps: 50, // 0.5% slippage
+        onProgress: (stage) => {
+          if (stage === 'preparing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'prepare' ? { ...s, status: 'active', description: 'Preparing swap...' } : s
+            ));
+          } else if (stage === 'generating') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'prepare' ? { ...s, status: 'completed' } :
+              s.id === 'proof' ? { ...s, status: 'active', description: 'Creating zero-knowledge proof...' } : s
+            ));
+          } else if (stage === 'building') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'proof' ? { ...s, status: 'active', description: 'Building transactions...' } : s
+            ));
+          } else if (stage === 'approving') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'proof' ? { ...s, status: 'completed' } :
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Approve in wallet...' } : s
+            ));
+          } else if (stage === 'executing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Executing transactions...' } : s
+            ));
+          } else if (stage === 'confirming') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'completed' } :
+              s.id === 'confirm' ? { ...s, status: 'active', description: 'Waiting for confirmation...' } : s
+            ));
+          }
+        },
       });
 
       if (result) {
+        // Mark proof and submit as completed, move to confirm
+        setOverlaySteps(prev => prev.map(s =>
+          s.id === 'proof' ? { ...s, status: 'completed' } :
+          s.id === 'submit' ? { ...s, status: 'completed' } :
+          s.id === 'confirm' ? { ...s, status: 'active', description: 'Waiting for confirmation...' } : s
+        ));
+
         // Mark all as completed
         setOverlaySteps(prev => prev.map(s => ({
           ...s,
           status: 'completed' as const,
-          signature: s.id === 'submit' ? result.signature : undefined
+          signature: s.id === 'confirm' ? result.signature : undefined
         })));
         setTxSignature(result.signature);
         setOverlayStatus('success');
@@ -725,7 +763,7 @@ function SwapTab({
       });
       setOverlayStatus('error');
     }
-  }, [canSubmit, selectedPool, inputToken, parsedAmount, getSelectionResult, consolidate, swap, swapDirection, swapError]);
+  }, [canSubmit, selectedPool, inputToken, parsedAmount, getSelectionResult, consolidate, swap, swapDirection, swapError, client, sync]);
 
   const handleCloseOverlay = useCallback(() => {
     setShowOverlay(false);
@@ -1133,6 +1171,7 @@ function AddLiquidityTab({
   isProverReady: boolean;
   notes: any[];
 }) {
+  const { client, sync } = useCloakCraft();
   const { pools, isLoading: poolsLoading, refresh: refreshPools } = useAmmPools();
   const { addLiquidity, isAdding, error: addError } = useAddLiquidity();
 
@@ -1140,19 +1179,26 @@ function AddLiquidityTab({
   const [amountA, setAmountA] = useState('');
   const [amountB, setAmountB] = useState('');
   const [lastChanged, setLastChanged] = useState<'A' | 'B' | null>(null);
-  const [txStatus, setTxStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [overlaySteps, setOverlaySteps] = useState<TransactionStep[]>([]);
+  const [overlayStatus, setOverlayStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
   const [txSignature, setTxSignature] = useState<string | undefined>();
-  const [txError, setTxError] = useState<string | undefined>();
 
   const tokenAInfo = useMemo(() => selectedPool ? getTokenInfo(selectedPool.tokenAMint) : null, [selectedPool]);
   const tokenBInfo = useMemo(() => selectedPool ? getTokenInfo(selectedPool.tokenBMint) : null, [selectedPool]);
 
-  const { totalAvailable: balanceA, selectNotesForAmount: selectNotesA } = useNoteSelector(
+  const { totalAvailable: balanceA, selectNotesForAmount: selectNotesA, getSelectionResult: getSelectionResultA } = useNoteSelector(
     selectedPool?.tokenAMint || SUPPORTED_TOKENS[0]?.mint
   );
-  const { totalAvailable: balanceB, selectNotesForAmount: selectNotesB } = useNoteSelector(
+  const { totalAvailable: balanceB, selectNotesForAmount: selectNotesB, getSelectionResult: getSelectionResultB } = useNoteSelector(
     selectedPool?.tokenBMint || SUPPORTED_TOKENS[0]?.mint
   );
+
+  // Consolidation hooks for both tokens
+  const shouldConsolidateA = useShouldConsolidate(selectedPool?.tokenAMint || SUPPORTED_TOKENS[0]?.mint);
+  const shouldConsolidateB = useShouldConsolidate(selectedPool?.tokenBMint || SUPPORTED_TOKENS[0]?.mint);
+  const { consolidate: consolidateA, isConsolidating: isConsolidatingA } = useConsolidation({ tokenMint: selectedPool?.tokenAMint || SUPPORTED_TOKENS[0]?.mint });
+  const { consolidate: consolidateB, isConsolidating: isConsolidatingB } = useConsolidation({ tokenMint: selectedPool?.tokenBMint || SUPPORTED_TOKENS[0]?.mint });
 
   // Check if this is the first deposit (empty pool)
   const isFirstDeposit = useMemo(() => {
@@ -1268,53 +1314,220 @@ function AddLiquidityTab({
     return null;
   }, [selectedPool, amountA, amountB, parsedAmountA, parsedAmountB, balanceA, balanceB]);
 
-  const canSubmit = !validationError && isProgramReady && isProverReady && !isAdding && txStatus !== 'pending';
+  const canSubmit = !validationError && isProgramReady && isProverReady && !isAdding && overlayStatus !== 'pending';
 
   const handleSubmit = useCallback(async () => {
-    if (!canSubmit || !selectedPool) return;
+    if (!canSubmit || !selectedPool || !tokenAInfo || !tokenBInfo || !client) return;
 
-    setTxStatus('pending');
-    setTxError(undefined);
+    // Check if consolidation is needed for either token (maxInputs=1 for each)
+    let selectionResultA = getSelectionResultA(parsedAmountA, { maxInputs: 1 });
+    let selectionResultB = getSelectionResultB(parsedAmountB, { maxInputs: 1 });
+
+    // Build initial steps based on whether consolidation is needed
+    const steps: TransactionStep[] = [];
+
+    if (selectionResultA.needsConsolidation) {
+      steps.push(
+        { id: 'consolidate-a-prepare', name: `Consolidating ${tokenAInfo.symbol}`, description: 'Preparing notes...', status: 'active' },
+        { id: 'consolidate-a-execute', name: `Consolidating ${tokenAInfo.symbol}`, description: 'Approve in wallet...', status: 'pending' },
+        { id: 'consolidate-a-confirm', name: `Confirming ${tokenAInfo.symbol}`, description: 'Waiting for confirmation...', status: 'pending' },
+      );
+    }
+
+    if (selectionResultB.needsConsolidation) {
+      steps.push(
+        { id: 'consolidate-b-prepare', name: `Consolidating ${tokenBInfo.symbol}`, description: 'Preparing notes...', status: selectionResultA.needsConsolidation ? 'pending' : 'active' },
+        { id: 'consolidate-b-execute', name: `Consolidating ${tokenBInfo.symbol}`, description: 'Approve in wallet...', status: 'pending' },
+        { id: 'consolidate-b-confirm', name: `Confirming ${tokenBInfo.symbol}`, description: 'Waiting for confirmation...', status: 'pending' },
+      );
+    }
+
+    const hasConsolidation = selectionResultA.needsConsolidation || selectionResultB.needsConsolidation;
+    steps.push(
+      { id: 'prepare', name: 'Preparing liquidity', description: 'Selecting notes...', status: hasConsolidation ? 'pending' : 'active' },
+      { id: 'proof', name: 'Generating proof', description: 'Creating zero-knowledge proof...', status: 'pending' },
+      { id: 'submit', name: 'Adding liquidity', description: 'Approve in wallet...', status: 'pending' },
+      { id: 'confirm', name: 'Confirming', description: 'Waiting for confirmation...', status: 'pending' },
+    );
+
+    setOverlaySteps(steps);
+    setOverlayStatus('pending');
+    setShowOverlay(true);
     setTxSignature(undefined);
 
     try {
-      const notesA = selectNotesA(parsedAmountA);
-      const notesB = selectNotesB(parsedAmountB);
+      let selectedNoteA: any = null;
+      let selectedNoteB: any = null;
 
-      if (!notesA[0] || !notesB[0]) {
+      // Consolidate token A if needed
+      if (selectionResultA.needsConsolidation) {
+        await consolidateA((stage, batchInfo) => {
+          const batchLabel = batchInfo && batchInfo.total > 1 ? ` (batch ${batchInfo.current}/${batchInfo.total})` : '';
+          if (stage === 'generating' || stage === 'building') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-a-prepare' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-a-execute' ? { ...s, status: 'active', description: `Generating proof${batchLabel}...` } : s
+            ));
+          } else if (stage === 'approving' || stage === 'executing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-a-execute' ? { ...s, status: 'active', description: `Executing${batchLabel}...` } : s
+            ));
+          } else if (stage === 'confirming' || stage === 'syncing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-a-execute' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-a-confirm' ? { ...s, status: 'active', description: `Confirming${batchLabel}...` } : s
+            ));
+          }
+        }, parsedAmountA, 1);
+
+        // Mark token A consolidation done
+        setOverlaySteps(prev => prev.map(s =>
+          s.id === 'consolidate-a-confirm' ? { ...s, status: 'completed' } :
+          s.id === 'consolidate-b-prepare' ? { ...s, status: 'active' } : s
+        ));
+
+        // Fetch fresh notes for token A
+        client.clearScanCache();
+        const freshNotesA = await client.scanNotes(selectedPool.tokenAMint);
+        const tokenNotesA = freshNotesA.filter((n: any) => n.tokenMint.equals(selectedPool.tokenAMint));
+        const sortedNotesA = [...tokenNotesA].sort((a: any, b: any) => Number(b.amount - a.amount));
+        selectedNoteA = sortedNotesA.find((n: any) => n.amount >= parsedAmountA);
+        if (!selectedNoteA) {
+          throw new Error(`No single ${tokenAInfo.symbol} note large enough after consolidation.`);
+        }
+        sync(selectedPool.tokenAMint, true);
+      } else {
+        selectedNoteA = selectionResultA.notes[0];
+      }
+
+      // Consolidate token B if needed
+      if (selectionResultB.needsConsolidation) {
+        // Update step to show we're starting B consolidation
+        setOverlaySteps(prev => prev.map(s =>
+          s.id === 'consolidate-b-prepare' ? { ...s, status: 'active' } : s
+        ));
+
+        await consolidateB((stage, batchInfo) => {
+          const batchLabel = batchInfo && batchInfo.total > 1 ? ` (batch ${batchInfo.current}/${batchInfo.total})` : '';
+          if (stage === 'generating' || stage === 'building') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-b-prepare' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-b-execute' ? { ...s, status: 'active', description: `Generating proof${batchLabel}...` } : s
+            ));
+          } else if (stage === 'approving' || stage === 'executing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-b-execute' ? { ...s, status: 'active', description: `Executing${batchLabel}...` } : s
+            ));
+          } else if (stage === 'confirming' || stage === 'syncing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-b-execute' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-b-confirm' ? { ...s, status: 'active', description: `Confirming${batchLabel}...` } : s
+            ));
+          }
+        }, parsedAmountB, 1);
+
+        // Mark token B consolidation done
+        setOverlaySteps(prev => prev.map(s =>
+          s.id === 'consolidate-b-confirm' ? { ...s, status: 'completed' } :
+          s.id === 'prepare' ? { ...s, status: 'active' } : s
+        ));
+
+        // Fetch fresh notes for token B
+        client.clearScanCache();
+        const freshNotesB = await client.scanNotes(selectedPool.tokenBMint);
+        const tokenNotesB = freshNotesB.filter((n: any) => n.tokenMint.equals(selectedPool.tokenBMint));
+        const sortedNotesB = [...tokenNotesB].sort((a: any, b: any) => Number(b.amount - a.amount));
+        selectedNoteB = sortedNotesB.find((n: any) => n.amount >= parsedAmountB);
+        if (!selectedNoteB) {
+          throw new Error(`No single ${tokenBInfo.symbol} note large enough after consolidation.`);
+        }
+        sync(selectedPool.tokenBMint, true);
+      } else {
+        selectedNoteB = selectionResultB.notes[0];
+      }
+
+      if (!selectedNoteA || !selectedNoteB) {
         throw new Error('Could not select notes');
       }
 
+      // Start the add liquidity operation with progress callback
       const result = await addLiquidity({
         pool: selectedPool,
-        inputA: notesA[0],
-        inputB: notesB[0],
+        inputA: selectedNoteA,
+        inputB: selectedNoteB,
         amountA: parsedAmountA,
         amountB: parsedAmountB,
+        onProgress: (stage) => {
+          if (stage === 'preparing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'prepare' ? { ...s, status: 'active', description: 'Preparing add liquidity...' } : s
+            ));
+          } else if (stage === 'generating') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'prepare' ? { ...s, status: 'completed' } :
+              s.id === 'proof' ? { ...s, status: 'active', description: 'Creating zero-knowledge proof...' } : s
+            ));
+          } else if (stage === 'building') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'proof' ? { ...s, status: 'active', description: 'Building transactions...' } : s
+            ));
+          } else if (stage === 'approving') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'proof' ? { ...s, status: 'completed' } :
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Approve in wallet...' } : s
+            ));
+          } else if (stage === 'executing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Executing transactions...' } : s
+            ));
+          } else if (stage === 'confirming') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'completed' } :
+              s.id === 'confirm' ? { ...s, status: 'active', description: 'Waiting for confirmation...' } : s
+            ));
+          }
+        },
       });
 
       if (result) {
+        // Mark proof and submit as completed, move to confirm
+        setOverlaySteps(prev => prev.map(s =>
+          s.id === 'proof' ? { ...s, status: 'completed' } :
+          s.id === 'submit' ? { ...s, status: 'completed' } :
+          s.id === 'confirm' ? { ...s, status: 'active', description: 'Waiting for confirmation...' } : s
+        ));
+
+        // Mark all as completed
+        setOverlaySteps(prev => prev.map(s => ({
+          ...s,
+          status: 'completed' as const,
+          signature: s.id === 'confirm' ? result.signature : undefined
+        })));
         setTxSignature(result.signature);
-        setTxStatus('success');
+        setOverlayStatus('success');
         setAmountA('');
         setAmountB('');
         toast.success('Liquidity added successfully');
         refreshPools();
       } else {
-        setTxStatus('error');
-        setTxError(addError || 'Failed to add liquidity');
+        throw new Error(addError || 'Failed to add liquidity');
       }
     } catch (error) {
-      setTxStatus('error');
-      setTxError(error instanceof Error ? error.message : 'Unknown error');
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      setOverlaySteps(prev => {
+        const activeIndex = prev.findIndex(s => s.status === 'active');
+        return prev.map((s, i) => i === activeIndex ? { ...s, status: 'error', error: errorMsg } : s);
+      });
+      setOverlayStatus('error');
     }
-  }, [canSubmit, selectedPool, parsedAmountA, parsedAmountB, selectNotesA, selectNotesB, addLiquidity, addError, refreshPools]);
+  }, [canSubmit, selectedPool, tokenAInfo, tokenBInfo, parsedAmountA, parsedAmountB, getSelectionResultA, getSelectionResultB, consolidateA, consolidateB, addLiquidity, addError, refreshPools, client, sync]);
 
-  const handleReset = useCallback(() => {
-    setTxStatus('idle');
-    setTxSignature(undefined);
-    setTxError(undefined);
-  }, []);
+  const handleCloseOverlay = useCallback(() => {
+    setShowOverlay(false);
+    if (overlayStatus === 'success' || overlayStatus === 'error') {
+      setOverlayStatus('idle');
+    }
+  }, [overlayStatus]);
 
   return (
     <Card>
@@ -1359,7 +1572,7 @@ function AddLiquidityTab({
                     setAmountB('');
                   }
                 }}
-                disabled={isAdding || txStatus === 'pending'}
+                disabled={isAdding || overlayStatus === 'pending'}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select pool" />
@@ -1408,7 +1621,7 @@ function AddLiquidityTab({
                     placeholder="0.00"
                     value={amountA}
                     onChange={(e) => handleAmountAChange(e.target.value)}
-                    disabled={isAdding || txStatus === 'pending'}
+                    disabled={isAdding || overlayStatus === 'pending'}
                   />
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>Private balance: {tokenAInfo ? formatAmount(balanceA, tokenAInfo.decimals) : '0'}</span>
@@ -1418,7 +1631,7 @@ function AddLiquidityTab({
                       size="sm"
                       className="h-5 px-2 text-xs"
                       onClick={() => tokenAInfo && handleAmountAChange(formatAmount(balanceA, tokenAInfo.decimals))}
-                      disabled={isAdding || txStatus === 'pending'}
+                      disabled={isAdding || overlayStatus === 'pending'}
                     >
                       MAX
                     </Button>
@@ -1434,7 +1647,7 @@ function AddLiquidityTab({
                     placeholder="0.00"
                     value={amountB}
                     onChange={(e) => handleAmountBChange(e.target.value)}
-                    disabled={isAdding || txStatus === 'pending'}
+                    disabled={isAdding || overlayStatus === 'pending'}
                   />
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>Private balance: {tokenBInfo ? formatAmount(balanceB, tokenBInfo.decimals) : '0'}</span>
@@ -1444,7 +1657,7 @@ function AddLiquidityTab({
                       size="sm"
                       className="h-5 px-2 text-xs"
                       onClick={() => tokenBInfo && handleAmountBChange(formatAmount(balanceB, tokenBInfo.decimals))}
-                      disabled={isAdding || txStatus === 'pending'}
+                      disabled={isAdding || overlayStatus === 'pending'}
                     >
                       MAX
                     </Button>
@@ -1494,25 +1707,45 @@ function AddLiquidityTab({
           </>
         )}
 
+        {/* Consolidation recommendations */}
+        {selectedPool && tokenAInfo && shouldConsolidateA && (
+          <ConsolidationPrompt
+            tokenMint={selectedPool.tokenAMint}
+            tokenSymbol={tokenAInfo.symbol}
+            variant="alert"
+          />
+        )}
+        {selectedPool && tokenBInfo && shouldConsolidateB && (
+          <ConsolidationPrompt
+            tokenMint={selectedPool.tokenBMint}
+            tokenSymbol={tokenBInfo.symbol}
+            variant="alert"
+          />
+        )}
+
         {!isProverReady && (
           <div className="rounded-lg bg-yellow-500/10 p-4 text-sm">
             <p className="text-yellow-600">Loading ZK prover...</p>
           </div>
         )}
-
-        <TransactionStatus
-          status={txStatus}
-          signature={txSignature}
-          error={txError}
-          onReset={handleReset}
-        />
       </CardContent>
 
       <CardFooter>
         <Button className="w-full" onClick={handleSubmit} disabled={!canSubmit || pools.length === 0}>
-          {isAdding || txStatus === 'pending' ? 'Adding...' : 'Add Liquidity'}
+          {isAdding || overlayStatus === 'pending' ? 'Adding...' : 'Add Liquidity'}
         </Button>
       </CardFooter>
+
+      {/* Transaction Overlay */}
+      <TransactionOverlay
+        isOpen={showOverlay}
+        onClose={handleCloseOverlay}
+        title="Add Liquidity"
+        steps={overlaySteps}
+        status={overlayStatus}
+        finalSignature={txSignature}
+        onRetry={handleSubmit}
+      />
     </Card>
   );
 }
@@ -1526,21 +1759,28 @@ function RemoveLiquidityTab({
   isProverReady: boolean;
   notes: any[];
 }) {
+  const { client, sync } = useCloakCraft();
   const { pools, isLoading: poolsLoading, refresh: refreshPools } = useAmmPools();
   const { removeLiquidity, isRemoving, error: removeError } = useRemoveLiquidity();
+  const { config: protocolFees } = useProtocolFees();
 
   const [selectedPool, setSelectedPool] = useState<(AmmPoolState & { address: PublicKey }) | null>(null);
   const [amount, setAmount] = useState('');
-  const [txStatus, setTxStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [overlaySteps, setOverlaySteps] = useState<TransactionStep[]>([]);
+  const [overlayStatus, setOverlayStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
   const [txSignature, setTxSignature] = useState<string | undefined>();
-  const [txError, setTxError] = useState<string | undefined>();
 
   const tokenAInfo = useMemo(() => selectedPool ? getTokenInfo(selectedPool.tokenAMint) : null, [selectedPool]);
   const tokenBInfo = useMemo(() => selectedPool ? getTokenInfo(selectedPool.tokenBMint) : null, [selectedPool]);
 
-  const { totalAvailable: lpBalance, selectNotesForAmount: selectLpNotes } = useNoteSelector(
+  const { totalAvailable: lpBalance, selectNotesForAmount: selectLpNotes, getSelectionResult: getSelectionResultLp } = useNoteSelector(
     selectedPool?.lpMint || SUPPORTED_TOKENS[0]?.mint
   );
+
+  // Consolidation for LP tokens
+  const shouldConsolidateLp = useShouldConsolidate(selectedPool?.lpMint || SUPPORTED_TOKENS[0]?.mint);
+  const { consolidate: consolidateLp, isConsolidating: isConsolidatingLp } = useConsolidation({ tokenMint: selectedPool?.lpMint || SUPPORTED_TOKENS[0]?.mint });
 
   useEffect(() => {
     if (pools.length > 0 && !selectedPool) {
@@ -1556,6 +1796,15 @@ function RemoveLiquidityTab({
       return 0n;
     }
   }, [amount]);
+
+  // Fee calculation for display - moved after parsedAmount
+  const feeBreakdown = useFeeBreakdown({
+    amount: parsedAmount,
+    feeRateBps: protocolFees?.removeLiquidityFeeBps ?? 25,
+    feesEnabled: protocolFees?.feesEnabled ?? true,
+    symbol: 'LP',
+    decimals: 9,
+  });
 
   // Calculate expected output amounts
   const outputCalc = useMemo(() => {
@@ -1596,49 +1845,160 @@ function RemoveLiquidityTab({
     return null;
   }, [selectedPool, amount, parsedAmount, lpBalance]);
 
-  const canSubmit = !validationError && isProgramReady && isProverReady && !isRemoving && txStatus !== 'pending';
+  const canSubmit = !validationError && isProgramReady && isProverReady && !isRemoving && overlayStatus !== 'pending';
 
   const handleSubmit = useCallback(async () => {
-    if (!canSubmit || !selectedPool) return;
+    if (!canSubmit || !selectedPool || !client) return;
 
-    setTxStatus('pending');
-    setTxError(undefined);
+    // Check if consolidation is needed (maxInputs=1 for remove liquidity)
+    let selectionResult = getSelectionResultLp(parsedAmount, { maxInputs: 1 });
+
+    // Build initial steps based on whether consolidation is needed
+    const steps: TransactionStep[] = [];
+
+    if (selectionResult.needsConsolidation) {
+      steps.push(
+        { id: 'consolidate-prepare', name: 'Consolidating LP tokens', description: 'Preparing notes...', status: 'active' },
+        { id: 'consolidate-execute', name: 'Consolidating LP tokens', description: 'Approve in wallet...', status: 'pending' },
+        { id: 'consolidate-confirm', name: 'Confirming consolidation', description: 'Waiting for confirmation...', status: 'pending' },
+      );
+    }
+
+    steps.push(
+      { id: 'prepare', name: 'Preparing removal', description: 'Selecting notes...', status: selectionResult.needsConsolidation ? 'pending' : 'active' },
+      { id: 'proof', name: 'Generating proof', description: 'Creating zero-knowledge proof...', status: 'pending' },
+      { id: 'submit', name: 'Removing liquidity', description: 'Approve in wallet...', status: 'pending' },
+      { id: 'confirm', name: 'Confirming', description: 'Waiting for confirmation...', status: 'pending' },
+    );
+
+    setOverlaySteps(steps);
+    setOverlayStatus('pending');
+    setShowOverlay(true);
     setTxSignature(undefined);
 
     try {
-      const lpNotes = selectLpNotes(parsedAmount);
+      let selectedNote: any = null;
 
-      if (!lpNotes[0]) {
+      // Consolidate LP tokens if needed
+      if (selectionResult.needsConsolidation) {
+        await consolidateLp((stage, batchInfo) => {
+          const batchLabel = batchInfo && batchInfo.total > 1 ? ` (batch ${batchInfo.current}/${batchInfo.total})` : '';
+          if (stage === 'generating' || stage === 'building') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-prepare' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-execute' ? { ...s, status: 'active', description: `Generating proof${batchLabel}...` } : s
+            ));
+          } else if (stage === 'approving' || stage === 'executing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-execute' ? { ...s, status: 'active', description: `Executing${batchLabel}...` } : s
+            ));
+          } else if (stage === 'confirming' || stage === 'syncing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'consolidate-execute' ? { ...s, status: 'completed' } :
+              s.id === 'consolidate-confirm' ? { ...s, status: 'active', description: `Confirming${batchLabel}...` } : s
+            ));
+          }
+        }, parsedAmount, 1);
+
+        // Mark consolidation done
+        setOverlaySteps(prev => prev.map(s =>
+          s.id === 'consolidate-confirm' ? { ...s, status: 'completed' } :
+          s.id === 'prepare' ? { ...s, status: 'active' } : s
+        ));
+
+        // Fetch fresh LP notes
+        client.clearScanCache();
+        const freshNotes = await client.scanNotes(selectedPool.lpMint);
+        const lpNotes = freshNotes.filter((n: any) => n.tokenMint.equals(selectedPool.lpMint));
+        const sortedNotes = [...lpNotes].sort((a: any, b: any) => Number(b.amount - a.amount));
+        selectedNote = sortedNotes.find((n: any) => n.amount >= parsedAmount);
+        if (!selectedNote) {
+          throw new Error('No single LP note large enough after consolidation.');
+        }
+        sync(selectedPool.lpMint, true);
+      } else {
+        selectedNote = selectionResult.notes[0];
+      }
+
+      if (!selectedNote) {
         throw new Error('Could not select LP notes');
       }
 
+      // Start the remove liquidity operation with progress callback
       const result = await removeLiquidity({
         pool: selectedPool,
-        lpInput: lpNotes[0],
+        lpInput: selectedNote,
         lpAmount: parsedAmount,
+        onProgress: (stage) => {
+          if (stage === 'preparing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'prepare' ? { ...s, status: 'active', description: 'Preparing remove liquidity...' } : s
+            ));
+          } else if (stage === 'generating') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'prepare' ? { ...s, status: 'completed' } :
+              s.id === 'proof' ? { ...s, status: 'active', description: 'Creating zero-knowledge proof...' } : s
+            ));
+          } else if (stage === 'building') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'proof' ? { ...s, status: 'active', description: 'Building transactions...' } : s
+            ));
+          } else if (stage === 'approving') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'proof' ? { ...s, status: 'completed' } :
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Approve in wallet...' } : s
+            ));
+          } else if (stage === 'executing') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'active', description: 'Executing transactions...' } : s
+            ));
+          } else if (stage === 'confirming') {
+            setOverlaySteps(prev => prev.map(s =>
+              s.id === 'submit' ? { ...s, status: 'completed' } :
+              s.id === 'confirm' ? { ...s, status: 'active', description: 'Waiting for confirmation...' } : s
+            ));
+          }
+        },
       });
 
       if (result) {
+        // Mark proof and submit as completed, move to confirm
+        setOverlaySteps(prev => prev.map(s =>
+          s.id === 'proof' ? { ...s, status: 'completed' } :
+          s.id === 'submit' ? { ...s, status: 'completed' } :
+          s.id === 'confirm' ? { ...s, status: 'active', description: 'Waiting for confirmation...' } : s
+        ));
+
+        // Mark all as completed
+        setOverlaySteps(prev => prev.map(s => ({
+          ...s,
+          status: 'completed' as const,
+          signature: s.id === 'confirm' ? result.signature : undefined
+        })));
         setTxSignature(result.signature);
-        setTxStatus('success');
+        setOverlayStatus('success');
         setAmount('');
         toast.success('Liquidity removed successfully');
         refreshPools();
       } else {
-        setTxStatus('error');
-        setTxError(removeError || 'Failed to remove liquidity');
+        throw new Error(removeError || 'Failed to remove liquidity');
       }
     } catch (error) {
-      setTxStatus('error');
-      setTxError(error instanceof Error ? error.message : 'Unknown error');
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      setOverlaySteps(prev => {
+        const activeIndex = prev.findIndex(s => s.status === 'active');
+        return prev.map((s, i) => i === activeIndex ? { ...s, status: 'error', error: errorMsg } : s);
+      });
+      setOverlayStatus('error');
     }
-  }, [canSubmit, selectedPool, parsedAmount, selectLpNotes, removeLiquidity, removeError, refreshPools]);
+  }, [canSubmit, selectedPool, parsedAmount, getSelectionResultLp, consolidateLp, removeLiquidity, removeError, refreshPools, client, sync]);
 
-  const handleReset = useCallback(() => {
-    setTxStatus('idle');
-    setTxSignature(undefined);
-    setTxError(undefined);
-  }, []);
+  const handleCloseOverlay = useCallback(() => {
+    setShowOverlay(false);
+    if (overlayStatus === 'success' || overlayStatus === 'error') {
+      setOverlayStatus('idle');
+    }
+  }, [overlayStatus]);
 
   return (
     <Card>
@@ -1682,7 +2042,7 @@ function RemoveLiquidityTab({
                     setAmount('');
                   }
                 }}
-                disabled={isRemoving || txStatus === 'pending'}
+                disabled={isRemoving || overlayStatus === 'pending'}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select pool" />
@@ -1717,7 +2077,7 @@ function RemoveLiquidityTab({
                           setAmount(e.target.value);
                         }
                       }}
-                      disabled={isRemoving || txStatus === 'pending'}
+                      disabled={isRemoving || overlayStatus === 'pending'}
                     />
                     <Button
                       type="button"
@@ -1725,7 +2085,7 @@ function RemoveLiquidityTab({
                       size="sm"
                       className="absolute right-1 top-1/2 -translate-y-1/2 h-7 px-2 text-xs"
                       onClick={() => setAmount(formatAmount(lpBalance, 9))}
-                      disabled={isRemoving || txStatus === 'pending'}
+                      disabled={isRemoving || overlayStatus === 'pending'}
                     >
                       MAX
                     </Button>
@@ -1784,6 +2144,20 @@ function RemoveLiquidityTab({
                     swapAmount={0n}
                   />
                 )}
+
+                {/* Consolidation recommendation */}
+                {shouldConsolidateLp && (
+                  <ConsolidationPrompt
+                    tokenMint={selectedPool.lpMint}
+                    tokenSymbol="LP"
+                    variant="alert"
+                  />
+                )}
+
+                {/* Fee info */}
+                {feeBreakdown?.protocolFee && parsedAmount > 0n && (
+                  <FeeBreakdown data={feeBreakdown} />
+                )}
               </>
             )}
           </>
@@ -1794,20 +2168,30 @@ function RemoveLiquidityTab({
             <p className="text-yellow-600">Loading ZK prover...</p>
           </div>
         )}
-
-        <TransactionStatus
-          status={txStatus}
-          signature={txSignature}
-          error={txError}
-          onReset={handleReset}
-        />
       </CardContent>
 
       <CardFooter>
         <Button className="w-full" onClick={handleSubmit} disabled={!canSubmit || pools.length === 0}>
-          {isRemoving || txStatus === 'pending' ? 'Removing...' : 'Remove Liquidity'}
+          {isRemoving || overlayStatus === 'pending' ? 'Removing...' : 'Remove Liquidity'}
         </Button>
       </CardFooter>
+
+      {/* Transaction Overlay */}
+      <TransactionOverlay
+        isOpen={showOverlay}
+        onClose={handleCloseOverlay}
+        title="Remove Liquidity"
+        steps={overlaySteps}
+        status={overlayStatus}
+        finalSignature={txSignature}
+        feeBreakdown={feeBreakdown ? {
+          amount: feeBreakdown.amount,
+          protocolFee: feeBreakdown.protocolFee,
+          total: feeBreakdown.total,
+          symbol: feeBreakdown.symbol,
+        } : undefined}
+        onRetry={handleSubmit}
+      />
     </Card>
   );
 }

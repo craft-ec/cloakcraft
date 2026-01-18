@@ -1885,11 +1885,15 @@ export class CloakCraftClient {
       throw new Error("Prover not initialized. Call initializeProver(['swap/swap']) first.");
     }
 
+    params.onProgress?.('generating');
+
     // Generate proof (returns both proof and computed commitments/nullifier)
     const proofResult = await this.proofGenerator.generateSwapProof(
       params,
       this.wallet.keypair
     );
+
+    params.onProgress?.('building');
 
     // Derive pool PDAs
     const inputTokenMint = params.input.tokenMint instanceof Uint8Array
@@ -1905,6 +1909,26 @@ export class CloakCraftClient {
 
     const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
     const [outputPoolPda] = derivePoolPda(outputTokenMint, this.programId);
+
+    // Fetch input pool to get vault address
+    const inputPoolAccount = await (this.program.account as any).pool.fetch(inputPoolPda);
+    const inputVault = inputPoolAccount.tokenVault;
+
+    // Get protocol config (required) and treasury ATA for fee collection
+    const [protocolConfigPda] = deriveProtocolConfigPda(this.programId);
+    let treasuryAta: PublicKey | undefined;
+
+    try {
+      const configAccount = await (this.program.account as any).protocolConfig.fetch(protocolConfigPda);
+      if (configAccount && configAccount.feesEnabled) {
+        // Get treasury's ATA for input token (needed for fee transfer)
+        const { getAssociatedTokenAddress } = await import('@solana/spl-token');
+        treasuryAta = await getAssociatedTokenAddress(inputTokenMint, configAccount.treasury);
+      }
+    } catch {
+      // Protocol config doesn't exist - will fail on-chain if not initialized
+      console.warn('[Swap] Protocol config not found - swap will fail if not initialized');
+    }
 
     // Require accountHash for commitment existence proof
     const accountHash = params.input.accountHash;
@@ -1928,6 +1952,9 @@ export class CloakCraftClient {
       inputTokenMint,
       outputTokenMint,
       ammPool: params.poolId,
+      inputVault,
+      protocolConfig: protocolConfigPda, // Required
+      treasuryAta, // Optional - only if fees enabled
       relayer: relayerPubkey,
       proof,
       merkleRoot: params.merkleRoot,
@@ -2069,6 +2096,7 @@ export class CloakCraftClient {
 
     // Sign all transactions at once (ONE wallet popup)
     console.log('[Swap] Requesting signature for all transactions...');
+    params.onProgress?.('approving');
     let signedTransactions;
     if (relayer) {
       signedTransactions = transactions.map(tx => {
@@ -2089,6 +2117,7 @@ export class CloakCraftClient {
 
     // Execute signed transactions sequentially
     console.log('[Swap] Executing signed transactions sequentially...');
+    params.onProgress?.('executing');
     let phase0Signature = '';
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
@@ -2137,6 +2166,8 @@ export class CloakCraftClient {
       throw new Error("Prover not initialized. Call initializeProver(['swap/add_liquidity']) first.");
     }
 
+    params.onProgress?.('generating');
+
     // CRITICAL: lpAmount was already calculated and passed in params
     // We must use the SAME value in the proof that will be used in encryption
     // (This is the same pattern as swap where we pass outputAmount)
@@ -2147,6 +2178,8 @@ export class CloakCraftClient {
       params,
       this.wallet.keypair
     );
+
+    params.onProgress?.('building');
 
     // Derive pool PDAs
     const tokenAMint = params.inputA.tokenMint instanceof Uint8Array
@@ -2342,6 +2375,7 @@ export class CloakCraftClient {
 
     // Sign all transactions at once (ONE wallet popup)
     console.log('[Add Liquidity] Requesting signature for all transactions...');
+    params.onProgress?.('approving');
     let signedTransactions;
     if (relayer) {
       signedTransactions = transactions.map(tx => {
@@ -2362,6 +2396,7 @@ export class CloakCraftClient {
 
     // Execute signed transactions sequentially
     console.log('[Add Liquidity] Executing signed transactions sequentially...');
+    params.onProgress?.('executing');
     let phase0Signature = '';
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
@@ -2411,6 +2446,8 @@ export class CloakCraftClient {
       throw new Error("Prover not initialized. Call initializeProver(['swap/remove_liquidity']) first.");
     }
 
+    params.onProgress?.('generating');
+
     // Use token mints from params (no need to fetch account)
     const tokenAMint = params.tokenAMint;
     const tokenBMint = params.tokenBMint;
@@ -2432,6 +2469,8 @@ export class CloakCraftClient {
       params,
       this.wallet.keypair
     );
+
+    params.onProgress?.('building');
 
     // Compute LP input commitment for verification
     const lpInputCommitment = computeCommitment(params.lpInput);
@@ -2592,6 +2631,7 @@ export class CloakCraftClient {
 
     // Sign all transactions at once (ONE wallet popup)
     console.log('[Remove Liquidity] Requesting signature for all transactions...');
+    params.onProgress?.('approving');
     let signedTransactions;
     if (relayer) {
       signedTransactions = transactions.map(tx => {
@@ -2612,6 +2652,7 @@ export class CloakCraftClient {
 
     // Execute signed transactions sequentially
     console.log('[Remove Liquidity] Executing signed transactions sequentially...');
+    params.onProgress?.('executing');
     let phase0Signature = '';
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];

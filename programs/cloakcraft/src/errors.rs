@@ -273,4 +273,14 @@ pub enum CloakCraftError {
     // ============ Consolidation Errors ============
     #[msg("Invalid input count - must be between 2 and 3 for consolidation")]
     InvalidInputCount,
+
+    // ============ Protocol Fee Errors ============
+    #[msg("Invalid vault account")]
+    InvalidVault,
+
+    #[msg("Treasury ATA required when protocol fees are enabled")]
+    InvalidTreasury,
+
+    #[msg("Fee amount is less than required minimum")]
+    InsufficientFee,
 }

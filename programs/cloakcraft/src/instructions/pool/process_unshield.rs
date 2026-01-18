@@ -49,14 +49,14 @@ pub struct ProcessUnshield<'info> {
     )]
     pub pending_operation: Box<Account<'info, PendingOperation>>,
 
-    /// Protocol config (optional - if fees are enabled, boxed to reduce stack usage)
+    /// Protocol config (required - enforces fee verification)
     #[account(
         seeds = [seeds::PROTOCOL_CONFIG],
         bump = protocol_config.bump,
     )]
-    pub protocol_config: Option<Box<Account<'info, ProtocolConfig>>>,
+    pub protocol_config: Box<Account<'info, ProtocolConfig>>,
 
-    /// Treasury token account for receiving fees (optional - required if fee_amount > 0)
+    /// Treasury token account for receiving fees (required if fee > 0)
     /// CHECK: Verified to match treasury in protocol_config
     #[account(mut)]
     pub treasury_token_account: Option<Box<Account<'info, TokenAccount>>>,
@@ -122,38 +122,51 @@ pub fn process_unshield<'info>(
     ];
     let signer_seeds = &[&pool_seeds[..]];
 
-    // Process protocol fee if amount > 0 and not already processed
+    // Verify protocol fee is correct (on-chain enforcement)
     let fee_amount = pending_op.fee_amount;
+    let protocol_config = &ctx.accounts.protocol_config;
+
+    if protocol_config.fees_enabled {
+        // Calculate expected fee based on transfer_amount + unshield_amount
+        // Fee is charged on the total value leaving the sender's control
+        let transfer_amount = pending_op.transfer_amount;
+        let total_taxable = transfer_amount
+            .checked_add(unshield_amount)
+            .ok_or(CloakCraftError::AmountOverflow)?;
+
+        let expected_fee = protocol_config.calculate_fee(total_taxable, protocol_config.transfer_fee_bps);
+
+        msg!("Fee verification: transfer={}, unshield={}, total={}, expected={}, provided={}",
+            transfer_amount, unshield_amount, total_taxable, expected_fee, fee_amount);
+
+        // ENFORCE: fee must be >= expected
+        require!(
+            fee_amount >= expected_fee,
+            CloakCraftError::InsufficientFee
+        );
+    }
+
+    // Process protocol fee if amount > 0 and not already processed
     if fee_amount > 0 && !pending_op.fee_processed {
         // Verify treasury account is provided
         let treasury = ctx.accounts.treasury_token_account.as_ref()
-            .ok_or(CloakCraftError::InvalidAmount)?;
+            .ok_or(CloakCraftError::InvalidTreasury)?;
 
-        // Verify protocol config is provided if fees are charged
-        if let Some(_config) = ctx.accounts.protocol_config.as_ref() {
-            // Note: We don't verify the fee matches expected rate here because
-            // the fee_amount was already verified in the ZK proof (Phase 0).
-            // The circuit enforces: in_amount = outputs + unshield + fee
-            msg!("Transferring {} fee to treasury {:?}", fee_amount, treasury.key());
+        msg!("Transferring {} fee to treasury {:?}", fee_amount, treasury.key());
 
-            transfer_from_vault(
-                &ctx.accounts.token_program,
-                &*ctx.accounts.token_vault,
-                &**treasury,
-                &pool.to_account_info(),
-                signer_seeds,
-                fee_amount,
-            )?;
+        transfer_from_vault(
+            &ctx.accounts.token_program,
+            &*ctx.accounts.token_vault,
+            &**treasury,
+            &pool.to_account_info(),
+            signer_seeds,
+            fee_amount,
+        )?;
 
-            update_pool_balance(pool, fee_amount, false)?;
-            pending_op.fee_processed = true;
+        update_pool_balance(pool, fee_amount, false)?;
+        pending_op.fee_processed = true;
 
-            msg!("✅ Fee transfer complete");
-        } else {
-            // If no protocol config but fee_amount > 0, this is an error
-            // (circuit proved a fee but we can't collect it)
-            msg!("WARNING: Fee amount {} but no protocol config - fee not collected", fee_amount);
-        }
+        msg!("✅ Fee transfer complete");
     }
 
     // Process unshield if amount > 0

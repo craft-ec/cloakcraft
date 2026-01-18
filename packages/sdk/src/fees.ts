@@ -6,7 +6,7 @@
  * Fee Operations (charged):
  * - transfer: Private → private transfers (0.1% suggested)
  * - unshield: Private → public withdrawals (0.25% suggested)
- * - swap: Private AMM swaps (0.3% suggested)
+ * - swap: Protocol takes 20% of LP fees (e.g., 0.3% LP fee → 0.06% protocol fee)
  * - remove_liquidity: LP token withdrawals (0.25% suggested)
  *
  * Free Operations (add value to protocol):
@@ -47,8 +47,8 @@ export interface ProtocolFeeConfig {
   transferFeeBps: number;
   /** Unshield fee in basis points (25 = 0.25%) */
   unshieldFeeBps: number;
-  /** Swap fee in basis points (30 = 0.3%) */
-  swapFeeBps: number;
+  /** Protocol's share of LP swap fees in basis points (2000 = 20%) */
+  swapFeeShareBps: number;
   /** Remove liquidity fee in basis points (25 = 0.25%) */
   removeLiquidityFeeBps: number;
   /** Whether fees are enabled */
@@ -75,10 +75,10 @@ export interface FeeCalculation {
  * Default fee configuration (suggested rates)
  */
 export const DEFAULT_FEE_CONFIG: Omit<ProtocolFeeConfig, 'authority' | 'treasury'> = {
-  transferFeeBps: 10,        // 0.1%
-  unshieldFeeBps: 25,        // 0.25%
-  swapFeeBps: 30,            // 0.3%
-  removeLiquidityFeeBps: 25, // 0.25%
+  transferFeeBps: 10,         // 0.1%
+  unshieldFeeBps: 25,         // 0.25%
+  swapFeeShareBps: 2000,      // 20% of LP fees
+  removeLiquidityFeeBps: 25,  // 0.25%
   feesEnabled: true,
 };
 
@@ -158,7 +158,7 @@ export function calculateProtocolFee(
 }
 
 /**
- * Get fee basis points for an operation
+ * Get fee basis points for an operation (except swap which uses share of LP fees)
  */
 export function getFeeBps(operation: FeeableOperation, config: ProtocolFeeConfig): number {
   switch (operation) {
@@ -167,12 +167,64 @@ export function getFeeBps(operation: FeeableOperation, config: ProtocolFeeConfig
     case 'unshield':
       return config.unshieldFeeBps;
     case 'swap':
-      return config.swapFeeBps;
+      // For swap, use calculateSwapProtocolFee instead
+      // This returns 0 as swaps use percentage of LP fee, not fixed rate
+      return 0;
     case 'remove_liquidity':
       return config.removeLiquidityFeeBps;
     default:
       return 0;
   }
+}
+
+/**
+ * Calculate swap protocol fee (20% of LP fees)
+ *
+ * @param swapAmount - Amount being swapped
+ * @param lpFeeBps - Pool's LP fee in basis points (e.g., 30 = 0.3%)
+ * @param config - Protocol fee configuration
+ * @returns Object with protocol fee and remaining LP fee
+ */
+export function calculateSwapProtocolFee(
+  swapAmount: bigint,
+  lpFeeBps: number,
+  config: ProtocolFeeConfig | null
+): {
+  protocolFee: bigint;
+  lpFeeRemaining: bigint;
+  totalLpFee: bigint;
+  effectiveFeeBps: number;
+} {
+  // If no config or fees disabled, all LP fee stays in pool
+  if (!config || !config.feesEnabled || config.swapFeeShareBps === 0 || lpFeeBps === 0) {
+    const totalLpFee = (swapAmount * BigInt(lpFeeBps)) / BPS_DIVISOR;
+    return {
+      protocolFee: 0n,
+      lpFeeRemaining: totalLpFee,
+      totalLpFee,
+      effectiveFeeBps: 0,
+    };
+  }
+
+  // Calculate total LP fee first
+  const totalLpFee = (swapAmount * BigInt(lpFeeBps)) / BPS_DIVISOR;
+
+  // Protocol takes swapFeeShareBps% of the LP fee
+  const protocolFee = (totalLpFee * BigInt(config.swapFeeShareBps)) / BPS_DIVISOR;
+
+  // Remaining LP fee stays in pool
+  const lpFeeRemaining = totalLpFee - protocolFee;
+
+  // Calculate effective fee rate for display
+  // effectiveFeeBps = lpFeeBps * swapFeeShareBps / 10000
+  const effectiveFeeBps = Math.floor((lpFeeBps * config.swapFeeShareBps) / 10000);
+
+  return {
+    protocolFee,
+    lpFeeRemaining,
+    totalLpFee,
+    effectiveFeeBps,
+  };
 }
 
 /**
@@ -245,8 +297,8 @@ export async function fetchProtocolFeeConfig(
   const unshieldFeeBps = data.readUInt16LE(offset);
   offset += 2;
 
-  // swap_fee_bps: u16 (2 bytes, little-endian)
-  const swapFeeBps = data.readUInt16LE(offset);
+  // swap_fee_share_bps: u16 (2 bytes, little-endian)
+  const swapFeeShareBps = data.readUInt16LE(offset);
   offset += 2;
 
   // remove_liquidity_fee_bps: u16 (2 bytes, little-endian)
@@ -261,7 +313,7 @@ export async function fetchProtocolFeeConfig(
     treasury,
     transferFeeBps,
     unshieldFeeBps,
-    swapFeeBps,
+    swapFeeShareBps,
     removeLiquidityFeeBps,
     feesEnabled,
   };

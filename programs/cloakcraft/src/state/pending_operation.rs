@@ -171,6 +171,10 @@ pub struct PendingOperation {
     /// Unshield amount (for process_unshield phase)
     pub unshield_amount: u64,
 
+    /// Transfer amount (public for on-chain fee verification)
+    /// This is the amount going to the recipient (out_amount_1 in circuit)
+    pub transfer_amount: u64,
+
     /// Whether fee has been processed (transferred to treasury)
     pub fee_processed: bool,
 }
@@ -211,6 +215,7 @@ impl PendingOperation {
         1 + // swap_a_to_b (operation-specific)
         8 + // fee_amount (protocol fee)
         8 + // unshield_amount
+        8 + // transfer_amount (public for fee verification)
         1; // fee_processed
         // Total: ~2,083 bytes with 3 inputs + 8 outputs (safe for 4KB stack)
 

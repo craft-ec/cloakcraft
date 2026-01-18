@@ -17,8 +17,8 @@ export interface ProtocolFeeConfig {
   transferFeeBps: number;
   /** Unshield fee in basis points */
   unshieldFeeBps: number;
-  /** Swap fee in basis points */
-  swapFeeBps: number;
+  /** Protocol's share of LP swap fees in basis points (2000 = 20%) */
+  swapFeeShareBps: number;
   /** Remove liquidity fee in basis points */
   removeLiquidityFeeBps: number;
   /** Whether fees are enabled */
@@ -47,10 +47,10 @@ export interface UseProtocolFeesResult {
 
 // Default fee rates (used as fallback)
 const DEFAULT_FEES: Omit<ProtocolFeeConfig, 'treasury' | 'authority'> = {
-  transferFeeBps: 10,        // 0.1%
-  unshieldFeeBps: 25,        // 0.25%
-  swapFeeBps: 30,            // 0.3%
-  removeLiquidityFeeBps: 25, // 0.25%
+  transferFeeBps: 10,         // 0.1%
+  unshieldFeeBps: 25,         // 0.25%
+  swapFeeShareBps: 2000,      // 20% of LP fees
+  removeLiquidityFeeBps: 25,  // 0.25%
   feesEnabled: true,
 };
 
@@ -100,7 +100,7 @@ export function useProtocolFees(): UseProtocolFeesResult {
       // 32 bytes treasury
       // 2 bytes transfer_fee_bps
       // 2 bytes unshield_fee_bps
-      // 2 bytes swap_fee_bps
+      // 2 bytes swap_fee_share_bps
       // 2 bytes remove_liquidity_fee_bps
       // 1 byte fees_enabled
       // ...reserved
@@ -110,7 +110,7 @@ export function useProtocolFees(): UseProtocolFeesResult {
       const treasury = new PublicKey(data.subarray(40, 72));
       const transferFeeBps = data.readUInt16LE(72);
       const unshieldFeeBps = data.readUInt16LE(74);
-      const swapFeeBps = data.readUInt16LE(76);
+      const swapFeeShareBps = data.readUInt16LE(76);
       const removeLiquidityFeeBps = data.readUInt16LE(78);
       const feesEnabled = data[80] !== 0;
 
@@ -119,7 +119,7 @@ export function useProtocolFees(): UseProtocolFeesResult {
         treasury,
         transferFeeBps,
         unshieldFeeBps,
-        swapFeeBps,
+        swapFeeShareBps,
         removeLiquidityFeeBps,
         feesEnabled,
       });
@@ -138,6 +138,7 @@ export function useProtocolFees(): UseProtocolFeesResult {
   }, [fetchConfig]);
 
   // Calculate fee for an amount
+  // Note: For swaps, use calculateSwapFee instead since it requires the pool's LP fee
   const calculateFee = useCallback(
     (amount: bigint, operation: 'transfer' | 'unshield' | 'swap' | 'remove_liquidity'): bigint => {
       const cfg = config ?? {
@@ -150,10 +151,15 @@ export function useProtocolFees(): UseProtocolFeesResult {
         return 0n;
       }
 
+      // Swap fees are calculated differently (% of LP fee, not fixed rate)
+      // Use calculateSwapFee for swaps
+      if (operation === 'swap') {
+        return 0n;
+      }
+
       const bps = {
         transfer: cfg.transferFeeBps,
         unshield: cfg.unshieldFeeBps,
-        swap: cfg.swapFeeBps,
         remove_liquidity: cfg.removeLiquidityFeeBps,
       }[operation];
 

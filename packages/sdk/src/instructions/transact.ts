@@ -375,9 +375,11 @@ export async function buildTransactWithProgram(
   // Prepare output recipients (stealth pubkey X coordinates)
   const outputRecipients = params.outputs.map(output => Array.from(output.recipientPubkey.x));
 
-  // Debug: log unshield amount and fee amount for instruction
+  // Debug: log amounts for instruction
+  const transferAmountForInstruction = outputAmounts[0] ?? 0n; // First output = transfer to recipient
   const unshieldAmountForInstruction = params.unshieldAmount ?? 0n;
   const feeAmountForInstruction = params.feeAmount ?? 0n;
+  console.log('[Phase 0] transfer_amount for instruction:', transferAmountForInstruction.toString());
   console.log('[Phase 0] unshield_amount for instruction:', unshieldAmountForInstruction.toString());
   console.log('[Phase 0] fee_amount for instruction:', feeAmountForInstruction.toString());
   console.log('[Phase 0] params.unshieldAmount:', params.unshieldAmount);
@@ -391,8 +393,9 @@ export async function buildTransactWithProgram(
     console.log(`  [${2+i}] out_commitment_${i+1}:`, Buffer.from(outputCommitments[i]).toString('hex').slice(0, 32) + '...');
   }
   console.log(`  [${2+outputCommitments.length}] token_mint:`, params.tokenMint.toBase58());
-  console.log(`  [${3+outputCommitments.length}] unshield_amount:`, unshieldAmountForInstruction.toString());
-  console.log(`  [${4+outputCommitments.length}] fee_amount:`, feeAmountForInstruction.toString());
+  console.log(`  [${3+outputCommitments.length}] transfer_amount:`, transferAmountForInstruction.toString());
+  console.log(`  [${4+outputCommitments.length}] unshield_amount:`, unshieldAmountForInstruction.toString());
+  console.log(`  [${5+outputCommitments.length}] fee_amount:`, feeAmountForInstruction.toString());
 
   // Debug: Log FULL commitment bytes for comparison with proof
   console.log('[Phase 0] === FULL commitment bytes for on-chain ===');
@@ -413,6 +416,7 @@ export async function buildTransactWithProgram(
       outputAmounts.map(a => new BN(a.toString())),
       outputRandomness.map(r => Array.from(r)),
       stealthEphemeralPubkeys.map(e => Array.from(e)),
+      new BN(transferAmountForInstruction.toString()),
       new BN(unshieldAmountForInstruction.toString()),
       new BN(feeAmountForInstruction.toString())
     )

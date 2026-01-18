@@ -1275,6 +1275,10 @@
           }
         },
         {
+          "name": "transfer_amount",
+          "type": "u64"
+        },
+        {
           "name": "unshield_amount",
           "type": "u64"
         },
@@ -2769,7 +2773,7 @@
         {
           "name": "input_pool",
           "docs": [
-            "Input token pool (for reference)"
+            "Input token pool (has vault for input token)"
           ],
           "pda": {
             "seeds": [
@@ -2849,6 +2853,13 @@
           }
         },
         {
+          "name": "input_vault",
+          "docs": [
+            "Input token vault (source for protocol fee transfer)"
+          ],
+          "writable": true
+        },
+        {
           "name": "pending_operation",
           "docs": [
             "Pending operation PDA (from Phase 0)"
@@ -2884,6 +2895,52 @@
             "Relayer (must match pending operation)"
           ],
           "signer": true
+        },
+        {
+          "name": "protocol_config",
+          "docs": [
+            "Protocol config (required - enforces fee collection)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury_ata",
+          "docs": [
+            "Treasury token account (receives protocol fees)",
+            "Only required if fees are enabled and fee > 0"
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program for transfers"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": [
@@ -3567,7 +3624,7 @@
         "Initialize protocol configuration with fee rates",
         "",
         "Creates the global ProtocolConfig account. Can only be called once.",
-        "Fee rates are in basis points (10 = 0.1%, 100 = 1%, 1000 = 10% max)."
+        "Fee rates are in basis points. swap_fee_share_bps is protocol's share of LP fees (2000 = 20%)."
       ],
       "discriminator": [
         28,
@@ -3650,7 +3707,7 @@
           "type": "u16"
         },
         {
-          "name": "swap_fee_bps",
+          "name": "swap_fee_share_bps",
           "type": "u16"
         },
         {
@@ -3769,9 +3826,8 @@
         {
           "name": "protocol_config",
           "docs": [
-            "Protocol config (optional - if fees are enabled, boxed to reduce stack usage)"
+            "Protocol config (required - enforces fee verification)"
           ],
-          "optional": true,
           "pda": {
             "seeds": [
               {
@@ -3800,7 +3856,7 @@
         {
           "name": "treasury_token_account",
           "docs": [
-            "Treasury token account for receiving fees (optional - required if fee_amount > 0)"
+            "Treasury token account for receiving fees (required if fee > 0)"
           ],
           "writable": true,
           "optional": true
@@ -5433,7 +5489,7 @@
           }
         },
         {
-          "name": "swap_fee_bps",
+          "name": "swap_fee_share_bps",
           "type": {
             "option": "u16"
           }
@@ -6182,6 +6238,21 @@
       "code": 6082,
       "name": "InvalidInputCount",
       "msg": "Invalid input count - must be between 2 and 3 for consolidation"
+    },
+    {
+      "code": 6083,
+      "name": "InvalidVault",
+      "msg": "Invalid vault account"
+    },
+    {
+      "code": 6084,
+      "name": "InvalidTreasury",
+      "msg": "Treasury ATA required when protocol fees are enabled"
+    },
+    {
+      "code": 6085,
+      "name": "InsufficientFee",
+      "msg": "Fee amount is less than required minimum"
     }
   ],
   "types": [
@@ -7751,6 +7822,14 @@
             "type": "u64"
           },
           {
+            "name": "transfer_amount",
+            "docs": [
+              "Transfer amount (public for on-chain fee verification)",
+              "This is the amount going to the recipient (out_amount_1 in circuit)"
+            ],
+            "type": "u64"
+          },
+          {
             "name": "fee_processed",
             "docs": [
               "Whether fee has been processed (transferred to treasury)"
@@ -7901,10 +7980,11 @@
             "type": "u16"
           },
           {
-            "name": "swap_fee_bps",
+            "name": "swap_fee_share_bps",
             "docs": [
-              "Swap fee in basis points (e.g., 30 = 0.3%)",
-              "Applied to private AMM swaps"
+              "Protocol's share of LP swap fees in basis points (e.g., 2000 = 20%)",
+              "Protocol fee = LP fee * swap_fee_share_bps / 10000",
+              "Example: 0.3% LP fee * 20% = 0.06% protocol fee"
             ],
             "type": "u16"
           },

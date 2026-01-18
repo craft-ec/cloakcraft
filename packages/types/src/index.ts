@@ -299,6 +299,8 @@ export interface AmmSwapParams {
   merklePath: Uint8Array[];
   /** Merkle path indices (0=left, 1=right) */
   merkleIndices: number[];
+  /** Optional progress callback */
+  onProgress?: (stage: TransferProgressStage) => void;
 }
 
 /** Add liquidity parameters */
@@ -325,6 +327,8 @@ export interface AddLiquidityParams {
   changeARecipient: StealthAddress;
   /** Recipient for token B change */
   changeBRecipient: StealthAddress;
+  /** Optional progress callback */
+  onProgress?: (stage: TransferProgressStage) => void;
 }
 
 /** Remove liquidity parameters */
@@ -355,6 +359,8 @@ export interface RemoveLiquidityParams {
   outputAAmount: bigint;
   /** Expected Token B output amount */
   outputBAmount: bigint;
+  /** Optional progress callback */
+  onProgress?: (stage: TransferProgressStage) => void;
 }
 
 // =============================================================================

@@ -92,6 +92,7 @@ pub fn create_pending_with_proof(
     output_amounts: Vec<u64>,
     output_randomness: Vec<[u8; 32]>,
     stealth_ephemeral_pubkeys: Vec<[u8; 64]>,
+    transfer_amount: u64,
     unshield_amount: u64,
     fee_amount: u64,
 ) -> Result<()> {
@@ -119,6 +120,7 @@ pub fn create_pending_with_proof(
             &nullifier,
             &out_commitments,
             &pool.token_mint,
+            transfer_amount,
             unshield_amount,
             fee_amount,
         );
@@ -189,26 +191,29 @@ pub fn create_pending_with_proof(
     }
     pending_op.completed_mask = 0;
 
-    // Store fee and unshield amounts for Phase 3
+    // Store fee, transfer, and unshield amounts for Phase 3
     pending_op.fee_amount = fee_amount;
     pending_op.unshield_amount = unshield_amount;
+    pending_op.transfer_amount = transfer_amount;
     pending_op.fee_processed = false;
 
     msg!("Phase 0 complete: ZK proof verified, PendingOperation created");
-    msg!("  fee_amount: {}", fee_amount);
+    msg!("  transfer_amount: {}", transfer_amount);
     msg!("  unshield_amount: {}", unshield_amount);
+    msg!("  fee_amount: {}", fee_amount);
     msg!("Next: Phase 1 - verify_commitment_for_pending");
 
     Ok(())
 }
 
 /// Build public inputs array for proof verification
-/// Order matches circuit: merkle_root, nullifier, out_commitments, token_mint, unshield_amount, fee_amount
+/// Order matches circuit: merkle_root, nullifier, out_commitments, token_mint, transfer_amount, unshield_amount, fee_amount
 fn build_transact_public_inputs(
     merkle_root: &[u8; 32],
     nullifier: &[u8; 32],
     out_commitments: &[[u8; 32]],
     token_mint: &Pubkey,
+    transfer_amount: u64,
     unshield_amount: u64,
     fee_amount: u64,
 ) -> Vec<[u8; 32]> {
@@ -219,6 +224,7 @@ fn build_transact_public_inputs(
         inputs.push(*commitment);
     }
     inputs.push(pubkey_to_field(token_mint));
+    inputs.push(u64_to_field(transfer_amount));
     inputs.push(u64_to_field(unshield_amount));
     inputs.push(u64_to_field(fee_amount));
     inputs

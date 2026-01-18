@@ -1418,6 +1418,7 @@ export class ProofGenerator {
       out_commitment_1: fieldToHex(params.outputs[0].commitment),
       out_commitment_2: fieldToHex(out2Commitment),
       token_mint: fieldToHex(tokenMint),
+      transfer_amount: params.outputs[0].amount.toString(), // NEW: Public for on-chain fee verification
       unshield_amount: unshieldAmountForProof.toString(),
       fee_amount: feeAmountForProof.toString(),
 

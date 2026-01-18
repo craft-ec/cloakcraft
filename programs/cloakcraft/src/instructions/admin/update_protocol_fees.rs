@@ -28,14 +28,14 @@ pub struct UpdateProtocolFees<'info> {
 /// # Arguments
 /// * `transfer_fee_bps` - New transfer fee in basis points (None to keep current)
 /// * `unshield_fee_bps` - New unshield fee in basis points (None to keep current)
-/// * `swap_fee_bps` - New swap fee in basis points (None to keep current)
+/// * `swap_fee_share_bps` - Protocol's share of LP fees (None to keep current, e.g., 2000 = 20%)
 /// * `remove_liquidity_fee_bps` - New remove liquidity fee in basis points (None to keep current)
 /// * `fees_enabled` - New fees enabled state (None to keep current)
 pub fn update_protocol_fees(
     ctx: Context<UpdateProtocolFees>,
     transfer_fee_bps: Option<u16>,
     unshield_fee_bps: Option<u16>,
-    swap_fee_bps: Option<u16>,
+    swap_fee_share_bps: Option<u16>,
     remove_liquidity_fee_bps: Option<u16>,
     fees_enabled: Option<bool>,
 ) -> Result<()> {
@@ -61,14 +61,14 @@ pub fn update_protocol_fees(
         msg!("Unshield fee updated to {} bps", fee);
     }
 
-    // Update swap fee if provided
-    if let Some(fee) = swap_fee_bps {
+    // Update swap fee share if provided (max 50% of LP fees)
+    if let Some(fee) = swap_fee_share_bps {
         require!(
-            fee <= ProtocolConfig::MAX_FEE_BPS,
+            fee <= 5000,
             CloakCraftError::InvalidAmount
         );
-        config.swap_fee_bps = fee;
-        msg!("Swap fee updated to {} bps", fee);
+        config.swap_fee_share_bps = fee;
+        msg!("Swap fee share updated to {} bps ({}% of LP fees)", fee, fee as f64 / 100.0);
     }
 
     // Update remove liquidity fee if provided
