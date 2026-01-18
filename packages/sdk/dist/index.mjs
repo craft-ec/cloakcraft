@@ -19,7 +19,7 @@ import {
   deriveAmmPoolPda,
   derivePendingOperationPda,
   generateOperationId
-} from "./chunk-FKIZJDB7.mjs";
+} from "./chunk-Y2MV6Z7X.mjs";
 import {
   DOMAIN_ACTION_NULLIFIER,
   DOMAIN_COMMITMENT,
@@ -58,6 +58,7 @@ import {
   MAX_FEE_BPS,
   calculateMinimumFee,
   calculateProtocolFee,
+  calculateSwapProtocolFee,
   estimateTotalCost,
   fetchProtocolFeeConfig,
   formatFeeAmount,
@@ -66,7 +67,7 @@ import {
   isFeeableOperation,
   isFreeOperation,
   verifyFeeAmount
-} from "./chunk-JPXN5O7X.mjs";
+} from "./chunk-7BY2YTLU.mjs";
 import {
   CIRCUIT_IDS,
   DEVNET_V2_TREES,
@@ -1566,6 +1567,8 @@ var ProofGenerator = class {
       out_commitment_1: fieldToHex(params.outputs[0].commitment),
       out_commitment_2: fieldToHex(out2Commitment),
       token_mint: fieldToHex(tokenMint),
+      transfer_amount: params.outputs[0].amount.toString(),
+      // NEW: Public for on-chain fee verification
       unshield_amount: unshieldAmountForProof.toString(),
       fee_amount: feeAmountForProof.toString(),
       // Private inputs (Circom circuit - no in_stealth_pub_y)
@@ -2524,7 +2527,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     encryptedNotes.push(Buffer.alloc(0));
     outputAmounts.push(0n);
   }
-  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await import("./swap-MYDEZ2QE.mjs");
+  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await import("./swap-VRKYX5RC.mjs");
   const operationId = generateOperationId2(
     nullifier,
     outputCommitments[0],
@@ -2611,8 +2614,10 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     unshieldRecipientAta = params.unshieldRecipient;
   }
   const outputRecipients = params.outputs.map((output) => Array.from(output.recipientPubkey.x));
+  const transferAmountForInstruction = outputAmounts[0] ?? 0n;
   const unshieldAmountForInstruction = params.unshieldAmount ?? 0n;
   const feeAmountForInstruction = params.feeAmount ?? 0n;
+  console.log("[Phase 0] transfer_amount for instruction:", transferAmountForInstruction.toString());
   console.log("[Phase 0] unshield_amount for instruction:", unshieldAmountForInstruction.toString());
   console.log("[Phase 0] fee_amount for instruction:", feeAmountForInstruction.toString());
   console.log("[Phase 0] params.unshieldAmount:", params.unshieldAmount);
@@ -2624,8 +2629,9 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     console.log(`  [${2 + i}] out_commitment_${i + 1}:`, Buffer.from(outputCommitments[i]).toString("hex").slice(0, 32) + "...");
   }
   console.log(`  [${2 + outputCommitments.length}] token_mint:`, params.tokenMint.toBase58());
-  console.log(`  [${3 + outputCommitments.length}] unshield_amount:`, unshieldAmountForInstruction.toString());
-  console.log(`  [${4 + outputCommitments.length}] fee_amount:`, feeAmountForInstruction.toString());
+  console.log(`  [${3 + outputCommitments.length}] transfer_amount:`, transferAmountForInstruction.toString());
+  console.log(`  [${4 + outputCommitments.length}] unshield_amount:`, unshieldAmountForInstruction.toString());
+  console.log(`  [${5 + outputCommitments.length}] fee_amount:`, feeAmountForInstruction.toString());
   console.log("[Phase 0] === FULL commitment bytes for on-chain ===");
   for (let i = 0; i < outputCommitments.length; i++) {
     console.log(`  out_commitment_${i + 1} (full):`, Buffer.from(outputCommitments[i]).toString("hex"));
@@ -2641,6 +2647,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     outputAmounts.map((a) => new BN(a.toString())),
     outputRandomness.map((r) => Array.from(r)),
     stealthEphemeralPubkeys.map((e) => Array.from(e)),
+    new BN(transferAmountForInstruction.toString()),
     new BN(unshieldAmountForInstruction.toString()),
     new BN(feeAmountForInstruction.toString())
   ).accountsStrict({
@@ -2799,7 +2806,7 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
   }
   const [poolPda] = derivePoolPda(params.tokenMint, programId);
   const [vkPda] = deriveVerificationKeyPda(circuitId, programId);
-  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await import("./swap-MYDEZ2QE.mjs");
+  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await import("./swap-VRKYX5RC.mjs");
   const operationId = generateOperationId2(
     params.nullifiers[0],
     params.outputCommitment,
@@ -4025,7 +4032,7 @@ var CloakCraftClient = class {
     if (params.fee && params.fee > 0n) {
       const [configPda] = deriveProtocolConfigPda(this.programId);
       protocolConfig = configPda;
-      const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2 } = await import("./fees-ZC4M2ATQ.mjs");
+      const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2 } = await import("./fees-6XWJD63E.mjs");
       const feeConfig = await fetchProtocolFeeConfig2(this.connection, this.programId);
       if (feeConfig?.treasury) {
         treasuryWallet = feeConfig.treasury;
@@ -4109,7 +4116,7 @@ var CloakCraftClient = class {
       console.error("[Transfer] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-MYDEZ2QE.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-VRKYX5RC.mjs");
     console.log("[Transfer] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -4292,7 +4299,7 @@ var CloakCraftClient = class {
     const commitment = preparedInputs[0].commitment;
     const dummyPath = Array(32).fill(new Uint8Array(32));
     const dummyIndices = Array(32).fill(0);
-    const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2, calculateProtocolFee: calculateProtocolFee2 } = await import("./fees-ZC4M2ATQ.mjs");
+    const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2, calculateProtocolFee: calculateProtocolFee2 } = await import("./fees-6XWJD63E.mjs");
     const feeConfig = await fetchProtocolFeeConfig2(this.connection, this.programId);
     const operationType = request.unshield ? "unshield" : "transfer";
     const totalInputAmount = preparedInputs.reduce((sum, input) => sum + input.amount, 0n);
@@ -4493,7 +4500,7 @@ var CloakCraftClient = class {
       console.error("[Consolidation] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-MYDEZ2QE.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-VRKYX5RC.mjs");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
     for (let i = 0; i < phase1Txs.length; i++) {
@@ -4832,15 +4839,30 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("swap/swap")) {
       throw new Error("Prover not initialized. Call initializeProver(['swap/swap']) first.");
     }
+    params.onProgress?.("generating");
     const proofResult = await this.proofGenerator.generateSwapProof(
       params,
       this.wallet.keypair
     );
+    params.onProgress?.("building");
     const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey9(params.input.tokenMint) : params.input.tokenMint;
     const ammPoolAccount = await this.program.account.ammPool.fetch(params.poolId);
     const outputTokenMint = params.swapDirection === "aToB" ? ammPoolAccount.tokenBMint : ammPoolAccount.tokenAMint;
     const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
     const [outputPoolPda] = derivePoolPda(outputTokenMint, this.programId);
+    const inputPoolAccount = await this.program.account.pool.fetch(inputPoolPda);
+    const inputVault = inputPoolAccount.tokenVault;
+    const [protocolConfigPda] = deriveProtocolConfigPda(this.programId);
+    let treasuryAta;
+    try {
+      const configAccount = await this.program.account.protocolConfig.fetch(protocolConfigPda);
+      if (configAccount && configAccount.feesEnabled) {
+        const { getAssociatedTokenAddress } = await import("@solana/spl-token");
+        treasuryAta = await getAssociatedTokenAddress(inputTokenMint, configAccount.treasury);
+      }
+    } catch {
+      console.warn("[Swap] Protocol config not found - swap will fail if not initialized");
+    }
     const accountHash = params.input.accountHash;
     if (!accountHash) {
       throw new Error("Input note missing accountHash. Use scanNotes() to get notes with accountHash.");
@@ -4855,6 +4877,11 @@ var CloakCraftClient = class {
       inputTokenMint,
       outputTokenMint,
       ammPool: params.poolId,
+      inputVault,
+      protocolConfig: protocolConfigPda,
+      // Required
+      treasuryAta,
+      // Optional - only if fees enabled
       relayer: relayerPubkey,
       proof,
       merkleRoot: params.merkleRoot,
@@ -4898,7 +4925,7 @@ var CloakCraftClient = class {
       console.error("[Swap] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-MYDEZ2QE.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-VRKYX5RC.mjs");
     console.log("[Swap] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -4963,6 +4990,7 @@ var CloakCraftClient = class {
       })
     );
     console.log("[Swap] Requesting signature for all transactions...");
+    params.onProgress?.("approving");
     let signedTransactions;
     if (relayer) {
       signedTransactions = transactions.map((tx) => {
@@ -4981,6 +5009,7 @@ var CloakCraftClient = class {
     }
     console.log(`[Swap] All ${signedTransactions.length} transactions signed!`);
     console.log("[Swap] Executing signed transactions sequentially...");
+    params.onProgress?.("executing");
     let phase0Signature = "";
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
@@ -5017,11 +5046,13 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("swap/add_liquidity")) {
       throw new Error("Prover not initialized. Call initializeProver(['swap/add_liquidity']) first.");
     }
+    params.onProgress?.("generating");
     const lpAmount = params.lpAmount;
     const proofResult = await this.proofGenerator.generateAddLiquidityProof(
       params,
       this.wallet.keypair
     );
+    params.onProgress?.("building");
     const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new PublicKey9(params.inputA.tokenMint) : params.inputA.tokenMint;
     const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new PublicKey9(params.inputB.tokenMint) : params.inputB.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
@@ -5106,7 +5137,7 @@ var CloakCraftClient = class {
       console.error("[Add Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-MYDEZ2QE.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-VRKYX5RC.mjs");
     console.log("[Add Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -5173,6 +5204,7 @@ var CloakCraftClient = class {
       })
     );
     console.log("[Add Liquidity] Requesting signature for all transactions...");
+    params.onProgress?.("approving");
     let signedTransactions;
     if (relayer) {
       signedTransactions = transactions.map((tx) => {
@@ -5191,6 +5223,7 @@ var CloakCraftClient = class {
     }
     console.log(`[Add Liquidity] All ${signedTransactions.length} transactions signed!`);
     console.log("[Add Liquidity] Executing signed transactions sequentially...");
+    params.onProgress?.("executing");
     let phase0Signature = "";
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
@@ -5228,6 +5261,7 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("swap/remove_liquidity")) {
       throw new Error("Prover not initialized. Call initializeProver(['swap/remove_liquidity']) first.");
     }
+    params.onProgress?.("generating");
     const tokenAMint = params.tokenAMint;
     const tokenBMint = params.tokenBMint;
     const lpMint = params.lpInput.tokenMint instanceof Uint8Array ? new PublicKey9(params.lpInput.tokenMint) : params.lpInput.tokenMint;
@@ -5238,10 +5272,34 @@ var CloakCraftClient = class {
     console.log(`  Token A Pool: ${poolA.toBase58()}`);
     console.log(`  Token B Pool: ${poolB.toBase58()}`);
     console.log(`  LP Token Pool: ${lpPool.toBase58()}`);
+    const poolAAccount = await this.program.account.pool.fetch(poolA);
+    const poolBAccount = await this.program.account.pool.fetch(poolB);
+    const vaultA = poolAAccount.tokenVault;
+    const vaultB = poolBAccount.tokenVault;
+    const [protocolConfigPda] = deriveProtocolConfigPda(this.programId);
+    let treasuryAtaA;
+    let treasuryAtaB;
+    try {
+      const configAccount = await this.connection.getAccountInfo(protocolConfigPda);
+      if (configAccount) {
+        const data = configAccount.data;
+        const treasury = new PublicKey9(data.subarray(40, 72));
+        const feesEnabled = data[80] === 1;
+        if (feesEnabled) {
+          const { getAssociatedTokenAddress } = await import("@solana/spl-token");
+          treasuryAtaA = await getAssociatedTokenAddress(tokenAMint, treasury, true);
+          treasuryAtaB = await getAssociatedTokenAddress(tokenBMint, treasury, true);
+          console.log("[Remove Liquidity] Fees enabled, treasury ATAs:", treasuryAtaA.toBase58(), treasuryAtaB.toBase58());
+        }
+      }
+    } catch (e) {
+      console.warn("[Remove Liquidity] Could not fetch protocol config:", e);
+    }
     const { proof, lpNullifier, outputACommitment, outputBCommitment, outputARandomness, outputBRandomness } = await this.proofGenerator.generateRemoveLiquidityProof(
       params,
       this.wallet.keypair
     );
+    params.onProgress?.("building");
     const lpInputCommitment = computeCommitment(params.lpInput);
     if (!params.lpInput.accountHash) {
       throw new Error("LP input note must have accountHash for commitment verification");
@@ -5257,6 +5315,11 @@ var CloakCraftClient = class {
       tokenBMint: params.tokenBMint,
       // Use raw format like addLiquidity
       ammPool: params.poolId,
+      vaultA,
+      vaultB,
+      protocolConfig: protocolConfigPda,
+      treasuryAtaA,
+      treasuryAtaB,
       relayer: relayerPubkey,
       proof,
       lpNullifier,
@@ -5299,7 +5362,7 @@ var CloakCraftClient = class {
       console.error("[Remove Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-MYDEZ2QE.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-VRKYX5RC.mjs");
     console.log("[Remove Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -5364,6 +5427,7 @@ var CloakCraftClient = class {
       })
     );
     console.log("[Remove Liquidity] Requesting signature for all transactions...");
+    params.onProgress?.("approving");
     let signedTransactions;
     if (relayer) {
       signedTransactions = transactions.map((tx) => {
@@ -5382,6 +5446,7 @@ var CloakCraftClient = class {
     }
     console.log(`[Remove Liquidity] All ${signedTransactions.length} transactions signed!`);
     console.log("[Remove Liquidity] Executing signed transactions sequentially...");
+    params.onProgress?.("executing");
     let phase0Signature = "";
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
@@ -7784,6 +7849,7 @@ export {
   calculateRemoveLiquidityOutput,
   calculateSlippage,
   calculateSwapOutput,
+  calculateSwapProtocolFee,
   calculateTotalLiquidity,
   calculateUsdPriceImpact,
   canFitInSingleTransaction,

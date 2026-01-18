@@ -382,6 +382,8 @@ declare function useOrders(): {
  * Provides interface for AMM swaps
  */
 
+/** Progress stages for swap operation */
+type SwapProgressStage = 'preparing' | 'generating' | 'building' | 'approving' | 'executing' | 'confirming';
 interface SwapOptions {
     /** Input note to spend */
     input: DecryptedNote;
@@ -395,6 +397,8 @@ interface SwapOptions {
     swapAmount: bigint;
     /** Slippage tolerance in basis points (e.g., 50 = 0.5%) */
     slippageBps?: number;
+    /** Optional progress callback */
+    onProgress?: (stage: SwapProgressStage) => void;
 }
 declare function useSwap(): {
     swap: (options: SwapOptions) => Promise<TransactionResult | null>;
@@ -434,6 +438,8 @@ declare function useInitializeAmmPool(): {
     error: string | null;
     result: string | null;
 };
+/** Progress stages for add liquidity operation */
+type AddLiquidityProgressStage = 'preparing' | 'generating' | 'building' | 'approving' | 'executing' | 'confirming';
 /**
  * Hook for adding liquidity
  */
@@ -447,12 +453,15 @@ declare function useAddLiquidity(): {
         amountA: bigint;
         amountB: bigint;
         slippageBps?: number;
+        onProgress?: (stage: AddLiquidityProgressStage) => void;
     }) => Promise<TransactionResult | null>;
     reset: () => void;
     isAdding: boolean;
     error: string | null;
     result: TransactionResult | null;
 };
+/** Progress stages for remove liquidity operation */
+type RemoveLiquidityProgressStage = 'preparing' | 'generating' | 'building' | 'approving' | 'executing' | 'confirming';
 /**
  * Hook for removing liquidity
  */
@@ -464,6 +473,7 @@ declare function useRemoveLiquidity(): {
         lpInput: DecryptedNote;
         lpAmount: bigint;
         slippageBps?: number;
+        onProgress?: (stage: RemoveLiquidityProgressStage) => void;
     }) => Promise<TransactionResult | null>;
     reset: () => void;
     isRemoving: boolean;
@@ -815,8 +825,8 @@ interface ProtocolFeeConfig {
     transferFeeBps: number;
     /** Unshield fee in basis points */
     unshieldFeeBps: number;
-    /** Swap fee in basis points */
-    swapFeeBps: number;
+    /** Protocol's share of LP swap fees in basis points (2000 = 20%) */
+    swapFeeShareBps: number;
     /** Remove liquidity fee in basis points */
     removeLiquidityFeeBps: number;
     /** Whether fees are enabled */
@@ -850,4 +860,4 @@ declare function useProtocolFees(): UseProtocolFeesResult;
  */
 declare function useIsFreeOperation(operation: 'shield' | 'add_liquidity' | 'consolidate' | 'transfer' | 'unshield' | 'swap' | 'remove_liquidity'): boolean;
 
-export { CloakCraftProvider, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type ProtocolFeeConfig, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, WALLET_DERIVATION_MESSAGE, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useCloakCraft, useConsolidation, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsConsolidationRecommended, useIsFreeOperation, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOrders, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePrivateBalance, useProtocolFees, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useWallet };
+export { type AddLiquidityProgressStage, CloakCraftProvider, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type ProtocolFeeConfig, type RemoveLiquidityProgressStage, type SwapProgressStage, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, WALLET_DERIVATION_MESSAGE, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useCloakCraft, useConsolidation, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsConsolidationRecommended, useIsFreeOperation, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOrders, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePrivateBalance, useProtocolFees, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useWallet };

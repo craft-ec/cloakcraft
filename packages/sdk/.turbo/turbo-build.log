@@ -8,25 +8,25 @@ CLI tsup v8.5.1
 CLI Target: es2020
 CJS Build start
 ESM Build start
-CJS dist/idl/index.js 175.73 KB
-CJS dist/index.js     361.56 KB
-CJS ⚡️ Build success in 30ms
+CJS dist/index.js     364.46 KB
+CJS dist/idl/index.js 177.76 KB
+CJS ⚡️ Build success in 31ms
 ESM dist/constants-2I4ET3IX.mjs 467.00 B
-ESM dist/swap-MYDEZ2QE.mjs      813.00 B
-ESM dist/chunk-FKIZJDB7.mjs     35.81 KB
 ESM dist/chunk-ZUIOLIGE.mjs     7.16 KB
-ESM dist/index.mjs              280.85 KB
-ESM dist/chunk-3EMHSCQ7.mjs     16.18 KB
-ESM dist/fees-ZC4M2ATQ.mjs      622.00 B
-ESM dist/idl/index.mjs          174.78 KB
-ESM dist/chunk-JPXN5O7X.mjs     3.78 KB
 ESM dist/shield-KJFMXCZO.mjs    331.00 B
+ESM dist/idl/index.mjs          176.81 KB
+ESM dist/swap-4MBK4N23.mjs      813.00 B
+ESM dist/chunk-3EMHSCQ7.mjs     16.18 KB
+ESM dist/chunk-OEQ7RES4.mjs     36.11 KB
+ESM dist/fees-6XWJD63E.mjs      678.00 B
+ESM dist/index.mjs              282.59 KB
 ESM dist/chunk-Y6FXYEAI.mjs     390.00 B
+ESM dist/chunk-7BY2YTLU.mjs     4.53 KB
 ESM dist/chunk-HQXTEDR6.mjs     2.26 KB
-ESM ⚡️ Build success in 30ms
+ESM ⚡️ Build success in 31ms
 DTS Build start
-DTS ⚡️ Build success in 1350ms
-DTS dist/index.d.ts      132.27 KB
-DTS dist/idl/index.d.ts  122.35 KB
-DTS dist/index.d.mts     132.27 KB
-DTS dist/idl/index.d.mts 122.35 KB
+DTS ⚡️ Build success in 1533ms
+DTS dist/index.d.ts      133.17 KB
+DTS dist/idl/index.d.ts  123.87 KB
+DTS dist/index.d.mts     133.17 KB
+DTS dist/idl/index.d.mts 123.87 KB

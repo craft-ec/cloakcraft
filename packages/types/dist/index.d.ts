@@ -246,6 +246,8 @@ interface AmmSwapParams {
     merklePath: Uint8Array[];
     /** Merkle path indices (0=left, 1=right) */
     merkleIndices: number[];
+    /** Optional progress callback */
+    onProgress?: (stage: TransferProgressStage) => void;
 }
 /** Add liquidity parameters */
 interface AddLiquidityParams {
@@ -271,6 +273,8 @@ interface AddLiquidityParams {
     changeARecipient: StealthAddress;
     /** Recipient for token B change */
     changeBRecipient: StealthAddress;
+    /** Optional progress callback */
+    onProgress?: (stage: TransferProgressStage) => void;
 }
 /** Remove liquidity parameters */
 interface RemoveLiquidityParams {
@@ -300,6 +304,8 @@ interface RemoveLiquidityParams {
     outputAAmount: bigint;
     /** Expected Token B output amount */
     outputBAmount: bigint;
+    /** Optional progress callback */
+    onProgress?: (stage: TransferProgressStage) => void;
 }
 /** Consolidation parameters for merging multiple notes into one */
 interface ConsolidationParams {

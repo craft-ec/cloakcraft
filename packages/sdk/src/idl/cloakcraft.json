@@ -2613,7 +2613,7 @@
         {
           "name": "pool_a",
           "docs": [
-            "Token A pool (for reference)"
+            "Token A pool (authority for vault_a transfers)"
           ],
           "pda": {
             "seeds": [
@@ -2637,7 +2637,7 @@
         {
           "name": "pool_b",
           "docs": [
-            "Token B pool (for reference)"
+            "Token B pool (authority for vault_b transfers)"
           ],
           "pda": {
             "seeds": [
@@ -2693,6 +2693,20 @@
           }
         },
         {
+          "name": "vault_a",
+          "docs": [
+            "Token A vault (source for protocol fee transfer)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault_b",
+          "docs": [
+            "Token B vault (source for protocol fee transfer)"
+          ],
+          "writable": true
+        },
+        {
           "name": "pending_operation",
           "docs": [
             "Pending operation PDA (from Phase 0)"
@@ -2728,6 +2742,59 @@
             "Relayer (must match pending operation)"
           ],
           "signer": true
+        },
+        {
+          "name": "protocol_config",
+          "docs": [
+            "Protocol config (required - enforces fee collection)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury_ata_a",
+          "docs": [
+            "Treasury token account for token A (receives protocol fees)"
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "treasury_ata_b",
+          "docs": [
+            "Treasury token account for token B (receives protocol fees)"
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program for transfers"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": [

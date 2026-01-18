@@ -2464,6 +2464,37 @@ export class CloakCraftClient {
     console.log(`  Token B Pool: ${poolB.toBase58()}`);
     console.log(`  LP Token Pool: ${lpPool.toBase58()}`);
 
+    // Fetch pool accounts to get vault addresses
+    const poolAAccount = await (this.program.account as any).pool.fetch(poolA);
+    const poolBAccount = await (this.program.account as any).pool.fetch(poolB);
+    const vaultA = poolAAccount.tokenVault;
+    const vaultB = poolBAccount.tokenVault;
+
+    // Get protocol config (required) and treasury ATAs for fee collection
+    const [protocolConfigPda] = deriveProtocolConfigPda(this.programId);
+    let treasuryAtaA: PublicKey | undefined;
+    let treasuryAtaB: PublicKey | undefined;
+
+    try {
+      // Get protocol config to check if fees are enabled
+      const configAccount = await this.connection.getAccountInfo(protocolConfigPda);
+      if (configAccount) {
+        const data = configAccount.data;
+        const treasury = new PublicKey(data.subarray(40, 72));
+        const feesEnabled = data[80] === 1;
+
+        if (feesEnabled) {
+          // Derive treasury ATAs for both tokens
+          const { getAssociatedTokenAddress } = await import('@solana/spl-token');
+          treasuryAtaA = await getAssociatedTokenAddress(tokenAMint, treasury, true);
+          treasuryAtaB = await getAssociatedTokenAddress(tokenBMint, treasury, true);
+          console.log('[Remove Liquidity] Fees enabled, treasury ATAs:', treasuryAtaA.toBase58(), treasuryAtaB.toBase58());
+        }
+      }
+    } catch (e) {
+      console.warn('[Remove Liquidity] Could not fetch protocol config:', e);
+    }
+
     // Generate proof (returns proof + computed nullifier and commitments)
     const { proof, lpNullifier, outputACommitment, outputBCommitment, outputARandomness, outputBRandomness } = await this.proofGenerator.generateRemoveLiquidityProof(
       params,
@@ -2491,6 +2522,11 @@ export class CloakCraftClient {
       tokenAMint: params.tokenAMint,  // Use raw format like addLiquidity
       tokenBMint: params.tokenBMint,  // Use raw format like addLiquidity
       ammPool: params.poolId,
+      vaultA,
+      vaultB,
+      protocolConfig: protocolConfigPda,
+      treasuryAtaA,
+      treasuryAtaB,
       relayer: relayerPubkey,
       proof,
       lpNullifier,

@@ -1021,16 +1021,24 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
     import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   console.log("[Swap Phase 3] Building executeSwap...");
-  const phase3Tx = await program.methods.executeSwap(
-    Array.from(operationId)
-  ).accountsStrict({
+  const phase3Accounts = {
     inputPool: params.inputPool,
     outputPool: params.outputPool,
     ammPool: params.ammPool,
+    inputVault: params.inputVault,
     pendingOperation: pendingOpPda,
-    relayer: params.relayer
-  }).preInstructions([
-    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 1e5 }),
+    relayer: params.relayer,
+    protocolConfig: params.protocolConfig,
+    // Required
+    tokenProgram: import_spl_token2.TOKEN_PROGRAM_ID
+  };
+  if (params.treasuryAta) {
+    phase3Accounts.treasuryAta = params.treasuryAta;
+  }
+  const phase3Tx = await program.methods.executeSwap(
+    Array.from(operationId)
+  ).accounts(phase3Accounts).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 15e4 }),
     import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   console.log("[Swap] All phase transactions built successfully");
@@ -1600,18 +1608,29 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
     import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   console.log("[RemoveLiquidity Phase 3] Building executeRemoveLiquidity...");
-  const phase3Tx = await program.methods.executeRemoveLiquidity(
-    Array.from(operationId),
-    Array.from(params.newPoolStateHash)
-  ).accountsStrict({
+  const phase3Accounts = {
     lpPool: params.lpPool,
     poolA: params.poolA,
     poolB: params.poolB,
     ammPool: params.ammPool,
+    vaultA: params.vaultA,
+    vaultB: params.vaultB,
     pendingOperation: pendingOpPda,
-    relayer: params.relayer
-  }).preInstructions([
-    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 1e5 }),
+    relayer: params.relayer,
+    protocolConfig: params.protocolConfig,
+    tokenProgram: import_spl_token2.TOKEN_PROGRAM_ID
+  };
+  if (params.treasuryAtaA) {
+    phase3Accounts.treasuryAtaA = params.treasuryAtaA;
+  }
+  if (params.treasuryAtaB) {
+    phase3Accounts.treasuryAtaB = params.treasuryAtaB;
+  }
+  const phase3Tx = await program.methods.executeRemoveLiquidity(
+    Array.from(operationId),
+    Array.from(params.newPoolStateHash)
+  ).accounts(phase3Accounts).preInstructions([
+    import_web37.ComputeBudgetProgram.setComputeUnitLimit({ units: 15e4 }),
     import_web37.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
   ]);
   console.log("[RemoveLiquidity] All phase transactions built successfully");
@@ -1624,11 +1643,12 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
     pendingCommitments
   };
 }
-var import_web37, import_anchor2;
+var import_web37, import_spl_token2, import_anchor2;
 var init_swap = __esm({
   "src/instructions/swap.ts"() {
     "use strict";
     import_web37 = require("@solana/web3.js");
+    import_spl_token2 = require("@solana/spl-token");
     import_anchor2 = require("@coral-xyz/anchor");
     init_constants();
     init_light_helpers();
@@ -1644,6 +1664,7 @@ __export(fees_exports, {
   MAX_FEE_BPS: () => MAX_FEE_BPS,
   calculateMinimumFee: () => calculateMinimumFee,
   calculateProtocolFee: () => calculateProtocolFee,
+  calculateSwapProtocolFee: () => calculateSwapProtocolFee,
   estimateTotalCost: () => estimateTotalCost,
   fetchProtocolFeeConfig: () => fetchProtocolFeeConfig,
   formatFeeAmount: () => formatFeeAmount,
@@ -1696,12 +1717,33 @@ function getFeeBps(operation, config) {
     case "unshield":
       return config.unshieldFeeBps;
     case "swap":
-      return config.swapFeeBps;
+      return 0;
     case "remove_liquidity":
       return config.removeLiquidityFeeBps;
     default:
       return 0;
   }
+}
+function calculateSwapProtocolFee(swapAmount, lpFeeBps, config) {
+  if (!config || !config.feesEnabled || config.swapFeeShareBps === 0 || lpFeeBps === 0) {
+    const totalLpFee2 = swapAmount * BigInt(lpFeeBps) / BPS_DIVISOR;
+    return {
+      protocolFee: 0n,
+      lpFeeRemaining: totalLpFee2,
+      totalLpFee: totalLpFee2,
+      effectiveFeeBps: 0
+    };
+  }
+  const totalLpFee = swapAmount * BigInt(lpFeeBps) / BPS_DIVISOR;
+  const protocolFee = totalLpFee * BigInt(config.swapFeeShareBps) / BPS_DIVISOR;
+  const lpFeeRemaining = totalLpFee - protocolFee;
+  const effectiveFeeBps = Math.floor(lpFeeBps * config.swapFeeShareBps / 1e4);
+  return {
+    protocolFee,
+    lpFeeRemaining,
+    totalLpFee,
+    effectiveFeeBps
+  };
 }
 function calculateMinimumFee(amount, feeBps) {
   if (feeBps === 0) return 0n;
@@ -1729,7 +1771,7 @@ async function fetchProtocolFeeConfig(connection, programId = PROGRAM_ID) {
   offset += 2;
   const unshieldFeeBps = data.readUInt16LE(offset);
   offset += 2;
-  const swapFeeBps = data.readUInt16LE(offset);
+  const swapFeeShareBps = data.readUInt16LE(offset);
   offset += 2;
   const removeLiquidityFeeBps = data.readUInt16LE(offset);
   offset += 2;
@@ -1739,7 +1781,7 @@ async function fetchProtocolFeeConfig(connection, programId = PROGRAM_ID) {
     treasury,
     transferFeeBps,
     unshieldFeeBps,
-    swapFeeBps,
+    swapFeeShareBps,
     removeLiquidityFeeBps,
     feesEnabled
   };
@@ -1779,8 +1821,8 @@ var init_fees = __esm({
       // 0.1%
       unshieldFeeBps: 25,
       // 0.25%
-      swapFeeBps: 30,
-      // 0.3%
+      swapFeeShareBps: 2e3,
+      // 20% of LP fees
       removeLiquidityFeeBps: 25,
       // 0.25%
       feesEnabled: true
@@ -1870,6 +1912,7 @@ __export(index_exports, {
   calculateRemoveLiquidityOutput: () => calculateRemoveLiquidityOutput,
   calculateSlippage: () => calculateSlippage,
   calculateSwapOutput: () => calculateSwapOutput,
+  calculateSwapProtocolFee: () => calculateSwapProtocolFee,
   calculateTotalLiquidity: () => calculateTotalLiquidity,
   calculateUsdPriceImpact: () => calculateUsdPriceImpact,
   canFitInSingleTransaction: () => canFitInSingleTransaction,
@@ -1982,7 +2025,7 @@ __reExport(index_exports, require("@cloakcraft/types"), module.exports);
 
 // src/client.ts
 var import_web315 = require("@solana/web3.js");
-var import_spl_token4 = require("@solana/spl-token");
+var import_spl_token5 = require("@solana/spl-token");
 
 // src/wallet.ts
 init_babyjubjub();
@@ -3470,6 +3513,8 @@ var ProofGenerator = class {
       out_commitment_1: fieldToHex(params.outputs[0].commitment),
       out_commitment_2: fieldToHex(out2Commitment),
       token_mint: fieldToHex(tokenMint),
+      transfer_amount: params.outputs[0].amount.toString(),
+      // NEW: Public for on-chain fee verification
       unshield_amount: unshieldAmountForProof.toString(),
       fee_amount: feeAmountForProof.toString(),
       // Private inputs (Circom circuit - no in_stealth_pub_y)
@@ -4362,7 +4407,7 @@ init_shield();
 
 // src/instructions/transact.ts
 var import_web38 = require("@solana/web3.js");
-var import_spl_token2 = require("@solana/spl-token");
+var import_spl_token3 = require("@solana/spl-token");
 var import_anchor3 = require("@coral-xyz/anchor");
 init_constants();
 init_light_helpers();
@@ -4526,8 +4571,10 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     unshieldRecipientAta = params.unshieldRecipient;
   }
   const outputRecipients = params.outputs.map((output) => Array.from(output.recipientPubkey.x));
+  const transferAmountForInstruction = outputAmounts[0] ?? 0n;
   const unshieldAmountForInstruction = params.unshieldAmount ?? 0n;
   const feeAmountForInstruction = params.feeAmount ?? 0n;
+  console.log("[Phase 0] transfer_amount for instruction:", transferAmountForInstruction.toString());
   console.log("[Phase 0] unshield_amount for instruction:", unshieldAmountForInstruction.toString());
   console.log("[Phase 0] fee_amount for instruction:", feeAmountForInstruction.toString());
   console.log("[Phase 0] params.unshieldAmount:", params.unshieldAmount);
@@ -4539,8 +4586,9 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     console.log(`  [${2 + i}] out_commitment_${i + 1}:`, Buffer.from(outputCommitments[i]).toString("hex").slice(0, 32) + "...");
   }
   console.log(`  [${2 + outputCommitments.length}] token_mint:`, params.tokenMint.toBase58());
-  console.log(`  [${3 + outputCommitments.length}] unshield_amount:`, unshieldAmountForInstruction.toString());
-  console.log(`  [${4 + outputCommitments.length}] fee_amount:`, feeAmountForInstruction.toString());
+  console.log(`  [${3 + outputCommitments.length}] transfer_amount:`, transferAmountForInstruction.toString());
+  console.log(`  [${4 + outputCommitments.length}] unshield_amount:`, unshieldAmountForInstruction.toString());
+  console.log(`  [${5 + outputCommitments.length}] fee_amount:`, feeAmountForInstruction.toString());
   console.log("[Phase 0] === FULL commitment bytes for on-chain ===");
   for (let i = 0; i < outputCommitments.length; i++) {
     console.log(`  out_commitment_${i + 1} (full):`, Buffer.from(outputCommitments[i]).toString("hex"));
@@ -4556,6 +4604,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     outputAmounts.map((a) => new import_anchor3.BN(a.toString())),
     outputRandomness.map((r) => Array.from(r)),
     stealthEphemeralPubkeys.map((e) => Array.from(e)),
+    new import_anchor3.BN(transferAmountForInstruction.toString()),
     new import_anchor3.BN(unshieldAmountForInstruction.toString()),
     new import_anchor3.BN(feeAmountForInstruction.toString())
   ).accountsStrict({
@@ -4635,7 +4684,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
       treasuryTokenAccount: params.treasuryTokenAccount ?? null,
       unshieldRecipient: unshieldRecipientAta ?? null,
       relayer: params.relayer,
-      tokenProgram: import_spl_token2.TOKEN_PROGRAM_ID
+      tokenProgram: import_spl_token3.TOKEN_PROGRAM_ID
     };
     const phase3PreInstructions = [
       import_web38.ComputeBudgetProgram.setComputeUnitLimit({ units: 15e4 }),
@@ -4645,7 +4694,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     if (params.treasuryWallet && params.treasuryTokenAccount && params.feeAmount && params.feeAmount > 0n) {
       console.log("[Phase 3] Adding create treasury ATA instruction (idempotent)");
       phase3PreInstructions.push(
-        (0, import_spl_token2.createAssociatedTokenAccountIdempotentInstruction)(
+        (0, import_spl_token3.createAssociatedTokenAccountIdempotentInstruction)(
           params.relayer,
           // payer
           params.treasuryTokenAccount,
@@ -4654,8 +4703,8 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
           // owner
           params.tokenMint,
           // mint
-          import_spl_token2.TOKEN_PROGRAM_ID,
-          import_spl_token2.ASSOCIATED_TOKEN_PROGRAM_ID
+          import_spl_token3.TOKEN_PROGRAM_ID,
+          import_spl_token3.ASSOCIATED_TOKEN_PROGRAM_ID
         )
       );
     }
@@ -4937,7 +4986,7 @@ async function storeCommitments(program, tokenMint, commitments, relayer, rpcUrl
 
 // src/instructions/initialize.ts
 var import_web310 = require("@solana/web3.js");
-var import_spl_token3 = require("@solana/spl-token");
+var import_spl_token4 = require("@solana/spl-token");
 init_constants();
 async function buildInitializePoolWithProgram(program, params) {
   const programId = program.programId;
@@ -4949,7 +4998,7 @@ async function buildInitializePoolWithProgram(program, params) {
     tokenMint: params.tokenMint,
     authority: params.authority,
     payer: params.payer,
-    tokenProgram: import_spl_token3.TOKEN_PROGRAM_ID,
+    tokenProgram: import_spl_token4.TOKEN_PROGRAM_ID,
     systemProgram: import_web310.SystemProgram.programId
   });
   return tx;
@@ -5941,7 +5990,7 @@ var CloakCraftClient = class {
       const feeConfig = await fetchProtocolFeeConfig2(this.connection, this.programId);
       if (feeConfig?.treasury) {
         treasuryWallet = feeConfig.treasury;
-        treasuryTokenAccount = (0, import_spl_token4.getAssociatedTokenAddressSync)(
+        treasuryTokenAccount = (0, import_spl_token5.getAssociatedTokenAddressSync)(
           tokenMint,
           treasuryWallet,
           true
@@ -6744,15 +6793,30 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("swap/swap")) {
       throw new Error("Prover not initialized. Call initializeProver(['swap/swap']) first.");
     }
+    params.onProgress?.("generating");
     const proofResult = await this.proofGenerator.generateSwapProof(
       params,
       this.wallet.keypair
     );
+    params.onProgress?.("building");
     const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new import_web315.PublicKey(params.input.tokenMint) : params.input.tokenMint;
     const ammPoolAccount = await this.program.account.ammPool.fetch(params.poolId);
     const outputTokenMint = params.swapDirection === "aToB" ? ammPoolAccount.tokenBMint : ammPoolAccount.tokenAMint;
     const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
     const [outputPoolPda] = derivePoolPda(outputTokenMint, this.programId);
+    const inputPoolAccount = await this.program.account.pool.fetch(inputPoolPda);
+    const inputVault = inputPoolAccount.tokenVault;
+    const [protocolConfigPda] = deriveProtocolConfigPda(this.programId);
+    let treasuryAta;
+    try {
+      const configAccount = await this.program.account.protocolConfig.fetch(protocolConfigPda);
+      if (configAccount && configAccount.feesEnabled) {
+        const { getAssociatedTokenAddress } = await import("@solana/spl-token");
+        treasuryAta = await getAssociatedTokenAddress(inputTokenMint, configAccount.treasury);
+      }
+    } catch {
+      console.warn("[Swap] Protocol config not found - swap will fail if not initialized");
+    }
     const accountHash = params.input.accountHash;
     if (!accountHash) {
       throw new Error("Input note missing accountHash. Use scanNotes() to get notes with accountHash.");
@@ -6767,6 +6831,11 @@ var CloakCraftClient = class {
       inputTokenMint,
       outputTokenMint,
       ammPool: params.poolId,
+      inputVault,
+      protocolConfig: protocolConfigPda,
+      // Required
+      treasuryAta,
+      // Optional - only if fees enabled
       relayer: relayerPubkey,
       proof,
       merkleRoot: params.merkleRoot,
@@ -6875,6 +6944,7 @@ var CloakCraftClient = class {
       })
     );
     console.log("[Swap] Requesting signature for all transactions...");
+    params.onProgress?.("approving");
     let signedTransactions;
     if (relayer) {
       signedTransactions = transactions.map((tx) => {
@@ -6893,6 +6963,7 @@ var CloakCraftClient = class {
     }
     console.log(`[Swap] All ${signedTransactions.length} transactions signed!`);
     console.log("[Swap] Executing signed transactions sequentially...");
+    params.onProgress?.("executing");
     let phase0Signature = "";
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
@@ -6929,11 +7000,13 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("swap/add_liquidity")) {
       throw new Error("Prover not initialized. Call initializeProver(['swap/add_liquidity']) first.");
     }
+    params.onProgress?.("generating");
     const lpAmount = params.lpAmount;
     const proofResult = await this.proofGenerator.generateAddLiquidityProof(
       params,
       this.wallet.keypair
     );
+    params.onProgress?.("building");
     const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new import_web315.PublicKey(params.inputA.tokenMint) : params.inputA.tokenMint;
     const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new import_web315.PublicKey(params.inputB.tokenMint) : params.inputB.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
@@ -7085,6 +7158,7 @@ var CloakCraftClient = class {
       })
     );
     console.log("[Add Liquidity] Requesting signature for all transactions...");
+    params.onProgress?.("approving");
     let signedTransactions;
     if (relayer) {
       signedTransactions = transactions.map((tx) => {
@@ -7103,6 +7177,7 @@ var CloakCraftClient = class {
     }
     console.log(`[Add Liquidity] All ${signedTransactions.length} transactions signed!`);
     console.log("[Add Liquidity] Executing signed transactions sequentially...");
+    params.onProgress?.("executing");
     let phase0Signature = "";
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
@@ -7140,6 +7215,7 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("swap/remove_liquidity")) {
       throw new Error("Prover not initialized. Call initializeProver(['swap/remove_liquidity']) first.");
     }
+    params.onProgress?.("generating");
     const tokenAMint = params.tokenAMint;
     const tokenBMint = params.tokenBMint;
     const lpMint = params.lpInput.tokenMint instanceof Uint8Array ? new import_web315.PublicKey(params.lpInput.tokenMint) : params.lpInput.tokenMint;
@@ -7150,10 +7226,34 @@ var CloakCraftClient = class {
     console.log(`  Token A Pool: ${poolA.toBase58()}`);
     console.log(`  Token B Pool: ${poolB.toBase58()}`);
     console.log(`  LP Token Pool: ${lpPool.toBase58()}`);
+    const poolAAccount = await this.program.account.pool.fetch(poolA);
+    const poolBAccount = await this.program.account.pool.fetch(poolB);
+    const vaultA = poolAAccount.tokenVault;
+    const vaultB = poolBAccount.tokenVault;
+    const [protocolConfigPda] = deriveProtocolConfigPda(this.programId);
+    let treasuryAtaA;
+    let treasuryAtaB;
+    try {
+      const configAccount = await this.connection.getAccountInfo(protocolConfigPda);
+      if (configAccount) {
+        const data = configAccount.data;
+        const treasury = new import_web315.PublicKey(data.subarray(40, 72));
+        const feesEnabled = data[80] === 1;
+        if (feesEnabled) {
+          const { getAssociatedTokenAddress } = await import("@solana/spl-token");
+          treasuryAtaA = await getAssociatedTokenAddress(tokenAMint, treasury, true);
+          treasuryAtaB = await getAssociatedTokenAddress(tokenBMint, treasury, true);
+          console.log("[Remove Liquidity] Fees enabled, treasury ATAs:", treasuryAtaA.toBase58(), treasuryAtaB.toBase58());
+        }
+      }
+    } catch (e) {
+      console.warn("[Remove Liquidity] Could not fetch protocol config:", e);
+    }
     const { proof, lpNullifier, outputACommitment, outputBCommitment, outputARandomness, outputBRandomness } = await this.proofGenerator.generateRemoveLiquidityProof(
       params,
       this.wallet.keypair
     );
+    params.onProgress?.("building");
     const lpInputCommitment = computeCommitment(params.lpInput);
     if (!params.lpInput.accountHash) {
       throw new Error("LP input note must have accountHash for commitment verification");
@@ -7169,6 +7269,11 @@ var CloakCraftClient = class {
       tokenBMint: params.tokenBMint,
       // Use raw format like addLiquidity
       ammPool: params.poolId,
+      vaultA,
+      vaultB,
+      protocolConfig: protocolConfigPda,
+      treasuryAtaA,
+      treasuryAtaB,
       relayer: relayerPubkey,
       proof,
       lpNullifier,
@@ -7276,6 +7381,7 @@ var CloakCraftClient = class {
       })
     );
     console.log("[Remove Liquidity] Requesting signature for all transactions...");
+    params.onProgress?.("approving");
     let signedTransactions;
     if (relayer) {
       signedTransactions = transactions.map((tx) => {
@@ -7294,6 +7400,7 @@ var CloakCraftClient = class {
     }
     console.log(`[Remove Liquidity] All ${signedTransactions.length} transactions signed!`);
     console.log("[Remove Liquidity] Executing signed transactions sequentially...");
+    params.onProgress?.("executing");
     let phase0Signature = "";
     for (let i = 0; i < signedTransactions.length; i++) {
       const tx = signedTransactions[i];
@@ -9704,6 +9811,7 @@ function disableAutoConsolidation() {
   calculateRemoveLiquidityOutput,
   calculateSlippage,
   calculateSwapOutput,
+  calculateSwapProtocolFee,
   calculateTotalLiquidity,
   calculateUsdPriceImpact,
   canFitInSingleTransaction,

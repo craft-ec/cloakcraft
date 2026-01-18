@@ -2165,6 +2165,12 @@ interface SwapInstructionParams {
     outputTokenMint: PublicKey;
     /** AMM pool state */
     ammPool: PublicKey;
+    /** Input token vault (for protocol fee transfer) */
+    inputVault: PublicKey;
+    /** Protocol config PDA (required - enforces fee collection) */
+    protocolConfig: PublicKey;
+    /** Treasury ATA for input token (required if fees enabled and > 0) */
+    treasuryAta?: PublicKey;
     /** Relayer public key */
     relayer: PublicKey;
     /** ZK proof bytes */
@@ -2402,6 +2408,16 @@ interface RemoveLiquidityInstructionParams {
     tokenBMint: PublicKey;
     /** AMM pool state */
     ammPool: PublicKey;
+    /** Token A vault (for protocol fee transfer) */
+    vaultA: PublicKey;
+    /** Token B vault (for protocol fee transfer) */
+    vaultB: PublicKey;
+    /** Protocol config PDA (required - enforces fee collection) */
+    protocolConfig: PublicKey;
+    /** Treasury ATA for token A (required if fees enabled and > 0) */
+    treasuryAtaA?: PublicKey;
+    /** Treasury ATA for token B (required if fees enabled and > 0) */
+    treasuryAtaB?: PublicKey;
     /** Relayer */
     relayer: PublicKey;
     /** ZK proof */
@@ -3514,7 +3530,7 @@ declare function verifyInvariant(oldReserveA: bigint, oldReserveB: bigint, newRe
  * Fee Operations (charged):
  * - transfer: Private → private transfers (0.1% suggested)
  * - unshield: Private → public withdrawals (0.25% suggested)
- * - swap: Private AMM swaps (0.3% suggested)
+ * - swap: Protocol takes 20% of LP fees (e.g., 0.3% LP fee → 0.06% protocol fee)
  * - remove_liquidity: LP token withdrawals (0.25% suggested)
  *
  * Free Operations (add value to protocol):
@@ -3549,8 +3565,8 @@ interface ProtocolFeeConfig {
     transferFeeBps: number;
     /** Unshield fee in basis points (25 = 0.25%) */
     unshieldFeeBps: number;
-    /** Swap fee in basis points (30 = 0.3%) */
-    swapFeeBps: number;
+    /** Protocol's share of LP swap fees in basis points (2000 = 20%) */
+    swapFeeShareBps: number;
     /** Remove liquidity fee in basis points (25 = 0.25%) */
     removeLiquidityFeeBps: number;
     /** Whether fees are enabled */
@@ -3601,9 +3617,23 @@ declare function isFeeableOperation(operation: OperationType): operation is Feea
  */
 declare function calculateProtocolFee(amount: bigint, operation: OperationType, config: ProtocolFeeConfig | null): FeeCalculation;
 /**
- * Get fee basis points for an operation
+ * Get fee basis points for an operation (except swap which uses share of LP fees)
  */
 declare function getFeeBps(operation: FeeableOperation, config: ProtocolFeeConfig): number;
+/**
+ * Calculate swap protocol fee (20% of LP fees)
+ *
+ * @param swapAmount - Amount being swapped
+ * @param lpFeeBps - Pool's LP fee in basis points (e.g., 30 = 0.3%)
+ * @param config - Protocol fee configuration
+ * @returns Object with protocol fee and remaining LP fee
+ */
+declare function calculateSwapProtocolFee(swapAmount: bigint, lpFeeBps: number, config: ProtocolFeeConfig | null): {
+    protocolFee: bigint;
+    lpFeeRemaining: bigint;
+    totalLpFee: bigint;
+    effectiveFeeBps: number;
+};
 /**
  * Calculate minimum fee required (rounds up to ensure sufficient fee)
  *
@@ -4044,4 +4074,4 @@ declare function enableAutoConsolidation(config?: Omit<AutoConsolidationConfig, 
  */
 declare function disableAutoConsolidation(): void;
 
-export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, type AutoConsolidationConfig, type AutoConsolidationState, AutoConsolidator, BPS_DIVISOR, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CircuitType, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, type ConsolidationBatch, type ConsolidationInput, type ConsolidationInstructionParams, type ConsolidationOptions, type ConsolidationResult, ConsolidationService, type ConsolidationSuggestion, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEFAULT_FEE_CONFIG, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FeeCalculation, type FeeableOperation, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, type FragmentationReport, type FreeOperation, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, MAINNET_LIGHT_TREES, MAX_FEE_BPS, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, type NoteSelectionOptions, type NoteSelectionResult, type OperationType, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, type PoolAnalytics, PoolAnalyticsCalculator, type PoolStats, ProofGenerator, type ProtocolFeeConfig, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, SEEDS, type ScannedNote, type SelectionStrategy, type ShieldInstructionParams, type ShieldResult, SmartNoteSelector, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TokenPrice, TokenPriceFetcher, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type TransactionFilter, TransactionHistory, type TransactionRecord, TransactionStatus, TransactionType, type UserPoolPosition, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildConsolidationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePoolWithProgram, buildRemoveLiquidityWithProgram, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateInvariant, calculateMinOutput, calculateMinimumFee, calculatePriceImpact, calculatePriceRatio, calculateProtocolFee, calculateRemoveLiquidityOutput, calculateSlippage, calculateSwapOutput, calculateTotalLiquidity, calculateUsdPriceImpact, canFitInSingleTransaction, canonicalTokenOrder, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, consolidationService, createAddressLookupTable, createCloakCraftALT, createNote, createPendingTransaction, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePoolPda, deriveProtocolConfigPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, disableAutoConsolidation, elgamalEncrypt, enableAutoConsolidation, encryptNote, encryptVote, estimateTotalCost, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fetchProtocolFeeConfig, fieldToBytes, formatAmmPool, formatApy, formatFeeAmount, formatFeeRate, formatPrice, formatPriceChange, formatShare, formatTvl, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getAutoConsolidator, getFeeBps, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isFeeableOperation, isFreeOperation, isInSubgroup, isOnCurve, lagrangeCoefficient, loadCircomArtifacts, loadWallet, noteSelector, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof, verifyFeeAmount, verifyInvariant };
+export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, type AutoConsolidationConfig, type AutoConsolidationState, AutoConsolidator, BPS_DIVISOR, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CircuitType, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, type ConsolidationBatch, type ConsolidationInput, type ConsolidationInstructionParams, type ConsolidationOptions, type ConsolidationResult, ConsolidationService, type ConsolidationSuggestion, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEFAULT_FEE_CONFIG, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FeeCalculation, type FeeableOperation, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, type FragmentationReport, type FreeOperation, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, MAINNET_LIGHT_TREES, MAX_FEE_BPS, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, type NoteSelectionOptions, type NoteSelectionResult, type OperationType, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, type PoolAnalytics, PoolAnalyticsCalculator, type PoolStats, ProofGenerator, type ProtocolFeeConfig, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, SEEDS, type ScannedNote, type SelectionStrategy, type ShieldInstructionParams, type ShieldResult, SmartNoteSelector, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TokenPrice, TokenPriceFetcher, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type TransactionFilter, TransactionHistory, type TransactionRecord, TransactionStatus, TransactionType, type UserPoolPosition, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildConsolidationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePoolWithProgram, buildRemoveLiquidityWithProgram, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateInvariant, calculateMinOutput, calculateMinimumFee, calculatePriceImpact, calculatePriceRatio, calculateProtocolFee, calculateRemoveLiquidityOutput, calculateSlippage, calculateSwapOutput, calculateSwapProtocolFee, calculateTotalLiquidity, calculateUsdPriceImpact, canFitInSingleTransaction, canonicalTokenOrder, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, consolidationService, createAddressLookupTable, createCloakCraftALT, createNote, createPendingTransaction, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePoolPda, deriveProtocolConfigPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, disableAutoConsolidation, elgamalEncrypt, enableAutoConsolidation, encryptNote, encryptVote, estimateTotalCost, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fetchProtocolFeeConfig, fieldToBytes, formatAmmPool, formatApy, formatFeeAmount, formatFeeRate, formatPrice, formatPriceChange, formatShare, formatTvl, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getAutoConsolidator, getFeeBps, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isFeeableOperation, isFreeOperation, isInSubgroup, isOnCurve, lagrangeCoefficient, loadCircomArtifacts, loadWallet, noteSelector, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof, verifyFeeAmount, verifyInvariant };

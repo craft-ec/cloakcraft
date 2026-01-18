@@ -1270,7 +1270,8 @@ function useSwap() {
       }
       setState({ isSwapping: true, error: null, result: null });
       try {
-        const { input, pool, swapDirection, swapAmount, slippageBps = 50 } = options;
+        const { input, pool, swapDirection, swapAmount, slippageBps = 50, onProgress } = options;
+        onProgress?.("preparing");
         const reserveIn = swapDirection === "aToB" ? pool.reserveA : pool.reserveB;
         const reserveOut = swapDirection === "aToB" ? pool.reserveB : pool.reserveA;
         const { outputAmount } = calculateSwapOutput(
@@ -1306,8 +1307,10 @@ function useSwap() {
           changeRecipient,
           merkleRoot,
           merklePath: dummyPath,
-          merkleIndices: dummyIndices
+          merkleIndices: dummyIndices,
+          onProgress
         });
+        onProgress?.("confirming");
         await new Promise((resolve) => setTimeout(resolve, 2e3));
         await sync(input.tokenMint, true);
         await sync(outputTokenMint, true);
@@ -1446,7 +1449,8 @@ function useAddLiquidity() {
       }
       setState({ isAdding: true, error: null, result: null });
       try {
-        const { pool, inputA, inputB, amountA, amountB, slippageBps = 50 } = options;
+        const { pool, inputA, inputB, amountA, amountB, slippageBps = 50, onProgress } = options;
+        onProgress?.("preparing");
         const { depositA, depositB, lpAmount } = calculateAddLiquidityAmounts(
           amountA,
           amountB,
@@ -1481,8 +1485,10 @@ function useAddLiquidity() {
           minLpAmount,
           lpRecipient,
           changeARecipient,
-          changeBRecipient
+          changeBRecipient,
+          onProgress
         });
+        onProgress?.("confirming");
         await new Promise((resolve) => setTimeout(resolve, 2e3));
         await sync(inputA.tokenMint, true);
         await sync(inputB.tokenMint, true);
@@ -1525,7 +1531,8 @@ function useRemoveLiquidity() {
       }
       setState({ isRemoving: true, error: null, result: null });
       try {
-        const { pool, lpInput, lpAmount, slippageBps = 50 } = options;
+        const { pool, lpInput, lpAmount, slippageBps = 50, onProgress } = options;
+        onProgress?.("preparing");
         const { outputA, outputB } = calculateRemoveLiquidityOutput(
           lpAmount,
           pool.lpSupply,
@@ -1572,8 +1579,10 @@ function useRemoveLiquidity() {
           oldPoolStateHash,
           newPoolStateHash,
           merklePath: dummyPath,
-          merklePathIndices: dummyIndices
+          merklePathIndices: dummyIndices,
+          onProgress
         });
+        onProgress?.("confirming");
         await new Promise((resolve) => setTimeout(resolve, 2e3));
         await sync(pool.lpMint, true);
         await sync(pool.tokenAMint, true);
@@ -2466,8 +2475,8 @@ var DEFAULT_FEES = {
   // 0.1%
   unshieldFeeBps: 25,
   // 0.25%
-  swapFeeBps: 30,
-  // 0.3%
+  swapFeeShareBps: 2e3,
+  // 20% of LP fees
   removeLiquidityFeeBps: 25,
   // 0.25%
   feesEnabled: true
@@ -2502,7 +2511,7 @@ function useProtocolFees() {
       const treasury = new PublicKey3(data.subarray(40, 72));
       const transferFeeBps = data.readUInt16LE(72);
       const unshieldFeeBps = data.readUInt16LE(74);
-      const swapFeeBps = data.readUInt16LE(76);
+      const swapFeeShareBps = data.readUInt16LE(76);
       const removeLiquidityFeeBps = data.readUInt16LE(78);
       const feesEnabled = data[80] !== 0;
       setConfig({
@@ -2510,7 +2519,7 @@ function useProtocolFees() {
         treasury,
         transferFeeBps,
         unshieldFeeBps,
-        swapFeeBps,
+        swapFeeShareBps,
         removeLiquidityFeeBps,
         feesEnabled
       });
@@ -2535,10 +2544,12 @@ function useProtocolFees() {
       if (!cfg.feesEnabled) {
         return 0n;
       }
+      if (operation === "swap") {
+        return 0n;
+      }
       const bps = {
         transfer: cfg.transferFeeBps,
         unshield: cfg.unshieldFeeBps,
-        swap: cfg.swapFeeBps,
         remove_liquidity: cfg.removeLiquidityFeeBps
       }[operation];
       return amount * BigInt(bps) / 10000n;

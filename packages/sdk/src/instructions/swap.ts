@@ -1266,6 +1266,16 @@ export interface RemoveLiquidityInstructionParams {
   tokenBMint: PublicKey;
   /** AMM pool state */
   ammPool: PublicKey;
+  /** Token A vault (for protocol fee transfer) */
+  vaultA: PublicKey;
+  /** Token B vault (for protocol fee transfer) */
+  vaultB: PublicKey;
+  /** Protocol config PDA (required - enforces fee collection) */
+  protocolConfig: PublicKey;
+  /** Treasury ATA for token A (required if fees enabled and > 0) */
+  treasuryAtaA?: PublicKey;
+  /** Treasury ATA for token B (required if fees enabled and > 0) */
+  treasuryAtaB?: PublicKey;
   /** Relayer */
   relayer: PublicKey;
   /** ZK proof */
@@ -1564,22 +1574,36 @@ export async function buildRemoveLiquidityWithProgram(
 
   console.log('[RemoveLiquidity Phase 3] Building executeRemoveLiquidity...');
 
-  // Phase 3: Execute Remove Liquidity (AMM state update)
+  // Phase 3: Execute Remove Liquidity (AMM state update + protocol fee transfer)
+  const phase3Accounts: Record<string, PublicKey> = {
+    lpPool: params.lpPool,
+    poolA: params.poolA,
+    poolB: params.poolB,
+    ammPool: params.ammPool,
+    vaultA: params.vaultA,
+    vaultB: params.vaultB,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer,
+    protocolConfig: params.protocolConfig,
+    tokenProgram: TOKEN_PROGRAM_ID,
+  };
+
+  // Treasury ATAs only needed if fees are enabled
+  if (params.treasuryAtaA) {
+    phase3Accounts.treasuryAtaA = params.treasuryAtaA;
+  }
+  if (params.treasuryAtaB) {
+    phase3Accounts.treasuryAtaB = params.treasuryAtaB;
+  }
+
   const phase3Tx = await program.methods
     .executeRemoveLiquidity(
       Array.from(operationId),
       Array.from(params.newPoolStateHash)
     )
-    .accountsStrict({
-      lpPool: params.lpPool,
-      poolA: params.poolA,
-      poolB: params.poolB,
-      ammPool: params.ammPool,
-      pendingOperation: pendingOpPda,
-      relayer: params.relayer,
-    })
+    .accounts(phase3Accounts)
     .preInstructions([
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 100_000 }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 }),
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }),
     ]);
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { PublicKey } from '@solana/web3.js';
 import { useWallet as useSolanaWallet } from '@solana/wallet-adapter-react';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
@@ -66,10 +66,22 @@ import {
 import { SUPPORTED_TOKENS, TokenInfo } from '@/lib/constants';
 import { formatAmount, parseAmount, isValidPublicKey } from '@/lib/utils';
 
+const VALID_TABS = ['shield', 'transfer', 'unshield'] as const;
+type TabValue = typeof VALID_TABS[number];
+
 export default function TransferPage() {
-  const searchParams = useSearchParams();
-  const tabParam = searchParams.get('tab');
-  const defaultTab = ['shield', 'transfer', 'unshield'].includes(tabParam || '') ? tabParam! : 'shield';
+  const params = useParams();
+  const router = useRouter();
+
+  // Get tab from URL path (e.g., /transfer/shield -> 'shield')
+  const tabFromPath = params.tab?.[0] as string | undefined;
+  const currentTab: TabValue = VALID_TABS.includes(tabFromPath as TabValue)
+    ? (tabFromPath as TabValue)
+    : 'shield';
+
+  const handleTabChange = useCallback((value: string) => {
+    router.push(`/transfer/${value}`);
+  }, [router]);
 
   const { publicKey } = useSolanaWallet();
   const { isConnected: isStealthConnected, isProgramReady, isProverReady, wallet, client, notes } = useCloakCraft();
@@ -108,7 +120,7 @@ export default function TransferPage() {
         <p className="text-muted-foreground">Shield, transfer, or unshield your tokens.</p>
       </div>
 
-      <Tabs defaultValue={defaultTab} className="max-w-lg mx-auto">
+      <Tabs value={currentTab} onValueChange={handleTabChange} className="max-w-lg mx-auto">
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="shield" className="gap-1 xs:gap-2 px-2 xs:px-3 text-xs xs:text-sm">
             <ArrowDownToLine className="h-4 w-4 shrink-0" />

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { PublicKey, Keypair } from '@solana/web3.js';
 import { useWallet as useSolanaWallet } from '@solana/wallet-adapter-react';
 import {
@@ -66,10 +66,22 @@ import { SUPPORTED_TOKENS, TokenInfo, getTokenInfo } from '@/lib/constants';
 import { formatAmount, parseAmount } from '@/lib/utils';
 import type { AmmPoolState } from '@cloakcraft/sdk';
 
+const VALID_TABS = ['swap', 'create', 'add', 'remove'] as const;
+type TabValue = typeof VALID_TABS[number];
+
 export default function SwapPage() {
-  const searchParams = useSearchParams();
-  const tabParam = searchParams.get('tab');
-  const defaultTab = ['swap', 'create', 'add', 'remove'].includes(tabParam || '') ? tabParam! : 'swap';
+  const params = useParams();
+  const router = useRouter();
+
+  // Get tab from URL path (e.g., /swap/create -> 'create')
+  const tabFromPath = params.tab?.[0] as string | undefined;
+  const currentTab: TabValue = VALID_TABS.includes(tabFromPath as TabValue)
+    ? (tabFromPath as TabValue)
+    : 'swap';
+
+  const handleTabChange = useCallback((value: string) => {
+    router.push(`/swap/${value}`);
+  }, [router]);
 
   const { publicKey } = useSolanaWallet();
   const { isConnected: isStealthConnected, isProgramReady, isProverReady, notes } = useCloakCraft();
@@ -107,7 +119,7 @@ export default function SwapPage() {
         <p className="text-muted-foreground">Swap tokens and manage AMM liquidity.</p>
       </div>
 
-      <Tabs defaultValue={defaultTab} className="max-w-lg mx-auto">
+      <Tabs value={currentTab} onValueChange={handleTabChange} className="max-w-lg mx-auto">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="swap" className="gap-1 xs:gap-2 px-2 xs:px-3">
             <ArrowDownUp className="h-4 w-4" />
@@ -515,11 +527,9 @@ function SwapTab({
   }, [amount, inputToken]);
 
   // Fee calculation for display - protocol takes swapFeeShareBps% of pool's LP fee
-  // e.g., if pool LP fee is 30 bps (0.3%) and protocol share is 2000 bps (20%),
-  // effective protocol fee = 30 * 2000 / 10000 = 6 bps (0.06%)
   const effectiveSwapFeeBps = useMemo(() => {
-    const poolFeeBps = selectedPool?.feeBps ?? 30; // Pool's LP fee
-    const protocolShareBps = protocolFees?.swapFeeShareBps ?? 2000; // Protocol's share of LP fee
+    const poolFeeBps = selectedPool?.feeBps ?? 30;
+    const protocolShareBps = protocolFees?.swapFeeShareBps ?? 2000;
     return Math.floor((poolFeeBps * protocolShareBps) / 10000);
   }, [selectedPool?.feeBps, protocolFees?.swapFeeShareBps]);
 
