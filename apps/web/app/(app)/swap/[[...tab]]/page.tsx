@@ -22,6 +22,7 @@ import {
   calculateAddLiquidityAmounts,
   calculateRemoveLiquidityOutput,
   calculatePriceRatio,
+  PoolType,
 } from '@cloakcraft/sdk';
 import {
   ArrowDownUp,
@@ -205,6 +206,35 @@ function PoolRateCard({
     return 1 / rateAtoB;
   }, [rateAtoB]);
 
+  // StableSwap helper: calculate D (invariant) using Newton-Raphson
+  const getStableSwapD = (x: number, y: number, amp: number): number => {
+    const sum = x + y;
+    if (sum === 0) return 0;
+    const ann = amp * 4; // A * n^n where n=2
+    let d = sum;
+    for (let i = 0; i < 255; i++) {
+      const dP = (d * d * d) / (4 * x * y);
+      const dPrev = d;
+      d = ((ann * sum + dP * 2) * d) / ((ann - 1) * d + dP * 3);
+      if (Math.abs(d - dPrev) <= 1) return d;
+    }
+    return d;
+  };
+
+  // StableSwap helper: calculate y given x and D
+  const getStableSwapY = (x: number, d: number, amp: number): number => {
+    const ann = amp * 4;
+    const c = (d * d * d) / (4 * x * ann);
+    const b = x + d / ann;
+    let y = d;
+    for (let i = 0; i < 255; i++) {
+      const yPrev = y;
+      y = (y * y + c) / (2 * y + b - d);
+      if (Math.abs(y - yPrev) <= 1) return y;
+    }
+    return y;
+  };
+
   // Calculate price curve points for the graph
   const curveData = useMemo(() => {
     const k = Number(pool.reserveA) * Number(pool.reserveB);
@@ -212,6 +242,9 @@ function PoolRateCard({
 
     const currentReserveA = Number(pool.reserveA);
     const currentReserveB = Number(pool.reserveB);
+    const isStableSwap = pool.poolType === PoolType.StableSwap;
+    const amp = isStableSwap ? Number(pool.amplification ?? 200n) : 0;
+    const d = isStableSwap ? getStableSwapD(currentReserveA, currentReserveB, amp) : 0;
 
     // Generate points around current reserves (50% to 200%)
     const points: { x: number; y: number; isCurrent: boolean; isSwap?: boolean }[] = [];
@@ -221,7 +254,8 @@ function PoolRateCard({
 
     for (let i = 0; i <= steps; i++) {
       const x = minX + (maxX - minX) * (i / steps);
-      const y = k / x;
+      // Use appropriate formula based on pool type
+      const y = isStableSwap ? getStableSwapY(x, d, amp) : k / x;
       points.push({
         x,
         y,
@@ -237,10 +271,10 @@ function PoolRateCard({
 
       if (swapDirection === 'aToB') {
         newReserveA = currentReserveA + swapAmountNum;
-        newReserveB = k / newReserveA;
+        newReserveB = isStableSwap ? getStableSwapY(newReserveA, d, amp) : k / newReserveA;
       } else {
         newReserveB = currentReserveB + swapAmountNum;
-        newReserveA = k / newReserveB;
+        newReserveA = isStableSwap ? getStableSwapY(newReserveB, d, amp) : k / newReserveB;
       }
 
       // Find and mark the swap point
@@ -259,7 +293,7 @@ function PoolRateCard({
     }
 
     return points;
-  }, [pool.reserveA, pool.reserveB, swapAmount, swapDirection]);
+  }, [pool.reserveA, pool.reserveB, pool.poolType, pool.amplification, swapAmount, swapDirection]);
 
   // SVG dimensions
   const width = 280;
@@ -337,9 +371,27 @@ function PoolRateCard({
         </div>
       </div>
 
+      {/* Pool Type Badge */}
+      <div className="flex items-center gap-2">
+        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+          pool.poolType === PoolType.StableSwap
+            ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+            : 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
+        }`}>
+          {pool.poolType === PoolType.StableSwap ? 'StableSwap' : 'Constant Product'}
+        </span>
+        {pool.poolType === PoolType.StableSwap && pool.amplification && (
+          <span className="text-xs text-muted-foreground">
+            A = {pool.amplification.toString()}
+          </span>
+        )}
+      </div>
+
       {/* Price Curve Graph */}
       <div className="space-y-2">
-        <div className="text-sm text-muted-foreground">Price Curve (x·y = k)</div>
+        <div className="text-sm text-muted-foreground">
+          Price Curve {pool.poolType === PoolType.StableSwap ? '(StableSwap)' : '(x·y = k)'}
+        </div>
         <div className="rounded bg-muted/30 p-2">
           <svg
             width={width}
@@ -464,7 +516,9 @@ function PoolRateCard({
           </svg>
         </div>
         <p className="text-xs text-muted-foreground text-center">
-          Constant product AMM: larger trades have more price impact
+          {pool.poolType === PoolType.StableSwap
+            ? 'StableSwap AMM: optimized for pegged assets with low slippage'
+            : 'Constant product AMM: larger trades have more price impact'}
         </p>
       </div>
     </div>
@@ -839,9 +893,11 @@ function SwapTab({
                   {pools.map((pool) => {
                     const tokenA = getTokenInfo(pool.tokenAMint);
                     const tokenB = getTokenInfo(pool.tokenBMint);
+                    const isStable = pool.poolType === PoolType.StableSwap;
                     return (
                       <SelectItem key={pool.address.toBase58()} value={pool.address.toBase58()}>
                         {tokenA?.symbol || 'Unknown'} / {tokenB?.symbol || 'Unknown'}
+                        {isStable ? ' (Stable)' : ''}
                       </SelectItem>
                     );
                   })}
@@ -1020,6 +1076,8 @@ function CreatePoolTab({
   const [tokenA, setTokenA] = useState<string>('');
   const [tokenB, setTokenB] = useState<string>('');
   const [feeBps, setFeeBps] = useState('30');
+  const [poolType, setPoolType] = useState<'constantProduct' | 'stableSwap'>('constantProduct');
+  const [amplification, setAmplification] = useState('200');
   const [txStatus, setTxStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
   const [txSignature, setTxSignature] = useState<string | undefined>();
   const [txError, setTxError] = useState<string | undefined>();
@@ -1046,8 +1104,12 @@ function CreatePoolTab({
     if (tokenA === tokenB) return 'Tokens must be different';
     const fee = parseInt(feeBps);
     if (isNaN(fee) || fee < 0 || fee > 1000) return 'Fee must be 0-1000 bps';
+    if (poolType === 'stableSwap') {
+      const amp = parseInt(amplification);
+      if (isNaN(amp) || amp < 1 || amp > 10000) return 'Amplification must be 1-10000';
+    }
     return null;
-  }, [tokenA, tokenB, feeBps]);
+  }, [tokenA, tokenB, feeBps, poolType, amplification]);
 
   const canSubmit = !validationError && isProgramReady && !isInitializing && txStatus !== 'pending';
 
@@ -1062,13 +1124,14 @@ function CreatePoolTab({
       const tokenAMint = new PublicKey(tokenA);
       const tokenBMint = new PublicKey(tokenB);
       const fee = parseInt(feeBps);
+      const amp = parseInt(amplification) || 200;
 
-      const signature = await initializePool(tokenAMint, tokenBMint, fee);
+      const signature = await initializePool(tokenAMint, tokenBMint, fee, poolType, amp);
 
       if (signature) {
         setTxSignature(signature);
         setTxStatus('success');
-        toast.success('Pool created successfully');
+        toast.success(`${poolType === 'stableSwap' ? 'StableSwap' : 'Constant Product'} pool created successfully`);
         refreshPools();
       } else {
         setTxStatus('error');
@@ -1078,7 +1141,7 @@ function CreatePoolTab({
       setTxStatus('error');
       setTxError(error instanceof Error ? error.message : 'Unknown error');
     }
-  }, [canSubmit, tokenA, tokenB, feeBps, initializePool, initError, refreshPools]);
+  }, [canSubmit, tokenA, tokenB, feeBps, poolType, amplification, initializePool, initError, refreshPools]);
 
   const handleReset = useCallback(() => {
     setTxStatus('idle');
@@ -1140,16 +1203,56 @@ function CreatePoolTab({
             </div>
 
             <div className="space-y-2">
+              <Label>Pool Type</Label>
+              <Select
+                value={poolType}
+                onValueChange={(value: 'constantProduct' | 'stableSwap') => setPoolType(value)}
+                disabled={isInitializing || txStatus === 'pending'}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="constantProduct">Constant Product (x*y=k)</SelectItem>
+                  <SelectItem value="stableSwap">StableSwap (Curve-style)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {poolType === 'stableSwap'
+                  ? 'Best for pegged assets (stablecoins). Low slippage near peg.'
+                  : 'Best for volatile pairs (e.g., SOL/USDC).'}
+              </p>
+            </div>
+
+            {poolType === 'stableSwap' && (
+              <div className="space-y-2">
+                <Label>Amplification (A)</Label>
+                <Input
+                  type="number"
+                  value={amplification}
+                  onChange={(e) => setAmplification(e.target.value)}
+                  placeholder="200"
+                  disabled={isInitializing || txStatus === 'pending'}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Higher = more like constant sum (lower slippage at peg). Typical: 100-1000.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-2">
               <Label>Fee (basis points)</Label>
               <Input
                 type="number"
                 value={feeBps}
                 onChange={(e) => setFeeBps(e.target.value)}
-                placeholder="30"
+                placeholder={poolType === 'stableSwap' ? '4' : '30'}
                 disabled={isInitializing || txStatus === 'pending'}
               />
               <p className="text-xs text-muted-foreground">
-                30 bps = 0.3% fee per swap
+                {poolType === 'stableSwap'
+                  ? '4 bps = 0.04% (typical for stables)'
+                  : '30 bps = 0.3% fee per swap'}
               </p>
             </div>
           </>
@@ -1592,10 +1695,11 @@ function AddLiquidityTab({
                     const tA = getTokenInfo(pool.tokenAMint);
                     const tB = getTokenInfo(pool.tokenBMint);
                     const isEmpty = pool.reserveA === 0n && pool.reserveB === 0n;
+                    const isStable = pool.poolType === PoolType.StableSwap;
                     return (
                       <SelectItem key={pool.address.toBase58()} value={pool.address.toBase58()}>
                         {tA?.symbol || 'Unknown'} / {tB?.symbol || 'Unknown'}
-                        {isEmpty && ' (Empty)'}
+                        {isStable ? ' (Stable)' : ''}{isEmpty && ' (Empty)'}
                       </SelectItem>
                     );
                   })}
@@ -2061,9 +2165,11 @@ function RemoveLiquidityTab({
                   {pools.map((pool) => {
                     const tA = getTokenInfo(pool.tokenAMint);
                     const tB = getTokenInfo(pool.tokenBMint);
+                    const isStable = pool.poolType === PoolType.StableSwap;
                     return (
                       <SelectItem key={pool.address.toBase58()} value={pool.address.toBase58()}>
                         {tA?.symbol || 'Unknown'} / {tB?.symbol || 'Unknown'}
+                        {isStable ? ' (Stable)' : ''}
                       </SelectItem>
                     );
                   })}

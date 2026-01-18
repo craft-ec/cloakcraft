@@ -109,6 +109,13 @@ export interface PendingNullifierData {
 /**
  * Initialize AMM pool instruction parameters
  */
+/**
+ * Pool type for AMM
+ * 0 = ConstantProduct (x * y = k)
+ * 1 = StableSwap (Curve style)
+ */
+export type PoolTypeParam = { constantProduct: {} } | { stableSwap: {} };
+
 export interface InitializeAmmPoolParams {
   /** Token A mint */
   tokenAMint: PublicKey;
@@ -122,6 +129,10 @@ export interface InitializeAmmPoolParams {
   authority: PublicKey;
   /** Payer */
   payer: PublicKey;
+  /** Pool type: 'constantProduct' or 'stableSwap' */
+  poolType?: 'constantProduct' | 'stableSwap';
+  /** Amplification coefficient for StableSwap pools (100-10000, typical: 200) */
+  amplification?: number;
 }
 
 /**
@@ -152,12 +163,22 @@ export async function buildInitializeAmmPoolWithProgram(
   // Derive AMM pool PDA (uses same canonical ordering)
   const [ammPoolPda] = deriveAmmPoolPda(canonicalA, canonicalB, programId);
 
+  // Convert pool type string to Anchor enum format
+  const poolTypeEnum: PoolTypeParam = params.poolType === 'stableSwap'
+    ? { stableSwap: {} }
+    : { constantProduct: {} };
+
+  // Amplification: default to 0 for constant product, require value for stable
+  const amplification = params.amplification ?? (params.poolType === 'stableSwap' ? 200 : 0);
+
   // Build transaction with tokens in canonical order
   const tx = await program.methods
     .initializeAmmPool(
       canonicalA,
       canonicalB,
-      params.feeBps
+      params.feeBps,
+      poolTypeEnum,
+      new BN(amplification)
     )
     .accountsStrict({
       ammPool: ammPoolPda,

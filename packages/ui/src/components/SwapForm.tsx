@@ -7,7 +7,7 @@
 import React, { useState, useMemo } from 'react';
 import { PublicKey, Keypair as SolanaKeypair } from '@solana/web3.js';
 import { useNoteSelector, useWallet, useCloakCraft } from '@cloakcraft/hooks';
-import { generateStealthAddress, calculateSwapOutput, calculateMinOutput } from '@cloakcraft/sdk';
+import { generateStealthAddress, calculateSwapOutputUnified, calculateMinOutput, PoolType } from '@cloakcraft/sdk';
 import { styles, colors } from '../styles';
 import { AmmPoolDetails } from './AmmPoolDetails';
 
@@ -143,11 +143,16 @@ export function SwapForm({
       const reserveIn = isInputTokenA ? selectedAmmPool.reserveA : selectedAmmPool.reserveB;
       const reserveOut = isInputTokenA ? selectedAmmPool.reserveB : selectedAmmPool.reserveA;
 
-      const { outputAmount, priceImpact } = calculateSwapOutput(
+      const poolType = selectedAmmPool.poolType ?? PoolType.ConstantProduct;
+      const amplification = selectedAmmPool.amplification ?? 0n;
+
+      const { outputAmount, priceImpact } = calculateSwapOutputUnified(
         amountLamports,
         reserveIn,
         reserveOut,
-        selectedAmmPool.feeBps || 30 // Use pool's fee or default to 0.3%
+        poolType,
+        selectedAmmPool.feeBps || 30, // Use pool's fee or default to 0.3%
+        amplification
       );
 
       const minOutput = calculateMinOutput(outputAmount, slippageBps);

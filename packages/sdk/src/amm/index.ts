@@ -22,7 +22,8 @@ export {
 
 // Calculations
 export {
-  calculateSwapOutput,
+  calculateStableSwapOutput,
+  calculateSwapOutputUnified,
   calculateMinOutput,
   calculateAddLiquidityAmounts,
   calculateRemoveLiquidityOutput,
@@ -32,4 +33,5 @@ export {
   calculateTotalLiquidity,
   validateSwapAmount,
   validateLiquidityAmounts,
+  PoolType,
 } from './calculations';

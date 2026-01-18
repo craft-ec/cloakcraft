@@ -1,29 +1,178 @@
 /**
  * AMM Calculations
  *
- * Implements constant product (x * y = k) AMM formulas for:
+ * Implements multiple AMM formulas:
+ * - Constant Product (x * y = k) - Uniswap V2 style, for volatile pairs
+ * - StableSwap (Curve) - for pegged assets like stablecoins
+ *
+ * Features:
  * - Swap output calculation
  * - Liquidity addition/removal
  * - Price impact and slippage
  */
 
+import { PoolType } from '@cloakcraft/types';
+
+// Re-export PoolType from types for convenience
+export { PoolType } from '@cloakcraft/types';
+
 /**
- * Calculate swap output amount using constant product formula
+ * Calculate swap output amount using StableSwap formula (Curve-style)
  *
- * Formula: output = (reserveOut * inputAmount * (10000 - fee)) / ((reserveIn * 10000) + (inputAmount * (10000 - fee)))
+ * StableSwap invariant: A * n^n * sum(x) + D = A * D * n^n + D^(n+1) / (n^n * prod(x))
+ * For n=2: A * 4 * (x + y) + D = A * D * 4 + D^3 / (4 * x * y)
  *
  * @param inputAmount - Amount of input token to swap
  * @param reserveIn - Reserve of input token in pool
  * @param reserveOut - Reserve of output token in pool
- * @param feeBps - Fee in basis points (default 30 = 0.3%)
+ * @param amplification - Amplification coefficient (A), typically 100-1000
+ * @param feeBps - Fee in basis points (default 4 = 0.04% for stables)
  * @returns Output amount and price impact percentage
  */
-export function calculateSwapOutput(
+export function calculateStableSwapOutput(
   inputAmount: bigint,
   reserveIn: bigint,
   reserveOut: bigint,
-  feeBps: number = 30
+  amplification: bigint,
+  feeBps: number = 4
 ): { outputAmount: bigint; priceImpact: number } {
+  if (inputAmount === 0n) {
+    return { outputAmount: 0n, priceImpact: 0 };
+  }
+
+  if (reserveIn === 0n || reserveOut === 0n) {
+    throw new Error('Pool has no liquidity');
+  }
+
+  if (amplification <= 0n) {
+    throw new Error('Amplification must be positive');
+  }
+
+  // Apply fee
+  const feeAmount = (inputAmount * BigInt(feeBps)) / 10000n;
+  const inputWithFee = inputAmount - feeAmount;
+
+  // Scale up for precision (1e18)
+  const PRECISION = 1000000000000000000n;
+  const x = reserveIn * PRECISION;
+  const y = reserveOut * PRECISION;
+  const dx = inputWithFee * PRECISION;
+
+  // Calculate D (the invariant)
+  const d = getD(x, y, amplification);
+
+  // New x after swap
+  const newX = x + dx;
+
+  // Calculate new y
+  const newY = getY(newX, d, amplification);
+
+  // Output amount = old_y - new_y
+  const outputScaled = y - newY;
+  const outputAmount = outputScaled / PRECISION;
+
+  // Calculate price impact (for stables, this should be very low near peg)
+  const priceImpact = Number((inputAmount * 10000n) / reserveIn) / 100;
+
+  return { outputAmount, priceImpact };
+}
+
+/**
+ * Calculate D (the StableSwap invariant) using Newton-Raphson
+ */
+function getD(x: bigint, y: bigint, amp: bigint): bigint {
+  const sum = x + y;
+  if (sum === 0n) return 0n;
+
+  const ann = amp * 4n; // A * n^n where n=2
+
+  let d = sum;
+  let dPrev: bigint;
+
+  // Newton-Raphson iteration
+  for (let i = 0; i < 255; i++) {
+    // D_P = D^3 / (4 * x * y)
+    let dP = d;
+    dP = (dP * d) / (x * 2n);
+    dP = (dP * d) / (y * 2n);
+
+    dPrev = d;
+
+    // d = (ann * sum + dP * 2) * d / ((ann - 1) * d + 3 * dP)
+    const numerator = (ann * sum + dP * 2n) * d;
+    const denominator = (ann - 1n) * d + dP * 3n;
+    d = numerator / denominator;
+
+    // Check convergence
+    if (d > dPrev) {
+      if (d - dPrev <= 1n) return d;
+    } else {
+      if (dPrev - d <= 1n) return d;
+    }
+  }
+
+  throw new Error('StableSwap D calculation failed to converge');
+}
+
+/**
+ * Calculate y given x and D using Newton-Raphson
+ */
+function getY(x: bigint, d: bigint, amp: bigint): bigint {
+  const ann = amp * 4n; // A * n^n where n=2
+
+  // c = D^3 / (4 * x * ann)
+  const c = ((d * d) / (x * 2n) * d) / (ann * 2n);
+
+  // b = x + D / ann
+  const b = x + d / ann;
+
+  let y = d;
+  let yPrev: bigint;
+
+  // Newton-Raphson iteration
+  for (let i = 0; i < 255; i++) {
+    yPrev = y;
+
+    // y = (y^2 + c) / (2*y + b - D)
+    const numerator = y * y + c;
+    const denominator = y * 2n + b - d;
+    y = numerator / denominator;
+
+    // Check convergence
+    if (y > yPrev) {
+      if (y - yPrev <= 1n) return y;
+    } else {
+      if (yPrev - y <= 1n) return y;
+    }
+  }
+
+  throw new Error('StableSwap Y calculation failed to converge');
+}
+
+/**
+ * Unified swap output calculation that handles both pool types
+ *
+ * @param inputAmount - Amount of input token to swap
+ * @param reserveIn - Reserve of input token in pool
+ * @param reserveOut - Reserve of output token in pool
+ * @param poolType - Pool type (ConstantProduct or StableSwap)
+ * @param feeBps - Fee in basis points
+ * @param amplification - Amplification coefficient (only for StableSwap)
+ * @returns Output amount and price impact percentage
+ */
+export function calculateSwapOutputUnified(
+  inputAmount: bigint,
+  reserveIn: bigint,
+  reserveOut: bigint,
+  poolType: PoolType,
+  feeBps: number,
+  amplification: bigint = 0n
+): { outputAmount: bigint; priceImpact: number } {
+  if (poolType === PoolType.StableSwap) {
+    return calculateStableSwapOutput(inputAmount, reserveIn, reserveOut, amplification, feeBps);
+  }
+
+  // Constant Product (x * y = k) formula
   if (inputAmount === 0n) {
     return { outputAmount: 0n, priceImpact: 0 };
   }
@@ -42,8 +191,6 @@ export function calculateSwapOutput(
   const outputAmount = numerator / denominator;
 
   // Calculate price impact
-  // Price impact = (inputAmount / reserveIn) * 100
-  // This approximates how much the price moves
   const priceImpact = Number((inputAmount * 10000n) / reserveIn) / 100;
 
   return { outputAmount, priceImpact };
@@ -175,12 +322,18 @@ export function calculateRemoveLiquidityOutput(
  * @param inputAmount - Amount of input token
  * @param reserveIn - Reserve of input token
  * @param reserveOut - Reserve of output token
+ * @param poolType - Pool type (defaults to ConstantProduct)
+ * @param feeBps - Fee in basis points (defaults to 30)
+ * @param amplification - Amplification coefficient (only for StableSwap)
  * @returns Price impact as percentage (e.g., 1.5 = 1.5%)
  */
 export function calculatePriceImpact(
   inputAmount: bigint,
   reserveIn: bigint,
-  reserveOut: bigint
+  reserveOut: bigint,
+  poolType: PoolType = PoolType.ConstantProduct,
+  feeBps: number = 30,
+  amplification: bigint = 0n
 ): number {
   if (inputAmount === 0n || reserveIn === 0n) {
     return 0;
@@ -195,7 +348,7 @@ export function calculatePriceImpact(
     // Calculate spot price before and after
     const priceBefore = Number(reserveOut) / Number(reserveIn);
     const newReserveIn = reserveIn + inputAmount;
-    const { outputAmount } = calculateSwapOutput(inputAmount, reserveIn, reserveOut);
+    const { outputAmount } = calculateSwapOutputUnified(inputAmount, reserveIn, reserveOut, poolType, feeBps, amplification);
     const newReserveOut = reserveOut - outputAmount;
     const priceAfter = Number(newReserveOut) / Number(newReserveIn);
 

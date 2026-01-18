@@ -240,13 +240,22 @@ pub mod cloakcraft {
     // ============ Swap Operations (Internal AMM) ============
 
     /// Initialize a liquidity pool
+    ///
+    /// Supports two pool types:
+    /// - ConstantProduct (pool_type=0): x * y = k formula, best for volatile pairs
+    /// - StableSwap (pool_type=1): Curve-style formula, best for pegged assets
+    ///
+    /// For StableSwap pools, amplification should be 100-1000 (typical: 200 for stablecoins).
+    /// For ConstantProduct pools, amplification is ignored (can pass 0).
     pub fn initialize_amm_pool(
         ctx: Context<InitializeAmmPool>,
         token_a_mint: Pubkey,
         token_b_mint: Pubkey,
         fee_bps: u16,
+        pool_type: state::PoolType,
+        amplification: u64,
     ) -> Result<()> {
-        swap::initialize_amm_pool(ctx, token_a_mint, token_b_mint, fee_bps)
+        swap::initialize_amm_pool(ctx, token_a_mint, token_b_mint, fee_bps, pool_type, amplification)
     }
 
     // ============ Append Pattern Swap Operations ============

@@ -8,12 +8,13 @@ import { useState, useCallback, useEffect } from 'react';
 import { PublicKey } from '@solana/web3.js';
 import { useCloakCraft } from './provider';
 import {
-  calculateSwapOutput,
+  calculateSwapOutputUnified,
   calculateMinOutput,
   calculateAddLiquidityAmounts,
   calculateRemoveLiquidityOutput,
   generateStealthAddress,
   computeAmmStateHash,
+  PoolType,
 } from '@cloakcraft/sdk';
 import { Keypair as SolanaKeypair } from '@solana/web3.js';
 import type { DecryptedNote, AmmPoolState, TransactionResult } from '@cloakcraft/types';
@@ -75,14 +76,19 @@ export function useSwap() {
 
         onProgress?.('preparing');
 
-        // Calculate output amount from AMM
+        // Calculate output amount from AMM (handles both ConstantProduct and StableSwap)
         const reserveIn = swapDirection === 'aToB' ? pool.reserveA : pool.reserveB;
         const reserveOut = swapDirection === 'aToB' ? pool.reserveB : pool.reserveA;
-        const { outputAmount } = calculateSwapOutput(
+        const poolType = pool.poolType ?? PoolType.ConstantProduct;
+        const amplification = pool.amplification ?? 0n;
+
+        const { outputAmount } = calculateSwapOutputUnified(
           swapAmount,
           reserveIn,
           reserveOut,
-          pool.feeBps
+          poolType,
+          pool.feeBps,
+          amplification
         );
 
         // Calculate minimum output with slippage
@@ -226,11 +232,16 @@ export function useSwapQuote(
     try {
       const reserveIn = swapDirection === 'aToB' ? pool.reserveA : pool.reserveB;
       const reserveOut = swapDirection === 'aToB' ? pool.reserveB : pool.reserveA;
-      const { outputAmount, priceImpact } = calculateSwapOutput(
+      const poolType = pool.poolType ?? PoolType.ConstantProduct;
+      const amplification = pool.amplification ?? 0n;
+
+      const { outputAmount, priceImpact } = calculateSwapOutputUnified(
         inputAmount,
         reserveIn,
         reserveOut,
-        pool.feeBps
+        poolType,
+        pool.feeBps,
+        amplification
       );
 
       const minOutput = calculateMinOutput(outputAmount, 50); // 0.5% slippage
@@ -263,7 +274,9 @@ export function useInitializeAmmPool() {
     async (
       tokenAMint: PublicKey,
       tokenBMint: PublicKey,
-      feeBps: number = 30
+      feeBps: number = 30,
+      poolType: 'constantProduct' | 'stableSwap' = 'constantProduct',
+      amplification: number = 200
     ): Promise<string | null> => {
       if (!client?.getProgram()) {
         setState({ isInitializing: false, error: 'Program not set', result: null });
@@ -280,7 +293,9 @@ export function useInitializeAmmPool() {
           tokenAMint,
           tokenBMint,
           lpMintKeypair,
-          feeBps
+          feeBps,
+          poolType,
+          amplification
         );
 
         setState({ isInitializing: false, error: null, result: signature });

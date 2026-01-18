@@ -112,6 +112,12 @@ pub enum CloakCraftError {
     #[msg("Invalid LP token amount - must match calculated amount")]
     InvalidLpAmount,
 
+    #[msg("Swap output amount does not match AMM formula calculation")]
+    InvalidSwapOutput,
+
+    #[msg("Invalid amplification coefficient for StableSwap pool")]
+    InvalidAmplification,
+
     // ============ Governance Errors ============
     #[msg("Aggregation not found")]
     AggregationNotFound,

@@ -6,6 +6,7 @@
 
 import { Connection, PublicKey } from '@solana/web3.js';
 import { keccak_256 } from '@noble/hashes/sha3';
+import { PoolType } from '@cloakcraft/types';
 import type { AmmPoolState } from '@cloakcraft/types';
 import { deriveAmmPoolPda } from '../instructions/swap';
 
@@ -47,6 +48,8 @@ export async function fetchAmmPool(
  * - is_active: 1 byte (bool)
  * - bump: 1 byte (u8)
  * - lp_mint_bump: 1 byte (u8)
+ * - pool_type: 1 byte (enum: 0=ConstantProduct, 1=StableSwap)
+ * - amplification: 8 bytes (u64 LE)
  *
  * @param data - Raw account data
  * @returns Deserialized AMM pool state
@@ -87,6 +90,15 @@ export function deserializeAmmPool(data: Buffer): AmmPoolState {
   offset += 1;
 
   const lpMintBump = data[offset];
+  offset += 1;
+
+  // New fields for StableSwap support
+  const poolTypeValue = data[offset];
+  const poolType = poolTypeValue === 1 ? PoolType.StableSwap : PoolType.ConstantProduct;
+  offset += 1;
+
+  const view2 = new DataView(data.buffer, data.byteOffset + offset);
+  const amplification = view2.getBigUint64(0, true);
 
   return {
     poolId,
@@ -102,6 +114,8 @@ export function deserializeAmmPool(data: Buffer): AmmPoolState {
     isActive,
     bump,
     lpMintBump,
+    poolType,
+    amplification,
   };
 }
 

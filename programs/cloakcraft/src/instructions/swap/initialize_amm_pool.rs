@@ -1,10 +1,14 @@
 //! Initialize an internal AMM pool
+//!
+//! Supports two pool types:
+//! - ConstantProduct (default): x * y = k formula, best for volatile pairs
+//! - StableSwap: Curve-style formula, best for pegged assets (stablecoins)
 
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::{create_account, CreateAccount};
 use anchor_spl::token::{Mint, Token, InitializeMint};
 
-use crate::state::AmmPool;
+use crate::state::{AmmPool, PoolType};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
 
@@ -54,6 +58,8 @@ pub fn initialize_amm_pool(
     token_a_mint: Pubkey,
     token_b_mint: Pubkey,
     fee_bps: u16,
+    pool_type: PoolType,
+    amplification: u64,
 ) -> Result<()> {
     // Enforce canonical ordering: token_a must be < token_b by bytes
     // This ensures USDC-SOL and SOL-USDC always create the same pool
@@ -63,8 +69,17 @@ pub fn initialize_amm_pool(
         CloakCraftError::TokensNotInCanonicalOrder
     );
 
+    // Validate amplification coefficient for StableSwap pools
+    if pool_type == PoolType::StableSwap {
+        // Amplification must be between 1 and 10000 (typical: 100-1000)
+        require!(
+            amplification >= 1 && amplification <= 10000,
+            CloakCraftError::InvalidAmplification
+        );
+    }
+
     let amm_pool = &mut ctx.accounts.amm_pool;
-    let clock = Clock::get()?;
+    let _clock = Clock::get()?;
 
     // Create LP mint account
     let rent = Rent::get()?;
@@ -107,8 +122,20 @@ pub fn initialize_amm_pool(
     amm_pool.is_active = true;
     amm_pool.bump = ctx.bumps.amm_pool;
     amm_pool.lp_mint_bump = 0; // No longer a PDA, set to 0
+    amm_pool.pool_type = pool_type;
+    amm_pool.amplification = if pool_type == PoolType::StableSwap {
+        amplification
+    } else {
+        0 // Not used for ConstantProduct pools
+    };
 
     // Initialize state hash
     amm_pool.state_hash = amm_pool.compute_state_hash();
+
+    msg!("AMM pool initialized: type={:?}, amplification={}",
+        pool_type,
+        amm_pool.amplification
+    );
+
     Ok(())
 }

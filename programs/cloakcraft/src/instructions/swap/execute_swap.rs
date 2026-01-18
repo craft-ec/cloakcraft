@@ -121,6 +121,15 @@ pub fn execute_swap<'info>(
     msg!("Swap direction: {}, amount: {}, output: {}",
         if swap_a_to_b { "A->B" } else { "B->A" }, swap_amount, output_amount);
 
+    // SECURITY: Verify output amount matches AMM formula
+    // This prevents malicious clients from claiming incorrect output amounts
+    require!(
+        amm_pool.verify_swap_output(swap_amount, output_amount, swap_a_to_b),
+        CloakCraftError::InvalidSwapOutput
+    );
+    msg!("✅ Swap output verified against {} formula",
+        if amm_pool.pool_type == crate::state::PoolType::StableSwap { "StableSwap" } else { "ConstantProduct" });
+
     // Calculate protocol fee (percentage of LP fees)
     // The protocol takes swap_fee_share_bps% of the pool's LP fee
     let protocol_config = &ctx.accounts.protocol_config;

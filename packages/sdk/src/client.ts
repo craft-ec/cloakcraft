@@ -494,6 +494,9 @@ export class CloakCraftClient {
         isActive: pool.account.isActive,
         bump: pool.account.bump,
         lpMintBump: pool.account.lpMintBump,
+        // Pool type: 0 = ConstantProduct, 1 = StableSwap
+        poolType: pool.account.poolType?.constantProduct !== undefined ? 0 : 1,
+        amplification: BigInt(pool.account.amplification?.toString() ?? '0'),
       }));
     } catch (e: any) {
       console.error('Error fetching all AMM pools:', e);
@@ -1695,6 +1698,8 @@ export class CloakCraftClient {
    * @param tokenBMint - Second token mint
    * @param lpMintKeypair - LP token mint keypair (newly generated)
    * @param feeBps - Trading fee in basis points (e.g., 30 = 0.3%)
+   * @param poolType - Pool type: 'constantProduct' (default) or 'stableSwap'
+   * @param amplification - Amplification coefficient for StableSwap (100-10000, default: 200)
    * @param payer - Payer for transaction fees and rent
    * @returns Transaction signature
    */
@@ -1703,6 +1708,8 @@ export class CloakCraftClient {
     tokenBMint: PublicKey,
     lpMintKeypair: SolanaKeypair,
     feeBps: number,
+    poolType: 'constantProduct' | 'stableSwap' = 'constantProduct',
+    amplification: number = 200,
     payer?: SolanaKeypair
   ): Promise<string> {
     if (!this.program) {
@@ -1738,6 +1745,8 @@ export class CloakCraftClient {
         feeBps,
         authority: payerPublicKey,
         payer: payerPublicKey,
+        poolType,
+        amplification,
       });
 
       // Sign and send

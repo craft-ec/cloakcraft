@@ -583,6 +583,14 @@ export interface PoolState {
   commitmentCounter?: bigint;
 }
 
+/** Pool type determining which AMM formula to use */
+export enum PoolType {
+  /** Constant product formula: x * y = k (Uniswap V2 style) */
+  ConstantProduct = 0,
+  /** StableSwap formula (Curve style) for pegged assets */
+  StableSwap = 1,
+}
+
 /** AMM pool state */
 export interface AmmPoolState {
   /** Pool ID */
@@ -611,6 +619,10 @@ export interface AmmPoolState {
   bump: number;
   /** LP mint bump */
   lpMintBump: number;
+  /** Pool type (ConstantProduct or StableSwap) */
+  poolType: PoolType;
+  /** Amplification coefficient for StableSwap pools (0 for ConstantProduct) */
+  amplification: bigint;
 }
 
 /** Order account state */

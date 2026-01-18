@@ -14,14 +14,25 @@ Provides calculation utilities for CloakCraft's Automated Market Maker (AMM) fun
 ### Swap Calculations
 
 ```typescript
-import { calculateSwapOutput, calculateMinOutput } from '@cloakcraft/sdk';
+import { calculateSwapOutputUnified, calculateMinOutput, PoolType } from '@cloakcraft/sdk';
 
-// Calculate expected output for a swap
-const { outputAmount, priceImpact } = calculateSwapOutput(
+// Calculate expected output for a swap (supports both ConstantProduct and StableSwap)
+const { outputAmount, priceImpact } = calculateSwapOutputUnified(
   1000n, // input amount
   100000n, // input token reserve
   200000n, // output token reserve
+  PoolType.ConstantProduct, // or PoolType.StableSwap for stablecoins
   30 // fee in basis points (0.3%)
+);
+
+// For StableSwap pools, include amplification parameter
+const stableOutput = calculateSwapOutputUnified(
+  1000n,
+  100000n,
+  100000n,
+  PoolType.StableSwap,
+  4, // lower fee for stables (0.04%)
+  200n // amplification coefficient
 );
 
 // Calculate minimum output with slippage tolerance
@@ -140,15 +151,24 @@ if (liquidityError) {
 
 ## Formulas
 
-### Constant Product
+### Constant Product (for volatile pairs)
 
-All swaps use the constant product formula: `x * y = k`
+Uses the constant product formula: `x * y = k`
 
 **Swap output:**
 ```
 output = (reserveOut * inputAmount * (10000 - fee)) /
          ((reserveIn * 10000) + (inputAmount * (10000 - fee)))
 ```
+
+### StableSwap (for pegged assets)
+
+Uses Curve-style invariant optimized for assets that should trade near 1:1:
+```
+A * n² * sum(x) + D = A * D * n² + D³ / (n² * prod(x))
+```
+
+Where A is the amplification coefficient (higher = flatter curve near peg).
 
 **Price impact:**
 ```
