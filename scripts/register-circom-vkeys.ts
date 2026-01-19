@@ -44,6 +44,27 @@ const CIRCUITS: CircuitConfig[] = [
     id: "consolidate_3x1",
     vkJsonPath: "circom-circuits/build/consolidate_3x1/verification_key.json",
   },
+  // Perps circuits
+  {
+    id: "perps_open_position",
+    vkJsonPath: "circom-circuits/build/perps/open_position_verification_key.json",
+  },
+  {
+    id: "perps_close_position",
+    vkJsonPath: "circom-circuits/build/perps/close_position_verification_key.json",
+  },
+  {
+    id: "perps_add_liquidity",
+    vkJsonPath: "circom-circuits/build/perps/add_liquidity_verification_key.json",
+  },
+  {
+    id: "perps_remove_liquidity",
+    vkJsonPath: "circom-circuits/build/perps/remove_liquidity_verification_key.json",
+  },
+  {
+    id: "perps_liquidate",
+    vkJsonPath: "circom-circuits/build/perps/liquidate_verification_key.json",
+  },
 ];
 
 // Convert decimal string to 32-byte big-endian buffer
