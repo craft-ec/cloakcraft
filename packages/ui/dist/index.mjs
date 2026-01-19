@@ -3161,7 +3161,7 @@ import { useCloakCraft as useCloakCraft11 } from "@cloakcraft/hooks";
 // src/components/SwapForm.tsx
 import React13, { useState as useState10, useMemo as useMemo2 } from "react";
 import { useNoteSelector as useNoteSelector4, useWallet as useWallet8, useCloakCraft as useCloakCraft8 } from "@cloakcraft/hooks";
-import { generateStealthAddress as generateStealthAddress2, calculateSwapOutput, calculateMinOutput } from "@cloakcraft/sdk";
+import { generateStealthAddress as generateStealthAddress2, calculateSwapOutputUnified, calculateMinOutput, PoolType } from "@cloakcraft/sdk";
 
 // src/components/AmmPoolDetails.tsx
 import { jsx as jsx16, jsxs as jsxs16 } from "react/jsx-runtime";
@@ -3433,12 +3433,16 @@ function SwapForm({
       const isInputTokenA = inputMintStr === tokenAMintStr;
       const reserveIn = isInputTokenA ? selectedAmmPool.reserveA : selectedAmmPool.reserveB;
       const reserveOut = isInputTokenA ? selectedAmmPool.reserveB : selectedAmmPool.reserveA;
-      const { outputAmount, priceImpact } = calculateSwapOutput(
+      const poolType = selectedAmmPool.poolType ?? PoolType.ConstantProduct;
+      const amplification = selectedAmmPool.amplification ?? 0n;
+      const { outputAmount, priceImpact } = calculateSwapOutputUnified(
         amountLamports,
         reserveIn,
         reserveOut,
-        selectedAmmPool.feeBps || 30
+        poolType,
+        selectedAmmPool.feeBps || 30,
         // Use pool's fee or default to 0.3%
+        amplification
       );
       const minOutput = calculateMinOutput(outputAmount, slippageBps);
       return {

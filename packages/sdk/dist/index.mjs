@@ -6,7 +6,7 @@ import {
   createNote,
   generateRandomness,
   verifyCommitment
-} from "./chunk-ZUIOLIGE.mjs";
+} from "./chunk-7NJUEXMN.mjs";
 import {
   buildAddLiquidityWithProgram,
   buildClosePendingOperationWithProgram,
@@ -19,7 +19,7 @@ import {
   deriveAmmPoolPda,
   derivePendingOperationPda,
   generateOperationId
-} from "./chunk-Y2MV6Z7X.mjs";
+} from "./chunk-TTHM27ML.mjs";
 import {
   DOMAIN_ACTION_NULLIFIER,
   DOMAIN_COMMITMENT,
@@ -51,7 +51,7 @@ import {
   scalarMul,
   serializeEncryptedNote,
   tryDecryptNote
-} from "./chunk-3EMHSCQ7.mjs";
+} from "./chunk-J6NJ7M24.mjs";
 import {
   BPS_DIVISOR,
   DEFAULT_FEE_CONFIG,
@@ -67,7 +67,7 @@ import {
   isFeeableOperation,
   isFreeOperation,
   verifyFeeAmount
-} from "./chunk-7BY2YTLU.mjs";
+} from "./chunk-G4ISNWBV.mjs";
 import {
   CIRCUIT_IDS,
   DEVNET_V2_TREES,
@@ -79,7 +79,7 @@ import {
   deriveVaultPda,
   deriveVerificationKeyPda,
   padCircuitId
-} from "./chunk-HQXTEDR6.mjs";
+} from "./chunk-M42L5IF7.mjs";
 import {
   __require
 } from "./chunk-Y6FXYEAI.mjs";
@@ -90,7 +90,7 @@ export * from "@cloakcraft/types";
 // src/client.ts
 import {
   Connection as Connection2,
-  PublicKey as PublicKey9,
+  PublicKey as PublicKey10,
   Transaction as Transaction2
 } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
@@ -638,7 +638,13 @@ var CIRCUIT_FILE_MAP = {
   "swap/add_liquidity": "swap_add_liquidity",
   "swap/remove_liquidity": "swap_remove_liquidity",
   "swap/swap": "swap_swap",
-  "governance/encrypted_submit": "governance_encrypted_submit"
+  "governance/encrypted_submit": "governance_encrypted_submit",
+  // Perps circuits
+  "perps/open_position": "open_position",
+  "perps/close_position": "close_position",
+  "perps/add_liquidity": "add_liquidity",
+  "perps/remove_liquidity": "remove_liquidity",
+  "perps/liquidate": "liquidate"
 };
 var ProofGenerator = class {
   constructor(config) {
@@ -751,7 +757,13 @@ var ProofGenerator = class {
       "swap/add_liquidity",
       "swap/remove_liquidity",
       "swap/swap",
-      "governance/encrypted_submit"
+      "governance/encrypted_submit",
+      // Perps circuits
+      "perps/open_position",
+      "perps/close_position",
+      "perps/add_liquidity",
+      "perps/remove_liquidity",
+      "perps/liquidate"
     ];
     return knownCircuits.includes(name);
   }
@@ -1439,7 +1451,13 @@ var ProofGenerator = class {
       "transfer/1x3": "transfer_1x3",
       "swap/swap": "swap",
       "swap/add_liquidity": "add_liquidity",
-      "swap/remove_liquidity": "remove_liquidity"
+      "swap/remove_liquidity": "remove_liquidity",
+      // Perps circuits
+      "perps/open_position": "open_position",
+      "perps/close_position": "close_position",
+      "perps/add_liquidity": "perps_add_liquidity",
+      "perps/remove_liquidity": "perps_remove_liquidity",
+      "perps/liquidate": "liquidate"
     };
     return mapping[circuitName] ?? circuitName.replace("/", "_");
   }
@@ -1587,6 +1605,351 @@ var ProofGenerator = class {
       out_stealth_pub_x_2: fieldToHex(out2StealthPubX),
       out_amount_2: out2Amount.toString(),
       out_randomness_2: fieldToHex(out2Randomness)
+    };
+  }
+  // =============================================================================
+  // Perpetual Futures Proof Generation
+  // =============================================================================
+  /**
+   * Generate proof for opening a perps position
+   *
+   * Circuit proves:
+   * - Ownership of margin commitment
+   * - Correct nullifier derivation
+   * - Correct position commitment computation
+   * - Balance check: input = margin + fee
+   */
+  async generateOpenPositionProof(params, keypair) {
+    const circuitName = "perps/open_position";
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`${circuitName} circuit not loaded. Circuits need to be compiled first.`);
+    }
+    let effectiveKey;
+    if (params.input.stealthEphemeralPubkey) {
+      effectiveKey = deriveStealthPrivateKey(
+        bytesToField(keypair.spending.sk),
+        params.input.stealthEphemeralPubkey
+      );
+    } else {
+      effectiveKey = bytesToField(keypair.spending.sk);
+    }
+    const effectiveNullifierKey = deriveNullifierKey(fieldToBytes(effectiveKey));
+    const inputCommitment = computeCommitment(params.input);
+    const nullifier = deriveSpendingNullifier(effectiveNullifierKey, inputCommitment, params.input.leafIndex);
+    const positionRandomness = generateRandomness();
+    const tokenMint = params.input.tokenMint instanceof Uint8Array ? params.input.tokenMint : params.input.tokenMint.toBytes();
+    const POSITION_COMMITMENT_DOMAIN = 8n;
+    const stage1 = poseidonHashDomain(
+      POSITION_COMMITMENT_DOMAIN,
+      params.input.stealthPubX,
+      fieldToBytes(params.marketId),
+      fieldToBytes(BigInt(params.isLong ? 1 : 0)),
+      fieldToBytes(params.marginAmount)
+    );
+    const positionCommitment = poseidonHash([
+      stage1,
+      fieldToBytes(params.positionSize),
+      fieldToBytes(BigInt(params.leverage)),
+      fieldToBytes(params.entryPrice),
+      positionRandomness
+    ]);
+    const merklePath = [...params.merklePath];
+    while (merklePath.length < 32) {
+      merklePath.push(new Uint8Array(32));
+    }
+    const merkleIndices = [...params.merkleIndices];
+    while (merkleIndices.length < 32) {
+      merkleIndices.push(0);
+    }
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      nullifier: fieldToHex(nullifier),
+      perps_pool_id: fieldToHex(params.perpsPoolId),
+      market_id: params.marketId.toString(),
+      position_commitment: fieldToHex(positionCommitment),
+      is_long: params.isLong ? "1" : "0",
+      margin_amount: params.marginAmount.toString(),
+      leverage: params.leverage.toString(),
+      position_fee: params.positionFee.toString(),
+      // Private inputs
+      in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
+      in_amount: params.input.amount.toString(),
+      in_randomness: fieldToHex(params.input.randomness),
+      in_stealth_spending_key: fieldToHex(fieldToBytes(effectiveKey)),
+      token_mint: fieldToHex(tokenMint),
+      merkle_path: merklePath.map((p) => fieldToHex(p)),
+      merkle_path_indices: merkleIndices.map((i) => i.toString()),
+      leaf_index: params.input.leafIndex.toString(),
+      position_size: params.positionSize.toString(),
+      entry_price: params.entryPrice.toString(),
+      position_randomness: fieldToHex(positionRandomness)
+    };
+    const proof = await this.prove(circuitName, witnessInputs);
+    return {
+      proof,
+      nullifier,
+      positionCommitment,
+      positionRandomness
+    };
+  }
+  /**
+   * Generate proof for closing a perps position
+   *
+   * Circuit proves:
+   * - Ownership of position commitment
+   * - Correct nullifier derivation
+   * - Correct settlement calculation (margin +/- PnL - fees)
+   * - Bounded profit (max profit = margin)
+   */
+  async generateClosePositionProof(params, keypair) {
+    const circuitName = "perps/close_position";
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`${circuitName} circuit not loaded. Circuits need to be compiled first.`);
+    }
+    const effectiveNullifierKey = deriveNullifierKey(params.position.spendingKey);
+    const POSITION_COMMITMENT_DOMAIN = 8n;
+    const stage1 = poseidonHashDomain(
+      POSITION_COMMITMENT_DOMAIN,
+      params.position.stealthPubX,
+      fieldToBytes(params.position.marketId),
+      fieldToBytes(BigInt(params.position.isLong ? 1 : 0)),
+      fieldToBytes(params.position.margin)
+    );
+    const positionCommitment = poseidonHash([
+      stage1,
+      fieldToBytes(params.position.size),
+      fieldToBytes(BigInt(params.position.leverage)),
+      fieldToBytes(params.position.entryPrice),
+      params.position.randomness
+    ]);
+    const positionNullifier = deriveSpendingNullifier(
+      effectiveNullifierKey,
+      positionCommitment,
+      params.position.leafIndex
+    );
+    let settlementAmount;
+    if (params.isProfit) {
+      const cappedPnl = params.pnlAmount > params.position.margin ? params.position.margin : params.pnlAmount;
+      settlementAmount = params.position.margin + cappedPnl - params.closeFee;
+    } else {
+      settlementAmount = params.position.margin - params.pnlAmount - params.closeFee;
+    }
+    if (settlementAmount < 0n) {
+      settlementAmount = 0n;
+    }
+    const settlementRandomness = generateRandomness();
+    const settlementCommitment = computeCommitment({
+      stealthPubX: params.settlementRecipient.stealthPubkey.x,
+      tokenMint: params.tokenMint,
+      amount: settlementAmount,
+      randomness: settlementRandomness
+    });
+    const merklePath = [...params.merklePath];
+    while (merklePath.length < 32) {
+      merklePath.push(new Uint8Array(32));
+    }
+    const merkleIndices = [...params.merkleIndices];
+    while (merkleIndices.length < 32) {
+      merkleIndices.push(0);
+    }
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      position_nullifier: fieldToHex(positionNullifier),
+      perps_pool_id: fieldToHex(params.perpsPoolId),
+      out_commitment: fieldToHex(settlementCommitment),
+      is_long: params.position.isLong ? "1" : "0",
+      exit_price: params.exitPrice.toString(),
+      close_fee: params.closeFee.toString(),
+      pnl_amount: params.pnlAmount.toString(),
+      is_profit: params.isProfit ? "1" : "0",
+      // Private inputs
+      position_stealth_pub_x: fieldToHex(params.position.stealthPubX),
+      market_id: params.position.marketId.toString(),
+      position_margin: params.position.margin.toString(),
+      position_size: params.position.size.toString(),
+      position_leverage: params.position.leverage.toString(),
+      entry_price: params.position.entryPrice.toString(),
+      position_randomness: fieldToHex(params.position.randomness),
+      position_spending_key: fieldToHex(params.position.spendingKey),
+      merkle_path: merklePath.map((p) => fieldToHex(p)),
+      merkle_path_indices: merkleIndices.map((i) => i.toString()),
+      leaf_index: params.position.leafIndex.toString(),
+      out_stealth_pub_x: fieldToHex(params.settlementRecipient.stealthPubkey.x),
+      out_token_mint: fieldToHex(params.tokenMint),
+      out_amount: settlementAmount.toString(),
+      out_randomness: fieldToHex(settlementRandomness)
+    };
+    const proof = await this.prove(circuitName, witnessInputs);
+    return {
+      proof,
+      positionNullifier,
+      settlementCommitment,
+      settlementRandomness,
+      settlementAmount
+    };
+  }
+  /**
+   * Generate proof for adding perps liquidity (single token deposit)
+   *
+   * Circuit proves:
+   * - Ownership of deposit commitment
+   * - Correct nullifier derivation
+   * - Correct LP commitment computation
+   * - Balance check: input = deposit + fee
+   */
+  async generateAddPerpsLiquidityProof(params, keypair) {
+    const circuitName = "perps/add_liquidity";
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`${circuitName} circuit not loaded. Circuits need to be compiled first.`);
+    }
+    let effectiveKey;
+    if (params.input.stealthEphemeralPubkey) {
+      effectiveKey = deriveStealthPrivateKey(
+        bytesToField(keypair.spending.sk),
+        params.input.stealthEphemeralPubkey
+      );
+    } else {
+      effectiveKey = bytesToField(keypair.spending.sk);
+    }
+    const effectiveNullifierKey = deriveNullifierKey(fieldToBytes(effectiveKey));
+    const inputCommitment = computeCommitment(params.input);
+    const nullifier = deriveSpendingNullifier(effectiveNullifierKey, inputCommitment, params.input.leafIndex);
+    const lpRandomness = generateRandomness();
+    const tokenMint = params.input.tokenMint instanceof Uint8Array ? params.input.tokenMint : params.input.tokenMint.toBytes();
+    const LP_COMMITMENT_DOMAIN = 9n;
+    const lpCommitment = poseidonHashDomain(
+      LP_COMMITMENT_DOMAIN,
+      params.lpRecipient.stealthPubkey.x,
+      params.perpsPoolId,
+      fieldToBytes(params.lpAmountMinted),
+      lpRandomness
+    );
+    const merklePath = [...params.merklePath];
+    while (merklePath.length < 32) {
+      merklePath.push(new Uint8Array(32));
+    }
+    const merkleIndices = [...params.merkleIndices];
+    while (merkleIndices.length < 32) {
+      merkleIndices.push(0);
+    }
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      nullifier: fieldToHex(nullifier),
+      perps_pool_id: fieldToHex(params.perpsPoolId),
+      lp_commitment: fieldToHex(lpCommitment),
+      token_index: params.tokenIndex.toString(),
+      deposit_amount: params.depositAmount.toString(),
+      lp_amount_minted: params.lpAmountMinted.toString(),
+      fee_amount: params.feeAmount.toString(),
+      // Private inputs
+      in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
+      in_amount: params.input.amount.toString(),
+      in_randomness: fieldToHex(params.input.randomness),
+      in_stealth_spending_key: fieldToHex(fieldToBytes(effectiveKey)),
+      token_mint: fieldToHex(tokenMint),
+      merkle_path: merklePath.map((p) => fieldToHex(p)),
+      merkle_path_indices: merkleIndices.map((i) => i.toString()),
+      leaf_index: params.input.leafIndex.toString(),
+      lp_stealth_pub_x: fieldToHex(params.lpRecipient.stealthPubkey.x),
+      lp_randomness: fieldToHex(lpRandomness)
+    };
+    const proof = await this.prove(circuitName, witnessInputs);
+    return {
+      proof,
+      nullifier,
+      lpCommitment,
+      lpRandomness
+    };
+  }
+  /**
+   * Generate proof for removing perps liquidity
+   *
+   * Circuit proves:
+   * - Ownership of LP commitment
+   * - Correct LP nullifier derivation
+   * - Correct output token commitment
+   * - Correct change LP commitment
+   * - LP balance: lp_amount = burned + change
+   */
+  async generateRemovePerpsLiquidityProof(params, keypair) {
+    const circuitName = "perps/remove_liquidity";
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`${circuitName} circuit not loaded. Circuits need to be compiled first.`);
+    }
+    const effectiveNullifierKey = deriveNullifierKey(params.lpInput.spendingKey);
+    const LP_COMMITMENT_DOMAIN = 9n;
+    const lpCommitment = poseidonHashDomain(
+      LP_COMMITMENT_DOMAIN,
+      params.lpInput.stealthPubX,
+      params.perpsPoolId,
+      fieldToBytes(params.lpInput.lpAmount),
+      params.lpInput.randomness
+    );
+    const lpNullifier = deriveSpendingNullifier(
+      effectiveNullifierKey,
+      lpCommitment,
+      params.lpInput.leafIndex
+    );
+    const outputRandomness = generateRandomness();
+    const changeLpRandomness = generateRandomness();
+    const outputCommitment = computeCommitment({
+      stealthPubX: params.outputRecipient.stealthPubkey.x,
+      tokenMint: params.outputTokenMint,
+      amount: params.withdrawAmount,
+      randomness: outputRandomness
+    });
+    const changeLpCommitment = poseidonHashDomain(
+      LP_COMMITMENT_DOMAIN,
+      params.lpInput.stealthPubX,
+      // Same owner
+      params.perpsPoolId,
+      fieldToBytes(params.changeLpAmount),
+      changeLpRandomness
+    );
+    const merklePath = [...params.merklePath];
+    while (merklePath.length < 32) {
+      merklePath.push(new Uint8Array(32));
+    }
+    const merkleIndices = [...params.merkleIndices];
+    while (merkleIndices.length < 32) {
+      merkleIndices.push(0);
+    }
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      lp_nullifier: fieldToHex(lpNullifier),
+      perps_pool_id: fieldToHex(params.perpsPoolId),
+      out_commitment: fieldToHex(outputCommitment),
+      token_index: params.tokenIndex.toString(),
+      withdraw_amount: params.withdrawAmount.toString(),
+      lp_amount_burned: params.lpAmountBurned.toString(),
+      fee_amount: params.feeAmount.toString(),
+      // Private inputs
+      lp_stealth_pub_x: fieldToHex(params.lpInput.stealthPubX),
+      lp_amount: params.lpInput.lpAmount.toString(),
+      lp_randomness: fieldToHex(params.lpInput.randomness),
+      lp_spending_key: fieldToHex(params.lpInput.spendingKey),
+      merkle_path: merklePath.map((p) => fieldToHex(p)),
+      merkle_path_indices: merkleIndices.map((i) => i.toString()),
+      leaf_index: params.lpInput.leafIndex.toString(),
+      out_stealth_pub_x: fieldToHex(params.outputRecipient.stealthPubkey.x),
+      out_token_mint: fieldToHex(params.outputTokenMint),
+      out_randomness: fieldToHex(outputRandomness),
+      change_lp_commitment: fieldToHex(changeLpCommitment),
+      change_lp_amount: params.changeLpAmount.toString(),
+      change_lp_randomness: fieldToHex(changeLpRandomness)
+    };
+    const proof = await this.prove(circuitName, witnessInputs);
+    return {
+      proof,
+      lpNullifier,
+      outputCommitment,
+      changeLpCommitment,
+      outputRandomness,
+      changeLpRandomness
     };
   }
 };
@@ -2527,7 +2890,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     encryptedNotes.push(Buffer.alloc(0));
     outputAmounts.push(0n);
   }
-  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await import("./swap-VRKYX5RC.mjs");
+  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await import("./swap-C7LLWDCZ.mjs");
   const operationId = generateOperationId2(
     nullifier,
     outputCommitments[0],
@@ -2561,7 +2924,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
   const commitmentQueue = new PublicKey3(commitmentProof.treeInfo.queue);
   const commitmentCpiContext = commitmentProof.treeInfo.cpiContext ? new PublicKey3(commitmentProof.treeInfo.cpiContext) : null;
   const { SystemAccountMetaConfig, PackedAccounts } = await import("@lightprotocol/stateless.js");
-  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-2I4ET3IX.mjs");
+  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-LQAXQEXO.mjs");
   const systemConfig = SystemAccountMetaConfig.new(lightProtocol.programId);
   const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
   const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES2.OUTPUT_QUEUE);
@@ -2806,7 +3169,7 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
   }
   const [poolPda] = derivePoolPda(params.tokenMint, programId);
   const [vkPda] = deriveVerificationKeyPda(circuitId, programId);
-  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await import("./swap-VRKYX5RC.mjs");
+  const { generateOperationId: generateOperationId2, derivePendingOperationPda: derivePendingOperationPda2 } = await import("./swap-C7LLWDCZ.mjs");
   const operationId = generateOperationId2(
     params.nullifiers[0],
     params.outputCommitment,
@@ -2834,7 +3197,7 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
     encryptedNote: new Uint8Array(encryptedNote)
   }];
   const { SystemAccountMetaConfig, PackedAccounts } = await import("@lightprotocol/stateless.js");
-  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-2I4ET3IX.mjs");
+  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-LQAXQEXO.mjs");
   const systemConfig = SystemAccountMetaConfig.new(lightProtocol.programId);
   const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
   const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES2.OUTPUT_QUEUE);
@@ -3366,9 +3729,697 @@ async function buildFinalizeDecryptionWithProgram(program, params) {
   return tx;
 }
 
-// src/address-lookup-table.ts
+// src/perps/types.ts
+var MAX_PERPS_TOKENS = 8;
+
+// src/perps/calculations.ts
+function calculatePnL(position, currentPrice, pool, currentTimestamp) {
+  const { margin, size, entryPrice, direction, entryBorrowFee } = position;
+  let pnl;
+  let isProfit;
+  if (direction === "long") {
+    if (currentPrice > entryPrice) {
+      pnl = (currentPrice - entryPrice) * size / entryPrice;
+      isProfit = true;
+    } else {
+      pnl = (entryPrice - currentPrice) * size / entryPrice;
+      isProfit = false;
+    }
+  } else {
+    if (currentPrice < entryPrice) {
+      pnl = (entryPrice - currentPrice) * size / entryPrice;
+      isProfit = true;
+    } else {
+      pnl = (currentPrice - entryPrice) * size / entryPrice;
+      isProfit = false;
+    }
+  }
+  const borrowFees = calculateBorrowFees(position, pool, currentTimestamp);
+  let boundedPnl = pnl;
+  let atProfitBound = false;
+  if (isProfit && pnl >= margin) {
+    boundedPnl = margin;
+    atProfitBound = true;
+  }
+  const effectiveMargin = isProfit ? margin + boundedPnl - borrowFees : margin - pnl - borrowFees;
+  const pnlBps = Number((isProfit ? boundedPnl : -pnl) * 10000n / margin);
+  const settlementAmount = effectiveMargin > 0n ? effectiveMargin : 0n;
+  const liquidationThreshold = margin * BigInt(pool.liquidationThresholdBps) / 10000n;
+  const isLiquidatable = effectiveMargin < liquidationThreshold;
+  return {
+    pnl: isProfit ? boundedPnl : -pnl,
+    isProfit,
+    pnlBps,
+    effectiveMargin,
+    borrowFees,
+    settlementAmount,
+    atProfitBound,
+    isLiquidatable
+  };
+}
+function calculateBorrowFees(position, pool, currentTimestamp) {
+  const token = pool.tokens[0];
+  if (!token || !token.isActive) {
+    return 0n;
+  }
+  const feeDelta = token.cumulativeBorrowFee - position.entryBorrowFee;
+  const borrowFee = position.size * feeDelta / BigInt(1e18);
+  return borrowFee;
+}
+function calculateLiquidationPrice(position, pool, currentTimestamp) {
+  const { margin, size, entryPrice, direction } = position;
+  const liquidationThreshold = margin * BigInt(pool.liquidationThresholdBps) / 10000n;
+  const currentBorrowFees = calculateBorrowFees(position, pool, currentTimestamp);
+  const availableForLoss = margin - liquidationThreshold - currentBorrowFees;
+  if (availableForLoss <= 0n) {
+    return {
+      price: entryPrice,
+      distanceBps: 0
+    };
+  }
+  const priceDiff = availableForLoss * entryPrice / size;
+  let liquidationPrice;
+  if (direction === "long") {
+    liquidationPrice = entryPrice - priceDiff;
+    if (liquidationPrice < 0n) liquidationPrice = 0n;
+  } else {
+    liquidationPrice = entryPrice + priceDiff;
+  }
+  const distanceBps = Number(
+    (direction === "long" ? entryPrice - liquidationPrice : liquidationPrice - entryPrice) * 10000n / entryPrice
+  );
+  return {
+    price: liquidationPrice,
+    distanceBps
+  };
+}
+function calculatePositionFee(positionSize, feeBps) {
+  return positionSize * BigInt(feeBps) / 10000n;
+}
+function calculateImbalanceFee(market, positionSize, isLong) {
+  const { longOpenInterest, shortOpenInterest } = market;
+  const totalOI = longOpenInterest + shortOpenInterest;
+  if (totalOI === 0n) {
+    return 0n;
+  }
+  const imbalance = longOpenInterest > shortOpenInterest ? longOpenInterest - shortOpenInterest : shortOpenInterest - longOpenInterest;
+  const imbalanceRatio = imbalance * 10000n / totalOI;
+  const isMinority = isLong && shortOpenInterest > longOpenInterest || !isLong && longOpenInterest > shortOpenInterest;
+  if (isMinority) {
+    return 0n;
+  }
+  const feeBps = Number(imbalanceRatio * 3n / 10000n);
+  const cappedFeeBps = Math.min(feeBps, 3);
+  return positionSize * BigInt(cappedFeeBps) / 10000n;
+}
+function calculateLpValue(pool, oraclePrices) {
+  let totalValueUsd = 0n;
+  const tokenValues = [];
+  for (let i = 0; i < pool.numTokens; i++) {
+    const token = pool.tokens[i];
+    if (!token || !token.isActive) continue;
+    const price = oraclePrices[i] ?? 0n;
+    const valueUsd = token.balance * price / BigInt(10 ** token.decimals);
+    tokenValues.push({
+      mint: token.mint,
+      balance: token.balance,
+      priceUsd: price,
+      valueUsd
+    });
+    totalValueUsd += valueUsd;
+  }
+  const valuePerLp = pool.lpSupply > 0n ? totalValueUsd * BigInt(1e6) / pool.lpSupply : 0n;
+  return {
+    totalValueUsd,
+    valuePerLp,
+    tokenValues
+  };
+}
+function calculateLpMintAmount(pool, depositAmount, tokenIndex, oraclePrices) {
+  const token = pool.tokens[tokenIndex];
+  if (!token || !token.isActive) {
+    throw new Error(`Invalid token index: ${tokenIndex}`);
+  }
+  const depositValueUsd = depositAmount * oraclePrices[tokenIndex] / BigInt(10 ** token.decimals);
+  if (pool.lpSupply === 0n) {
+    return depositValueUsd;
+  }
+  const { totalValueUsd } = calculateLpValue(pool, oraclePrices);
+  if (totalValueUsd === 0n) {
+    return depositValueUsd;
+  }
+  return depositValueUsd * pool.lpSupply / totalValueUsd;
+}
+function calculateWithdrawAmount(pool, lpAmount, tokenIndex, oraclePrices) {
+  const token = pool.tokens[tokenIndex];
+  if (!token || !token.isActive) {
+    throw new Error(`Invalid token index: ${tokenIndex}`);
+  }
+  const { totalValueUsd } = calculateLpValue(pool, oraclePrices);
+  if (totalValueUsd === 0n || pool.lpSupply === 0n) {
+    return 0n;
+  }
+  const withdrawValueUsd = lpAmount * totalValueUsd / pool.lpSupply;
+  const price = oraclePrices[tokenIndex];
+  if (price === 0n) {
+    throw new Error(`No price for token index: ${tokenIndex}`);
+  }
+  return withdrawValueUsd * BigInt(10 ** token.decimals) / price;
+}
+function calculateMaxWithdrawable(pool, tokenIndex, lpAmount, oraclePrices) {
+  const token = pool.tokens[tokenIndex];
+  if (!token || !token.isActive) {
+    throw new Error(`Invalid token index: ${tokenIndex}`);
+  }
+  const availableBalance = token.balance - token.locked;
+  const withdrawAmount = calculateWithdrawAmount(pool, lpAmount, tokenIndex, oraclePrices);
+  const maxAmount = withdrawAmount > availableBalance ? availableBalance : withdrawAmount;
+  const newBalance = token.balance - maxAmount;
+  const utilizationAfter = newBalance > 0n ? Number(token.locked * 10000n / newBalance) : 1e4;
+  const lpRequired = calculateLpForWithdrawal(pool, maxAmount, tokenIndex, oraclePrices);
+  return {
+    maxAmount,
+    utilizationAfter,
+    lpRequired
+  };
+}
+function calculateLpForWithdrawal(pool, withdrawAmount, tokenIndex, oraclePrices) {
+  const token = pool.tokens[tokenIndex];
+  if (!token || !token.isActive) {
+    return 0n;
+  }
+  const { totalValueUsd } = calculateLpValue(pool, oraclePrices);
+  const price = oraclePrices[tokenIndex];
+  if (totalValueUsd === 0n || pool.lpSupply === 0n || price === 0n) {
+    return 0n;
+  }
+  const withdrawValueUsd = withdrawAmount * price / BigInt(10 ** token.decimals);
+  return withdrawValueUsd * pool.lpSupply / totalValueUsd;
+}
+function calculateUtilization(token) {
+  if (token.balance === 0n) return 0;
+  return Number(token.locked * 10000n / token.balance);
+}
+function calculateBorrowRate(utilization, baseBorrowRateBps) {
+  const multiplier = 1e4 + utilization;
+  return baseBorrowRateBps * multiplier / 1e4;
+}
+function isValidLeverage(leverage, maxLeverage) {
+  return leverage >= 1 && leverage <= maxLeverage && Number.isInteger(leverage);
+}
+function wouldExceedUtilization(token, additionalLock, maxUtilizationBps) {
+  const newLocked = token.locked + additionalLock;
+  const utilization = Number(newLocked * 10000n / token.balance);
+  return utilization > maxUtilizationBps;
+}
+function isValidPositionSize(positionSize, market) {
+  return positionSize > 0n && positionSize <= market.maxPositionSize;
+}
+
+// src/perps/instructions.ts
 import {
   PublicKey as PublicKey8,
+  ComputeBudgetProgram as ComputeBudgetProgram5,
+  SystemProgram as SystemProgram3
+} from "@solana/web3.js";
+import { TOKEN_PROGRAM_ID as TOKEN_PROGRAM_ID3 } from "@solana/spl-token";
+import { BN as BN4 } from "@coral-xyz/anchor";
+var PERPS_SEEDS = {
+  PERPS_POOL: Buffer.from("perps_pool"),
+  PERPS_MARKET: Buffer.from("perps_market"),
+  PERPS_VAULT: Buffer.from("perps_vault"),
+  PERPS_LP_MINT: Buffer.from("perps_lp")
+};
+var PERPS_CIRCUIT_IDS = {
+  OPEN_POSITION: "perps_open_position",
+  CLOSE_POSITION: "perps_close_position",
+  ADD_LIQUIDITY: "perps_add_liquidity",
+  REMOVE_LIQUIDITY: "perps_remove_liquidity",
+  LIQUIDATE: "perps_liquidate"
+};
+function derivePerpsPoolPda(poolId, programId = PROGRAM_ID) {
+  return PublicKey8.findProgramAddressSync(
+    [PERPS_SEEDS.PERPS_POOL, poolId.toBuffer()],
+    programId
+  );
+}
+function derivePerpsMarketPda(perpsPool, marketId, programId = PROGRAM_ID) {
+  return PublicKey8.findProgramAddressSync(
+    [PERPS_SEEDS.PERPS_MARKET, perpsPool.toBuffer(), Buffer.from(marketId)],
+    programId
+  );
+}
+function derivePerpsVaultPda(perpsPool, tokenMint, programId = PROGRAM_ID) {
+  return PublicKey8.findProgramAddressSync(
+    [PERPS_SEEDS.PERPS_VAULT, perpsPool.toBuffer(), tokenMint.toBuffer()],
+    programId
+  );
+}
+function derivePerpsLpMintPda(perpsPool, programId = PROGRAM_ID) {
+  return PublicKey8.findProgramAddressSync(
+    [PERPS_SEEDS.PERPS_LP_MINT, perpsPool.toBuffer()],
+    programId
+  );
+}
+async function buildOpenPositionWithProgram(program, params) {
+  const programId = program.programId;
+  const operationId = generateOperationId(
+    params.nullifier,
+    params.positionCommitment,
+    Date.now()
+  );
+  const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
+  const [vkPda] = deriveVerificationKeyPda(PERPS_CIRCUIT_IDS.OPEN_POSITION, programId);
+  const phase0Tx = await program.methods.createPendingWithProofOpenPosition(
+    Array.from(operationId),
+    Buffer.from(params.proof),
+    Array.from(params.merkleRoot),
+    Array.from(params.inputCommitment),
+    Array.from(params.nullifier),
+    Array.from(params.positionCommitment),
+    params.isLong,
+    new BN4(params.marginAmount.toString()),
+    params.leverage,
+    new BN4(params.positionFee.toString())
+  ).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    perpsMarket: params.market,
+    verificationKey: vkPda,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer,
+    systemProgram: SystemProgram3.programId
+  }).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 8e5 })
+  ]);
+  const phase1Tx = await program.methods.verifyCommitmentExists(
+    Array.from(operationId),
+    0,
+    // commitment_index
+    params.lightVerifyParams
+  ).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase2Tx = await program.methods.createNullifierAndPending(
+    Array.from(operationId),
+    0,
+    // nullifier_index
+    params.lightNullifierParams
+  ).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase3Tx = await program.methods.executeOpenPosition(
+    Array.from(operationId),
+    new BN4(params.entryPrice.toString())
+  ).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    perpsMarket: params.market,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 3e5 })
+  ]);
+  const positionNote = {
+    stealthPubX: params.positionRecipient.stealthPubkey.x,
+    tokenMint: params.tokenMint,
+    amount: params.marginAmount,
+    // Position stores margin as amount
+    randomness: params.positionRandomness
+  };
+  const positionEncrypted = encryptNote(positionNote, params.positionRecipient.stealthPubkey);
+  const pendingCommitments = [
+    {
+      pool: params.settlementPool,
+      commitment: params.positionCommitment,
+      stealthEphemeralPubkey: new Uint8Array([
+        ...params.positionRecipient.ephemeralPubkey.x,
+        ...params.positionRecipient.ephemeralPubkey.y
+      ]),
+      encryptedNote: serializeEncryptedNote(positionEncrypted)
+    }
+  ];
+  if (params.changeAmount > 0n) {
+    const changeNote = {
+      stealthPubX: params.changeRecipient.stealthPubkey.x,
+      tokenMint: params.tokenMint,
+      amount: params.changeAmount,
+      randomness: params.changeRandomness
+    };
+    const changeEncrypted = encryptNote(changeNote, params.changeRecipient.stealthPubkey);
+    pendingCommitments.push({
+      pool: params.settlementPool,
+      commitment: new Uint8Array(32),
+      // Change commitment computed during proof
+      stealthEphemeralPubkey: new Uint8Array([
+        ...params.changeRecipient.ephemeralPubkey.x,
+        ...params.changeRecipient.ephemeralPubkey.y
+      ]),
+      encryptedNote: serializeEncryptedNote(changeEncrypted)
+    });
+  }
+  return {
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
+    operationId,
+    pendingCommitments
+  };
+}
+async function buildClosePositionWithProgram(program, params) {
+  const programId = program.programId;
+  const operationId = generateOperationId(
+    params.positionNullifier,
+    params.settlementCommitment,
+    Date.now()
+  );
+  const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
+  const [vkPda] = deriveVerificationKeyPda(PERPS_CIRCUIT_IDS.CLOSE_POSITION, programId);
+  const phase0Tx = await program.methods.createPendingWithProofClosePosition(
+    Array.from(operationId),
+    Buffer.from(params.proof),
+    Array.from(params.merkleRoot),
+    Array.from(params.positionCommitment),
+    Array.from(params.positionNullifier),
+    Array.from(params.settlementCommitment),
+    params.isLong,
+    new BN4(params.exitPrice.toString()),
+    new BN4(params.closeFee.toString()),
+    new BN4(params.pnlAmount.toString()),
+    params.isProfit
+  ).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    perpsMarket: params.market,
+    verificationKey: vkPda,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer,
+    systemProgram: SystemProgram3.programId
+  }).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 8e5 })
+  ]);
+  const phase1Tx = await program.methods.verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase2Tx = await program.methods.createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase3Tx = await program.methods.executeClosePosition(
+    Array.from(operationId),
+    new BN4(params.positionMargin.toString()),
+    new BN4(params.positionSize.toString()),
+    new BN4(params.entryPrice.toString())
+  ).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    perpsMarket: params.market,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 3e5 })
+  ]);
+  const settlementNote = {
+    stealthPubX: params.settlementRecipient.stealthPubkey.x,
+    tokenMint: params.tokenMint,
+    amount: params.settlementAmount,
+    randomness: params.settlementRandomness
+  };
+  const settlementEncrypted = encryptNote(settlementNote, params.settlementRecipient.stealthPubkey);
+  const pendingCommitments = [{
+    pool: params.settlementPool,
+    commitment: params.settlementCommitment,
+    stealthEphemeralPubkey: new Uint8Array([
+      ...params.settlementRecipient.ephemeralPubkey.x,
+      ...params.settlementRecipient.ephemeralPubkey.y
+    ]),
+    encryptedNote: serializeEncryptedNote(settlementEncrypted)
+  }];
+  return {
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
+    operationId,
+    pendingCommitments
+  };
+}
+async function buildAddPerpsLiquidityWithProgram(program, params) {
+  const programId = program.programId;
+  const operationId = generateOperationId(params.nullifier, params.lpCommitment, Date.now());
+  const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
+  const [vkPda] = deriveVerificationKeyPda(PERPS_CIRCUIT_IDS.ADD_LIQUIDITY, programId);
+  const oraclePricesBN = [];
+  for (let i = 0; i < 8; i++) {
+    oraclePricesBN.push(new BN4((params.oraclePrices[i] ?? 0n).toString()));
+  }
+  const phase0Tx = await program.methods.createPendingWithProofAddPerpsLiquidity(
+    Array.from(operationId),
+    Buffer.from(params.proof),
+    Array.from(params.merkleRoot),
+    Array.from(params.inputCommitment),
+    Array.from(params.nullifier),
+    Array.from(params.lpCommitment),
+    params.tokenIndex,
+    new BN4(params.depositAmount.toString()),
+    new BN4(params.lpAmountMinted.toString()),
+    new BN4(params.feeAmount.toString())
+  ).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    verificationKey: vkPda,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer,
+    systemProgram: SystemProgram3.programId
+  }).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 8e5 })
+  ]);
+  const phase1Tx = await program.methods.verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase2Tx = await program.methods.createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase3Tx = await program.methods.executeAddPerpsLiquidity(Array.from(operationId), oraclePricesBN).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer,
+    tokenProgram: TOKEN_PROGRAM_ID3
+  }).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 3e5 })
+  ]);
+  const lpNote = {
+    stealthPubX: params.lpRecipient.stealthPubkey.x,
+    tokenMint: params.lpMint,
+    amount: params.lpAmountMinted,
+    randomness: params.lpRandomness
+  };
+  const lpEncrypted = encryptNote(lpNote, params.lpRecipient.stealthPubkey);
+  const pendingCommitments = [{
+    pool: params.settlementPool,
+    commitment: params.lpCommitment,
+    stealthEphemeralPubkey: new Uint8Array([
+      ...params.lpRecipient.ephemeralPubkey.x,
+      ...params.lpRecipient.ephemeralPubkey.y
+    ]),
+    encryptedNote: serializeEncryptedNote(lpEncrypted)
+  }];
+  return {
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
+    operationId,
+    pendingCommitments
+  };
+}
+async function buildRemovePerpsLiquidityWithProgram(program, params) {
+  const programId = program.programId;
+  const operationId = generateOperationId(params.lpNullifier, params.outputCommitment, Date.now());
+  const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
+  const [vkPda] = deriveVerificationKeyPda(PERPS_CIRCUIT_IDS.REMOVE_LIQUIDITY, programId);
+  const oraclePricesBN = [];
+  for (let i = 0; i < 8; i++) {
+    oraclePricesBN.push(new BN4((params.oraclePrices[i] ?? 0n).toString()));
+  }
+  const phase0Tx = await program.methods.createPendingWithProofRemovePerpsLiquidity(
+    Array.from(operationId),
+    Buffer.from(params.proof),
+    Array.from(params.merkleRoot),
+    Array.from(params.lpCommitment),
+    Array.from(params.lpNullifier),
+    Array.from(params.outputCommitment),
+    Array.from(params.changeLpCommitment),
+    params.tokenIndex,
+    new BN4(params.withdrawAmount.toString()),
+    new BN4(params.lpAmountBurned.toString()),
+    new BN4(params.feeAmount.toString())
+  ).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    verificationKey: vkPda,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer,
+    systemProgram: SystemProgram3.programId
+  }).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 8e5 })
+  ]);
+  const phase1Tx = await program.methods.verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase2Tx = await program.methods.createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase3Tx = await program.methods.executeRemovePerpsLiquidity(Array.from(operationId), oraclePricesBN).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.relayer,
+    tokenProgram: TOKEN_PROGRAM_ID3
+  }).preInstructions([
+    ComputeBudgetProgram5.setComputeUnitLimit({ units: 3e5 })
+  ]);
+  const outputNote = {
+    stealthPubX: params.outputRecipient.stealthPubkey.x,
+    tokenMint: params.tokenMint,
+    amount: params.withdrawAmount,
+    randomness: params.outputRandomness
+  };
+  const outputEncrypted = encryptNote(outputNote, params.outputRecipient.stealthPubkey);
+  const pendingCommitments = [{
+    pool: params.settlementPool,
+    commitment: params.outputCommitment,
+    stealthEphemeralPubkey: new Uint8Array([
+      ...params.outputRecipient.ephemeralPubkey.x,
+      ...params.outputRecipient.ephemeralPubkey.y
+    ]),
+    encryptedNote: serializeEncryptedNote(outputEncrypted)
+  }];
+  if (params.lpChangeAmount > 0n) {
+    const lpChangeNote = {
+      stealthPubX: params.lpChangeRecipient.stealthPubkey.x,
+      tokenMint: params.lpMint,
+      amount: params.lpChangeAmount,
+      randomness: params.lpChangeRandomness
+    };
+    const lpChangeEncrypted = encryptNote(lpChangeNote, params.lpChangeRecipient.stealthPubkey);
+    pendingCommitments.push({
+      pool: params.settlementPool,
+      commitment: params.changeLpCommitment,
+      stealthEphemeralPubkey: new Uint8Array([
+        ...params.lpChangeRecipient.ephemeralPubkey.x,
+        ...params.lpChangeRecipient.ephemeralPubkey.y
+      ]),
+      encryptedNote: serializeEncryptedNote(lpChangeEncrypted)
+    });
+  }
+  return {
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
+    operationId,
+    pendingCommitments
+  };
+}
+async function buildInitializePerpsPoolWithProgram(program, params) {
+  const programId = program.programId;
+  const [perpsPoolPda] = derivePerpsPoolPda(params.poolId, programId);
+  const [lpMintPda] = derivePerpsLpMintPda(perpsPoolPda, programId);
+  const initParams = {
+    maxLeverage: params.maxLeverage ?? 100,
+    positionFeeBps: params.positionFeeBps ?? 6,
+    maxUtilizationBps: params.maxUtilizationBps ?? 8e3,
+    liquidationThresholdBps: params.liquidationThresholdBps ?? 50,
+    liquidationPenaltyBps: params.liquidationPenaltyBps ?? 50,
+    baseBorrowRateBps: params.baseBorrowRateBps ?? 10
+  };
+  const tx = await program.methods.initializePerpsPool(params.poolId, initParams).accountsStrict({
+    perpsPool: perpsPoolPda,
+    lpMint: lpMintPda,
+    authority: params.authority,
+    payer: params.payer,
+    systemProgram: SystemProgram3.programId,
+    tokenProgram: TOKEN_PROGRAM_ID3
+  });
+  return { tx };
+}
+async function buildAddTokenToPoolWithProgram(program, params) {
+  const programId = program.programId;
+  const [vaultPda] = derivePerpsVaultPda(params.perpsPool, params.tokenMint, programId);
+  const tx = await program.methods.addTokenToPool().accountsStrict({
+    perpsPool: params.perpsPool,
+    tokenMint: params.tokenMint,
+    vault: vaultPda,
+    oracle: params.oracle,
+    authority: params.authority,
+    payer: params.payer,
+    systemProgram: SystemProgram3.programId,
+    tokenProgram: TOKEN_PROGRAM_ID3
+  });
+  return { tx };
+}
+async function buildAddMarketWithProgram(program, params) {
+  const programId = program.programId;
+  const [marketPda] = derivePerpsMarketPda(params.perpsPool, params.marketId, programId);
+  const tx = await program.methods.addMarket(
+    Array.from(params.marketId),
+    params.baseTokenIndex,
+    params.quoteTokenIndex,
+    new BN4(params.maxPositionSize.toString())
+  ).accountsStrict({
+    perpsPool: params.perpsPool,
+    perpsMarket: marketPda,
+    authority: params.authority,
+    payer: params.payer,
+    systemProgram: SystemProgram3.programId
+  });
+  return { tx };
+}
+async function buildUpdateBorrowFeesWithProgram(program, perpsPool, keeper) {
+  const tx = await program.methods.updatePerpsBorrowFees().accountsStrict({
+    perpsPool,
+    keeper
+  });
+  return { tx };
+}
+
+// src/address-lookup-table.ts
+import {
+  PublicKey as PublicKey9,
   AddressLookupTableProgram,
   Transaction,
   sendAndConfirmTransaction
@@ -3443,50 +4494,50 @@ function getLightProtocolCommonAccounts(network) {
   if (network === "devnet") {
     return {
       stateTrees: [
-        new PublicKey8("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
+        new PublicKey9("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
         // State tree 0
       ],
       addressTrees: [
-        new PublicKey8("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
+        new PublicKey9("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
         // Address tree 0
       ],
       nullifierQueues: [
-        new PublicKey8("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
+        new PublicKey9("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
         // Nullifier queue 0
       ],
       // Additional Light Protocol system accounts (from PackedAccounts)
       systemAccounts: [
-        new PublicKey8("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
-        new PublicKey8("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
-        new PublicKey8("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
-        new PublicKey8("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
-        new PublicKey8("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
+        new PublicKey9("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
+        new PublicKey9("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
+        new PublicKey9("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
+        new PublicKey9("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
+        new PublicKey9("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
       ]
     };
   } else {
     return {
       stateTrees: [
-        new PublicKey8("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
+        new PublicKey9("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
         // Placeholder
       ],
       addressTrees: [
-        new PublicKey8("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
+        new PublicKey9("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
         // Placeholder
       ],
       nullifierQueues: [
-        new PublicKey8("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
+        new PublicKey9("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
         // Placeholder
       ],
       systemAccounts: [
-        new PublicKey8("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
+        new PublicKey9("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
         // Placeholder
-        new PublicKey8("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
+        new PublicKey9("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
         // Placeholder
-        new PublicKey8("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
+        new PublicKey9("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
         // Placeholder
-        new PublicKey8("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
+        new PublicKey9("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
         // Placeholder
-        new PublicKey8("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
+        new PublicKey9("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
         // Placeholder
       ]
     };
@@ -3721,11 +4772,11 @@ var CloakCraftClient = class {
    * Get pool state
    */
   async getPool(tokenMint) {
-    const [poolPda] = PublicKey9.findProgramAddressSync(
+    const [poolPda] = PublicKey10.findProgramAddressSync(
       [Buffer.from("pool"), tokenMint.toBuffer()],
       this.programId
     );
-    const [counterPda] = PublicKey9.findProgramAddressSync(
+    const [counterPda] = PublicKey10.findProgramAddressSync(
       [Buffer.from("commitment_counter"), poolPda.toBuffer()],
       this.programId
     );
@@ -3767,10 +4818,10 @@ var CloakCraftClient = class {
       commitmentCounter = counterInfo.data.readBigUInt64LE(8);
     }
     return {
-      tokenMint: new PublicKey9(data.subarray(8, 40)),
-      tokenVault: new PublicKey9(data.subarray(40, 72)),
+      tokenMint: new PublicKey10(data.subarray(8, 40)),
+      tokenVault: new PublicKey10(data.subarray(40, 72)),
       totalShielded: data.readBigUInt64LE(72),
-      authority: new PublicKey9(data.subarray(80, 112)),
+      authority: new PublicKey10(data.subarray(80, 112)),
       bump: data[112],
       vaultBump: data[113],
       commitmentCounter
@@ -3822,7 +4873,9 @@ var CloakCraftClient = class {
         authority: pool.account.authority,
         isActive: pool.account.isActive,
         bump: pool.account.bump,
-        lpMintBump: pool.account.lpMintBump
+        lpMintBump: pool.account.lpMintBump,
+        poolType: pool.account.poolType?.stableSwap !== void 0 ? 1 : 0,
+        amplification: BigInt(pool.account.amplification?.toString() ?? "0")
       }));
     } catch (e) {
       console.error("Error fetching all AMM pools:", e);
@@ -3884,7 +4937,7 @@ var CloakCraftClient = class {
       user: payer.publicKey
     };
     console.log("[Shield] Building transaction with Anchor...");
-    const { buildShieldWithProgram: buildShieldWithProgram2 } = await import("./shield-KJFMXCZO.mjs");
+    const { buildShieldWithProgram: buildShieldWithProgram2 } = await import("./shield-PVTL54AR.mjs");
     const { tx: anchorTx, commitment, randomness } = await buildShieldWithProgram2(
       this.program,
       instructionParams,
@@ -3974,12 +5027,12 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit(circuitName)) {
       throw new Error(`Prover not initialized. Call initializeProver(['${circuitName}']) first.`);
     }
-    const tokenMint = params.inputs[0].tokenMint instanceof Uint8Array ? new PublicKey9(params.inputs[0].tokenMint) : params.inputs[0].tokenMint;
-    const [poolPda] = PublicKey9.findProgramAddressSync(
+    const tokenMint = params.inputs[0].tokenMint instanceof Uint8Array ? new PublicKey10(params.inputs[0].tokenMint) : params.inputs[0].tokenMint;
+    const [poolPda] = PublicKey10.findProgramAddressSync(
       [Buffer.from("pool"), tokenMint.toBuffer()],
       this.programId
     );
-    const [counterPda] = PublicKey9.findProgramAddressSync(
+    const [counterPda] = PublicKey10.findProgramAddressSync(
       [Buffer.from("commitment_counter"), poolPda.toBuffer()],
       this.programId
     );
@@ -4032,7 +5085,7 @@ var CloakCraftClient = class {
     if (params.fee && params.fee > 0n) {
       const [configPda] = deriveProtocolConfigPda(this.programId);
       protocolConfig = configPda;
-      const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2 } = await import("./fees-6XWJD63E.mjs");
+      const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2 } = await import("./fees-MY6MFG2Z.mjs");
       const feeConfig = await fetchProtocolFeeConfig2(this.connection, this.programId);
       if (feeConfig?.treasury) {
         treasuryWallet = feeConfig.treasury;
@@ -4116,7 +5169,7 @@ var CloakCraftClient = class {
       console.error("[Transfer] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-VRKYX5RC.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-C7LLWDCZ.mjs");
     console.log("[Transfer] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -4291,22 +5344,56 @@ var CloakCraftClient = class {
     }
     const tokenMint = request.inputs[0].tokenMint;
     const preparedInputs = await this.prepareInputs(request.inputs);
-    const preparedOutputs = await this.prepareOutputs(request.outputs, tokenMint);
+    let preparedOutputs = await this.prepareOutputs(request.outputs, tokenMint);
     console.log("[prepareAndTransfer] Prepared outputs:");
     preparedOutputs.forEach((o, i) => {
       console.log(`  Output ${i}: amount=${o.amount}, commitment=${Buffer.from(o.commitment).toString("hex").slice(0, 16)}...`);
     });
+    const hasUnshield = request.unshield && request.unshield.amount > 0n;
+    const allOutputsToSelf = preparedOutputs.length > 0 && preparedOutputs.every(
+      (output) => checkStealthOwnership(
+        output.recipient.stealthPubkey,
+        output.recipient.ephemeralPubkey,
+        this.wallet.keypair
+      )
+    );
+    const isPureUnshield = hasUnshield && allOutputsToSelf;
+    if (isPureUnshield) {
+      console.log("[prepareAndTransfer] Pure unshield detected - restructuring outputs for fair fee");
+      const dummyStealthAddress = {
+        stealthPubkey: { x: new Uint8Array(32), y: new Uint8Array(32) },
+        ephemeralPubkey: { x: new Uint8Array(32), y: new Uint8Array(32) }
+      };
+      const dummyNote = createNote(
+        new Uint8Array(32),
+        tokenMint,
+        0n,
+        new Uint8Array(32)
+      );
+      const dummyCommitment = computeCommitment(dummyNote);
+      const dummyOutput = {
+        recipient: dummyStealthAddress,
+        amount: 0n,
+        commitment: dummyCommitment,
+        stealthPubX: new Uint8Array(32),
+        randomness: new Uint8Array(32)
+      };
+      preparedOutputs = [dummyOutput, preparedOutputs[0]];
+      console.log("[prepareAndTransfer] Restructured: out_1=dummy(0), out_2=change");
+    }
     const commitment = preparedInputs[0].commitment;
     const dummyPath = Array(32).fill(new Uint8Array(32));
     const dummyIndices = Array(32).fill(0);
-    const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2, calculateProtocolFee: calculateProtocolFee2 } = await import("./fees-6XWJD63E.mjs");
+    const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2, calculateProtocolFee: calculateProtocolFee2 } = await import("./fees-MY6MFG2Z.mjs");
     const feeConfig = await fetchProtocolFeeConfig2(this.connection, this.programId);
-    const operationType = request.unshield ? "unshield" : "transfer";
     const totalInputAmount = preparedInputs.reduce((sum, input) => sum + input.amount, 0n);
-    const feeableAmount = request.unshield?.amount ?? request.outputs[0]?.amount ?? 0n;
-    const feeCalc = calculateProtocolFee2(feeableAmount, operationType, feeConfig);
+    const transferAmount = preparedOutputs[0]?.amount ?? 0n;
+    const unshieldAmount = request.unshield?.amount ?? 0n;
+    const feeableAmount = transferAmount + unshieldAmount;
+    const feeCalc = calculateProtocolFee2(feeableAmount, "transfer", feeConfig);
     console.log("[prepareAndTransfer] Fee calculation:", {
-      operationType,
+      transferAmount: transferAmount.toString(),
+      unshieldAmount: unshieldAmount.toString(),
       feeableAmount: feeableAmount.toString(),
       feeAmount: feeCalc.feeAmount.toString(),
       feeBps: feeCalc.feeBps,
@@ -4500,7 +5587,7 @@ var CloakCraftClient = class {
       console.error("[Consolidation] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-VRKYX5RC.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-C7LLWDCZ.mjs");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
     for (let i = 0; i < phase1Txs.length; i++) {
@@ -4704,10 +5791,12 @@ var CloakCraftClient = class {
    * @param tokenBMint - Second token mint
    * @param lpMintKeypair - LP token mint keypair (newly generated)
    * @param feeBps - Trading fee in basis points (e.g., 30 = 0.3%)
+   * @param poolType - Pool type: 'constantProduct' (default) or 'stableSwap'
+   * @param amplification - Amplification coefficient for StableSwap (100-10000, default: 200)
    * @param payer - Payer for transaction fees and rent
    * @returns Transaction signature
    */
-  async initializeAmmPool(tokenAMint, tokenBMint, lpMintKeypair, feeBps, payer) {
+  async initializeAmmPool(tokenAMint, tokenBMint, lpMintKeypair, feeBps, poolType = "constantProduct", amplification = 200, payer) {
     if (!this.program) {
       throw new Error("No program set. Call setProgram() first.");
     }
@@ -4732,7 +5821,9 @@ var CloakCraftClient = class {
         lpMint: lpMintKeypair.publicKey,
         feeBps,
         authority: payerPublicKey,
-        payer: payerPublicKey
+        payer: payerPublicKey,
+        poolType,
+        amplification
       });
       let ammSignature;
       if (payerKeypair) {
@@ -4845,7 +5936,7 @@ var CloakCraftClient = class {
       this.wallet.keypair
     );
     params.onProgress?.("building");
-    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey9(params.input.tokenMint) : params.input.tokenMint;
+    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey10(params.input.tokenMint) : params.input.tokenMint;
     const ammPoolAccount = await this.program.account.ammPool.fetch(params.poolId);
     const outputTokenMint = params.swapDirection === "aToB" ? ammPoolAccount.tokenBMint : ammPoolAccount.tokenAMint;
     const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
@@ -4925,7 +6016,7 @@ var CloakCraftClient = class {
       console.error("[Swap] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-VRKYX5RC.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-C7LLWDCZ.mjs");
     console.log("[Swap] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -5053,8 +6144,8 @@ var CloakCraftClient = class {
       this.wallet.keypair
     );
     params.onProgress?.("building");
-    const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new PublicKey9(params.inputA.tokenMint) : params.inputA.tokenMint;
-    const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new PublicKey9(params.inputB.tokenMint) : params.inputB.tokenMint;
+    const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new PublicKey10(params.inputA.tokenMint) : params.inputA.tokenMint;
+    const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new PublicKey10(params.inputB.tokenMint) : params.inputB.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
     const [lpPool] = derivePoolPda(params.lpMint, this.programId);
@@ -5137,7 +6228,7 @@ var CloakCraftClient = class {
       console.error("[Add Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-VRKYX5RC.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-C7LLWDCZ.mjs");
     console.log("[Add Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -5264,7 +6355,7 @@ var CloakCraftClient = class {
     params.onProgress?.("generating");
     const tokenAMint = params.tokenAMint;
     const tokenBMint = params.tokenBMint;
-    const lpMint = params.lpInput.tokenMint instanceof Uint8Array ? new PublicKey9(params.lpInput.tokenMint) : params.lpInput.tokenMint;
+    const lpMint = params.lpInput.tokenMint instanceof Uint8Array ? new PublicKey10(params.lpInput.tokenMint) : params.lpInput.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
     const [lpPool] = derivePoolPda(lpMint, this.programId);
@@ -5283,7 +6374,7 @@ var CloakCraftClient = class {
       const configAccount = await this.connection.getAccountInfo(protocolConfigPda);
       if (configAccount) {
         const data = configAccount.data;
-        const treasury = new PublicKey9(data.subarray(40, 72));
+        const treasury = new PublicKey10(data.subarray(40, 72));
         const feesEnabled = data[80] === 1;
         if (feesEnabled) {
           const { getAssociatedTokenAddress } = await import("@solana/spl-token");
@@ -5362,7 +6453,7 @@ var CloakCraftClient = class {
       console.error("[Remove Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-VRKYX5RC.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-C7LLWDCZ.mjs");
     console.log("[Remove Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -5496,8 +6587,8 @@ var CloakCraftClient = class {
     );
     const [orderPda] = deriveOrderPda(params.orderId, this.programId);
     const orderAccount = await this.program.account.order.fetch(orderPda);
-    const makerPool = new PublicKey9(orderAccount.makerPool || params.order.escrowCommitment);
-    const takerInputMint = params.takerInput.tokenMint instanceof Uint8Array ? new PublicKey9(params.takerInput.tokenMint) : params.takerInput.tokenMint;
+    const makerPool = new PublicKey10(orderAccount.makerPool || params.order.escrowCommitment);
+    const takerInputMint = params.takerInput.tokenMint instanceof Uint8Array ? new PublicKey10(params.takerInput.tokenMint) : params.takerInput.tokenMint;
     const [takerPool] = derivePoolPda(takerInputMint, this.programId);
     const escrowNullifier = new Uint8Array(32);
     const takerNullifier = this.computeInputNullifier(params.takerInput);
@@ -5581,7 +6672,7 @@ var CloakCraftClient = class {
     );
     const [orderPda] = deriveOrderPda(params.orderId, this.programId);
     const orderAccount = await this.program.account.order.fetch(orderPda);
-    const pool = new PublicKey9(orderAccount.pool || orderAccount.makerPool);
+    const pool = new PublicKey10(orderAccount.pool || orderAccount.makerPool);
     const escrowNullifier = new Uint8Array(32);
     const refundCommitment = computeCommitment({
       stealthPubX: params.refundRecipient.stealthPubkey.x,
@@ -5665,7 +6756,7 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit("governance/encrypted_submit")) {
       throw new Error("Prover not initialized. Call initializeProver(['governance/encrypted_submit']) first.");
     }
-    const tokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey9(params.input.tokenMint) : params.input.tokenMint;
+    const tokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey10(params.input.tokenMint) : params.input.tokenMint;
     const [tokenPool] = derivePoolPda(tokenMint, this.programId);
     const randomness = generateVoteRandomness();
     const voteOption = params.voteChoice === 0 ? 0 /* Yes */ : params.voteChoice === 1 ? 1 /* No */ : 2 /* Abstain */;
@@ -5841,7 +6932,7 @@ var CloakCraftClient = class {
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     let poolPda;
     if (tokenMint) {
-      [poolPda] = PublicKey9.findProgramAddressSync(
+      [poolPda] = PublicKey10.findProgramAddressSync(
         [Buffer.from("pool"), tokenMint.toBuffer()],
         this.programId
       );
@@ -5866,7 +6957,7 @@ var CloakCraftClient = class {
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     let poolPda;
     if (tokenMint) {
-      [poolPda] = PublicKey9.findProgramAddressSync(
+      [poolPda] = PublicKey10.findProgramAddressSync(
         [Buffer.from("pool"), tokenMint.toBuffer()],
         this.programId
       );
@@ -5973,11 +7064,452 @@ var CloakCraftClient = class {
       leafIndex: proof.leafIndex
     };
   }
+  // =============================================================================
+  // Perpetual Futures Operations
+  // =============================================================================
+  /**
+   * Open a perpetual futures position
+   *
+   * @param params - Open position parameters
+   * @param relayer - Optional relayer keypair for transaction fees
+   */
+  async openPerpsPosition(params, relayer) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    if (!this.program) {
+      throw new Error("No program set. Call setProgram() first.");
+    }
+    if (!this.proofGenerator.hasCircuit("perps/open_position")) {
+      throw new Error("Prover not initialized. Call initializeProver(['perps/open_position']) first.");
+    }
+    params.onProgress?.("preparing");
+    const positionSize = params.marginAmount * BigInt(params.leverage);
+    const accountHash = params.input.accountHash;
+    if (!accountHash) {
+      throw new Error("Input note missing accountHash. Use scanNotes() to get notes with accountHash.");
+    }
+    params.onProgress?.("generating");
+    const positionFee = positionSize * 6n / 10000n;
+    const tokenMint = params.input.tokenMint instanceof Uint8Array ? params.input.tokenMint : params.input.tokenMint.toBytes();
+    const proofParams = {
+      input: {
+        stealthPubX: params.input.stealthPubX,
+        tokenMint,
+        amount: params.input.amount,
+        randomness: params.input.randomness,
+        leafIndex: params.input.leafIndex,
+        stealthEphemeralPubkey: params.input.stealthEphemeralPubkey
+      },
+      perpsPoolId: params.poolId.toBytes(),
+      marketId: bytesToField(params.marketId),
+      isLong: params.direction === "long",
+      marginAmount: params.marginAmount,
+      leverage: params.leverage,
+      positionSize,
+      entryPrice: params.oraclePrice,
+      positionFee,
+      merkleRoot: params.merkleRoot,
+      merklePath: params.merklePath,
+      merkleIndices: params.merkleIndices
+    };
+    const proofResult = await this.proofGenerator.generateOpenPositionProof(
+      proofParams,
+      this.wallet.keypair
+    );
+    const changeRandomness = generateRandomness();
+    const changeCommitment = new Uint8Array(32);
+    params.onProgress?.("building");
+    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey10(params.input.tokenMint) : params.input.tokenMint;
+    const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
+    const inputPoolAccount = await this.program.account.pool.fetch(inputPoolPda);
+    const inputVault = inputPoolAccount.tokenVault;
+    const [protocolConfigPda] = deriveProtocolConfigPda(this.programId);
+    const inputCommitment = computeCommitment(params.input);
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
+    const { proof, nullifier, positionCommitment, positionRandomness } = proofResult;
+    const instructionParams = {
+      perpsPool: params.poolId,
+      marketId: params.marketId,
+      inputPool: inputPoolPda,
+      inputVault,
+      inputTokenMint,
+      protocolConfig: protocolConfigPda,
+      relayer: relayerPubkey,
+      proof,
+      merkleRoot: params.merkleRoot,
+      nullifier,
+      inputCommitment,
+      accountHash,
+      leafIndex: params.input.leafIndex,
+      positionCommitment,
+      changeCommitment,
+      direction: params.direction,
+      marginAmount: params.marginAmount,
+      leverage: params.leverage,
+      positionSize,
+      oraclePrice: params.oraclePrice,
+      positionRecipient: params.positionRecipient,
+      changeRecipient: params.changeRecipient,
+      positionRandomness,
+      changeRandomness
+    };
+    console.log("[OpenPosition] === Starting Multi-Phase Open Position ===");
+    console.log("[OpenPosition] Direction:", params.direction);
+    console.log("[OpenPosition] Margin:", params.marginAmount.toString());
+    console.log("[OpenPosition] Leverage:", params.leverage);
+    const buildResult = await buildOpenPositionWithProgram(
+      this.program,
+      instructionParams
+    );
+    params.onProgress?.("approving");
+    params.onProgress?.("executing");
+    console.log("[OpenPosition] Built transactions successfully");
+    console.log("[OpenPosition] Note: Full execution requires perps circuits to be compiled");
+    return {
+      signature: "perps_circuit_required",
+      slot: 0
+    };
+  }
+  /**
+   * Close a perpetual futures position
+   *
+   * @param params - Close position parameters
+   * @param relayer - Optional relayer keypair for transaction fees
+   */
+  async closePerpsPosition(params, relayer) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    if (!this.program) {
+      throw new Error("No program set. Call setProgram() first.");
+    }
+    if (!this.proofGenerator.hasCircuit("perps/close_position")) {
+      throw new Error("Prover not initialized. Call initializeProver(['perps/close_position']) first.");
+    }
+    params.onProgress?.("preparing");
+    const accountHash = params.positionInput.accountHash;
+    if (!accountHash) {
+      throw new Error("Position note missing accountHash. Use scanNotes() to get notes with accountHash.");
+    }
+    params.onProgress?.("generating");
+    const closeFee = params.positionInput.amount * 6n / 10000n;
+    const pnlAmount = 0n;
+    const isProfit = false;
+    const tokenMint = params.positionInput.tokenMint instanceof Uint8Array ? params.positionInput.tokenMint : params.positionInput.tokenMint.toBytes();
+    const proofParams = {
+      position: {
+        stealthPubX: params.positionInput.stealthPubX,
+        marketId: bytesToField(params.marketId),
+        isLong: true,
+        // TODO: Get from position data
+        margin: params.positionInput.amount,
+        size: params.positionInput.amount,
+        // TODO: Get actual size
+        leverage: 1,
+        // TODO: Get from position data
+        entryPrice: params.oraclePrice,
+        // TODO: Get from position data
+        randomness: params.positionInput.randomness,
+        leafIndex: params.positionInput.leafIndex,
+        spendingKey: this.wallet.keypair.spending.sk
+      },
+      perpsPoolId: params.poolId.toBytes(),
+      exitPrice: params.oraclePrice,
+      pnlAmount,
+      isProfit,
+      closeFee,
+      settlementRecipient: params.settlementRecipient,
+      tokenMint,
+      merkleRoot: params.merkleRoot,
+      merklePath: params.merklePath,
+      merkleIndices: params.merkleIndices
+    };
+    const proofResult = await this.proofGenerator.generateClosePositionProof(
+      proofParams,
+      this.wallet.keypair
+    );
+    params.onProgress?.("building");
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
+    const { proof, positionNullifier: nullifier, settlementCommitment, settlementRandomness } = proofResult;
+    const positionCommitment = computeCommitment(params.positionInput);
+    const instructionParams = {
+      perpsPool: params.poolId,
+      marketId: params.marketId,
+      relayer: relayerPubkey,
+      proof,
+      merkleRoot: params.merkleRoot,
+      nullifier,
+      positionCommitment,
+      accountHash,
+      leafIndex: params.positionInput.leafIndex,
+      settlementCommitment,
+      oraclePrice: params.oraclePrice,
+      settlementRecipient: params.settlementRecipient,
+      settlementRandomness
+    };
+    console.log("[ClosePosition] === Starting Multi-Phase Close Position ===");
+    const buildResult = await buildClosePositionWithProgram(
+      this.program,
+      instructionParams
+    );
+    params.onProgress?.("approving");
+    params.onProgress?.("executing");
+    console.log("[ClosePosition] Built transactions successfully");
+    console.log("[ClosePosition] Note: Full execution requires perps circuits to be compiled");
+    return {
+      signature: "perps_circuit_required",
+      slot: 0
+    };
+  }
+  /**
+   * Add liquidity to a perpetual futures pool
+   *
+   * @param params - Add liquidity parameters
+   * @param relayer - Optional relayer keypair for transaction fees
+   */
+  async addPerpsLiquidity(params, relayer) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    if (!this.program) {
+      throw new Error("No program set. Call setProgram() first.");
+    }
+    if (!this.proofGenerator.hasCircuit("perps/add_liquidity")) {
+      throw new Error("Prover not initialized. Call initializeProver(['perps/add_liquidity']) first.");
+    }
+    params.onProgress?.("preparing");
+    const accountHash = params.input.accountHash;
+    if (!accountHash) {
+      throw new Error("Input note missing accountHash. Use scanNotes() to get notes with accountHash.");
+    }
+    params.onProgress?.("generating");
+    const feeAmount = 0n;
+    const tokenMint = params.input.tokenMint instanceof Uint8Array ? params.input.tokenMint : params.input.tokenMint.toBytes();
+    const proofParams = {
+      input: {
+        stealthPubX: params.input.stealthPubX,
+        tokenMint,
+        amount: params.input.amount,
+        randomness: params.input.randomness,
+        leafIndex: params.input.leafIndex,
+        stealthEphemeralPubkey: params.input.stealthEphemeralPubkey
+      },
+      perpsPoolId: params.poolId.toBytes(),
+      tokenIndex: params.tokenIndex,
+      depositAmount: params.depositAmount,
+      lpAmountMinted: params.lpAmount,
+      feeAmount,
+      lpRecipient: params.lpRecipient,
+      merkleRoot: params.merkleRoot,
+      merklePath: params.merklePath,
+      merkleIndices: params.merkleIndices
+    };
+    const proofResult = await this.proofGenerator.generateAddPerpsLiquidityProof(
+      proofParams,
+      this.wallet.keypair
+    );
+    const changeRandomness = generateRandomness();
+    const changeCommitment = new Uint8Array(32);
+    params.onProgress?.("building");
+    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey10(params.input.tokenMint) : params.input.tokenMint;
+    const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
+    const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, inputTokenMint, this.programId);
+    const [lpMintPda] = derivePerpsLpMintPda(params.poolId, this.programId);
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
+    const { proof, nullifier, lpCommitment, lpRandomness } = proofResult;
+    const inputCommitment = computeCommitment(params.input);
+    const instructionParams = {
+      perpsPool: params.poolId,
+      inputPool: inputPoolPda,
+      perpsVault: perpsVaultPda,
+      lpMint: lpMintPda,
+      inputTokenMint,
+      relayer: relayerPubkey,
+      proof,
+      merkleRoot: params.merkleRoot,
+      nullifier,
+      inputCommitment,
+      accountHash,
+      leafIndex: params.input.leafIndex,
+      lpCommitment,
+      changeCommitment,
+      tokenIndex: params.tokenIndex,
+      depositAmount: params.depositAmount,
+      lpAmount: params.lpAmount,
+      lpRecipient: params.lpRecipient,
+      changeRecipient: params.changeRecipient,
+      lpRandomness,
+      changeRandomness
+    };
+    console.log("[AddPerpsLiquidity] === Starting Multi-Phase Add Liquidity ===");
+    console.log("[AddPerpsLiquidity] Token index:", params.tokenIndex);
+    console.log("[AddPerpsLiquidity] Deposit amount:", params.depositAmount.toString());
+    const buildResult = await buildAddPerpsLiquidityWithProgram(
+      this.program,
+      instructionParams
+    );
+    params.onProgress?.("approving");
+    params.onProgress?.("executing");
+    console.log("[AddPerpsLiquidity] Built transactions successfully");
+    console.log("[AddPerpsLiquidity] Note: Full execution requires perps circuits to be compiled");
+    return {
+      signature: "perps_circuit_required",
+      slot: 0
+    };
+  }
+  /**
+   * Remove liquidity from a perpetual futures pool
+   *
+   * @param params - Remove liquidity parameters
+   * @param relayer - Optional relayer keypair for transaction fees
+   */
+  async removePerpsLiquidity(params, relayer) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    if (!this.program) {
+      throw new Error("No program set. Call setProgram() first.");
+    }
+    if (!this.proofGenerator.hasCircuit("perps/remove_liquidity")) {
+      throw new Error("Prover not initialized. Call initializeProver(['perps/remove_liquidity']) first.");
+    }
+    params.onProgress?.("preparing");
+    const accountHash = params.lpInput.accountHash;
+    if (!accountHash) {
+      throw new Error("LP note missing accountHash. Use scanNotes() to get notes with accountHash.");
+    }
+    params.onProgress?.("generating");
+    const [perpsPoolAccount] = derivePerpsPoolPda(params.poolId, this.programId);
+    const poolData = await this.program.account.perpsPool.fetch(params.poolId);
+    const tokenMint = poolData.tokens[params.tokenIndex].mint;
+    const tokenMintBytes = tokenMint.toBytes();
+    const feeAmount = 0n;
+    const changeLpAmount = params.lpInput.amount - params.lpAmount;
+    const proofParams = {
+      lpInput: {
+        stealthPubX: params.lpInput.stealthPubX,
+        lpAmount: params.lpInput.amount,
+        randomness: params.lpInput.randomness,
+        leafIndex: params.lpInput.leafIndex,
+        spendingKey: this.wallet.keypair.spending.sk
+      },
+      perpsPoolId: params.poolId.toBytes(),
+      tokenIndex: params.tokenIndex,
+      lpAmountBurned: params.lpAmount,
+      withdrawAmount: params.withdrawAmount,
+      feeAmount,
+      outputRecipient: params.withdrawRecipient,
+      outputTokenMint: tokenMintBytes,
+      changeLpAmount,
+      merkleRoot: params.merkleRoot,
+      merklePath: params.merklePath,
+      merkleIndices: params.merkleIndices
+    };
+    const proofResult = await this.proofGenerator.generateRemovePerpsLiquidityProof(
+      proofParams,
+      this.wallet.keypair
+    );
+    params.onProgress?.("building");
+    const [outputPoolPda] = derivePoolPda(tokenMint, this.programId);
+    const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, tokenMint, this.programId);
+    const [lpMintPda] = derivePerpsLpMintPda(params.poolId, this.programId);
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
+    const {
+      proof,
+      lpNullifier: nullifier,
+      outputCommitment: withdrawCommitment,
+      changeLpCommitment: lpChangeCommitment,
+      outputRandomness: withdrawRandomness,
+      changeLpRandomness: lpChangeRandomness
+    } = proofResult;
+    const lpCommitment = computeCommitment(params.lpInput);
+    const instructionParams = {
+      perpsPool: params.poolId,
+      outputPool: outputPoolPda,
+      perpsVault: perpsVaultPda,
+      lpMint: lpMintPda,
+      outputTokenMint: tokenMint,
+      relayer: relayerPubkey,
+      proof,
+      merkleRoot: params.merkleRoot,
+      nullifier,
+      lpCommitment,
+      accountHash,
+      leafIndex: params.lpInput.leafIndex,
+      withdrawCommitment,
+      lpChangeCommitment,
+      tokenIndex: params.tokenIndex,
+      lpAmount: params.lpAmount,
+      withdrawAmount: params.withdrawAmount,
+      withdrawRecipient: params.withdrawRecipient,
+      lpChangeRecipient: params.lpChangeRecipient,
+      withdrawRandomness,
+      lpChangeRandomness
+    };
+    console.log("[RemovePerpsLiquidity] === Starting Multi-Phase Remove Liquidity ===");
+    console.log("[RemovePerpsLiquidity] Token index:", params.tokenIndex);
+    console.log("[RemovePerpsLiquidity] LP amount:", params.lpAmount.toString());
+    const buildResult = await buildRemovePerpsLiquidityWithProgram(
+      this.program,
+      instructionParams
+    );
+    params.onProgress?.("approving");
+    params.onProgress?.("executing");
+    console.log("[RemovePerpsLiquidity] Built transactions successfully");
+    console.log("[RemovePerpsLiquidity] Note: Full execution requires perps circuits to be compiled");
+    return {
+      signature: "perps_circuit_required",
+      slot: 0
+    };
+  }
+  /**
+   * Fetch all perps pools
+   */
+  async getAllPerpsPools() {
+    if (!this.program) {
+      throw new Error("No program set. Call setProgram() first.");
+    }
+    const accounts = await this.program.account.perpsPool.all();
+    return accounts.map((acc) => ({
+      address: acc.publicKey,
+      data: acc.account
+    }));
+  }
+  /**
+   * Fetch a specific perps pool
+   */
+  async getPerpsPool(poolAddress) {
+    if (!this.program) {
+      throw new Error("No program set. Call setProgram() first.");
+    }
+    return await this.program.account.perpsPool.fetch(poolAddress);
+  }
+  /**
+   * Fetch perps markets for a pool
+   */
+  async getPerpsMarkets(poolAddress) {
+    if (!this.program) {
+      throw new Error("No program set. Call setProgram() first.");
+    }
+    const accounts = await this.program.account.perpsMarket.all([
+      { memcmp: { offset: 8 + 32, bytes: poolAddress.toBase58() } }
+    ]);
+    return accounts.map((acc) => ({
+      address: acc.publicKey,
+      data: acc.account
+    }));
+  }
 };
 
 // src/amm/pool.ts
-import { PublicKey as PublicKey10 } from "@solana/web3.js";
+import { PublicKey as PublicKey11 } from "@solana/web3.js";
 import { keccak_256 } from "@noble/hashes/sha3";
+import { PoolType } from "@cloakcraft/types";
 async function fetchAmmPool(connection, ammPoolPda) {
   const accountInfo = await connection.getAccountInfo(ammPoolPda);
   if (!accountInfo) {
@@ -5988,13 +7520,13 @@ async function fetchAmmPool(connection, ammPoolPda) {
 }
 function deserializeAmmPool(data) {
   let offset = 8;
-  const poolId = new PublicKey10(data.slice(offset, offset + 32));
+  const poolId = new PublicKey11(data.slice(offset, offset + 32));
   offset += 32;
-  const tokenAMint = new PublicKey10(data.slice(offset, offset + 32));
+  const tokenAMint = new PublicKey11(data.slice(offset, offset + 32));
   offset += 32;
-  const tokenBMint = new PublicKey10(data.slice(offset, offset + 32));
+  const tokenBMint = new PublicKey11(data.slice(offset, offset + 32));
   offset += 32;
-  const lpMint = new PublicKey10(data.slice(offset, offset + 32));
+  const lpMint = new PublicKey11(data.slice(offset, offset + 32));
   offset += 32;
   const stateHash = new Uint8Array(data.slice(offset, offset + 32));
   offset += 32;
@@ -6004,13 +7536,19 @@ function deserializeAmmPool(data) {
   const lpSupply = view.getBigUint64(16, true);
   const feeBps = view.getUint16(24, true);
   offset += 26;
-  const authority = new PublicKey10(data.slice(offset, offset + 32));
+  const authority = new PublicKey11(data.slice(offset, offset + 32));
   offset += 32;
   const isActive = data[offset] === 1;
   offset += 1;
   const bump = data[offset];
   offset += 1;
   const lpMintBump = data[offset];
+  offset += 1;
+  const poolTypeValue = data[offset];
+  const poolType = poolTypeValue === 1 ? PoolType.StableSwap : PoolType.ConstantProduct;
+  offset += 1;
+  const view2 = new DataView(data.buffer, data.byteOffset + offset);
+  const amplification = view2.getBigUint64(0, true);
   return {
     poolId,
     tokenAMint,
@@ -6024,7 +7562,9 @@ function deserializeAmmPool(data) {
     authority,
     isActive,
     bump,
-    lpMintBump
+    lpMintBump,
+    poolType,
+    amplification
   };
 }
 function computeAmmStateHash(reserveA, reserveB, lpSupply, poolId) {
@@ -6091,7 +7631,77 @@ function formatAmmPool(pool, decimalsA = 9, decimalsB = 9) {
 }
 
 // src/amm/calculations.ts
-function calculateSwapOutput(inputAmount, reserveIn, reserveOut, feeBps = 30) {
+import { PoolType as PoolType2 } from "@cloakcraft/types";
+import { PoolType as PoolType3 } from "@cloakcraft/types";
+function calculateStableSwapOutput(inputAmount, reserveIn, reserveOut, amplification, feeBps = 4) {
+  if (inputAmount === 0n) {
+    return { outputAmount: 0n, priceImpact: 0 };
+  }
+  if (reserveIn === 0n || reserveOut === 0n) {
+    throw new Error("Pool has no liquidity");
+  }
+  if (amplification <= 0n) {
+    throw new Error("Amplification must be positive");
+  }
+  const feeAmount = inputAmount * BigInt(feeBps) / 10000n;
+  const inputWithFee = inputAmount - feeAmount;
+  const PRECISION = 1000000000000000000n;
+  const x = reserveIn * PRECISION;
+  const y = reserveOut * PRECISION;
+  const dx = inputWithFee * PRECISION;
+  const d = getD(x, y, amplification);
+  const newX = x + dx;
+  const newY = getY(newX, d, amplification);
+  const outputScaled = y - newY;
+  const outputAmount = outputScaled / PRECISION;
+  const priceImpact = Number(inputAmount * 10000n / reserveIn) / 100;
+  return { outputAmount, priceImpact };
+}
+function getD(x, y, amp) {
+  const sum = x + y;
+  if (sum === 0n) return 0n;
+  const ann = amp * 4n;
+  let d = sum;
+  let dPrev;
+  for (let i = 0; i < 255; i++) {
+    let dP = d;
+    dP = dP * d / (x * 2n);
+    dP = dP * d / (y * 2n);
+    dPrev = d;
+    const numerator = (ann * sum + dP * 2n) * d;
+    const denominator = (ann - 1n) * d + dP * 3n;
+    d = numerator / denominator;
+    if (d > dPrev) {
+      if (d - dPrev <= 1n) return d;
+    } else {
+      if (dPrev - d <= 1n) return d;
+    }
+  }
+  throw new Error("StableSwap D calculation failed to converge");
+}
+function getY(x, d, amp) {
+  const ann = amp * 4n;
+  const c = d * d / (x * 2n) * d / (ann * 2n);
+  const b = x + d / ann;
+  let y = d;
+  let yPrev;
+  for (let i = 0; i < 255; i++) {
+    yPrev = y;
+    const numerator = y * y + c;
+    const denominator = y * 2n + b - d;
+    y = numerator / denominator;
+    if (y > yPrev) {
+      if (y - yPrev <= 1n) return y;
+    } else {
+      if (yPrev - y <= 1n) return y;
+    }
+  }
+  throw new Error("StableSwap Y calculation failed to converge");
+}
+function calculateSwapOutputUnified(inputAmount, reserveIn, reserveOut, poolType, feeBps, amplification = 0n) {
+  if (poolType === PoolType2.StableSwap) {
+    return calculateStableSwapOutput(inputAmount, reserveIn, reserveOut, amplification, feeBps);
+  }
   if (inputAmount === 0n) {
     return { outputAmount: 0n, priceImpact: 0 };
   }
@@ -6158,7 +7768,7 @@ function calculateRemoveLiquidityOutput(lpAmount, lpSupply, reserveA, reserveB) 
   const outputB = lpAmount * reserveB / lpSupply;
   return { outputA, outputB };
 }
-function calculatePriceImpact(inputAmount, reserveIn, reserveOut) {
+function calculatePriceImpact(inputAmount, reserveIn, reserveOut, poolType = PoolType2.ConstantProduct, feeBps = 30, amplification = 0n) {
   if (inputAmount === 0n || reserveIn === 0n) {
     return 0;
   }
@@ -6166,7 +7776,7 @@ function calculatePriceImpact(inputAmount, reserveIn, reserveOut) {
   if (impact > 1) {
     const priceBefore = Number(reserveOut) / Number(reserveIn);
     const newReserveIn = reserveIn + inputAmount;
-    const { outputAmount } = calculateSwapOutput(inputAmount, reserveIn, reserveOut);
+    const { outputAmount } = calculateSwapOutputUnified(inputAmount, reserveIn, reserveOut, poolType, feeBps, amplification);
     const newReserveOut = reserveOut - outputAmount;
     const priceAfter = Number(newReserveOut) / Number(newReserveIn);
     const exactImpact = Math.abs((priceAfter - priceBefore) / priceBefore) * 100;
@@ -6236,18 +7846,18 @@ function validateLiquidityAmounts(amountA, amountB, balanceA, balanceB) {
 import {
   TransactionMessage,
   VersionedTransaction,
-  ComputeBudgetProgram as ComputeBudgetProgram5
+  ComputeBudgetProgram as ComputeBudgetProgram6
 } from "@solana/web3.js";
 var MAX_TRANSACTION_SIZE = 1232;
 async function buildVersionedTransaction(connection, instructions, payer, config = {}) {
   const computeBudgetIxs = [];
   const computeUnits = config.computeUnits ?? 14e5;
   computeBudgetIxs.push(
-    ComputeBudgetProgram5.setComputeUnitLimit({ units: computeUnits })
+    ComputeBudgetProgram6.setComputeUnitLimit({ units: computeUnits })
   );
   if (config.computeUnitPrice !== void 0) {
     computeBudgetIxs.push(
-      ComputeBudgetProgram5.setComputeUnitPrice({ microLamports: config.computeUnitPrice })
+      ComputeBudgetProgram6.setComputeUnitPrice({ microLamports: config.computeUnitPrice })
     );
   }
   const allInstructions = [...computeBudgetIxs, ...instructions];
@@ -7797,10 +9407,14 @@ export {
   LightProtocol,
   MAINNET_LIGHT_TREES,
   MAX_FEE_BPS,
+  MAX_PERPS_TOKENS,
   MAX_TRANSACTION_SIZE,
   NoteManager,
+  PERPS_CIRCUIT_IDS,
+  PERPS_SEEDS,
   PROGRAM_ID,
   PoolAnalyticsCalculator,
+  PoolType3 as PoolType,
   ProofGenerator,
   SEEDS,
   SmartNoteSelector,
@@ -7815,9 +9429,13 @@ export {
   ammPoolExists,
   bigintToFieldString,
   buildAddLiquidityWithProgram,
+  buildAddMarketWithProgram,
+  buildAddPerpsLiquidityWithProgram,
+  buildAddTokenToPoolWithProgram,
   buildAtomicMultiPhaseTransaction,
   buildCancelOrderWithProgram,
   buildClosePendingOperationWithProgram,
+  buildClosePositionWithProgram,
   buildConsolidationWithProgram,
   buildCreateAggregationWithProgram,
   buildCreateCommitmentWithProgram,
@@ -7826,8 +9444,11 @@ export {
   buildFinalizeDecryptionWithProgram,
   buildInitializeAmmPoolWithProgram,
   buildInitializeCommitmentCounterWithProgram,
+  buildInitializePerpsPoolWithProgram,
   buildInitializePoolWithProgram,
+  buildOpenPositionWithProgram,
   buildRemoveLiquidityWithProgram,
+  buildRemovePerpsLiquidityWithProgram,
   buildShieldInstructions,
   buildShieldInstructionsForVersionedTx,
   buildShieldWithProgram,
@@ -7836,22 +9457,35 @@ export {
   buildSubmitVoteWithProgram,
   buildSwapWithProgram,
   buildTransactWithProgram,
+  buildUpdateBorrowFeesWithProgram,
   buildVersionedTransaction,
   bytesToField,
   bytesToFieldString,
   calculateAddLiquidityAmounts,
+  calculateBorrowFees,
+  calculateBorrowRate,
+  calculateImbalanceFee,
   calculateInvariant,
+  calculateLiquidationPrice,
+  calculateLpMintAmount,
+  calculateLpValue,
+  calculateMaxWithdrawable,
   calculateMinOutput,
   calculateMinimumFee,
+  calculatePnL,
+  calculatePositionFee,
   calculatePriceImpact,
   calculatePriceRatio,
   calculateProtocolFee,
   calculateRemoveLiquidityOutput,
   calculateSlippage,
-  calculateSwapOutput,
+  calculateStableSwapOutput,
+  calculateSwapOutputUnified,
   calculateSwapProtocolFee,
   calculateTotalLiquidity,
   calculateUsdPriceImpact,
+  calculateUtilization,
+  calculateWithdrawAmount,
   canFitInSingleTransaction,
   canonicalTokenOrder,
   checkNullifierSpent,
@@ -7876,6 +9510,10 @@ export {
   deriveNullifierKey,
   deriveOrderPda,
   derivePendingOperationPda,
+  derivePerpsLpMintPda,
+  derivePerpsMarketPda,
+  derivePerpsPoolPda,
+  derivePerpsVaultPda,
   derivePoolPda,
   deriveProtocolConfigPda,
   derivePublicKey,
@@ -7927,6 +9565,8 @@ export {
   isFreeOperation,
   isInSubgroup,
   isOnCurve,
+  isValidLeverage,
+  isValidPositionSize,
   lagrangeCoefficient,
   loadCircomArtifacts,
   loadWallet,
@@ -7955,5 +9595,6 @@ export {
   verifyCommitment,
   verifyDleqProof,
   verifyFeeAmount,
-  verifyInvariant
+  verifyInvariant,
+  wouldExceedUtilization
 };

@@ -3497,12 +3497,16 @@ function SwapForm({
       const isInputTokenA = inputMintStr === tokenAMintStr;
       const reserveIn = isInputTokenA ? selectedAmmPool.reserveA : selectedAmmPool.reserveB;
       const reserveOut = isInputTokenA ? selectedAmmPool.reserveB : selectedAmmPool.reserveA;
-      const { outputAmount, priceImpact } = (0, import_sdk2.calculateSwapOutput)(
+      const poolType = selectedAmmPool.poolType ?? import_sdk2.PoolType.ConstantProduct;
+      const amplification = selectedAmmPool.amplification ?? 0n;
+      const { outputAmount, priceImpact } = (0, import_sdk2.calculateSwapOutputUnified)(
         amountLamports,
         reserveIn,
         reserveOut,
-        selectedAmmPool.feeBps || 30
+        poolType,
+        selectedAmmPool.feeBps || 30,
         // Use pool's fee or default to 0.3%
+        amplification
       );
       const minOutput = (0, import_sdk2.calculateMinOutput)(outputAmount, slippageBps);
       return {

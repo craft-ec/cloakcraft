@@ -45,6 +45,7 @@ __export(index_exports, {
   useAutoConsolidation: () => useAutoConsolidation,
   useBalance: () => useBalance,
   useCloakCraft: () => useCloakCraft,
+  useClosePosition: () => useClosePosition,
   useConsolidation: () => useConsolidation,
   useFragmentationScore: () => useFragmentationScore,
   useImpermanentLoss: () => useImpermanentLoss,
@@ -52,16 +53,27 @@ __export(index_exports, {
   useInitializePool: () => useInitializePool,
   useIsConsolidationRecommended: () => useIsConsolidationRecommended,
   useIsFreeOperation: () => useIsFreeOperation,
+  useLiquidationPrice: () => useLiquidationPrice,
+  useLpMintPreview: () => useLpMintPreview,
+  useLpValue: () => useLpValue,
   useNoteSelection: () => useNoteSelection,
   useNoteSelector: () => useNoteSelector,
   useNotes: () => useNotes,
   useNullifierStatus: () => useNullifierStatus,
+  useOpenPosition: () => useOpenPosition,
   useOrders: () => useOrders,
+  usePerpsAddLiquidity: () => usePerpsAddLiquidity,
+  usePerpsMarkets: () => usePerpsMarkets,
+  usePerpsPool: () => usePerpsPool,
+  usePerpsPools: () => usePerpsPools,
+  usePerpsRemoveLiquidity: () => usePerpsRemoveLiquidity,
   usePool: () => usePool,
   usePoolAnalytics: () => usePoolAnalytics,
   usePoolList: () => usePoolList,
   usePoolStats: () => usePoolStats,
   usePortfolioValue: () => usePortfolioValue,
+  usePositionPnL: () => usePositionPnL,
+  usePositionValidation: () => usePositionValidation,
   usePrivateBalance: () => usePrivateBalance,
   useProtocolFees: () => useProtocolFees,
   usePublicBalance: () => usePublicBalance,
@@ -77,11 +89,13 @@ __export(index_exports, {
   useTokenBalances: () => useTokenBalances,
   useTokenPrice: () => useTokenPrice,
   useTokenPrices: () => useTokenPrices,
+  useTokenUtilization: () => useTokenUtilization,
   useTransactionHistory: () => useTransactionHistory,
   useTransfer: () => useTransfer,
   useUnshield: () => useUnshield,
   useUserPosition: () => useUserPosition,
-  useWallet: () => useWallet
+  useWallet: () => useWallet,
+  useWithdrawPreview: () => useWithdrawPreview
 });
 module.exports = __toCommonJS(index_exports);
 
@@ -814,10 +828,10 @@ function useUnshield() {
         console.log("[Unshield] Total input:", totalInput.toString());
         console.log("[Unshield] Amount to unshield:", amount.toString());
         console.log("[Unshield] Change:", change.toString());
-        const { generateStealthAddress: generateStealthAddress3 } = await import("@cloakcraft/sdk");
+        const { generateStealthAddress: generateStealthAddress4 } = await import("@cloakcraft/sdk");
         const outputs = [];
         if (change > 0n) {
-          const { stealthAddress } = generateStealthAddress3(wallet.publicKey);
+          const { stealthAddress } = generateStealthAddress4(wallet.publicKey);
           outputs.push({
             recipient: stealthAddress,
             amount: change
@@ -1354,11 +1368,15 @@ function useSwap() {
         onProgress?.("preparing");
         const reserveIn = swapDirection === "aToB" ? pool.reserveA : pool.reserveB;
         const reserveOut = swapDirection === "aToB" ? pool.reserveB : pool.reserveA;
-        const { outputAmount } = (0, import_sdk4.calculateSwapOutput)(
+        const poolType = pool.poolType ?? import_sdk4.PoolType.ConstantProduct;
+        const amplification = pool.amplification ?? 0n;
+        const { outputAmount } = (0, import_sdk4.calculateSwapOutputUnified)(
           swapAmount,
           reserveIn,
           reserveOut,
-          pool.feeBps
+          poolType,
+          pool.feeBps,
+          amplification
         );
         const minOutput = (0, import_sdk4.calculateMinOutput)(outputAmount, slippageBps);
         const outputTokenMint = swapDirection === "aToB" ? pool.tokenBMint : pool.tokenAMint;
@@ -1455,11 +1473,15 @@ function useSwapQuote(pool, swapDirection, inputAmount) {
     try {
       const reserveIn = swapDirection === "aToB" ? pool.reserveA : pool.reserveB;
       const reserveOut = swapDirection === "aToB" ? pool.reserveB : pool.reserveA;
-      const { outputAmount, priceImpact } = (0, import_sdk4.calculateSwapOutput)(
+      const poolType = pool.poolType ?? import_sdk4.PoolType.ConstantProduct;
+      const amplification = pool.amplification ?? 0n;
+      const { outputAmount, priceImpact } = (0, import_sdk4.calculateSwapOutputUnified)(
         inputAmount,
         reserveIn,
         reserveOut,
-        pool.feeBps
+        poolType,
+        pool.feeBps,
+        amplification
       );
       const minOutput = (0, import_sdk4.calculateMinOutput)(outputAmount, 50);
       setQuote({ outputAmount, minOutput, priceImpact });
@@ -1477,7 +1499,7 @@ function useInitializeAmmPool() {
     result: null
   });
   const initializePool = (0, import_react12.useCallback)(
-    async (tokenAMint, tokenBMint, feeBps = 30) => {
+    async (tokenAMint, tokenBMint, feeBps = 30, poolType = "constantProduct", amplification = 200) => {
       if (!client?.getProgram()) {
         setState({ isInitializing: false, error: "Program not set", result: null });
         return null;
@@ -1489,7 +1511,9 @@ function useInitializeAmmPool() {
           tokenAMint,
           tokenBMint,
           lpMintKeypair,
-          feeBps
+          feeBps,
+          poolType,
+          amplification
         );
         setState({ isInitializing: false, error: null, result: signature });
         return signature;
@@ -2637,6 +2661,513 @@ function useIsFreeOperation(operation) {
     return freeOperations.includes(operation);
   }, [operation]);
 }
+
+// src/usePerps.ts
+var import_react19 = require("react");
+var import_sdk14 = require("@cloakcraft/sdk");
+function usePerpsPools() {
+  const { client } = useCloakCraft();
+  const [pools, setPools] = (0, import_react19.useState)([]);
+  const [isLoading, setIsLoading] = (0, import_react19.useState)(false);
+  const [error, setError] = (0, import_react19.useState)(null);
+  const refresh = (0, import_react19.useCallback)(async () => {
+    if (!client?.getProgram()) {
+      setPools([]);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const program = client.getProgram();
+      if (!program) {
+        throw new Error("Program not available");
+      }
+      const accounts = await program.account.perpsPool.all();
+      const poolData = accounts.map((acc) => ({
+        ...acc.account,
+        address: acc.publicKey
+      }));
+      setPools(poolData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch perps pools");
+      setPools([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [client]);
+  (0, import_react19.useEffect)(() => {
+    refresh();
+  }, [refresh]);
+  return {
+    pools,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function usePerpsPool(poolAddress) {
+  const { client } = useCloakCraft();
+  const [pool, setPool] = (0, import_react19.useState)(null);
+  const [isLoading, setIsLoading] = (0, import_react19.useState)(false);
+  const [error, setError] = (0, import_react19.useState)(null);
+  const refresh = (0, import_react19.useCallback)(async () => {
+    if (!client?.getProgram() || !poolAddress) {
+      setPool(null);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const program = client.getProgram();
+      if (!program) {
+        throw new Error("Program not available");
+      }
+      const account = await program.account.perpsPool.fetch(poolAddress);
+      setPool({ ...account, address: poolAddress });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch perps pool");
+      setPool(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [client, poolAddress]);
+  (0, import_react19.useEffect)(() => {
+    refresh();
+  }, [refresh]);
+  return {
+    pool,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function usePerpsMarkets(poolAddress) {
+  const { client } = useCloakCraft();
+  const [markets, setMarkets] = (0, import_react19.useState)([]);
+  const [isLoading, setIsLoading] = (0, import_react19.useState)(false);
+  const [error, setError] = (0, import_react19.useState)(null);
+  const refresh = (0, import_react19.useCallback)(async () => {
+    if (!client?.getProgram() || !poolAddress) {
+      setMarkets([]);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const program = client.getProgram();
+      if (!program) {
+        throw new Error("Program not available");
+      }
+      const accounts = await program.account.perpsMarket.all([
+        { memcmp: { offset: 8 + 32, bytes: poolAddress.toBase58() } }
+        // pool field offset
+      ]);
+      const marketData = accounts.map((acc) => ({
+        ...acc.account,
+        address: acc.publicKey
+      }));
+      setMarkets(marketData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch perps markets");
+      setMarkets([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [client, poolAddress]);
+  (0, import_react19.useEffect)(() => {
+    refresh();
+  }, [refresh]);
+  return {
+    markets,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function useOpenPosition() {
+  const { client, wallet, sync } = useCloakCraft();
+  const [state, setState] = (0, import_react19.useState)({
+    isOpening: false,
+    error: null,
+    result: null
+  });
+  const openPosition = (0, import_react19.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isOpening: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      if (!client.getProgram()) {
+        setState({ isOpening: false, error: "Program not set", result: null });
+        return null;
+      }
+      setState({ isOpening: true, error: null, result: null });
+      try {
+        const {
+          marginInput,
+          pool,
+          market,
+          direction,
+          marginAmount,
+          leverage,
+          oraclePrice,
+          onProgress
+        } = options;
+        onProgress?.("preparing");
+        if (!(0, import_sdk14.isValidLeverage)(leverage, pool.maxLeverage)) {
+          throw new Error(`Invalid leverage. Must be between 1 and ${pool.maxLeverage}`);
+        }
+        const positionSize = marginAmount * BigInt(leverage);
+        const tokenIndex = direction === "long" ? market.quoteTokenIndex : market.baseTokenIndex;
+        const token = pool.tokens[tokenIndex];
+        if (token && (0, import_sdk14.wouldExceedUtilization)(token, positionSize, pool.maxUtilizationBps)) {
+          throw new Error("Position would exceed pool utilization limit");
+        }
+        const { stealthAddress: positionRecipient } = (0, import_sdk14.generateStealthAddress)(wallet.publicKey);
+        const { stealthAddress: changeRecipient } = (0, import_sdk14.generateStealthAddress)(wallet.publicKey);
+        client.clearScanCache();
+        const freshNotes = await client.scanNotes(marginInput.tokenMint);
+        const freshInput = freshNotes.find(
+          (n) => n.commitment && marginInput.commitment && Buffer.from(n.commitment).toString("hex") === Buffer.from(marginInput.commitment).toString("hex")
+        );
+        if (!freshInput) {
+          throw new Error("Margin note not found. It may have been spent.");
+        }
+        onProgress?.("generating");
+        onProgress?.("building");
+        onProgress?.("approving");
+        onProgress?.("executing");
+        const result = {
+          signature: "pending_implementation",
+          slot: 0
+        };
+        onProgress?.("confirming");
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        await sync(marginInput.tokenMint, true);
+        setState({ isOpening: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Open position failed";
+        setState({ isOpening: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet, sync]
+  );
+  const reset = (0, import_react19.useCallback)(() => {
+    setState({ isOpening: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    openPosition,
+    reset
+  };
+}
+function useClosePosition() {
+  const { client, wallet, sync } = useCloakCraft();
+  const [state, setState] = (0, import_react19.useState)({
+    isClosing: false,
+    error: null,
+    result: null
+  });
+  const closePosition = (0, import_react19.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isClosing: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      if (!client.getProgram()) {
+        setState({ isClosing: false, error: "Program not set", result: null });
+        return null;
+      }
+      setState({ isClosing: true, error: null, result: null });
+      try {
+        const { position, pool, market, oraclePrice, onProgress } = options;
+        onProgress?.("preparing");
+        const currentTimestamp = Math.floor(Date.now() / 1e3);
+        const pnlResult = (0, import_sdk14.calculatePnL)(position, oraclePrice, pool, currentTimestamp);
+        const { stealthAddress: settlementRecipient } = (0, import_sdk14.generateStealthAddress)(wallet.publicKey);
+        onProgress?.("generating");
+        onProgress?.("building");
+        onProgress?.("approving");
+        onProgress?.("executing");
+        const result = {
+          signature: "pending_implementation",
+          slot: 0
+        };
+        onProgress?.("confirming");
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        const settlementTokenIndex = position.direction === "long" ? market.quoteTokenIndex : market.baseTokenIndex;
+        const settlementToken = pool.tokens[settlementTokenIndex];
+        if (settlementToken) {
+          await sync(settlementToken.mint, true);
+        }
+        setState({ isClosing: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Close position failed";
+        setState({ isClosing: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet, sync]
+  );
+  const reset = (0, import_react19.useCallback)(() => {
+    setState({ isClosing: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    closePosition,
+    reset
+  };
+}
+function usePerpsAddLiquidity() {
+  const { client, wallet, sync } = useCloakCraft();
+  const [state, setState] = (0, import_react19.useState)({
+    isAdding: false,
+    error: null,
+    result: null
+  });
+  const addLiquidity = (0, import_react19.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isAdding: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      if (!client.getProgram()) {
+        setState({ isAdding: false, error: "Program not set", result: null });
+        return null;
+      }
+      setState({ isAdding: true, error: null, result: null });
+      try {
+        const { tokenInput, pool, tokenIndex, depositAmount, oraclePrices, onProgress } = options;
+        onProgress?.("preparing");
+        if (tokenIndex >= pool.numTokens) {
+          throw new Error("Invalid token index");
+        }
+        const token = pool.tokens[tokenIndex];
+        if (!token?.isActive) {
+          throw new Error("Token not active in pool");
+        }
+        const lpAmount = (0, import_sdk14.calculateLpMintAmount)(pool, depositAmount, tokenIndex, oraclePrices);
+        const { stealthAddress: lpRecipient } = (0, import_sdk14.generateStealthAddress)(wallet.publicKey);
+        const { stealthAddress: changeRecipient } = (0, import_sdk14.generateStealthAddress)(wallet.publicKey);
+        client.clearScanCache();
+        const freshNotes = await client.scanNotes(tokenInput.tokenMint);
+        const freshInput = freshNotes.find(
+          (n) => n.commitment && tokenInput.commitment && Buffer.from(n.commitment).toString("hex") === Buffer.from(tokenInput.commitment).toString("hex")
+        );
+        if (!freshInput) {
+          throw new Error("Token note not found. It may have been spent.");
+        }
+        onProgress?.("generating");
+        onProgress?.("building");
+        onProgress?.("approving");
+        onProgress?.("executing");
+        const result = {
+          signature: "pending_implementation",
+          slot: 0
+        };
+        onProgress?.("confirming");
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        await sync(tokenInput.tokenMint, true);
+        await sync(pool.lpMint, true);
+        setState({ isAdding: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Add liquidity failed";
+        setState({ isAdding: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet, sync]
+  );
+  const reset = (0, import_react19.useCallback)(() => {
+    setState({ isAdding: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    addLiquidity,
+    reset
+  };
+}
+function usePerpsRemoveLiquidity() {
+  const { client, wallet, sync } = useCloakCraft();
+  const [state, setState] = (0, import_react19.useState)({
+    isRemoving: false,
+    error: null,
+    result: null
+  });
+  const removeLiquidity = (0, import_react19.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isRemoving: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      if (!client.getProgram()) {
+        setState({ isRemoving: false, error: "Program not set", result: null });
+        return null;
+      }
+      setState({ isRemoving: true, error: null, result: null });
+      try {
+        const { lpInput, pool, tokenIndex, lpAmount, oraclePrices, onProgress } = options;
+        onProgress?.("preparing");
+        if (tokenIndex >= pool.numTokens) {
+          throw new Error("Invalid token index");
+        }
+        const token = pool.tokens[tokenIndex];
+        if (!token?.isActive) {
+          throw new Error("Token not active in pool");
+        }
+        const withdrawAmount = (0, import_sdk14.calculateWithdrawAmount)(pool, lpAmount, tokenIndex, oraclePrices);
+        const { maxAmount, utilizationAfter } = (0, import_sdk14.calculateMaxWithdrawable)(
+          pool,
+          tokenIndex,
+          lpAmount,
+          oraclePrices
+        );
+        if (withdrawAmount > maxAmount) {
+          throw new Error("Withdrawal would exceed available balance");
+        }
+        const { stealthAddress: withdrawRecipient } = (0, import_sdk14.generateStealthAddress)(wallet.publicKey);
+        const { stealthAddress: lpChangeRecipient } = (0, import_sdk14.generateStealthAddress)(wallet.publicKey);
+        client.clearScanCache();
+        const freshNotes = await client.scanNotes(pool.lpMint);
+        const freshInput = freshNotes.find(
+          (n) => n.commitment && lpInput.commitment && Buffer.from(n.commitment).toString("hex") === Buffer.from(lpInput.commitment).toString("hex")
+        );
+        if (!freshInput) {
+          throw new Error("LP note not found. It may have been spent.");
+        }
+        onProgress?.("generating");
+        onProgress?.("building");
+        onProgress?.("approving");
+        onProgress?.("executing");
+        const result = {
+          signature: "pending_implementation",
+          slot: 0
+        };
+        onProgress?.("confirming");
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        await sync(pool.lpMint, true);
+        await sync(token.mint, true);
+        setState({ isRemoving: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Remove liquidity failed";
+        setState({ isRemoving: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet, sync]
+  );
+  const reset = (0, import_react19.useCallback)(() => {
+    setState({ isRemoving: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    removeLiquidity,
+    reset
+  };
+}
+function usePositionPnL(position, currentPrice, pool) {
+  return (0, import_react19.useMemo)(() => {
+    if (!position || !pool || currentPrice <= 0n) {
+      return null;
+    }
+    try {
+      const currentTimestamp = Math.floor(Date.now() / 1e3);
+      return (0, import_sdk14.calculatePnL)(position, currentPrice, pool, currentTimestamp);
+    } catch {
+      return null;
+    }
+  }, [position, currentPrice, pool]);
+}
+function useLiquidationPrice(position, pool) {
+  return (0, import_react19.useMemo)(() => {
+    if (!position || !pool) {
+      return null;
+    }
+    try {
+      const currentTimestamp = Math.floor(Date.now() / 1e3);
+      return (0, import_sdk14.calculateLiquidationPrice)(position, pool, currentTimestamp);
+    } catch {
+      return null;
+    }
+  }, [position, pool]);
+}
+function useLpValue(pool, oraclePrices) {
+  return (0, import_react19.useMemo)(() => {
+    if (!pool || oraclePrices.length === 0) {
+      return null;
+    }
+    try {
+      return (0, import_sdk14.calculateLpValue)(pool, oraclePrices);
+    } catch {
+      return null;
+    }
+  }, [pool, oraclePrices]);
+}
+function useLpMintPreview(pool, depositAmount, tokenIndex, oraclePrices) {
+  return (0, import_react19.useMemo)(() => {
+    if (!pool || depositAmount <= 0n || oraclePrices.length === 0) {
+      return null;
+    }
+    try {
+      return (0, import_sdk14.calculateLpMintAmount)(pool, depositAmount, tokenIndex, oraclePrices);
+    } catch {
+      return null;
+    }
+  }, [pool, depositAmount, tokenIndex, oraclePrices]);
+}
+function useWithdrawPreview(pool, lpAmount, tokenIndex, oraclePrices) {
+  return (0, import_react19.useMemo)(() => {
+    if (!pool || lpAmount <= 0n || oraclePrices.length === 0) {
+      return null;
+    }
+    try {
+      return (0, import_sdk14.calculateMaxWithdrawable)(pool, tokenIndex, lpAmount, oraclePrices);
+    } catch {
+      return null;
+    }
+  }, [pool, lpAmount, tokenIndex, oraclePrices]);
+}
+function useTokenUtilization(pool) {
+  return (0, import_react19.useMemo)(() => {
+    if (!pool) {
+      return [];
+    }
+    return pool.tokens.filter((t) => t?.isActive).map((token, index) => ({
+      tokenIndex: index,
+      mint: token.mint,
+      utilization: (0, import_sdk14.calculateUtilization)(token),
+      borrowRate: (0, import_sdk14.calculateBorrowRate)(
+        (0, import_sdk14.calculateUtilization)(token),
+        pool.baseBorrowRateBps
+      )
+    }));
+  }, [pool]);
+}
+function usePositionValidation(pool, market, marginAmount, leverage, direction) {
+  return (0, import_react19.useMemo)(() => {
+    if (!pool || !market) {
+      return { isValid: false, error: "Pool or market not loaded" };
+    }
+    if (!(0, import_sdk14.isValidLeverage)(leverage, pool.maxLeverage)) {
+      return { isValid: false, error: `Leverage must be between 1 and ${pool.maxLeverage}` };
+    }
+    const positionSize = marginAmount * BigInt(leverage);
+    const tokenIndex = direction === "long" ? market.quoteTokenIndex : market.baseTokenIndex;
+    const token = pool.tokens[tokenIndex];
+    if (!token?.isActive) {
+      return { isValid: false, error: "Token not active" };
+    }
+    if ((0, import_sdk14.wouldExceedUtilization)(token, positionSize, pool.maxUtilizationBps)) {
+      return { isValid: false, error: "Would exceed pool utilization limit" };
+    }
+    return { isValid: true, error: null, positionSize };
+  }, [pool, market, marginAmount, leverage, direction]);
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   CloakCraftProvider,
@@ -2654,6 +3185,7 @@ function useIsFreeOperation(operation) {
   useAutoConsolidation,
   useBalance,
   useCloakCraft,
+  useClosePosition,
   useConsolidation,
   useFragmentationScore,
   useImpermanentLoss,
@@ -2661,16 +3193,27 @@ function useIsFreeOperation(operation) {
   useInitializePool,
   useIsConsolidationRecommended,
   useIsFreeOperation,
+  useLiquidationPrice,
+  useLpMintPreview,
+  useLpValue,
   useNoteSelection,
   useNoteSelector,
   useNotes,
   useNullifierStatus,
+  useOpenPosition,
   useOrders,
+  usePerpsAddLiquidity,
+  usePerpsMarkets,
+  usePerpsPool,
+  usePerpsPools,
+  usePerpsRemoveLiquidity,
   usePool,
   usePoolAnalytics,
   usePoolList,
   usePoolStats,
   usePortfolioValue,
+  usePositionPnL,
+  usePositionValidation,
   usePrivateBalance,
   useProtocolFees,
   usePublicBalance,
@@ -2686,9 +3229,11 @@ function useIsFreeOperation(operation) {
   useTokenBalances,
   useTokenPrice,
   useTokenPrices,
+  useTokenUtilization,
   useTransactionHistory,
   useTransfer,
   useUnshield,
   useUserPosition,
-  useWallet
+  useWallet,
+  useWithdrawPreview
 });

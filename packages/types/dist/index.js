@@ -21,9 +21,15 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var index_exports = {};
 __export(index_exports, {
   AggregationStatus: () => AggregationStatus,
-  OrderStatus: () => OrderStatus
+  OrderStatus: () => OrderStatus,
+  PoolType: () => PoolType
 });
 module.exports = __toCommonJS(index_exports);
+var PoolType = /* @__PURE__ */ ((PoolType2) => {
+  PoolType2[PoolType2["ConstantProduct"] = 0] = "ConstantProduct";
+  PoolType2[PoolType2["StableSwap"] = 1] = "StableSwap";
+  return PoolType2;
+})(PoolType || {});
 var OrderStatus = /* @__PURE__ */ ((OrderStatus2) => {
   OrderStatus2[OrderStatus2["Open"] = 0] = "Open";
   OrderStatus2[OrderStatus2["Filled"] = 1] = "Filled";
@@ -39,5 +45,6 @@ var AggregationStatus = /* @__PURE__ */ ((AggregationStatus2) => {
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   AggregationStatus,
-  OrderStatus
+  OrderStatus,
+  PoolType
 });

@@ -2,7 +2,7 @@ import * as react_jsx_runtime from 'react/jsx-runtime';
 import { ReactNode } from 'react';
 import { PublicKey, Keypair } from '@solana/web3.js';
 import * as _cloakcraft_sdk from '@cloakcraft/sdk';
-import { CloakCraftClient, Wallet, SelectionStrategy, TransactionFilter, TransactionRecord, TransactionType, TransactionStatus, TokenPrice, PoolAnalytics, PoolStats, UserPoolPosition, FragmentationReport, ConsolidationSuggestion, ConsolidationBatch, AutoConsolidationState } from '@cloakcraft/sdk';
+import { CloakCraftClient, Wallet, SelectionStrategy, TransactionFilter, TransactionRecord, TransactionType, TransactionStatus, TokenPrice, PoolAnalytics, PoolStats, UserPoolPosition, FragmentationReport, ConsolidationSuggestion, ConsolidationBatch, AutoConsolidationState, PerpsPoolState, PerpsMarketState, DecryptedPerpsPosition, PerpsPosition, PnLResult, LiquidationPriceResult, LpValueResult, WithdrawableResult } from '@cloakcraft/sdk';
 export { PoolAnalytics, PoolStats, TokenPrice, TransactionFilter, TransactionRecord, TransactionStatus, TransactionType, UserPoolPosition, formatApy, formatPrice, formatPriceChange, formatShare, formatTvl } from '@cloakcraft/sdk';
 import * as _cloakcraft_types from '@cloakcraft/types';
 import { SyncStatus, DecryptedNote, TransactionResult, StealthAddress, PoolState, OrderState, AmmPoolState } from '@cloakcraft/types';
@@ -432,7 +432,7 @@ declare function useSwapQuote(pool: (AmmPoolState & {
  * Hook for initializing AMM pool
  */
 declare function useInitializeAmmPool(): {
-    initializePool: (tokenAMint: PublicKey, tokenBMint: PublicKey, feeBps?: number) => Promise<string | null>;
+    initializePool: (tokenAMint: PublicKey, tokenBMint: PublicKey, feeBps?: number, poolType?: "constantProduct" | "stableSwap", amplification?: number) => Promise<string | null>;
     reset: () => void;
     isInitializing: boolean;
     error: string | null;
@@ -860,4 +860,197 @@ declare function useProtocolFees(): UseProtocolFeesResult;
  */
 declare function useIsFreeOperation(operation: 'shield' | 'add_liquidity' | 'consolidate' | 'transfer' | 'unshield' | 'swap' | 'remove_liquidity'): boolean;
 
-export { type AddLiquidityProgressStage, CloakCraftProvider, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type ProtocolFeeConfig, type RemoveLiquidityProgressStage, type SwapProgressStage, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, WALLET_DERIVATION_MESSAGE, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useCloakCraft, useConsolidation, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsConsolidationRecommended, useIsFreeOperation, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOrders, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePrivateBalance, useProtocolFees, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useWallet };
+/**
+ * Perpetual Futures hooks
+ *
+ * Provides interface for perps operations: positions, liquidity, and calculations
+ */
+
+/** Progress stages for perps operations */
+type PerpsProgressStage = 'preparing' | 'generating' | 'building' | 'approving' | 'executing' | 'confirming';
+interface OpenPositionOptions {
+    /** Input margin note to spend */
+    marginInput: DecryptedNote;
+    /** Perps pool */
+    pool: PerpsPoolState & {
+        address: PublicKey;
+    };
+    /** Market to trade */
+    market: PerpsMarketState & {
+        address: PublicKey;
+    };
+    /** Position direction */
+    direction: 'long' | 'short';
+    /** Margin amount */
+    marginAmount: bigint;
+    /** Leverage (1-100) */
+    leverage: number;
+    /** Current oracle price */
+    oraclePrice: bigint;
+    /** Optional progress callback */
+    onProgress?: (stage: PerpsProgressStage) => void;
+}
+interface ClosePositionOptions {
+    /** Position to close */
+    position: DecryptedPerpsPosition;
+    /** Perps pool */
+    pool: PerpsPoolState & {
+        address: PublicKey;
+    };
+    /** Market */
+    market: PerpsMarketState & {
+        address: PublicKey;
+    };
+    /** Current oracle price */
+    oraclePrice: bigint;
+    /** Optional progress callback */
+    onProgress?: (stage: PerpsProgressStage) => void;
+}
+interface AddPerpsLiquidityOptions {
+    /** Input token note to deposit */
+    tokenInput: DecryptedNote;
+    /** Perps pool */
+    pool: PerpsPoolState & {
+        address: PublicKey;
+    };
+    /** Token index in pool */
+    tokenIndex: number;
+    /** Deposit amount */
+    depositAmount: bigint;
+    /** Current oracle prices for all tokens */
+    oraclePrices: bigint[];
+    /** Optional progress callback */
+    onProgress?: (stage: PerpsProgressStage) => void;
+}
+interface RemovePerpsLiquidityOptions {
+    /** LP token note to burn */
+    lpInput: DecryptedNote;
+    /** Perps pool */
+    pool: PerpsPoolState & {
+        address: PublicKey;
+    };
+    /** Token index to withdraw */
+    tokenIndex: number;
+    /** LP amount to burn */
+    lpAmount: bigint;
+    /** Current oracle prices for all tokens */
+    oraclePrices: bigint[];
+    /** Optional progress callback */
+    onProgress?: (stage: PerpsProgressStage) => void;
+}
+/**
+ * Hook for fetching all perps pools
+ */
+declare function usePerpsPools(): {
+    pools: (PerpsPoolState & {
+        address: PublicKey;
+    })[];
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
+/**
+ * Hook for fetching a single perps pool
+ */
+declare function usePerpsPool(poolAddress: PublicKey | null): {
+    pool: (PerpsPoolState & {
+        address: PublicKey;
+    }) | null;
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
+/**
+ * Hook for fetching perps markets for a pool
+ */
+declare function usePerpsMarkets(poolAddress: PublicKey | null): {
+    markets: (PerpsMarketState & {
+        address: PublicKey;
+    })[];
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
+/**
+ * Hook for opening a perpetual position
+ */
+declare function useOpenPosition(): {
+    openPosition: (options: OpenPositionOptions) => Promise<TransactionResult | null>;
+    reset: () => void;
+    isOpening: boolean;
+    error: string | null;
+    result: TransactionResult | null;
+};
+/**
+ * Hook for closing a perpetual position
+ */
+declare function useClosePosition(): {
+    closePosition: (options: ClosePositionOptions) => Promise<TransactionResult | null>;
+    reset: () => void;
+    isClosing: boolean;
+    error: string | null;
+    result: TransactionResult | null;
+};
+/**
+ * Hook for adding liquidity to perps pool
+ */
+declare function usePerpsAddLiquidity(): {
+    addLiquidity: (options: AddPerpsLiquidityOptions) => Promise<TransactionResult | null>;
+    reset: () => void;
+    isAdding: boolean;
+    error: string | null;
+    result: TransactionResult | null;
+};
+/**
+ * Hook for removing liquidity from perps pool
+ */
+declare function usePerpsRemoveLiquidity(): {
+    removeLiquidity: (options: RemovePerpsLiquidityOptions) => Promise<TransactionResult | null>;
+    reset: () => void;
+    isRemoving: boolean;
+    error: string | null;
+    result: TransactionResult | null;
+};
+/**
+ * Hook for calculating position PnL
+ */
+declare function usePositionPnL(position: PerpsPosition | null, currentPrice: bigint, pool: PerpsPoolState | null): PnLResult | null;
+/**
+ * Hook for calculating liquidation price
+ */
+declare function useLiquidationPrice(position: PerpsPosition | null, pool: PerpsPoolState | null): LiquidationPriceResult | null;
+/**
+ * Hook for calculating LP value
+ */
+declare function useLpValue(pool: PerpsPoolState | null, oraclePrices: bigint[]): LpValueResult | null;
+/**
+ * Hook for calculating LP mint amount preview
+ */
+declare function useLpMintPreview(pool: PerpsPoolState | null, depositAmount: bigint, tokenIndex: number, oraclePrices: bigint[]): bigint | null;
+/**
+ * Hook for calculating withdrawal preview
+ */
+declare function useWithdrawPreview(pool: PerpsPoolState | null, lpAmount: bigint, tokenIndex: number, oraclePrices: bigint[]): WithdrawableResult | null;
+/**
+ * Hook for token utilization rates
+ */
+declare function useTokenUtilization(pool: PerpsPoolState | null): {
+    tokenIndex: number;
+    mint: PublicKey;
+    utilization: number;
+    borrowRate: number;
+}[];
+/**
+ * Hook for position validation
+ */
+declare function usePositionValidation(pool: PerpsPoolState | null, market: PerpsMarketState | null, marginAmount: bigint, leverage: number, direction: 'long' | 'short'): {
+    isValid: boolean;
+    error: string;
+    positionSize?: undefined;
+} | {
+    isValid: boolean;
+    error: null;
+    positionSize: bigint;
+};
+
+export { type AddLiquidityProgressStage, CloakCraftProvider, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type PerpsProgressStage, type ProtocolFeeConfig, type RemoveLiquidityProgressStage, type SwapProgressStage, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, WALLET_DERIVATION_MESSAGE, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useCloakCraft, useClosePosition, useConsolidation, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsConsolidationRecommended, useIsFreeOperation, useLiquidationPrice, useLpMintPreview, useLpValue, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOpenPosition, useOrders, usePerpsAddLiquidity, usePerpsMarkets, usePerpsPool, usePerpsPools, usePerpsRemoveLiquidity, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePositionPnL, usePositionValidation, usePrivateBalance, useProtocolFees, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTokenUtilization, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useWallet, useWithdrawPreview };

@@ -1,4 +1,9 @@
 // src/index.ts
+var PoolType = /* @__PURE__ */ ((PoolType2) => {
+  PoolType2[PoolType2["ConstantProduct"] = 0] = "ConstantProduct";
+  PoolType2[PoolType2["StableSwap"] = 1] = "StableSwap";
+  return PoolType2;
+})(PoolType || {});
 var OrderStatus = /* @__PURE__ */ ((OrderStatus2) => {
   OrderStatus2[OrderStatus2["Open"] = 0] = "Open";
   OrderStatus2[OrderStatus2["Filled"] = 1] = "Filled";
@@ -13,5 +18,6 @@ var AggregationStatus = /* @__PURE__ */ ((AggregationStatus2) => {
 })(AggregationStatus || {});
 export {
   AggregationStatus,
-  OrderStatus
+  OrderStatus,
+  PoolType
 };

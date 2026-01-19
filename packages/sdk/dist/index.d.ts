@@ -1,5 +1,6 @@
-import { DecryptedNote, Keypair, SpendingKey, ViewingKey, Point, TransferParams, AdapterSwapParams, OrderParams, AmmSwapParams, AddLiquidityParams, RemoveLiquidityParams, ConsolidationParams, FillOrderParams, CancelOrderParams, VoteParams, Groth16Proof, PoolState, AmmPoolState, ShieldParams, TransactionResult, StealthAddress, TransferProgressStage, SyncStatus, CreateAggregationParams, SubmitVoteParams, SubmitDecryptionShareParams, FinalizeVotingParams, FieldElement, PoseidonHash, Note, Commitment, Nullifier, EncryptedNote, ElGamalCiphertext } from '@cloakcraft/types';
+import { DecryptedNote, Keypair, SpendingKey, ViewingKey, Point, TransferParams, AdapterSwapParams, OrderParams, AmmSwapParams, AddLiquidityParams, RemoveLiquidityParams, ConsolidationParams, FillOrderParams, CancelOrderParams, VoteParams, Groth16Proof, PoolState, AmmPoolState, ShieldParams, TransactionResult, StealthAddress, TransferProgressStage, SyncStatus, CreateAggregationParams, SubmitVoteParams, SubmitDecryptionShareParams, FinalizeVotingParams, OpenPerpsPositionParams, ClosePerpsPositionParams, PerpsAddLiquidityClientParams, PerpsRemoveLiquidityClientParams, FieldElement, PoseidonHash, Note, Commitment, Nullifier, EncryptedNote, ElGamalCiphertext, PoolType, PreparedInput } from '@cloakcraft/types';
 export * from '@cloakcraft/types';
+export { PoolType } from '@cloakcraft/types';
 import * as _solana_web3_js from '@solana/web3.js';
 import { PublicKey, AccountMeta, Connection, Keypair as Keypair$1, TransactionInstruction, AddressLookupTableAccount, VersionedTransaction } from '@solana/web3.js';
 import * as _lightprotocol_stateless_js from '@lightprotocol/stateless.js';
@@ -50,7 +51,7 @@ interface PackedAddressTreeInfo {
 /**
  * Light nullifier params for transaction
  */
-interface LightNullifierParams {
+interface LightNullifierParams$1 {
     /** Validity proof from indexer */
     validityProof: ValidityProof;
     /** Address tree info */
@@ -141,7 +142,7 @@ declare class LightClient {
         addressQueueAccountIndex: number;
         /** Output state tree index */
         outputTreeIndex: number;
-    }): Promise<LightNullifierParams>;
+    }): Promise<LightNullifierParams$1>;
     /**
      * Get remaining accounts needed for Light Protocol CPI
      *
@@ -271,7 +272,7 @@ declare class LightCommitmentClient extends LightClient {
         addressMerkleTreeAccountIndex: number;
         addressQueueAccountIndex: number;
         outputTreeIndex: number;
-    }): Promise<LightNullifierParams>;
+    }): Promise<LightNullifierParams$1>;
     /**
      * Derive commitment compressed account address
      *
@@ -609,6 +610,213 @@ declare class ProofGenerator {
      */
     private formatProofForSolana;
     private buildTransferWitness;
+    /**
+     * Generate proof for opening a perps position
+     *
+     * Circuit proves:
+     * - Ownership of margin commitment
+     * - Correct nullifier derivation
+     * - Correct position commitment computation
+     * - Balance check: input = margin + fee
+     */
+    generateOpenPositionProof(params: {
+        /** Input note (margin source) */
+        input: {
+            stealthPubX: Uint8Array;
+            tokenMint: any;
+            amount: bigint;
+            randomness: Uint8Array;
+            leafIndex: number;
+            stealthEphemeralPubkey?: {
+                x: Uint8Array;
+                y: Uint8Array;
+            };
+        };
+        /** Perps pool ID (Pubkey bytes) */
+        perpsPoolId: Uint8Array;
+        /** Market ID */
+        marketId: bigint;
+        /** Is long position */
+        isLong: boolean;
+        /** Margin amount */
+        marginAmount: bigint;
+        /** Leverage (1-100) */
+        leverage: number;
+        /** Position size */
+        positionSize: bigint;
+        /** Entry price */
+        entryPrice: bigint;
+        /** Position fee */
+        positionFee: bigint;
+        /** Merkle root */
+        merkleRoot: Uint8Array;
+        /** Merkle path */
+        merklePath: Uint8Array[];
+        /** Merkle path indices */
+        merkleIndices: number[];
+    }, keypair: Keypair): Promise<{
+        proof: Uint8Array;
+        nullifier: Uint8Array;
+        positionCommitment: Uint8Array;
+        positionRandomness: Uint8Array;
+    }>;
+    /**
+     * Generate proof for closing a perps position
+     *
+     * Circuit proves:
+     * - Ownership of position commitment
+     * - Correct nullifier derivation
+     * - Correct settlement calculation (margin +/- PnL - fees)
+     * - Bounded profit (max profit = margin)
+     */
+    generateClosePositionProof(params: {
+        /** Position details */
+        position: {
+            stealthPubX: Uint8Array;
+            marketId: bigint;
+            isLong: boolean;
+            margin: bigint;
+            size: bigint;
+            leverage: number;
+            entryPrice: bigint;
+            randomness: Uint8Array;
+            leafIndex: number;
+            spendingKey: Uint8Array;
+        };
+        /** Perps pool ID */
+        perpsPoolId: Uint8Array;
+        /** Exit price from oracle */
+        exitPrice: bigint;
+        /** PnL amount (absolute value) */
+        pnlAmount: bigint;
+        /** Is profit (true) or loss (false) */
+        isProfit: boolean;
+        /** Close fee */
+        closeFee: bigint;
+        /** Settlement recipient stealth address */
+        settlementRecipient: {
+            stealthPubkey: {
+                x: Uint8Array;
+            };
+        };
+        /** Token mint for settlement */
+        tokenMint: Uint8Array;
+        /** Merkle root */
+        merkleRoot: Uint8Array;
+        /** Merkle path */
+        merklePath: Uint8Array[];
+        /** Merkle path indices */
+        merkleIndices: number[];
+    }, keypair: Keypair): Promise<{
+        proof: Uint8Array;
+        positionNullifier: Uint8Array;
+        settlementCommitment: Uint8Array;
+        settlementRandomness: Uint8Array;
+        settlementAmount: bigint;
+    }>;
+    /**
+     * Generate proof for adding perps liquidity (single token deposit)
+     *
+     * Circuit proves:
+     * - Ownership of deposit commitment
+     * - Correct nullifier derivation
+     * - Correct LP commitment computation
+     * - Balance check: input = deposit + fee
+     */
+    generateAddPerpsLiquidityProof(params: {
+        /** Input note (deposit token) */
+        input: {
+            stealthPubX: Uint8Array;
+            tokenMint: any;
+            amount: bigint;
+            randomness: Uint8Array;
+            leafIndex: number;
+            stealthEphemeralPubkey?: {
+                x: Uint8Array;
+                y: Uint8Array;
+            };
+        };
+        /** Perps pool ID */
+        perpsPoolId: Uint8Array;
+        /** Token index in pool (0-7) */
+        tokenIndex: number;
+        /** Deposit amount */
+        depositAmount: bigint;
+        /** LP amount to mint (calculated on-chain) */
+        lpAmountMinted: bigint;
+        /** Fee amount */
+        feeAmount: bigint;
+        /** LP recipient stealth address */
+        lpRecipient: {
+            stealthPubkey: {
+                x: Uint8Array;
+            };
+        };
+        /** Merkle root */
+        merkleRoot: Uint8Array;
+        /** Merkle path */
+        merklePath: Uint8Array[];
+        /** Merkle path indices */
+        merkleIndices: number[];
+    }, keypair: Keypair): Promise<{
+        proof: Uint8Array;
+        nullifier: Uint8Array;
+        lpCommitment: Uint8Array;
+        lpRandomness: Uint8Array;
+    }>;
+    /**
+     * Generate proof for removing perps liquidity
+     *
+     * Circuit proves:
+     * - Ownership of LP commitment
+     * - Correct LP nullifier derivation
+     * - Correct output token commitment
+     * - Correct change LP commitment
+     * - LP balance: lp_amount = burned + change
+     */
+    generateRemovePerpsLiquidityProof(params: {
+        /** LP token input */
+        lpInput: {
+            stealthPubX: Uint8Array;
+            lpAmount: bigint;
+            randomness: Uint8Array;
+            leafIndex: number;
+            spendingKey: Uint8Array;
+        };
+        /** Perps pool ID */
+        perpsPoolId: Uint8Array;
+        /** Token index to withdraw (0-7) */
+        tokenIndex: number;
+        /** LP amount to burn */
+        lpAmountBurned: bigint;
+        /** Withdraw amount */
+        withdrawAmount: bigint;
+        /** Fee amount */
+        feeAmount: bigint;
+        /** Output token recipient */
+        outputRecipient: {
+            stealthPubkey: {
+                x: Uint8Array;
+            };
+        };
+        /** Output token mint */
+        outputTokenMint: Uint8Array;
+        /** Change LP amount */
+        changeLpAmount: bigint;
+        /** Merkle root */
+        merkleRoot: Uint8Array;
+        /** Merkle path */
+        merklePath: Uint8Array[];
+        /** Merkle path indices */
+        merkleIndices: number[];
+    }, keypair: Keypair): Promise<{
+        proof: Uint8Array;
+        lpNullifier: Uint8Array;
+        outputCommitment: Uint8Array;
+        changeLpCommitment: Uint8Array;
+        outputRandomness: Uint8Array;
+        changeLpRandomness: Uint8Array;
+    }>;
 }
 /**
  * Parse a Groth16 proof from bytes
@@ -715,7 +923,7 @@ declare class CloakCraftClient {
      * @param nullifier - The nullifier bytes
      * @param pool - The pool public key (used in address derivation seeds)
      */
-    prepareLightParams(nullifier: Uint8Array, pool: PublicKey): Promise<LightNullifierParams>;
+    prepareLightParams(nullifier: Uint8Array, pool: PublicKey): Promise<LightNullifierParams$1>;
     /**
      * Get remaining accounts needed for Light Protocol CPI
      */
@@ -889,10 +1097,12 @@ declare class CloakCraftClient {
      * @param tokenBMint - Second token mint
      * @param lpMintKeypair - LP token mint keypair (newly generated)
      * @param feeBps - Trading fee in basis points (e.g., 30 = 0.3%)
+     * @param poolType - Pool type: 'constantProduct' (default) or 'stableSwap'
+     * @param amplification - Amplification coefficient for StableSwap (100-10000, default: 200)
      * @param payer - Payer for transaction fees and rent
      * @returns Transaction signature
      */
-    initializeAmmPool(tokenAMint: PublicKey, tokenBMint: PublicKey, lpMintKeypair: Keypair$1, feeBps: number, payer?: Keypair$1): Promise<string>;
+    initializeAmmPool(tokenAMint: PublicKey, tokenBMint: PublicKey, lpMintKeypair: Keypair$1, feeBps: number, poolType?: 'constantProduct' | 'stableSwap', amplification?: number, payer?: Keypair$1): Promise<string>;
     /**
      * Initialize LP pool for an existing AMM pool
      *
@@ -1048,6 +1258,52 @@ declare class CloakCraftClient {
      * Uses accountHash if available (from scanner), otherwise derives address.
      */
     private fetchMerkleProof;
+    /**
+     * Open a perpetual futures position
+     *
+     * @param params - Open position parameters
+     * @param relayer - Optional relayer keypair for transaction fees
+     */
+    openPerpsPosition(params: OpenPerpsPositionParams, relayer?: Keypair$1): Promise<TransactionResult>;
+    /**
+     * Close a perpetual futures position
+     *
+     * @param params - Close position parameters
+     * @param relayer - Optional relayer keypair for transaction fees
+     */
+    closePerpsPosition(params: ClosePerpsPositionParams, relayer?: Keypair$1): Promise<TransactionResult>;
+    /**
+     * Add liquidity to a perpetual futures pool
+     *
+     * @param params - Add liquidity parameters
+     * @param relayer - Optional relayer keypair for transaction fees
+     */
+    addPerpsLiquidity(params: PerpsAddLiquidityClientParams, relayer?: Keypair$1): Promise<TransactionResult>;
+    /**
+     * Remove liquidity from a perpetual futures pool
+     *
+     * @param params - Remove liquidity parameters
+     * @param relayer - Optional relayer keypair for transaction fees
+     */
+    removePerpsLiquidity(params: PerpsRemoveLiquidityClientParams, relayer?: Keypair$1): Promise<TransactionResult>;
+    /**
+     * Fetch all perps pools
+     */
+    getAllPerpsPools(): Promise<Array<{
+        address: PublicKey;
+        data: any;
+    }>>;
+    /**
+     * Fetch a specific perps pool
+     */
+    getPerpsPool(poolAddress: PublicKey): Promise<any>;
+    /**
+     * Fetch perps markets for a pool
+     */
+    getPerpsMarkets(poolAddress: PublicKey): Promise<Array<{
+        address: PublicKey;
+        data: any;
+    }>>;
 }
 
 /**
@@ -1573,6 +1829,11 @@ declare const CIRCUIT_IDS: {
     readonly ORDER_FILL: "market_order_fill";
     readonly ORDER_CANCEL: "market_order_cancel";
     readonly GOVERNANCE_VOTE: "governance_encrypted_submit";
+    readonly PERPS_OPEN_POSITION: "perps_open_position";
+    readonly PERPS_CLOSE_POSITION: "perps_close_position";
+    readonly PERPS_ADD_LIQUIDITY: "perps_add_liquidity";
+    readonly PERPS_REMOVE_LIQUIDITY: "perps_remove_liquidity";
+    readonly PERPS_LIQUIDATE: "perps_liquidate";
 };
 /**
  * Pad circuit ID to 32 bytes
@@ -2128,6 +2389,16 @@ interface PendingNullifierData {
 /**
  * Initialize AMM pool instruction parameters
  */
+/**
+ * Pool type for AMM
+ * 0 = ConstantProduct (x * y = k)
+ * 1 = StableSwap (Curve style)
+ */
+type PoolTypeParam = {
+    constantProduct: {};
+} | {
+    stableSwap: {};
+};
 interface InitializeAmmPoolParams {
     /** Token A mint */
     tokenAMint: PublicKey;
@@ -2141,6 +2412,10 @@ interface InitializeAmmPoolParams {
     authority: PublicKey;
     /** Payer */
     payer: PublicKey;
+    /** Pool type: 'constantProduct' or 'stableSwap' */
+    poolType?: 'constantProduct' | 'stableSwap';
+    /** Amplification coefficient for StableSwap pools (100-10000, typical: 200) */
+    amplification?: number;
 }
 /**
  * Returns tokens in canonical order (lower pubkey first by bytes).
@@ -2728,6 +3003,8 @@ declare function fetchAmmPool(connection: Connection, ammPoolPda: PublicKey): Pr
  * - is_active: 1 byte (bool)
  * - bump: 1 byte (u8)
  * - lp_mint_bump: 1 byte (u8)
+ * - pool_type: 1 byte (enum: 0=ConstantProduct, 1=StableSwap)
+ * - amplification: 8 bytes (u64 LE)
  *
  * @param data - Raw account data
  * @returns Deserialized AMM pool state
@@ -2805,23 +3082,45 @@ declare function formatAmmPool(pool: AmmPoolState, decimalsA?: number, decimalsB
 /**
  * AMM Calculations
  *
- * Implements constant product (x * y = k) AMM formulas for:
+ * Implements multiple AMM formulas:
+ * - Constant Product (x * y = k) - Uniswap V2 style, for volatile pairs
+ * - StableSwap (Curve) - for pegged assets like stablecoins
+ *
+ * Features:
  * - Swap output calculation
  * - Liquidity addition/removal
  * - Price impact and slippage
  */
+
 /**
- * Calculate swap output amount using constant product formula
+ * Calculate swap output amount using StableSwap formula (Curve-style)
  *
- * Formula: output = (reserveOut * inputAmount * (10000 - fee)) / ((reserveIn * 10000) + (inputAmount * (10000 - fee)))
+ * StableSwap invariant: A * n^n * sum(x) + D = A * D * n^n + D^(n+1) / (n^n * prod(x))
+ * For n=2: A * 4 * (x + y) + D = A * D * 4 + D^3 / (4 * x * y)
  *
  * @param inputAmount - Amount of input token to swap
  * @param reserveIn - Reserve of input token in pool
  * @param reserveOut - Reserve of output token in pool
- * @param feeBps - Fee in basis points (default 30 = 0.3%)
+ * @param amplification - Amplification coefficient (A), typically 100-1000
+ * @param feeBps - Fee in basis points (default 4 = 0.04% for stables)
  * @returns Output amount and price impact percentage
  */
-declare function calculateSwapOutput(inputAmount: bigint, reserveIn: bigint, reserveOut: bigint, feeBps?: number): {
+declare function calculateStableSwapOutput(inputAmount: bigint, reserveIn: bigint, reserveOut: bigint, amplification: bigint, feeBps?: number): {
+    outputAmount: bigint;
+    priceImpact: number;
+};
+/**
+ * Unified swap output calculation that handles both pool types
+ *
+ * @param inputAmount - Amount of input token to swap
+ * @param reserveIn - Reserve of input token in pool
+ * @param reserveOut - Reserve of output token in pool
+ * @param poolType - Pool type (ConstantProduct or StableSwap)
+ * @param feeBps - Fee in basis points
+ * @param amplification - Amplification coefficient (only for StableSwap)
+ * @returns Output amount and price impact percentage
+ */
+declare function calculateSwapOutputUnified(inputAmount: bigint, reserveIn: bigint, reserveOut: bigint, poolType: PoolType, feeBps: number, amplification?: bigint): {
     outputAmount: bigint;
     priceImpact: number;
 };
@@ -2867,9 +3166,12 @@ declare function calculateRemoveLiquidityOutput(lpAmount: bigint, lpSupply: bigi
  * @param inputAmount - Amount of input token
  * @param reserveIn - Reserve of input token
  * @param reserveOut - Reserve of output token
+ * @param poolType - Pool type (defaults to ConstantProduct)
+ * @param feeBps - Fee in basis points (defaults to 30)
+ * @param amplification - Amplification coefficient (only for StableSwap)
  * @returns Price impact as percentage (e.g., 1.5 = 1.5%)
  */
-declare function calculatePriceImpact(inputAmount: bigint, reserveIn: bigint, reserveOut: bigint): number;
+declare function calculatePriceImpact(inputAmount: bigint, reserveIn: bigint, reserveOut: bigint, poolType?: PoolType, feeBps?: number, amplification?: bigint): number;
 /**
  * Calculate slippage percentage
  *
@@ -4074,4 +4376,830 @@ declare function enableAutoConsolidation(config?: Omit<AutoConsolidationConfig, 
  */
 declare function disableAutoConsolidation(): void;
 
-export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, type AutoConsolidationConfig, type AutoConsolidationState, AutoConsolidator, BPS_DIVISOR, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CircuitType, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type CommitmentMerkleProof, type CompressedAccountInfo, type ConsolidationBatch, type ConsolidationInput, type ConsolidationInstructionParams, type ConsolidationOptions, type ConsolidationResult, ConsolidationService, type ConsolidationSuggestion, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEFAULT_FEE_CONFIG, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FeeCalculation, type FeeableOperation, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, type FragmentationReport, type FreeOperation, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, MAINNET_LIGHT_TREES, MAX_FEE_BPS, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, type NoteSelectionOptions, type NoteSelectionResult, type OperationType, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, type PoolAnalytics, PoolAnalyticsCalculator, type PoolStats, ProofGenerator, type ProtocolFeeConfig, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, SEEDS, type ScannedNote, type SelectionStrategy, type ShieldInstructionParams, type ShieldResult, SmartNoteSelector, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TokenPrice, TokenPriceFetcher, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type TransactionFilter, TransactionHistory, type TransactionRecord, TransactionStatus, TransactionType, type UserPoolPosition, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildConsolidationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePoolWithProgram, buildRemoveLiquidityWithProgram, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateInvariant, calculateMinOutput, calculateMinimumFee, calculatePriceImpact, calculatePriceRatio, calculateProtocolFee, calculateRemoveLiquidityOutput, calculateSlippage, calculateSwapOutput, calculateSwapProtocolFee, calculateTotalLiquidity, calculateUsdPriceImpact, canFitInSingleTransaction, canonicalTokenOrder, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, consolidationService, createAddressLookupTable, createCloakCraftALT, createNote, createPendingTransaction, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePoolPda, deriveProtocolConfigPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, disableAutoConsolidation, elgamalEncrypt, enableAutoConsolidation, encryptNote, encryptVote, estimateTotalCost, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fetchProtocolFeeConfig, fieldToBytes, formatAmmPool, formatApy, formatFeeAmount, formatFeeRate, formatPrice, formatPriceChange, formatShare, formatTvl, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getAutoConsolidator, getFeeBps, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isFeeableOperation, isFreeOperation, isInSubgroup, isOnCurve, lagrangeCoefficient, loadCircomArtifacts, loadWallet, noteSelector, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof, verifyFeeAmount, verifyInvariant };
+/**
+ * CloakCraft Perpetual Futures Types
+ *
+ * Types for the lending-based perpetual futures system.
+ */
+
+/** Maximum number of tokens supported in a perps pool */
+declare const MAX_PERPS_TOKENS = 8;
+/** Token configuration in a perps pool */
+interface PerpsToken {
+    /** Token mint */
+    mint: PublicKey;
+    /** Token vault PDA */
+    vault: PublicKey;
+    /** Price oracle */
+    oracle: PublicKey;
+    /** Total balance in pool */
+    balance: bigint;
+    /** Amount locked in positions */
+    locked: bigint;
+    /** Cumulative borrow fee (scaled by 1e18) */
+    cumulativeBorrowFee: bigint;
+    /** Last fee update timestamp */
+    lastFeeUpdate: number;
+    /** Token decimals */
+    decimals: number;
+    /** Is active */
+    isActive: boolean;
+}
+/** Perps pool state */
+interface PerpsPoolState {
+    /** Pool ID */
+    poolId: PublicKey;
+    /** LP token mint */
+    lpMint: PublicKey;
+    /** LP token supply */
+    lpSupply: bigint;
+    /** Pool authority */
+    authority: PublicKey;
+    /** Number of tokens in pool */
+    numTokens: number;
+    /** Token configurations */
+    tokens: PerpsToken[];
+    /** Max leverage (e.g., 100 for 100x) */
+    maxLeverage: number;
+    /** Position fee in basis points */
+    positionFeeBps: number;
+    /** Max utilization in basis points (e.g., 8000 for 80%) */
+    maxUtilizationBps: number;
+    /** Liquidation threshold in basis points */
+    liquidationThresholdBps: number;
+    /** Liquidation penalty in basis points */
+    liquidationPenaltyBps: number;
+    /** Base borrow rate in basis points (per hour) */
+    baseBorrowRateBps: number;
+    /** Is pool active */
+    isActive: boolean;
+    /** PDA bump */
+    bump: number;
+}
+/** Perps market state (trading pair) */
+interface PerpsMarketState {
+    /** Market ID */
+    marketId: Uint8Array;
+    /** Parent pool */
+    pool: PublicKey;
+    /** Base token index in pool */
+    baseTokenIndex: number;
+    /** Quote token index in pool */
+    quoteTokenIndex: number;
+    /** Long open interest */
+    longOpenInterest: bigint;
+    /** Short open interest */
+    shortOpenInterest: bigint;
+    /** Max position size */
+    maxPositionSize: bigint;
+    /** Is market active */
+    isActive: boolean;
+    /** PDA bump */
+    bump: number;
+}
+/** Position direction */
+type PositionDirection = 'long' | 'short';
+/** Position data (stored in commitment) */
+interface PerpsPosition {
+    /** Position commitment */
+    commitment: Uint8Array;
+    /** Market */
+    market: PublicKey;
+    /** Direction */
+    direction: PositionDirection;
+    /** Margin amount */
+    margin: bigint;
+    /** Position size (margin * leverage) */
+    size: bigint;
+    /** Leverage multiplier */
+    leverage: number;
+    /** Entry price */
+    entryPrice: bigint;
+    /** Cumulative borrow fee at entry (for fee calculation) */
+    entryBorrowFee: bigint;
+    /** Entry timestamp */
+    entryTimestamp: number;
+    /** Leaf index in merkle tree */
+    leafIndex: number;
+    /** Stealth ephemeral pubkey (for spending) */
+    stealthEphemeralPubkey?: {
+        x: FieldElement;
+        y: FieldElement;
+    };
+}
+/** Decoded position from encrypted note */
+interface DecryptedPerpsPosition extends PerpsPosition {
+    /** Account hash for Light Protocol */
+    accountHash?: string;
+}
+/** Open position parameters */
+interface OpenPositionParams {
+    /** Input note (margin source) */
+    input: PreparedInput;
+    /** Perps pool */
+    perpsPool: PublicKey;
+    /** Market to trade */
+    market: PublicKey;
+    /** Position direction */
+    direction: PositionDirection;
+    /** Margin amount to use */
+    margin: bigint;
+    /** Leverage multiplier (1-100) */
+    leverage: number;
+    /** Entry price from oracle */
+    entryPrice: bigint;
+    /** Recipient for position commitment */
+    positionRecipient: StealthAddress;
+    /** Recipient for change (input - margin - fee) */
+    changeRecipient: StealthAddress;
+    /** Merkle root for input */
+    merkleRoot: Uint8Array;
+    /** Merkle path elements */
+    merklePath: Uint8Array[];
+    /** Merkle path indices */
+    merkleIndices: number[];
+    /** Optional progress callback */
+    onProgress?: (stage: TransferProgressStage) => void;
+}
+/** Close position parameters */
+interface ClosePositionParams {
+    /** Position note to close */
+    position: DecryptedPerpsPosition;
+    /** Perps pool */
+    perpsPool: PublicKey;
+    /** Market */
+    market: PublicKey;
+    /** Exit price from oracle */
+    exitPrice: bigint;
+    /** Recipient for settlement (margin + PnL) */
+    settlementRecipient: StealthAddress;
+    /** Merkle root for position */
+    merkleRoot: Uint8Array;
+    /** Merkle path elements */
+    merklePath: Uint8Array[];
+    /** Merkle path indices */
+    merkleIndices: number[];
+    /** Optional progress callback */
+    onProgress?: (stage: TransferProgressStage) => void;
+}
+/** Add perps liquidity parameters */
+interface AddPerpsLiquidityParams {
+    /** Input note (single token) */
+    input: PreparedInput;
+    /** Perps pool */
+    perpsPool: PublicKey;
+    /** Token index in pool */
+    tokenIndex: number;
+    /** Amount to deposit */
+    depositAmount: bigint;
+    /** LP tokens to receive */
+    lpAmount: bigint;
+    /** Recipient for LP tokens */
+    lpRecipient: StealthAddress;
+    /** Recipient for change (input - deposit) */
+    changeRecipient: StealthAddress;
+    /** Merkle root for input */
+    merkleRoot: Uint8Array;
+    /** Merkle path elements */
+    merklePath: Uint8Array[];
+    /** Merkle path indices */
+    merkleIndices: number[];
+    /** Current oracle prices for all tokens */
+    oraclePrices: bigint[];
+    /** Optional progress callback */
+    onProgress?: (stage: TransferProgressStage) => void;
+}
+/** Remove perps liquidity parameters */
+interface RemovePerpsLiquidityParams {
+    /** LP token note */
+    lpInput: PreparedInput;
+    /** Perps pool */
+    perpsPool: PublicKey;
+    /** Token index to withdraw */
+    tokenIndex: number;
+    /** LP tokens to burn */
+    lpAmount: bigint;
+    /** Amount to withdraw */
+    withdrawAmount: bigint;
+    /** Recipient for withdrawn tokens */
+    outputRecipient: StealthAddress;
+    /** Recipient for LP change (if any) */
+    lpChangeRecipient: StealthAddress;
+    /** Merkle root for LP input */
+    merkleRoot: Uint8Array;
+    /** Merkle path elements */
+    merklePath: Uint8Array[];
+    /** Merkle path indices */
+    merkleIndices: number[];
+    /** Current oracle prices for all tokens */
+    oraclePrices: bigint[];
+    /** Optional progress callback */
+    onProgress?: (stage: TransferProgressStage) => void;
+}
+/** Liquidate position parameters */
+interface LiquidatePositionParams {
+    /** Position to liquidate */
+    position: DecryptedPerpsPosition;
+    /** Perps pool */
+    perpsPool: PublicKey;
+    /** Market */
+    market: PublicKey;
+    /** Current price from oracle */
+    currentPrice: bigint;
+    /** Keeper/liquidator receiving reward */
+    liquidatorRecipient: StealthAddress;
+    /** Position owner receiving remainder */
+    ownerRecipient: StealthAddress;
+    /** Merkle root for position */
+    merkleRoot: Uint8Array;
+    /** Merkle path elements */
+    merklePath: Uint8Array[];
+    /** Merkle path indices */
+    merkleIndices: number[];
+}
+/** Open position proof result */
+interface OpenPositionProofResult {
+    proof: Uint8Array;
+    nullifier: Uint8Array;
+    positionCommitment: Uint8Array;
+    changeCommitment: Uint8Array;
+    positionRandomness: Uint8Array;
+    changeRandomness: Uint8Array;
+    positionFee: bigint;
+}
+/** Close position proof result */
+interface ClosePositionProofResult {
+    proof: Uint8Array;
+    positionNullifier: Uint8Array;
+    settlementCommitment: Uint8Array;
+    settlementRandomness: Uint8Array;
+    pnlAmount: bigint;
+    isProfit: boolean;
+    closeFee: bigint;
+}
+/** Add perps liquidity proof result */
+interface AddPerpsLiquidityProofResult {
+    proof: Uint8Array;
+    nullifier: Uint8Array;
+    lpCommitment: Uint8Array;
+    changeCommitment: Uint8Array;
+    lpRandomness: Uint8Array;
+    changeRandomness: Uint8Array;
+    feeAmount: bigint;
+}
+/** Remove perps liquidity proof result */
+interface RemovePerpsLiquidityProofResult {
+    proof: Uint8Array;
+    lpNullifier: Uint8Array;
+    outputCommitment: Uint8Array;
+    lpChangeCommitment: Uint8Array;
+    outputRandomness: Uint8Array;
+    lpChangeRandomness: Uint8Array;
+    feeAmount: bigint;
+}
+/** Liquidate position proof result */
+interface LiquidateProofResult {
+    proof: Uint8Array;
+    positionNullifier: Uint8Array;
+    ownerCommitment: Uint8Array;
+    liquidatorCommitment: Uint8Array;
+    ownerRandomness: Uint8Array;
+    liquidatorRandomness: Uint8Array;
+    liquidatorReward: bigint;
+    ownerRemainder: bigint;
+}
+/** PnL calculation result */
+interface PnLResult {
+    /** Raw PnL amount (positive = profit, negative = loss) */
+    pnl: bigint;
+    /** Is position in profit */
+    isProfit: boolean;
+    /** PnL percentage (scaled by 10000, e.g., 500 = 5%) */
+    pnlBps: number;
+    /** Effective margin after PnL */
+    effectiveMargin: bigint;
+    /** Accumulated borrow fees */
+    borrowFees: bigint;
+    /** Total settlement amount */
+    settlementAmount: bigint;
+    /** Is position at profit bound (PnL >= margin) */
+    atProfitBound: boolean;
+    /** Is position liquidatable */
+    isLiquidatable: boolean;
+}
+/** Liquidation price result */
+interface LiquidationPriceResult {
+    /** Liquidation price */
+    price: bigint;
+    /** Distance from current price in basis points */
+    distanceBps: number;
+}
+/** LP value calculation result */
+interface LpValueResult {
+    /** Total value in USD (scaled by 1e6) */
+    totalValueUsd: bigint;
+    /** Value per LP token */
+    valuePerLp: bigint;
+    /** Token balances and values */
+    tokenValues: {
+        mint: PublicKey;
+        balance: bigint;
+        priceUsd: bigint;
+        valueUsd: bigint;
+    }[];
+}
+/** Withdrawable amount result */
+interface WithdrawableResult {
+    /** Max withdrawable amount of requested token */
+    maxAmount: bigint;
+    /** Current utilization after withdrawal */
+    utilizationAfter: number;
+    /** LP tokens required to burn */
+    lpRequired: bigint;
+}
+
+/**
+ * CloakCraft Perpetual Futures Calculations
+ *
+ * PnL, liquidation price, LP value, and other perps-related calculations.
+ */
+
+/**
+ * Calculate position PnL
+ *
+ * @param position - The position to calculate PnL for
+ * @param currentPrice - Current oracle price
+ * @param pool - Perps pool state
+ * @param currentTimestamp - Current timestamp for borrow fee calculation
+ */
+declare function calculatePnL(position: PerpsPosition, currentPrice: bigint, pool: PerpsPoolState, currentTimestamp: number): PnLResult;
+/**
+ * Calculate accumulated borrow fees for a position
+ *
+ * @param position - The position
+ * @param pool - Perps pool state
+ * @param currentTimestamp - Current timestamp
+ */
+declare function calculateBorrowFees(position: PerpsPosition, pool: PerpsPoolState, currentTimestamp: number): bigint;
+/**
+ * Calculate liquidation price for a position
+ *
+ * @param position - The position
+ * @param pool - Perps pool state
+ * @param currentTimestamp - Current timestamp for fee estimation
+ */
+declare function calculateLiquidationPrice(position: PerpsPosition, pool: PerpsPoolState, currentTimestamp: number): LiquidationPriceResult;
+/**
+ * Calculate position fee
+ *
+ * @param positionSize - Size of the position
+ * @param feeBps - Fee in basis points
+ */
+declare function calculatePositionFee(positionSize: bigint, feeBps: number): bigint;
+/**
+ * Calculate imbalance fee for opening a position
+ *
+ * @param market - Market state
+ * @param positionSize - Size of position being opened
+ * @param isLong - Whether opening a long
+ */
+declare function calculateImbalanceFee(market: PerpsMarketState, positionSize: bigint, isLong: boolean): bigint;
+/**
+ * Calculate total pool value and LP token value
+ *
+ * @param pool - Perps pool state
+ * @param oraclePrices - Current oracle prices for each token (USD, scaled by 1e6)
+ */
+declare function calculateLpValue(pool: PerpsPoolState, oraclePrices: bigint[]): LpValueResult;
+/**
+ * Calculate LP tokens to mint for a deposit
+ *
+ * @param pool - Perps pool state
+ * @param depositAmount - Amount of token to deposit
+ * @param tokenIndex - Index of token being deposited
+ * @param oraclePrices - Current oracle prices
+ */
+declare function calculateLpMintAmount(pool: PerpsPoolState, depositAmount: bigint, tokenIndex: number, oraclePrices: bigint[]): bigint;
+/**
+ * Calculate token amount for LP withdrawal
+ *
+ * @param pool - Perps pool state
+ * @param lpAmount - Amount of LP tokens to burn
+ * @param tokenIndex - Index of token to withdraw
+ * @param oraclePrices - Current oracle prices
+ */
+declare function calculateWithdrawAmount(pool: PerpsPoolState, lpAmount: bigint, tokenIndex: number, oraclePrices: bigint[]): bigint;
+/**
+ * Calculate maximum withdrawable amount for a token
+ *
+ * @param pool - Perps pool state
+ * @param tokenIndex - Index of token to withdraw
+ * @param lpAmount - Amount of LP tokens to burn
+ * @param oraclePrices - Current oracle prices
+ */
+declare function calculateMaxWithdrawable(pool: PerpsPoolState, tokenIndex: number, lpAmount: bigint, oraclePrices: bigint[]): WithdrawableResult;
+/**
+ * Calculate token utilization rate
+ *
+ * @param token - Token state
+ */
+declare function calculateUtilization(token: {
+    balance: bigint;
+    locked: bigint;
+}): number;
+/**
+ * Calculate borrow rate based on utilization
+ *
+ * @param utilization - Current utilization (basis points, 0-10000)
+ * @param baseBorrowRateBps - Base borrow rate in bps
+ */
+declare function calculateBorrowRate(utilization: number, baseBorrowRateBps: number): number;
+/**
+ * Check if a leverage is valid
+ */
+declare function isValidLeverage(leverage: number, maxLeverage: number): boolean;
+/**
+ * Check if utilization would exceed limit after an operation
+ */
+declare function wouldExceedUtilization(token: {
+    balance: bigint;
+    locked: bigint;
+}, additionalLock: bigint, maxUtilizationBps: number): boolean;
+/**
+ * Validate position size against market limits
+ */
+declare function isValidPositionSize(positionSize: bigint, market: PerpsMarketState): boolean;
+
+/**
+ * CloakCraft Perpetual Futures Instruction Builders
+ *
+ * Multi-phase instruction builders for perps operations.
+ * Follows the append pattern for complex operations.
+ */
+
+declare const PERPS_SEEDS: {
+    readonly PERPS_POOL: Buffer<ArrayBuffer>;
+    readonly PERPS_MARKET: Buffer<ArrayBuffer>;
+    readonly PERPS_VAULT: Buffer<ArrayBuffer>;
+    readonly PERPS_LP_MINT: Buffer<ArrayBuffer>;
+};
+declare const PERPS_CIRCUIT_IDS: {
+    readonly OPEN_POSITION: "perps_open_position";
+    readonly CLOSE_POSITION: "perps_close_position";
+    readonly ADD_LIQUIDITY: "perps_add_liquidity";
+    readonly REMOVE_LIQUIDITY: "perps_remove_liquidity";
+    readonly LIQUIDATE: "perps_liquidate";
+};
+/**
+ * Derive perps pool PDA
+ */
+declare function derivePerpsPoolPda(poolId: PublicKey, programId?: PublicKey): [PublicKey, number];
+/**
+ * Derive perps market PDA
+ */
+declare function derivePerpsMarketPda(perpsPool: PublicKey, marketId: Uint8Array, programId?: PublicKey): [PublicKey, number];
+/**
+ * Derive perps vault PDA for a token
+ */
+declare function derivePerpsVaultPda(perpsPool: PublicKey, tokenMint: PublicKey, programId?: PublicKey): [PublicKey, number];
+/**
+ * Derive perps LP mint PDA
+ */
+declare function derivePerpsLpMintPda(perpsPool: PublicKey, programId?: PublicKey): [PublicKey, number];
+/** Light params for verify commitment */
+interface LightVerifyParams {
+    commitmentAccountHash: number[];
+    commitmentMerkleContext: {
+        merkleTreePubkeyIndex: number;
+        queuePubkeyIndex: number;
+        leafIndex: number;
+        rootIndex: number;
+    };
+    commitmentInclusionProof: {
+        a: number[];
+        b: number[];
+        c: number[];
+    };
+    commitmentAddressTreeInfo: {
+        addressMerkleTreePubkeyIndex: number;
+        addressQueuePubkeyIndex: number;
+        rootIndex: number;
+    };
+}
+/** Light params for create nullifier */
+interface LightNullifierParams {
+    nullifierNonInclusionProof: {
+        a: number[];
+        b: number[];
+        c: number[];
+    };
+    nullifierAddressTreeInfo: {
+        addressMerkleTreePubkeyIndex: number;
+        addressQueuePubkeyIndex: number;
+        rootIndex: number;
+    };
+    outputTreeIndex: number;
+}
+interface OpenPositionInstructionParams {
+    /** Settlement pool (where margin comes from) */
+    settlementPool: PublicKey;
+    /** Perps pool */
+    perpsPool: PublicKey;
+    /** Market */
+    market: PublicKey;
+    /** ZK proof */
+    proof: Uint8Array;
+    /** Merkle root */
+    merkleRoot: Uint8Array;
+    /** Input commitment (margin) */
+    inputCommitment: Uint8Array;
+    /** Nullifier */
+    nullifier: Uint8Array;
+    /** Position commitment */
+    positionCommitment: Uint8Array;
+    /** Is long position */
+    isLong: boolean;
+    /** Margin amount */
+    marginAmount: bigint;
+    /** Leverage */
+    leverage: number;
+    /** Position fee */
+    positionFee: bigint;
+    /** Entry price */
+    entryPrice: bigint;
+    /** Relayer/payer */
+    relayer: PublicKey;
+    /** Position stealth address for encryption */
+    positionRecipient: StealthAddress;
+    /** Change stealth address */
+    changeRecipient: StealthAddress;
+    /** Position randomness (from proof generation) */
+    positionRandomness: Uint8Array;
+    /** Change randomness */
+    changeRandomness: Uint8Array;
+    /** Change amount */
+    changeAmount: bigint;
+    /** Token mint for margin */
+    tokenMint: PublicKey;
+    /** Light params for verify commitment */
+    lightVerifyParams: LightVerifyParams;
+    /** Light params for create nullifier */
+    lightNullifierParams: LightNullifierParams;
+    /** Remaining accounts for Light Protocol */
+    remainingAccounts: {
+        pubkey: PublicKey;
+        isSigner: boolean;
+        isWritable: boolean;
+    }[];
+}
+/**
+ * Build open position multi-phase instructions
+ */
+declare function buildOpenPositionWithProgram(program: Program, params: OpenPositionInstructionParams): Promise<{
+    tx: any;
+    phase1Tx: any;
+    phase2Tx: any;
+    phase3Tx: any;
+    operationId: Uint8Array;
+    pendingCommitments: PendingCommitmentData[];
+}>;
+interface ClosePositionInstructionParams {
+    /** Settlement pool */
+    settlementPool: PublicKey;
+    /** Perps pool */
+    perpsPool: PublicKey;
+    /** Market */
+    market: PublicKey;
+    /** ZK proof */
+    proof: Uint8Array;
+    /** Merkle root */
+    merkleRoot: Uint8Array;
+    /** Position commitment */
+    positionCommitment: Uint8Array;
+    /** Position nullifier */
+    positionNullifier: Uint8Array;
+    /** Settlement commitment */
+    settlementCommitment: Uint8Array;
+    /** Is long */
+    isLong: boolean;
+    /** Exit price */
+    exitPrice: bigint;
+    /** Close fee */
+    closeFee: bigint;
+    /** PnL amount */
+    pnlAmount: bigint;
+    /** Is profit */
+    isProfit: boolean;
+    /** Position margin */
+    positionMargin: bigint;
+    /** Position size */
+    positionSize: bigint;
+    /** Entry price */
+    entryPrice: bigint;
+    /** Relayer */
+    relayer: PublicKey;
+    /** Settlement recipient */
+    settlementRecipient: StealthAddress;
+    /** Settlement randomness */
+    settlementRandomness: Uint8Array;
+    /** Settlement amount */
+    settlementAmount: bigint;
+    /** Token mint */
+    tokenMint: PublicKey;
+    /** Light verify params */
+    lightVerifyParams: LightVerifyParams;
+    /** Light nullifier params */
+    lightNullifierParams: LightNullifierParams;
+    /** Remaining accounts */
+    remainingAccounts: {
+        pubkey: PublicKey;
+        isSigner: boolean;
+        isWritable: boolean;
+    }[];
+}
+/**
+ * Build close position multi-phase instructions
+ */
+declare function buildClosePositionWithProgram(program: Program, params: ClosePositionInstructionParams): Promise<{
+    tx: any;
+    phase1Tx: any;
+    phase2Tx: any;
+    phase3Tx: any;
+    operationId: Uint8Array;
+    pendingCommitments: PendingCommitmentData[];
+}>;
+interface AddPerpsLiquidityInstructionParams {
+    /** Settlement pool */
+    settlementPool: PublicKey;
+    /** Perps pool */
+    perpsPool: PublicKey;
+    /** ZK proof */
+    proof: Uint8Array;
+    /** Merkle root */
+    merkleRoot: Uint8Array;
+    /** Input commitment */
+    inputCommitment: Uint8Array;
+    /** Nullifier */
+    nullifier: Uint8Array;
+    /** LP commitment */
+    lpCommitment: Uint8Array;
+    /** Token index */
+    tokenIndex: number;
+    /** Deposit amount */
+    depositAmount: bigint;
+    /** LP amount to mint */
+    lpAmountMinted: bigint;
+    /** Fee amount */
+    feeAmount: bigint;
+    /** Oracle prices for all tokens (8 elements) */
+    oraclePrices: bigint[];
+    /** Relayer */
+    relayer: PublicKey;
+    /** LP recipient */
+    lpRecipient: StealthAddress;
+    /** LP randomness */
+    lpRandomness: Uint8Array;
+    /** Token mint */
+    tokenMint: PublicKey;
+    /** LP mint */
+    lpMint: PublicKey;
+    /** Light verify params */
+    lightVerifyParams: LightVerifyParams;
+    /** Light nullifier params */
+    lightNullifierParams: LightNullifierParams;
+    /** Remaining accounts */
+    remainingAccounts: {
+        pubkey: PublicKey;
+        isSigner: boolean;
+        isWritable: boolean;
+    }[];
+}
+/**
+ * Build add perps liquidity multi-phase instructions
+ */
+declare function buildAddPerpsLiquidityWithProgram(program: Program, params: AddPerpsLiquidityInstructionParams): Promise<{
+    tx: any;
+    phase1Tx: any;
+    phase2Tx: any;
+    phase3Tx: any;
+    operationId: Uint8Array;
+    pendingCommitments: PendingCommitmentData[];
+}>;
+interface RemovePerpsLiquidityInstructionParams {
+    /** Settlement pool */
+    settlementPool: PublicKey;
+    /** Perps pool */
+    perpsPool: PublicKey;
+    /** ZK proof */
+    proof: Uint8Array;
+    /** Merkle root */
+    merkleRoot: Uint8Array;
+    /** LP commitment */
+    lpCommitment: Uint8Array;
+    /** LP nullifier */
+    lpNullifier: Uint8Array;
+    /** Output commitment */
+    outputCommitment: Uint8Array;
+    /** Change LP commitment */
+    changeLpCommitment: Uint8Array;
+    /** Token index to withdraw */
+    tokenIndex: number;
+    /** Withdraw amount */
+    withdrawAmount: bigint;
+    /** LP amount to burn */
+    lpAmountBurned: bigint;
+    /** Fee amount */
+    feeAmount: bigint;
+    /** Oracle prices */
+    oraclePrices: bigint[];
+    /** Relayer */
+    relayer: PublicKey;
+    /** Output recipient */
+    outputRecipient: StealthAddress;
+    /** LP change recipient */
+    lpChangeRecipient: StealthAddress;
+    /** Output randomness */
+    outputRandomness: Uint8Array;
+    /** LP change randomness */
+    lpChangeRandomness: Uint8Array;
+    /** Token mint */
+    tokenMint: PublicKey;
+    /** LP mint */
+    lpMint: PublicKey;
+    /** LP change amount */
+    lpChangeAmount: bigint;
+    /** Light verify params */
+    lightVerifyParams: LightVerifyParams;
+    /** Light nullifier params */
+    lightNullifierParams: LightNullifierParams;
+    /** Remaining accounts */
+    remainingAccounts: {
+        pubkey: PublicKey;
+        isSigner: boolean;
+        isWritable: boolean;
+    }[];
+}
+/**
+ * Build remove perps liquidity multi-phase instructions
+ */
+declare function buildRemovePerpsLiquidityWithProgram(program: Program, params: RemovePerpsLiquidityInstructionParams): Promise<{
+    tx: any;
+    phase1Tx: any;
+    phase2Tx: any;
+    phase3Tx: any;
+    operationId: Uint8Array;
+    pendingCommitments: PendingCommitmentData[];
+}>;
+interface InitializePerpsPoolParams {
+    poolId: PublicKey;
+    authority: PublicKey;
+    payer: PublicKey;
+    maxLeverage?: number;
+    positionFeeBps?: number;
+    maxUtilizationBps?: number;
+    liquidationThresholdBps?: number;
+    liquidationPenaltyBps?: number;
+    baseBorrowRateBps?: number;
+}
+/**
+ * Build initialize perps pool instruction
+ */
+declare function buildInitializePerpsPoolWithProgram(program: Program, params: InitializePerpsPoolParams): Promise<{
+    tx: any;
+}>;
+interface AddTokenToPoolParams {
+    perpsPool: PublicKey;
+    tokenMint: PublicKey;
+    oracle: PublicKey;
+    authority: PublicKey;
+    payer: PublicKey;
+}
+/**
+ * Build add token to pool instruction
+ */
+declare function buildAddTokenToPoolWithProgram(program: Program, params: AddTokenToPoolParams): Promise<{
+    tx: any;
+}>;
+interface AddMarketParams {
+    perpsPool: PublicKey;
+    marketId: Uint8Array;
+    baseTokenIndex: number;
+    quoteTokenIndex: number;
+    maxPositionSize: bigint;
+    authority: PublicKey;
+    payer: PublicKey;
+}
+/**
+ * Build add market instruction
+ */
+declare function buildAddMarketWithProgram(program: Program, params: AddMarketParams): Promise<{
+    tx: any;
+}>;
+/**
+ * Build update borrow fees instruction
+ */
+declare function buildUpdateBorrowFeesWithProgram(program: Program, perpsPool: PublicKey, keeper: PublicKey): Promise<{
+    tx: any;
+}>;
+
+export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, type AddMarketParams, type AddPerpsLiquidityInstructionParams, type AddPerpsLiquidityParams, type AddPerpsLiquidityProofResult, type AddTokenToPoolParams, type AutoConsolidationConfig, type AutoConsolidationState, AutoConsolidator, BPS_DIVISOR, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CircuitType, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type ClosePositionInstructionParams, type ClosePositionParams, type ClosePositionProofResult, type CommitmentMerkleProof, type CompressedAccountInfo, type ConsolidationBatch, type ConsolidationInput, type ConsolidationInstructionParams, type ConsolidationOptions, type ConsolidationResult, ConsolidationService, type ConsolidationSuggestion, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEFAULT_FEE_CONFIG, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptedPerpsPosition, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FeeCalculation, type FeeableOperation, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, type FragmentationReport, type FreeOperation, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePerpsPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams$1 as LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, type LiquidatePositionParams, type LiquidateProofResult, type LiquidationPriceResult, type LpValueResult, MAINNET_LIGHT_TREES, MAX_FEE_BPS, MAX_PERPS_TOKENS, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, type NoteSelectionOptions, type NoteSelectionResult, type OpenPositionInstructionParams, type OpenPositionParams, type OpenPositionProofResult, type OperationType, PERPS_CIRCUIT_IDS, PERPS_SEEDS, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, type PerpsMarketState, type PerpsPoolState, type PerpsPosition, type PerpsToken, type PnLResult, type PoolAnalytics, PoolAnalyticsCalculator, type PoolStats, type PoolTypeParam, type PositionDirection, ProofGenerator, type ProtocolFeeConfig, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, type RemovePerpsLiquidityInstructionParams, type RemovePerpsLiquidityParams, type RemovePerpsLiquidityProofResult, SEEDS, type ScannedNote, type SelectionStrategy, type ShieldInstructionParams, type ShieldResult, SmartNoteSelector, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TokenPrice, TokenPriceFetcher, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type TransactionFilter, TransactionHistory, type TransactionRecord, TransactionStatus, TransactionType, type UserPoolPosition, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, type WithdrawableResult, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAddMarketWithProgram, buildAddPerpsLiquidityWithProgram, buildAddTokenToPoolWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildClosePositionWithProgram, buildConsolidationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePerpsPoolWithProgram, buildInitializePoolWithProgram, buildOpenPositionWithProgram, buildRemoveLiquidityWithProgram, buildRemovePerpsLiquidityWithProgram, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildUpdateBorrowFeesWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateBorrowFees, calculateBorrowRate, calculateImbalanceFee, calculateInvariant, calculateLiquidationPrice, calculateLpMintAmount, calculateLpValue, calculateMaxWithdrawable, calculateMinOutput, calculateMinimumFee, calculatePnL, calculatePositionFee, calculatePriceImpact, calculatePriceRatio, calculateProtocolFee, calculateRemoveLiquidityOutput, calculateSlippage, calculateStableSwapOutput, calculateSwapOutputUnified, calculateSwapProtocolFee, calculateTotalLiquidity, calculateUsdPriceImpact, calculateUtilization, calculateWithdrawAmount, canFitInSingleTransaction, canonicalTokenOrder, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, consolidationService, createAddressLookupTable, createCloakCraftALT, createNote, createPendingTransaction, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePerpsLpMintPda, derivePerpsMarketPda, derivePerpsPoolPda, derivePerpsVaultPda, derivePoolPda, deriveProtocolConfigPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, disableAutoConsolidation, elgamalEncrypt, enableAutoConsolidation, encryptNote, encryptVote, estimateTotalCost, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fetchProtocolFeeConfig, fieldToBytes, formatAmmPool, formatApy, formatFeeAmount, formatFeeRate, formatPrice, formatPriceChange, formatShare, formatTvl, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getAutoConsolidator, getFeeBps, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isFeeableOperation, isFreeOperation, isInSubgroup, isOnCurve, isValidLeverage, isValidPositionSize, lagrangeCoefficient, loadCircomArtifacts, loadWallet, noteSelector, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof, verifyFeeAmount, verifyInvariant, wouldExceedUtilization };
