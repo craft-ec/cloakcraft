@@ -10,14 +10,14 @@ use crate::errors::CloakCraftError;
 
 #[derive(Accounts)]
 pub struct UpdatePoolConfig<'info> {
-    /// Perps pool account
+    /// Perps pool account (boxed due to large size)
     #[account(
         mut,
         seeds = [seeds::PERPS_POOL, perps_pool.pool_id.as_ref()],
         bump = perps_pool.bump,
         has_one = authority @ CloakCraftError::Unauthorized
     )]
-    pub perps_pool: Account<'info, PerpsPool>,
+    pub perps_pool: Box<Account<'info, PerpsPool>>,
 
     /// Pool authority
     pub authority: Signer<'info>,
@@ -104,14 +104,14 @@ pub fn update_pool_config(
 /// Pause/unpause a specific token in the pool
 #[derive(Accounts)]
 pub struct UpdateTokenStatus<'info> {
-    /// Perps pool account
+    /// Perps pool account (boxed due to large size)
     #[account(
         mut,
         seeds = [seeds::PERPS_POOL, perps_pool.pool_id.as_ref()],
         bump = perps_pool.bump,
         has_one = authority @ CloakCraftError::Unauthorized
     )]
-    pub perps_pool: Account<'info, PerpsPool>,
+    pub perps_pool: Box<Account<'info, PerpsPool>>,
 
     /// Pool authority
     pub authority: Signer<'info>,
@@ -143,13 +143,13 @@ pub fn update_token_status(
 /// Pause/unpause a specific market
 #[derive(Accounts)]
 pub struct UpdateMarketStatus<'info> {
-    /// Perps pool account
+    /// Perps pool account (boxed due to large size)
     #[account(
         seeds = [seeds::PERPS_POOL, perps_pool.pool_id.as_ref()],
         bump = perps_pool.bump,
         has_one = authority @ CloakCraftError::Unauthorized
     )]
-    pub perps_pool: Account<'info, PerpsPool>,
+    pub perps_pool: Box<Account<'info, PerpsPool>>,
 
     /// Market account
     #[account(

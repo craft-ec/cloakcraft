@@ -13,14 +13,14 @@ use crate::errors::CloakCraftError;
 
 #[derive(Accounts)]
 pub struct AddTokenToPool<'info> {
-    /// Perps pool account
+    /// Perps pool account (boxed due to large size)
     #[account(
         mut,
         seeds = [seeds::PERPS_POOL, perps_pool.pool_id.as_ref()],
         bump = perps_pool.bump,
         has_one = authority @ CloakCraftError::Unauthorized
     )]
-    pub perps_pool: Account<'info, PerpsPool>,
+    pub perps_pool: Box<Account<'info, PerpsPool>>,
 
     /// Token mint to add
     pub token_mint: Account<'info, Mint>,
