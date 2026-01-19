@@ -7,6 +7,7 @@ pub mod swap;
 pub mod governance;
 pub mod admin;
 pub mod generic;
+pub mod perps;
 
 pub use pool::*;
 pub use adapter::*;
@@ -15,3 +16,4 @@ pub use swap::*;
 pub use governance::*;
 pub use admin::*;
 pub use generic::*;
+pub use perps::*;

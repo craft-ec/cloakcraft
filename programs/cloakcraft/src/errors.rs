@@ -289,4 +289,80 @@ pub enum CloakCraftError {
 
     #[msg("Fee amount is less than required minimum")]
     InsufficientFee,
+
+    // ============ Perpetual Futures Errors ============
+    #[msg("Perps pool not found")]
+    PerpsPoolNotFound,
+
+    #[msg("Perps pool is not active")]
+    PerpsPoolNotActive,
+
+    #[msg("Perps market not found")]
+    PerpsMarketNotFound,
+
+    #[msg("Perps market is not active")]
+    PerpsMarketNotActive,
+
+    #[msg("Maximum tokens in pool reached")]
+    MaxTokensReached,
+
+    #[msg("Token already exists in pool")]
+    TokenAlreadyInPool,
+
+    #[msg("Token not found in pool")]
+    TokenNotInPool,
+
+    #[msg("Token is not active")]
+    TokenNotActive,
+
+    #[msg("Utilization limit exceeded")]
+    UtilizationLimitExceeded,
+
+    #[msg("Insufficient available liquidity")]
+    InsufficientAvailableLiquidity,
+
+    #[msg("Position size exceeds maximum")]
+    PositionSizeExceeded,
+
+    #[msg("Leverage exceeds maximum allowed")]
+    LeverageExceeded,
+
+    #[msg("Invalid leverage value")]
+    InvalidLeverage,
+
+    #[msg("Position not liquidatable")]
+    PositionNotLiquidatable,
+
+    #[msg("Position at profit bound - must close")]
+    PositionAtProfitBound,
+
+    #[msg("Invalid oracle price")]
+    InvalidOraclePrice,
+
+    #[msg("Oracle price is stale")]
+    StaleOraclePrice,
+
+    #[msg("Invalid position direction")]
+    InvalidPositionDirection,
+
+    #[msg("Invalid margin amount")]
+    InvalidMarginAmount,
+
+    #[msg("Invalid position size")]
+    InvalidPositionSize,
+
+    #[msg("LP token amount mismatch")]
+    LpAmountMismatch,
+
+    #[msg("Withdrawal exceeds available balance")]
+    WithdrawalExceedsAvailable,
+
+    #[msg("Invalid borrow fee calculation")]
+    InvalidBorrowFee,
+
+    #[msg("Market base and quote tokens must be different")]
+    SameBaseQuoteToken,
+
+    #[msg("Invalid token index")]
+    InvalidTokenIndex,
 }

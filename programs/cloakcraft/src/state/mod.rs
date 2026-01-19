@@ -12,6 +12,8 @@ pub mod commitment;
 pub mod light_types;
 pub mod pending_operation;
 pub mod protocol_config;
+pub mod perps_pool;
+pub mod perps_market;
 
 pub use pool::*;
 pub use order::*;
@@ -25,3 +27,5 @@ pub use commitment::*;
 pub use light_types::*;
 pub use pending_operation::*;
 pub use protocol_config::*;
+pub use perps_pool::*;
+pub use perps_market::*;

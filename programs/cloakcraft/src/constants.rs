@@ -38,6 +38,13 @@ pub mod circuits {
     pub const SWAP_REMOVE_LIQUIDITY: [u8; 32] = *b"swap_remove_liquidity___________";
     pub const SWAP_SWAP: [u8; 32] = *b"swap_swap_______________________";
     pub const GOVERNANCE_ENCRYPTED: [u8; 32] = *b"governance_encrypted_submit_____";
+
+    // Perpetual futures circuits
+    pub const PERPS_OPEN_POSITION: [u8; 32] = *b"perps_open_position_____________";
+    pub const PERPS_CLOSE_POSITION: [u8; 32] = *b"perps_close_position____________";
+    pub const PERPS_LIQUIDATE: [u8; 32] = *b"perps_liquidate_________________";
+    pub const PERPS_ADD_LIQUIDITY: [u8; 32] = *b"perps_add_liquidity_____________";
+    pub const PERPS_REMOVE_LIQUIDITY: [u8; 32] = *b"perps_remove_liquidity__________";
 }
 
 /// PDA seeds
@@ -52,6 +59,28 @@ pub mod seeds {
     pub const ADAPT_MODULE: &[u8] = b"adapt";
     pub const COMMITTEE: &[u8] = b"committee";
     pub const PROTOCOL_CONFIG: &[u8] = b"protocol_config";
+
+    // Perpetual futures seeds
+    pub const PERPS_POOL: &[u8] = b"perps_pool";
+    pub const PERPS_LP_MINT: &[u8] = b"perps_lp_mint";
+    pub const PERPS_VAULT: &[u8] = b"perps_vault";
+    pub const PERPS_MARKET: &[u8] = b"perps_market";
+}
+
+/// Operation types for pending operations
+pub mod operation_types {
+    pub const TRANSFER: u8 = 0;
+    pub const SWAP: u8 = 1;
+    pub const ADD_LIQUIDITY: u8 = 2;
+    pub const REMOVE_LIQUIDITY: u8 = 3;
+    pub const CONSOLIDATE: u8 = 4;
+
+    // Perpetual futures operation types
+    pub const PERPS_OPEN_POSITION: u8 = 10;
+    pub const PERPS_CLOSE_POSITION: u8 = 11;
+    pub const PERPS_LIQUIDATE: u8 = 12;
+    pub const PERPS_ADD_LIQUIDITY: u8 = 13;
+    pub const PERPS_REMOVE_LIQUIDITY: u8 = 14;
 }
 
 /// Encrypted note size in bytes

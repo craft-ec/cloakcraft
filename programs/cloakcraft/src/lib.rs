@@ -18,6 +18,25 @@ pub mod helpers;
 
 use instructions::*;
 
+// Import perps Accounts structs directly to avoid Anchor namespace issues
+use instructions::perps::{
+    // Admin
+    InitializePerpsPool, InitializePerpsPoolParams,
+    AddTokenToPool, AddMarket,
+    UpdatePoolConfig, UpdatePoolConfigParams,
+    UpdateTokenStatus, UpdateMarketStatus,
+    // Position
+    CreatePendingWithProofOpenPosition, ExecuteOpenPosition,
+    CreatePendingWithProofClosePosition, ExecuteClosePosition,
+    // Liquidity
+    CreatePendingWithProofAddPerpsLiquidity, ExecuteAddPerpsLiquidity,
+    CreatePendingWithProofRemovePerpsLiquidity, ExecuteRemovePerpsLiquidity,
+    // Keeper
+    UpdateBorrowFees,
+    CreatePendingWithProofLiquidate, ExecuteLiquidate,
+    CheckProfitBound, EmitProfitBoundEvent,
+};
+
 declare_id!("DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha");
 
 /// Light Protocol CPI signer for compressed account operations
@@ -647,5 +666,264 @@ pub mod cloakcraft {
     /// Only callable by the current authority.
     pub fn update_protocol_authority(ctx: Context<UpdateProtocolAuthority>) -> Result<()> {
         admin::update_protocol_authority(ctx)
+    }
+
+    // ============ Perpetual Futures Operations ============
+
+    /// Initialize a perpetual futures pool
+    ///
+    /// Creates a multi-token pool with a single LP token.
+    /// Tokens are added separately via add_token_to_pool.
+    pub fn initialize_perps_pool(
+        ctx: Context<InitializePerpsPool>,
+        pool_id: Pubkey,
+        params: InitializePerpsPoolParams,
+    ) -> Result<()> {
+        perps::initialize_perps_pool(ctx, pool_id, params)
+    }
+
+    /// Add a token to a perps pool
+    ///
+    /// Adds a new supported token with its own vault and oracle.
+    pub fn add_token_to_pool(ctx: Context<AddTokenToPool>) -> Result<()> {
+        perps::add_token_to_pool(ctx)
+    }
+
+    /// Add a trading market to a perps pool
+    ///
+    /// Creates a new trading pair (e.g., SOL/USD).
+    pub fn add_market(
+        ctx: Context<AddMarket>,
+        market_id: [u8; 32],
+        base_token_index: u8,
+        quote_token_index: u8,
+        max_position_size: u64,
+    ) -> Result<()> {
+        perps::add_market(ctx, market_id, base_token_index, quote_token_index, max_position_size)
+    }
+
+    /// Update perps pool configuration
+    pub fn update_perps_pool_config(
+        ctx: Context<UpdatePoolConfig>,
+        params: UpdatePoolConfigParams,
+    ) -> Result<()> {
+        perps::update_pool_config(ctx, params)
+    }
+
+    /// Update token status in perps pool
+    pub fn update_perps_token_status(
+        ctx: Context<UpdateTokenStatus>,
+        token_index: u8,
+        is_active: bool,
+    ) -> Result<()> {
+        perps::update_token_status(ctx, token_index, is_active)
+    }
+
+    /// Update market status
+    pub fn update_perps_market_status(
+        ctx: Context<UpdateMarketStatus>,
+        is_active: bool,
+    ) -> Result<()> {
+        perps::update_market_status(ctx, is_active)
+    }
+
+    // ============ Perps Position Operations (Append Pattern) ============
+
+    /// Create Pending with Proof Phase 0 - Open Position
+    ///
+    /// Flow:
+    /// Phase 0 (this): Verify ZK proof + Create PendingOperation
+    /// Phase 1: verify_commitment_exists for margin
+    /// Phase 2: create_nullifier_and_pending for margin
+    /// Phase 3: execute_open_position to lock tokens
+    /// Phase 4: create_commitment for position
+    /// Final: close_pending_operation
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_open_position<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofOpenPosition<'info>>,
+        operation_id: [u8; 32],
+        proof: Vec<u8>,
+        merkle_root: [u8; 32],
+        input_commitment: [u8; 32],
+        nullifier: [u8; 32],
+        position_commitment: [u8; 32],
+        is_long: bool,
+        margin_amount: u64,
+        leverage: u8,
+        position_fee: u64,
+    ) -> Result<()> {
+        perps::create_pending_with_proof_open_position(
+            ctx, operation_id, proof, merkle_root, input_commitment, nullifier,
+            position_commitment, is_long, margin_amount, leverage, position_fee
+        )
+    }
+
+    /// Execute Open Position Phase 3
+    pub fn execute_open_position<'info>(
+        ctx: Context<'_, '_, '_, 'info, ExecuteOpenPosition<'info>>,
+        operation_id: [u8; 32],
+        entry_price: u64,
+    ) -> Result<()> {
+        perps::execute_open_position(ctx, operation_id, entry_price)
+    }
+
+    /// Create Pending with Proof Phase 0 - Close Position
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_close_position<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofClosePosition<'info>>,
+        operation_id: [u8; 32],
+        proof: Vec<u8>,
+        merkle_root: [u8; 32],
+        position_commitment: [u8; 32],
+        position_nullifier: [u8; 32],
+        settlement_commitment: [u8; 32],
+        is_long: bool,
+        exit_price: u64,
+        close_fee: u64,
+        pnl_amount: u64,
+        is_profit: bool,
+    ) -> Result<()> {
+        perps::create_pending_with_proof_close_position(
+            ctx, operation_id, proof, merkle_root, position_commitment, position_nullifier,
+            settlement_commitment, is_long, exit_price, close_fee, pnl_amount, is_profit
+        )
+    }
+
+    /// Execute Close Position Phase 3
+    pub fn execute_close_position<'info>(
+        ctx: Context<'_, '_, '_, 'info, ExecuteClosePosition<'info>>,
+        operation_id: [u8; 32],
+        position_margin: u64,
+        position_size: u64,
+        entry_price: u64,
+    ) -> Result<()> {
+        perps::execute_close_position(ctx, operation_id, position_margin, position_size, entry_price)
+    }
+
+    // ============ Perps Liquidity Operations (Append Pattern) ============
+
+    /// Create Pending with Proof Phase 0 - Add Perps Liquidity
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_add_perps_liquidity<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofAddPerpsLiquidity<'info>>,
+        operation_id: [u8; 32],
+        proof: Vec<u8>,
+        merkle_root: [u8; 32],
+        input_commitment: [u8; 32],
+        nullifier: [u8; 32],
+        lp_commitment: [u8; 32],
+        token_index: u8,
+        deposit_amount: u64,
+        lp_amount_minted: u64,
+        fee_amount: u64,
+    ) -> Result<()> {
+        perps::create_pending_with_proof_add_perps_liquidity(
+            ctx, operation_id, proof, merkle_root, input_commitment, nullifier,
+            lp_commitment, token_index, deposit_amount, lp_amount_minted, fee_amount
+        )
+    }
+
+    /// Execute Add Perps Liquidity Phase 3
+    pub fn execute_add_perps_liquidity<'info>(
+        ctx: Context<'_, '_, '_, 'info, ExecuteAddPerpsLiquidity<'info>>,
+        operation_id: [u8; 32],
+        oracle_prices: [u64; state::MAX_PERPS_TOKENS],
+    ) -> Result<()> {
+        perps::execute_add_perps_liquidity(ctx, operation_id, oracle_prices)
+    }
+
+    /// Create Pending with Proof Phase 0 - Remove Perps Liquidity
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_remove_perps_liquidity<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofRemovePerpsLiquidity<'info>>,
+        operation_id: [u8; 32],
+        proof: Vec<u8>,
+        merkle_root: [u8; 32],
+        lp_commitment: [u8; 32],
+        lp_nullifier: [u8; 32],
+        out_commitment: [u8; 32],
+        change_lp_commitment: [u8; 32],
+        token_index: u8,
+        withdraw_amount: u64,
+        lp_amount_burned: u64,
+        fee_amount: u64,
+    ) -> Result<()> {
+        perps::create_pending_with_proof_remove_perps_liquidity(
+            ctx, operation_id, proof, merkle_root, lp_commitment, lp_nullifier,
+            out_commitment, change_lp_commitment, token_index, withdraw_amount, lp_amount_burned, fee_amount
+        )
+    }
+
+    /// Execute Remove Perps Liquidity Phase 3
+    pub fn execute_remove_perps_liquidity<'info>(
+        ctx: Context<'_, '_, '_, 'info, ExecuteRemovePerpsLiquidity<'info>>,
+        operation_id: [u8; 32],
+        oracle_prices: [u64; state::MAX_PERPS_TOKENS],
+    ) -> Result<()> {
+        perps::execute_remove_perps_liquidity(ctx, operation_id, oracle_prices)
+    }
+
+    // ============ Perps Keeper Operations ============
+
+    /// Update borrow fee accumulators for all tokens
+    ///
+    /// Keeper instruction - anyone can call to update fees.
+    pub fn update_perps_borrow_fees(ctx: Context<UpdateBorrowFees>) -> Result<()> {
+        perps::update_borrow_fees(ctx)
+    }
+
+    /// Create Pending with Proof Phase 0 - Liquidate
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_liquidate<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofLiquidate<'info>>,
+        operation_id: [u8; 32],
+        proof: Vec<u8>,
+        merkle_root: [u8; 32],
+        position_commitment: [u8; 32],
+        position_nullifier: [u8; 32],
+        owner_commitment: [u8; 32],
+        liquidator_commitment: [u8; 32],
+        current_price: u64,
+        liquidator_reward: u64,
+        owner_remainder: u64,
+    ) -> Result<()> {
+        perps::create_pending_with_proof_liquidate(
+            ctx, operation_id, proof, merkle_root, position_commitment, position_nullifier,
+            owner_commitment, liquidator_commitment, current_price, liquidator_reward, owner_remainder
+        )
+    }
+
+    /// Execute Liquidate Phase 3
+    pub fn execute_liquidate<'info>(
+        ctx: Context<'_, '_, '_, 'info, ExecuteLiquidate<'info>>,
+        operation_id: [u8; 32],
+        position_margin: u64,
+        position_size: u64,
+        is_long: bool,
+    ) -> Result<()> {
+        perps::execute_liquidate(ctx, operation_id, position_margin, position_size, is_long)
+    }
+
+    /// Check if a position is at profit bound
+    pub fn check_perps_profit_bound(
+        ctx: Context<CheckProfitBound>,
+        position_margin: u64,
+        position_size: u64,
+        entry_price: u64,
+        is_long: bool,
+        current_price: u64,
+    ) -> Result<bool> {
+        perps::check_profit_bound(ctx, position_margin, position_size, entry_price, is_long, current_price)
+    }
+
+    /// Emit profit bound event for keeper detection
+    pub fn emit_perps_profit_bound_event(
+        ctx: Context<EmitProfitBoundEvent>,
+        position_commitment: [u8; 32],
+        margin: u64,
+        pnl: u64,
+        current_price: u64,
+    ) -> Result<()> {
+        perps::emit_profit_bound_event(ctx, position_commitment, margin, pnl, current_price)
     }
 }
