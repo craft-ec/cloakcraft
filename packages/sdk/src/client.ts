@@ -3493,12 +3493,47 @@ export class CloakCraftClient {
 
     params.onProgress?.('generating');
 
-    // Generate proof for open position
-    // Note: This requires the perps/open_position circuit to be implemented
+    // Calculate position fee (0.06% of position size)
+    const positionFee = (positionSize * 6n) / 10000n;
+
+    // Convert input note to proof generator format
+    const tokenMint = params.input.tokenMint instanceof Uint8Array
+      ? params.input.tokenMint
+      : params.input.tokenMint.toBytes();
+
+    // Transform client params to proof generator format
+    const proofParams = {
+      input: {
+        stealthPubX: params.input.stealthPubX,
+        tokenMint: tokenMint,
+        amount: params.input.amount,
+        randomness: params.input.randomness,
+        leafIndex: params.input.leafIndex,
+        stealthEphemeralPubkey: params.input.stealthEphemeralPubkey,
+      },
+      perpsPoolId: params.poolId.toBytes(),
+      marketId: bytesToField(params.marketId),
+      isLong: params.direction === 'long',
+      marginAmount: params.marginAmount,
+      leverage: params.leverage,
+      positionSize,
+      entryPrice: params.oraclePrice,
+      positionFee,
+      merkleRoot: params.merkleRoot,
+      merklePath: params.merklePath,
+      merkleIndices: params.merkleIndices,
+    };
+
     const proofResult = await this.proofGenerator.generateOpenPositionProof(
-      params,
+      proofParams,
       this.wallet.keypair
     );
+
+    // Generate change commitment (for remaining input after margin + fee)
+    // Note: In current circuit design, input must equal margin + fee exactly
+    // This is placeholder for future multi-output circuit support
+    const changeRandomness = generateRandomness();
+    const changeCommitment = new Uint8Array(32); // No change in current design
 
     params.onProgress?.('building');
 
@@ -3520,7 +3555,7 @@ export class CloakCraftClient {
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
 
-    const { proof, nullifier, positionCommitment, changeCommitment, positionRandomness, changeRandomness } = proofResult;
+    const { proof, nullifier, positionCommitment, positionRandomness } = proofResult;
 
     const instructionParams = {
       perpsPool: params.poolId,
@@ -3606,9 +3641,44 @@ export class CloakCraftClient {
 
     params.onProgress?.('generating');
 
-    // Generate proof for close position
+    // Calculate PnL and fees (simplified - actual calculation uses oracle prices)
+    // Note: Full PnL calculation would happen on-chain with oracle verification
+    const closeFee = (params.positionInput.amount * 6n) / 10000n; // 0.06%
+    const pnlAmount = 0n; // Placeholder - calculated on-chain
+    const isProfit = false;
+
+    // Transform client params to proof generator format
+    const tokenMint = params.positionInput.tokenMint instanceof Uint8Array
+      ? params.positionInput.tokenMint
+      : params.positionInput.tokenMint.toBytes();
+
+    const proofParams = {
+      position: {
+        stealthPubX: params.positionInput.stealthPubX,
+        marketId: bytesToField(params.marketId),
+        isLong: true, // TODO: Get from position data
+        margin: params.positionInput.amount,
+        size: params.positionInput.amount, // TODO: Get actual size
+        leverage: 1, // TODO: Get from position data
+        entryPrice: params.oraclePrice, // TODO: Get from position data
+        randomness: params.positionInput.randomness,
+        leafIndex: params.positionInput.leafIndex,
+        spendingKey: this.wallet.keypair.spending.sk,
+      },
+      perpsPoolId: params.poolId.toBytes(),
+      exitPrice: params.oraclePrice,
+      pnlAmount,
+      isProfit,
+      closeFee,
+      settlementRecipient: params.settlementRecipient,
+      tokenMint,
+      merkleRoot: params.merkleRoot,
+      merklePath: params.merklePath,
+      merkleIndices: params.merkleIndices,
+    };
+
     const proofResult = await this.proofGenerator.generateClosePositionProof(
-      params,
+      proofParams,
       this.wallet.keypair
     );
 
@@ -3617,7 +3687,7 @@ export class CloakCraftClient {
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
 
-    const { proof, nullifier, settlementCommitment, settlementRandomness } = proofResult;
+    const { proof, positionNullifier: nullifier, settlementCommitment, settlementRandomness } = proofResult;
 
     // Compute position commitment
     const positionCommitment = computeCommitment(params.positionInput);
@@ -3690,11 +3760,43 @@ export class CloakCraftClient {
 
     params.onProgress?.('generating');
 
-    // Generate proof for add liquidity
+    // Calculate fee (if any)
+    const feeAmount = 0n; // No deposit fee currently
+
+    // Convert input note to proof generator format
+    const tokenMint = params.input.tokenMint instanceof Uint8Array
+      ? params.input.tokenMint
+      : params.input.tokenMint.toBytes();
+
+    // Transform client params to proof generator format
+    const proofParams = {
+      input: {
+        stealthPubX: params.input.stealthPubX,
+        tokenMint: tokenMint,
+        amount: params.input.amount,
+        randomness: params.input.randomness,
+        leafIndex: params.input.leafIndex,
+        stealthEphemeralPubkey: params.input.stealthEphemeralPubkey,
+      },
+      perpsPoolId: params.poolId.toBytes(),
+      tokenIndex: params.tokenIndex,
+      depositAmount: params.depositAmount,
+      lpAmountMinted: params.lpAmount,
+      feeAmount,
+      lpRecipient: params.lpRecipient,
+      merkleRoot: params.merkleRoot,
+      merklePath: params.merklePath,
+      merkleIndices: params.merkleIndices,
+    };
+
     const proofResult = await this.proofGenerator.generateAddPerpsLiquidityProof(
-      params,
+      proofParams,
       this.wallet.keypair
     );
+
+    // Generate change commitment (for remaining input after deposit + fee)
+    const changeRandomness = generateRandomness();
+    const changeCommitment = new Uint8Array(32); // No change in current design
 
     params.onProgress?.('building');
 
@@ -3710,7 +3812,7 @@ export class CloakCraftClient {
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
 
-    const { proof, nullifier, lpCommitment, changeCommitment, lpRandomness, changeRandomness } = proofResult;
+    const { proof, nullifier, lpCommitment, lpRandomness } = proofResult;
 
     // Compute input commitment
     const inputCommitment = computeCommitment(params.input);
@@ -3792,20 +3894,46 @@ export class CloakCraftClient {
 
     params.onProgress?.('generating');
 
-    // Generate proof for remove liquidity
-    const proofResult = await this.proofGenerator.generateRemovePerpsLiquidityProof(
-      params,
-      this.wallet.keypair
-    );
-
-    params.onProgress?.('building');
-
-    // Derive PDAs
+    // Derive PDAs first to get token mint
     const [perpsPoolAccount] = derivePerpsPoolPda(params.poolId, this.programId);
 
     // Fetch pool to get token info
     const poolData = await (this.program.account as any).perpsPool.fetch(params.poolId);
     const tokenMint = poolData.tokens[params.tokenIndex].mint;
+    const tokenMintBytes = tokenMint.toBytes();
+
+    // Calculate fee (if any)
+    const feeAmount = 0n; // No withdrawal fee currently
+    const changeLpAmount = params.lpInput.amount - params.lpAmount; // LP tokens remaining after burn
+
+    // Transform client params to proof generator format
+    const proofParams = {
+      lpInput: {
+        stealthPubX: params.lpInput.stealthPubX,
+        lpAmount: params.lpInput.amount,
+        randomness: params.lpInput.randomness,
+        leafIndex: params.lpInput.leafIndex,
+        spendingKey: this.wallet.keypair.spending.sk,
+      },
+      perpsPoolId: params.poolId.toBytes(),
+      tokenIndex: params.tokenIndex,
+      lpAmountBurned: params.lpAmount,
+      withdrawAmount: params.withdrawAmount,
+      feeAmount,
+      outputRecipient: params.withdrawRecipient,
+      outputTokenMint: tokenMintBytes,
+      changeLpAmount,
+      merkleRoot: params.merkleRoot,
+      merklePath: params.merklePath,
+      merkleIndices: params.merkleIndices,
+    };
+
+    const proofResult = await this.proofGenerator.generateRemovePerpsLiquidityProof(
+      proofParams,
+      this.wallet.keypair
+    );
+
+    params.onProgress?.('building');
 
     const [outputPoolPda] = derivePoolPda(tokenMint, this.programId);
     const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, tokenMint, this.programId);
@@ -3814,7 +3942,14 @@ export class CloakCraftClient {
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
 
-    const { proof, nullifier, withdrawCommitment, lpChangeCommitment, withdrawRandomness, lpChangeRandomness } = proofResult;
+    const {
+      proof,
+      lpNullifier: nullifier,
+      outputCommitment: withdrawCommitment,
+      changeLpCommitment: lpChangeCommitment,
+      outputRandomness: withdrawRandomness,
+      changeLpRandomness: lpChangeRandomness
+    } = proofResult;
 
     // Compute LP commitment
     const lpCommitment = computeCommitment(params.lpInput);

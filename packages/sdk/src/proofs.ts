@@ -21,6 +21,11 @@ import type {
   FillOrderParams,
   CancelOrderParams,
   ConsolidationParams,
+  OpenPerpsPositionParams,
+  ClosePerpsPositionParams,
+  PerpsAddLiquidityClientParams,
+  PerpsRemoveLiquidityClientParams,
+  DecryptedNote,
 } from '@cloakcraft/types';
 import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier';
 import { computeCommitment, generateRandomness } from './crypto/commitment';
@@ -77,6 +82,12 @@ const CIRCUIT_FILE_MAP: Record<string, string> = {
   'swap/remove_liquidity': 'swap_remove_liquidity',
   'swap/swap': 'swap_swap',
   'governance/encrypted_submit': 'governance_encrypted_submit',
+  // Perps circuits
+  'perps/open_position': 'open_position',
+  'perps/close_position': 'close_position',
+  'perps/add_liquidity': 'add_liquidity',
+  'perps/remove_liquidity': 'remove_liquidity',
+  'perps/liquidate': 'liquidate',
 };
 
 /**
@@ -96,6 +107,12 @@ const CIRCUIT_DIR_MAP: Record<string, string> = {
   'swap/remove_liquidity': 'swap/remove_liquidity',
   'swap/swap': 'swap/swap',
   'governance/encrypted_submit': 'governance/encrypted_submit',
+  // Perps circuits
+  'perps/open_position': 'perps/open_position',
+  'perps/close_position': 'perps/close_position',
+  'perps/add_liquidity': 'perps/add_liquidity',
+  'perps/remove_liquidity': 'perps/remove_liquidity',
+  'perps/liquidate': 'perps/liquidate',
 };
 
 /**
@@ -236,6 +253,12 @@ export class ProofGenerator {
       'swap/remove_liquidity',
       'swap/swap',
       'governance/encrypted_submit',
+      // Perps circuits
+      'perps/open_position',
+      'perps/close_position',
+      'perps/add_liquidity',
+      'perps/remove_liquidity',
+      'perps/liquidate',
     ];
 
     return knownCircuits.includes(name);
@@ -1243,6 +1266,12 @@ export class ProofGenerator {
       'swap/swap': 'swap',
       'swap/add_liquidity': 'add_liquidity',
       'swap/remove_liquidity': 'remove_liquidity',
+      // Perps circuits
+      'perps/open_position': 'open_position',
+      'perps/close_position': 'close_position',
+      'perps/add_liquidity': 'perps_add_liquidity',
+      'perps/remove_liquidity': 'perps_remove_liquidity',
+      'perps/liquidate': 'liquidate',
     };
     return mapping[circuitName] ?? circuitName.replace('/', '_');
   }
@@ -1450,114 +1479,588 @@ export class ProofGenerator {
   /**
    * Generate proof for opening a perps position
    *
-   * Note: This is a stub - requires perps/open_position circuit to be implemented
+   * Circuit proves:
+   * - Ownership of margin commitment
+   * - Correct nullifier derivation
+   * - Correct position commitment computation
+   * - Balance check: input = margin + fee
    */
   async generateOpenPositionProof(
-    params: any,
-    keypair: any
+    params: {
+      /** Input note (margin source) */
+      input: {
+        stealthPubX: Uint8Array;
+        tokenMint: any;
+        amount: bigint;
+        randomness: Uint8Array;
+        leafIndex: number;
+        stealthEphemeralPubkey?: { x: Uint8Array; y: Uint8Array };
+      };
+      /** Perps pool ID (Pubkey bytes) */
+      perpsPoolId: Uint8Array;
+      /** Market ID */
+      marketId: bigint;
+      /** Is long position */
+      isLong: boolean;
+      /** Margin amount */
+      marginAmount: bigint;
+      /** Leverage (1-100) */
+      leverage: number;
+      /** Position size */
+      positionSize: bigint;
+      /** Entry price */
+      entryPrice: bigint;
+      /** Position fee */
+      positionFee: bigint;
+      /** Merkle root */
+      merkleRoot: Uint8Array;
+      /** Merkle path */
+      merklePath: Uint8Array[];
+      /** Merkle path indices */
+      merkleIndices: number[];
+    },
+    keypair: Keypair
   ): Promise<{
     proof: Uint8Array;
     nullifier: Uint8Array;
     positionCommitment: Uint8Array;
-    changeCommitment: Uint8Array;
     positionRandomness: Uint8Array;
-    changeRandomness: Uint8Array;
   }> {
-    // Check if circuit exists
-    if (!this.hasCircuit('perps/open_position')) {
-      throw new Error('perps/open_position circuit not loaded. Circuits need to be compiled first.');
+    const circuitName = 'perps/open_position';
+
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`${circuitName} circuit not loaded. Circuits need to be compiled first.`);
     }
 
-    // Generate randomness for commitments
-    const positionRandomness = generateRandomness();
-    const changeRandomness = generateRandomness();
+    // Derive effective spending key
+    let effectiveKey: bigint;
+    if (params.input.stealthEphemeralPubkey) {
+      effectiveKey = deriveStealthPrivateKey(
+        bytesToField(keypair.spending.sk),
+        params.input.stealthEphemeralPubkey
+      );
+    } else {
+      effectiveKey = bytesToField(keypair.spending.sk);
+    }
+    const effectiveNullifierKey = deriveNullifierKey(fieldToBytes(effectiveKey));
 
-    // Placeholder - actual implementation requires circuit
-    throw new Error('perps/open_position circuit implementation pending');
+    // Compute input commitment and nullifier
+    const inputCommitment = computeCommitment(params.input);
+    const nullifier = deriveSpendingNullifier(effectiveNullifierKey, inputCommitment, params.input.leafIndex);
+
+    // Generate position randomness
+    const positionRandomness = generateRandomness();
+
+    // Convert token mint to bytes
+    const tokenMint = params.input.tokenMint instanceof Uint8Array
+      ? params.input.tokenMint
+      : params.input.tokenMint.toBytes();
+
+    // Compute position commitment using Poseidon hash (matches circuit)
+    // PositionCommitment: two-stage hash
+    // Stage 1: H(POSITION_COMMITMENT_DOMAIN, stealth_pub_x, market_id, is_long, margin)
+    // Stage 2: H(stage1_out, size, leverage, entry_price, randomness)
+    const POSITION_COMMITMENT_DOMAIN = 8n;
+    const stage1 = poseidonHashDomain(
+      POSITION_COMMITMENT_DOMAIN,
+      params.input.stealthPubX,
+      fieldToBytes(params.marketId),
+      fieldToBytes(BigInt(params.isLong ? 1 : 0)),
+      fieldToBytes(params.marginAmount)
+    );
+    const positionCommitment = poseidonHash([
+      stage1,
+      fieldToBytes(params.positionSize),
+      fieldToBytes(BigInt(params.leverage)),
+      fieldToBytes(params.entryPrice),
+      positionRandomness,
+    ]);
+
+    // Pad merkle path to 32 elements
+    const merklePath = [...params.merklePath];
+    while (merklePath.length < 32) {
+      merklePath.push(new Uint8Array(32));
+    }
+    const merkleIndices = [...params.merkleIndices];
+    while (merkleIndices.length < 32) {
+      merkleIndices.push(0);
+    }
+
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      nullifier: fieldToHex(nullifier),
+      perps_pool_id: fieldToHex(params.perpsPoolId),
+      market_id: params.marketId.toString(),
+      position_commitment: fieldToHex(positionCommitment),
+      is_long: params.isLong ? '1' : '0',
+      margin_amount: params.marginAmount.toString(),
+      leverage: params.leverage.toString(),
+      position_fee: params.positionFee.toString(),
+
+      // Private inputs
+      in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
+      in_amount: params.input.amount.toString(),
+      in_randomness: fieldToHex(params.input.randomness),
+      in_stealth_spending_key: fieldToHex(fieldToBytes(effectiveKey)),
+      token_mint: fieldToHex(tokenMint),
+      merkle_path: merklePath.map(p => fieldToHex(p)),
+      merkle_path_indices: merkleIndices.map(i => i.toString()),
+      leaf_index: params.input.leafIndex.toString(),
+      position_size: params.positionSize.toString(),
+      entry_price: params.entryPrice.toString(),
+      position_randomness: fieldToHex(positionRandomness),
+    };
+
+    const proof = await this.prove(circuitName, witnessInputs);
+
+    return {
+      proof,
+      nullifier,
+      positionCommitment,
+      positionRandomness,
+    };
   }
 
   /**
    * Generate proof for closing a perps position
    *
-   * Note: This is a stub - requires perps/close_position circuit to be implemented
+   * Circuit proves:
+   * - Ownership of position commitment
+   * - Correct nullifier derivation
+   * - Correct settlement calculation (margin +/- PnL - fees)
+   * - Bounded profit (max profit = margin)
    */
   async generateClosePositionProof(
-    params: any,
-    keypair: any
+    params: {
+      /** Position details */
+      position: {
+        stealthPubX: Uint8Array;
+        marketId: bigint;
+        isLong: boolean;
+        margin: bigint;
+        size: bigint;
+        leverage: number;
+        entryPrice: bigint;
+        randomness: Uint8Array;
+        leafIndex: number;
+        spendingKey: Uint8Array;
+      };
+      /** Perps pool ID */
+      perpsPoolId: Uint8Array;
+      /** Exit price from oracle */
+      exitPrice: bigint;
+      /** PnL amount (absolute value) */
+      pnlAmount: bigint;
+      /** Is profit (true) or loss (false) */
+      isProfit: boolean;
+      /** Close fee */
+      closeFee: bigint;
+      /** Settlement recipient stealth address */
+      settlementRecipient: { stealthPubkey: { x: Uint8Array } };
+      /** Token mint for settlement */
+      tokenMint: Uint8Array;
+      /** Merkle root */
+      merkleRoot: Uint8Array;
+      /** Merkle path */
+      merklePath: Uint8Array[];
+      /** Merkle path indices */
+      merkleIndices: number[];
+    },
+    keypair: Keypair
   ): Promise<{
     proof: Uint8Array;
-    nullifier: Uint8Array;
+    positionNullifier: Uint8Array;
     settlementCommitment: Uint8Array;
     settlementRandomness: Uint8Array;
+    settlementAmount: bigint;
   }> {
-    // Check if circuit exists
-    if (!this.hasCircuit('perps/close_position')) {
-      throw new Error('perps/close_position circuit not loaded. Circuits need to be compiled first.');
+    const circuitName = 'perps/close_position';
+
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`${circuitName} circuit not loaded. Circuits need to be compiled first.`);
     }
 
-    // Generate randomness for settlement commitment
-    const settlementRandomness = generateRandomness();
+    // Derive nullifier key from position spending key
+    const effectiveNullifierKey = deriveNullifierKey(params.position.spendingKey);
 
-    // Placeholder - actual implementation requires circuit
-    throw new Error('perps/close_position circuit implementation pending');
+    // Recompute position commitment
+    const POSITION_COMMITMENT_DOMAIN = 8n;
+    const stage1 = poseidonHashDomain(
+      POSITION_COMMITMENT_DOMAIN,
+      params.position.stealthPubX,
+      fieldToBytes(params.position.marketId),
+      fieldToBytes(BigInt(params.position.isLong ? 1 : 0)),
+      fieldToBytes(params.position.margin)
+    );
+    const positionCommitment = poseidonHash([
+      stage1,
+      fieldToBytes(params.position.size),
+      fieldToBytes(BigInt(params.position.leverage)),
+      fieldToBytes(params.position.entryPrice),
+      params.position.randomness,
+    ]);
+
+    // Compute position nullifier
+    const positionNullifier = deriveSpendingNullifier(
+      effectiveNullifierKey,
+      positionCommitment,
+      params.position.leafIndex
+    );
+
+    // Calculate settlement amount
+    // If profit: settlement = margin + min(pnl, margin) - closeFee
+    // If loss: settlement = margin - pnl - closeFee
+    let settlementAmount: bigint;
+    if (params.isProfit) {
+      const cappedPnl = params.pnlAmount > params.position.margin ? params.position.margin : params.pnlAmount;
+      settlementAmount = params.position.margin + cappedPnl - params.closeFee;
+    } else {
+      settlementAmount = params.position.margin - params.pnlAmount - params.closeFee;
+    }
+
+    // Ensure non-negative
+    if (settlementAmount < 0n) {
+      settlementAmount = 0n;
+    }
+
+    // Generate settlement randomness and commitment
+    const settlementRandomness = generateRandomness();
+    const settlementCommitment = computeCommitment({
+      stealthPubX: params.settlementRecipient.stealthPubkey.x,
+      tokenMint: params.tokenMint,
+      amount: settlementAmount,
+      randomness: settlementRandomness,
+    } as any);
+
+    // Pad merkle path
+    const merklePath = [...params.merklePath];
+    while (merklePath.length < 32) {
+      merklePath.push(new Uint8Array(32));
+    }
+    const merkleIndices = [...params.merkleIndices];
+    while (merkleIndices.length < 32) {
+      merkleIndices.push(0);
+    }
+
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      position_nullifier: fieldToHex(positionNullifier),
+      perps_pool_id: fieldToHex(params.perpsPoolId),
+      out_commitment: fieldToHex(settlementCommitment),
+      is_long: params.position.isLong ? '1' : '0',
+      exit_price: params.exitPrice.toString(),
+      close_fee: params.closeFee.toString(),
+      pnl_amount: params.pnlAmount.toString(),
+      is_profit: params.isProfit ? '1' : '0',
+
+      // Private inputs
+      position_stealth_pub_x: fieldToHex(params.position.stealthPubX),
+      market_id: params.position.marketId.toString(),
+      position_margin: params.position.margin.toString(),
+      position_size: params.position.size.toString(),
+      position_leverage: params.position.leverage.toString(),
+      entry_price: params.position.entryPrice.toString(),
+      position_randomness: fieldToHex(params.position.randomness),
+      position_spending_key: fieldToHex(params.position.spendingKey),
+      merkle_path: merklePath.map(p => fieldToHex(p)),
+      merkle_path_indices: merkleIndices.map(i => i.toString()),
+      leaf_index: params.position.leafIndex.toString(),
+      out_stealth_pub_x: fieldToHex(params.settlementRecipient.stealthPubkey.x),
+      out_token_mint: fieldToHex(params.tokenMint),
+      out_amount: settlementAmount.toString(),
+      out_randomness: fieldToHex(settlementRandomness),
+    };
+
+    const proof = await this.prove(circuitName, witnessInputs);
+
+    return {
+      proof,
+      positionNullifier,
+      settlementCommitment,
+      settlementRandomness,
+      settlementAmount,
+    };
   }
 
   /**
-   * Generate proof for adding perps liquidity
+   * Generate proof for adding perps liquidity (single token deposit)
    *
-   * Note: This is a stub - requires perps/add_liquidity circuit to be implemented
+   * Circuit proves:
+   * - Ownership of deposit commitment
+   * - Correct nullifier derivation
+   * - Correct LP commitment computation
+   * - Balance check: input = deposit + fee
    */
   async generateAddPerpsLiquidityProof(
-    params: any,
-    keypair: any
+    params: {
+      /** Input note (deposit token) */
+      input: {
+        stealthPubX: Uint8Array;
+        tokenMint: any;
+        amount: bigint;
+        randomness: Uint8Array;
+        leafIndex: number;
+        stealthEphemeralPubkey?: { x: Uint8Array; y: Uint8Array };
+      };
+      /** Perps pool ID */
+      perpsPoolId: Uint8Array;
+      /** Token index in pool (0-7) */
+      tokenIndex: number;
+      /** Deposit amount */
+      depositAmount: bigint;
+      /** LP amount to mint (calculated on-chain) */
+      lpAmountMinted: bigint;
+      /** Fee amount */
+      feeAmount: bigint;
+      /** LP recipient stealth address */
+      lpRecipient: { stealthPubkey: { x: Uint8Array } };
+      /** Merkle root */
+      merkleRoot: Uint8Array;
+      /** Merkle path */
+      merklePath: Uint8Array[];
+      /** Merkle path indices */
+      merkleIndices: number[];
+    },
+    keypair: Keypair
   ): Promise<{
     proof: Uint8Array;
     nullifier: Uint8Array;
     lpCommitment: Uint8Array;
-    changeCommitment: Uint8Array;
     lpRandomness: Uint8Array;
-    changeRandomness: Uint8Array;
   }> {
-    // Check if circuit exists
-    if (!this.hasCircuit('perps/add_liquidity')) {
-      throw new Error('perps/add_liquidity circuit not loaded. Circuits need to be compiled first.');
+    const circuitName = 'perps/add_liquidity';
+
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`${circuitName} circuit not loaded. Circuits need to be compiled first.`);
     }
 
-    // Generate randomness for commitments
-    const lpRandomness = generateRandomness();
-    const changeRandomness = generateRandomness();
+    // Derive effective spending key
+    let effectiveKey: bigint;
+    if (params.input.stealthEphemeralPubkey) {
+      effectiveKey = deriveStealthPrivateKey(
+        bytesToField(keypair.spending.sk),
+        params.input.stealthEphemeralPubkey
+      );
+    } else {
+      effectiveKey = bytesToField(keypair.spending.sk);
+    }
+    const effectiveNullifierKey = deriveNullifierKey(fieldToBytes(effectiveKey));
 
-    // Placeholder - actual implementation requires circuit
-    throw new Error('perps/add_liquidity circuit implementation pending');
+    // Compute input commitment and nullifier
+    const inputCommitment = computeCommitment(params.input);
+    const nullifier = deriveSpendingNullifier(effectiveNullifierKey, inputCommitment, params.input.leafIndex);
+
+    // Generate LP randomness
+    const lpRandomness = generateRandomness();
+
+    // Convert token mint to bytes
+    const tokenMint = params.input.tokenMint instanceof Uint8Array
+      ? params.input.tokenMint
+      : params.input.tokenMint.toBytes();
+
+    // Compute LP commitment using LpCommitment template
+    // LpCommitment: H(LP_COMMITMENT_DOMAIN, stealth_pub_x, pool_id, lp_amount, randomness)
+    const LP_COMMITMENT_DOMAIN = 9n;
+    const lpCommitment = poseidonHashDomain(
+      LP_COMMITMENT_DOMAIN,
+      params.lpRecipient.stealthPubkey.x,
+      params.perpsPoolId,
+      fieldToBytes(params.lpAmountMinted),
+      lpRandomness
+    );
+
+    // Pad merkle path
+    const merklePath = [...params.merklePath];
+    while (merklePath.length < 32) {
+      merklePath.push(new Uint8Array(32));
+    }
+    const merkleIndices = [...params.merkleIndices];
+    while (merkleIndices.length < 32) {
+      merkleIndices.push(0);
+    }
+
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      nullifier: fieldToHex(nullifier),
+      perps_pool_id: fieldToHex(params.perpsPoolId),
+      lp_commitment: fieldToHex(lpCommitment),
+      token_index: params.tokenIndex.toString(),
+      deposit_amount: params.depositAmount.toString(),
+      lp_amount_minted: params.lpAmountMinted.toString(),
+      fee_amount: params.feeAmount.toString(),
+
+      // Private inputs
+      in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
+      in_amount: params.input.amount.toString(),
+      in_randomness: fieldToHex(params.input.randomness),
+      in_stealth_spending_key: fieldToHex(fieldToBytes(effectiveKey)),
+      token_mint: fieldToHex(tokenMint),
+      merkle_path: merklePath.map(p => fieldToHex(p)),
+      merkle_path_indices: merkleIndices.map(i => i.toString()),
+      leaf_index: params.input.leafIndex.toString(),
+      lp_stealth_pub_x: fieldToHex(params.lpRecipient.stealthPubkey.x),
+      lp_randomness: fieldToHex(lpRandomness),
+    };
+
+    const proof = await this.prove(circuitName, witnessInputs);
+
+    return {
+      proof,
+      nullifier,
+      lpCommitment,
+      lpRandomness,
+    };
   }
 
   /**
    * Generate proof for removing perps liquidity
    *
-   * Note: This is a stub - requires perps/remove_liquidity circuit to be implemented
+   * Circuit proves:
+   * - Ownership of LP commitment
+   * - Correct LP nullifier derivation
+   * - Correct output token commitment
+   * - Correct change LP commitment
+   * - LP balance: lp_amount = burned + change
    */
   async generateRemovePerpsLiquidityProof(
-    params: any,
-    keypair: any
+    params: {
+      /** LP token input */
+      lpInput: {
+        stealthPubX: Uint8Array;
+        lpAmount: bigint;
+        randomness: Uint8Array;
+        leafIndex: number;
+        spendingKey: Uint8Array;
+      };
+      /** Perps pool ID */
+      perpsPoolId: Uint8Array;
+      /** Token index to withdraw (0-7) */
+      tokenIndex: number;
+      /** LP amount to burn */
+      lpAmountBurned: bigint;
+      /** Withdraw amount */
+      withdrawAmount: bigint;
+      /** Fee amount */
+      feeAmount: bigint;
+      /** Output token recipient */
+      outputRecipient: { stealthPubkey: { x: Uint8Array } };
+      /** Output token mint */
+      outputTokenMint: Uint8Array;
+      /** Change LP amount */
+      changeLpAmount: bigint;
+      /** Merkle root */
+      merkleRoot: Uint8Array;
+      /** Merkle path */
+      merklePath: Uint8Array[];
+      /** Merkle path indices */
+      merkleIndices: number[];
+    },
+    keypair: Keypair
   ): Promise<{
     proof: Uint8Array;
-    nullifier: Uint8Array;
-    withdrawCommitment: Uint8Array;
-    lpChangeCommitment: Uint8Array;
-    withdrawRandomness: Uint8Array;
-    lpChangeRandomness: Uint8Array;
+    lpNullifier: Uint8Array;
+    outputCommitment: Uint8Array;
+    changeLpCommitment: Uint8Array;
+    outputRandomness: Uint8Array;
+    changeLpRandomness: Uint8Array;
   }> {
-    // Check if circuit exists
-    if (!this.hasCircuit('perps/remove_liquidity')) {
-      throw new Error('perps/remove_liquidity circuit not loaded. Circuits need to be compiled first.');
+    const circuitName = 'perps/remove_liquidity';
+
+    if (!this.hasCircuit(circuitName)) {
+      throw new Error(`${circuitName} circuit not loaded. Circuits need to be compiled first.`);
     }
 
-    // Generate randomness for commitments
-    const withdrawRandomness = generateRandomness();
-    const lpChangeRandomness = generateRandomness();
+    // Derive nullifier key from LP spending key
+    const effectiveNullifierKey = deriveNullifierKey(params.lpInput.spendingKey);
 
-    // Placeholder - actual implementation requires circuit
-    throw new Error('perps/remove_liquidity circuit implementation pending');
+    // Recompute LP commitment
+    const LP_COMMITMENT_DOMAIN = 9n;
+    const lpCommitment = poseidonHashDomain(
+      LP_COMMITMENT_DOMAIN,
+      params.lpInput.stealthPubX,
+      params.perpsPoolId,
+      fieldToBytes(params.lpInput.lpAmount),
+      params.lpInput.randomness
+    );
+
+    // Compute LP nullifier
+    const lpNullifier = deriveSpendingNullifier(
+      effectiveNullifierKey,
+      lpCommitment,
+      params.lpInput.leafIndex
+    );
+
+    // Generate output randomness
+    const outputRandomness = generateRandomness();
+    const changeLpRandomness = generateRandomness();
+
+    // Compute output token commitment
+    const outputCommitment = computeCommitment({
+      stealthPubX: params.outputRecipient.stealthPubkey.x,
+      tokenMint: params.outputTokenMint,
+      amount: params.withdrawAmount,
+      randomness: outputRandomness,
+    } as any);
+
+    // Compute change LP commitment
+    const changeLpCommitment = poseidonHashDomain(
+      LP_COMMITMENT_DOMAIN,
+      params.lpInput.stealthPubX, // Same owner
+      params.perpsPoolId,
+      fieldToBytes(params.changeLpAmount),
+      changeLpRandomness
+    );
+
+    // Pad merkle path
+    const merklePath = [...params.merklePath];
+    while (merklePath.length < 32) {
+      merklePath.push(new Uint8Array(32));
+    }
+    const merkleIndices = [...params.merkleIndices];
+    while (merkleIndices.length < 32) {
+      merkleIndices.push(0);
+    }
+
+    const witnessInputs = {
+      // Public inputs
+      merkle_root: fieldToHex(params.merkleRoot),
+      lp_nullifier: fieldToHex(lpNullifier),
+      perps_pool_id: fieldToHex(params.perpsPoolId),
+      out_commitment: fieldToHex(outputCommitment),
+      token_index: params.tokenIndex.toString(),
+      withdraw_amount: params.withdrawAmount.toString(),
+      lp_amount_burned: params.lpAmountBurned.toString(),
+      fee_amount: params.feeAmount.toString(),
+
+      // Private inputs
+      lp_stealth_pub_x: fieldToHex(params.lpInput.stealthPubX),
+      lp_amount: params.lpInput.lpAmount.toString(),
+      lp_randomness: fieldToHex(params.lpInput.randomness),
+      lp_spending_key: fieldToHex(params.lpInput.spendingKey),
+      merkle_path: merklePath.map(p => fieldToHex(p)),
+      merkle_path_indices: merkleIndices.map(i => i.toString()),
+      leaf_index: params.lpInput.leafIndex.toString(),
+      out_stealth_pub_x: fieldToHex(params.outputRecipient.stealthPubkey.x),
+      out_token_mint: fieldToHex(params.outputTokenMint),
+      out_randomness: fieldToHex(outputRandomness),
+      change_lp_commitment: fieldToHex(changeLpCommitment),
+      change_lp_amount: params.changeLpAmount.toString(),
+      change_lp_randomness: fieldToHex(changeLpRandomness),
+    };
+
+    const proof = await this.prove(circuitName, witnessInputs);
+
+    return {
+      proof,
+      lpNullifier,
+      outputCommitment,
+      changeLpCommitment,
+      outputRandomness,
+      changeLpRandomness,
+    };
   }
 
 }
