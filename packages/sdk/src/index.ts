@@ -61,3 +61,6 @@ export * from './consolidation';
 
 // Export auto-consolidator
 export * from './auto-consolidator';
+
+// Export perpetual futures module
+export * from './perps';

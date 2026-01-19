@@ -39,6 +39,12 @@ export const CIRCUIT_IDS = {
   ORDER_FILL: 'market_order_fill',
   ORDER_CANCEL: 'market_order_cancel',
   GOVERNANCE_VOTE: 'governance_encrypted_submit',
+  // Perpetual futures circuits
+  PERPS_OPEN_POSITION: 'perps_open_position',
+  PERPS_CLOSE_POSITION: 'perps_close_position',
+  PERPS_ADD_LIQUIDITY: 'perps_add_liquidity',
+  PERPS_REMOVE_LIQUIDITY: 'perps_remove_liquidity',
+  PERPS_LIQUIDATE: 'perps_liquidate',
 } as const;
 
 /**
