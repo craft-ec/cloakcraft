@@ -49,7 +49,7 @@ import { computeCommitment, generateRandomness, createNote } from './crypto/comm
 import { derivePublicKey } from './crypto/babyjubjub';
 import { poseidonHash, fieldToBytes, bytesToField, initPoseidon } from './crypto/poseidon';
 import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier';
-import { deriveStealthPrivateKey, generateStealthAddress } from './crypto/stealth';
+import { deriveStealthPrivateKey, generateStealthAddress, checkStealthOwnership } from './crypto/stealth';
 import {
   encryptVote,
   serializeEncryptedVote,
@@ -1120,13 +1120,60 @@ export class CloakCraftClient {
     const preparedInputs = await this.prepareInputs(request.inputs);
 
     // Prepare outputs with commitments (using same tokenMint as inputs)
-    const preparedOutputs = await this.prepareOutputs(request.outputs, tokenMint);
+    let preparedOutputs = await this.prepareOutputs(request.outputs, tokenMint);
 
     // Debug: Log prepared outputs
     console.log('[prepareAndTransfer] Prepared outputs:');
     preparedOutputs.forEach((o, i) => {
       console.log(`  Output ${i}: amount=${o.amount}, commitment=${Buffer.from(o.commitment).toString('hex').slice(0, 16)}...`);
     });
+
+    // Detect pure unshield scenario:
+    // - Has unshield (withdrawing to public wallet)
+    // - ALL outputs are to self (no transfer to others)
+    // For pure unshield, we restructure outputs so transfer_amount = 0 (fair fee)
+    const hasUnshield = request.unshield && request.unshield.amount > 0n;
+    const allOutputsToSelf = preparedOutputs.length > 0 && preparedOutputs.every(output =>
+      checkStealthOwnership(
+        output.recipient.stealthPubkey,
+        output.recipient.ephemeralPubkey,
+        this.wallet!.keypair
+      )
+    );
+    const isPureUnshield = hasUnshield && allOutputsToSelf;
+
+    if (isPureUnshield) {
+      console.log('[prepareAndTransfer] Pure unshield detected - restructuring outputs for fair fee');
+      // For pure unshield, structure outputs so transfer_amount = 0:
+      // out_1 = dummy (amount = 0) → transfer_amount = 0 → fee only on unshield
+      // out_2 = actual change back to self
+
+      // Create dummy output for out_1
+      const dummyStealthAddress: StealthAddress = {
+        stealthPubkey: { x: new Uint8Array(32), y: new Uint8Array(32) },
+        ephemeralPubkey: { x: new Uint8Array(32), y: new Uint8Array(32) },
+      };
+      const dummyNote = createNote(
+        new Uint8Array(32),
+        tokenMint,
+        0n,
+        new Uint8Array(32)
+      );
+      const dummyCommitment = computeCommitment(dummyNote);
+
+      const dummyOutput: TransferOutput = {
+        recipient: dummyStealthAddress,
+        amount: 0n,
+        commitment: dummyCommitment,
+        stealthPubX: new Uint8Array(32),
+        randomness: new Uint8Array(32),
+      };
+
+      // Put dummy first (out_1), then actual change (out_2)
+      // If there are multiple change outputs, use the first one
+      preparedOutputs = [dummyOutput, preparedOutputs[0]];
+      console.log('[prepareAndTransfer] Restructured: out_1=dummy(0), out_2=change');
+    }
 
     // Use commitment as merkle_root with dummy path
     // The circuit doesn't verify merkle path (it's for ABI compatibility only).
