@@ -311,10 +311,14 @@ function PoolRateCard({
     const minY = Math.min(...yValues);
     const maxY = Math.max(...yValues);
 
+    // Prevent division by zero (happens with bad pool data)
+    const rangeX = maxX - minX || 1;
+    const rangeY = maxY - minY || 1;
+
     return curveData.map(p => ({
       ...p,
-      svgX: padding + ((p.x - minX) / (maxX - minX)) * (width - 2 * padding),
-      svgY: height - padding - ((p.y - minY) / (maxY - minY)) * (height - 2 * padding),
+      svgX: padding + ((p.x - minX) / rangeX) * (width - 2 * padding),
+      svgY: height - padding - ((p.y - minY) / rangeY) * (height - 2 * padding),
     }));
   }, [curveData]);
 

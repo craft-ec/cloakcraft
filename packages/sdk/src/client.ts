@@ -510,7 +510,8 @@ export class CloakCraftClient {
         bump: pool.account.bump,
         lpMintBump: pool.account.lpMintBump,
         // Pool type: 0 = ConstantProduct, 1 = StableSwap
-        poolType: pool.account.poolType?.constantProduct !== undefined ? 0 : 1,
+        // Old pools without poolType field default to ConstantProduct
+        poolType: pool.account.poolType?.stableSwap !== undefined ? 1 : 0,
         amplification: BigInt(pool.account.amplification?.toString() ?? '0'),
       }));
     } catch (e: any) {
