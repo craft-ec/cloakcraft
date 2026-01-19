@@ -1142,19 +1142,24 @@ export class CloakCraftClient {
     const { fetchProtocolFeeConfig, calculateProtocolFee } = await import('./fees');
     const feeConfig = await fetchProtocolFeeConfig(this.connection, this.programId);
 
-    // Determine operation type for fee calculation
-    const operationType = request.unshield ? 'unshield' : 'transfer';
-
     // Calculate total input amount
     const totalInputAmount = preparedInputs.reduce((sum, input) => sum + input.amount, 0n);
 
-    // For fee calculation, use the "value being moved" - unshield amount or transfer amount
-    // Fee is based on what the user is extracting/sending, not the total input
-    const feeableAmount = request.unshield?.amount ?? request.outputs[0]?.amount ?? 0n;
-    const feeCalc = calculateProtocolFee(feeableAmount, operationType, feeConfig);
+    // Fee calculation must match on-chain logic (process_unshield.rs:130-137):
+    // total_taxable = transfer_amount + unshield_amount
+    // expected_fee = calculate_fee(total_taxable, transfer_fee_bps)
+    //
+    // transfer_amount = first output amount (recipient)
+    // unshield_amount = amount being withdrawn to public wallet
+    // Fee rate is ALWAYS transfer_fee_bps (not unshield_fee_bps)
+    const transferAmount = preparedOutputs[0]?.amount ?? 0n;
+    const unshieldAmount = request.unshield?.amount ?? 0n;
+    const feeableAmount = transferAmount + unshieldAmount;
+    const feeCalc = calculateProtocolFee(feeableAmount, 'transfer', feeConfig);
 
     console.log('[prepareAndTransfer] Fee calculation:', {
-      operationType,
+      transferAmount: transferAmount.toString(),
+      unshieldAmount: unshieldAmount.toString(),
       feeableAmount: feeableAmount.toString(),
       feeAmount: feeCalc.feeAmount.toString(),
       feeBps: feeCalc.feeBps,
