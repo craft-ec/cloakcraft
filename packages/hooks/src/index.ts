@@ -71,3 +71,26 @@ export {
   useIsFreeOperation,
 } from './useProtocolFees';
 export type { ProtocolFeeConfig, UseProtocolFeesResult } from './useProtocolFees';
+
+// Perpetual futures
+export {
+  // Pool & market fetching
+  usePerpsPools,
+  usePerpsPool,
+  usePerpsMarkets,
+  // Position operations
+  useOpenPosition,
+  useClosePosition,
+  // Liquidity operations
+  usePerpsAddLiquidity,
+  usePerpsRemoveLiquidity,
+  // Calculations
+  usePositionPnL,
+  useLiquidationPrice,
+  useLpValue,
+  useLpMintPreview,
+  useWithdrawPreview,
+  useTokenUtilization,
+  usePositionValidation,
+} from './usePerps';
+export type { PerpsProgressStage } from './usePerps';

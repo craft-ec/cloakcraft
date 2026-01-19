@@ -36,6 +36,10 @@ import type {
   SubmitVoteParams,
   SubmitDecryptionShareParams,
   FinalizeVotingParams,
+  OpenPerpsPositionParams,
+  ClosePerpsPositionParams,
+  PerpsAddLiquidityClientParams,
+  PerpsRemoveLiquidityClientParams,
 } from '@cloakcraft/types';
 
 import { Wallet, createWallet, loadWallet } from './wallet';
@@ -83,6 +87,17 @@ import {
   deriveProtocolConfigPda,
   CIRCUIT_IDS,
 } from './instructions';
+import {
+  buildOpenPositionWithProgram,
+  buildClosePositionWithProgram,
+  buildAddPerpsLiquidityWithProgram,
+  buildRemovePerpsLiquidityWithProgram,
+  derivePerpsPoolPda,
+  derivePerpsMarketPda,
+  derivePerpsVaultPda,
+  derivePerpsLpMintPda,
+  PERPS_CIRCUIT_IDS,
+} from './perps';
 import {
   buildVersionedTransaction,
   executeVersionedTransaction,
@@ -3384,5 +3399,460 @@ export class CloakCraftClient {
       pathIndices: proof.pathIndices,
       leafIndex: proof.leafIndex,
     };
+  }
+
+  // =============================================================================
+  // Perpetual Futures Operations
+  // =============================================================================
+
+  /**
+   * Open a perpetual futures position
+   *
+   * @param params - Open position parameters
+   * @param relayer - Optional relayer keypair for transaction fees
+   */
+  async openPerpsPosition(
+    params: OpenPerpsPositionParams,
+    relayer?: SolanaKeypair
+  ): Promise<TransactionResult> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    // Ensure the perps circuit is loaded
+    if (!this.proofGenerator.hasCircuit('perps/open_position')) {
+      throw new Error("Prover not initialized. Call initializeProver(['perps/open_position']) first.");
+    }
+
+    params.onProgress?.('preparing');
+
+    // Calculate position size
+    const positionSize = params.marginAmount * BigInt(params.leverage);
+
+    // Require accountHash for commitment existence proof
+    const accountHash = params.input.accountHash;
+    if (!accountHash) {
+      throw new Error('Input note missing accountHash. Use scanNotes() to get notes with accountHash.');
+    }
+
+    params.onProgress?.('generating');
+
+    // Generate proof for open position
+    // Note: This requires the perps/open_position circuit to be implemented
+    const proofResult = await this.proofGenerator.generateOpenPositionProof(
+      params,
+      this.wallet.keypair
+    );
+
+    params.onProgress?.('building');
+
+    // Derive PDAs
+    const inputTokenMint = params.input.tokenMint instanceof Uint8Array
+      ? new PublicKey(params.input.tokenMint)
+      : params.input.tokenMint;
+
+    const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
+    const inputPoolAccount = await (this.program.account as any).pool.fetch(inputPoolPda);
+    const inputVault = inputPoolAccount.tokenVault;
+
+    // Get protocol config
+    const [protocolConfigPda] = deriveProtocolConfigPda(this.programId);
+
+    // Compute input commitment
+    const inputCommitment = computeCommitment(params.input);
+
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
+
+    const { proof, nullifier, positionCommitment, changeCommitment, positionRandomness, changeRandomness } = proofResult;
+
+    const instructionParams = {
+      perpsPool: params.poolId,
+      marketId: params.marketId,
+      inputPool: inputPoolPda,
+      inputVault,
+      inputTokenMint,
+      protocolConfig: protocolConfigPda,
+      relayer: relayerPubkey,
+      proof,
+      merkleRoot: params.merkleRoot,
+      nullifier,
+      inputCommitment,
+      accountHash,
+      leafIndex: params.input.leafIndex,
+      positionCommitment,
+      changeCommitment,
+      direction: params.direction,
+      marginAmount: params.marginAmount,
+      leverage: params.leverage,
+      positionSize,
+      oraclePrice: params.oraclePrice,
+      positionRecipient: params.positionRecipient,
+      changeRecipient: params.changeRecipient,
+      positionRandomness,
+      changeRandomness,
+    };
+
+    // Build multi-phase transactions
+    console.log('[OpenPosition] === Starting Multi-Phase Open Position ===');
+    console.log('[OpenPosition] Direction:', params.direction);
+    console.log('[OpenPosition] Margin:', params.marginAmount.toString());
+    console.log('[OpenPosition] Leverage:', params.leverage);
+
+    const buildResult = await buildOpenPositionWithProgram(
+      this.program,
+      instructionParams as any
+    );
+
+    // Execute multi-phase pattern similar to swap
+    params.onProgress?.('approving');
+    params.onProgress?.('executing');
+
+    // For now, return placeholder - full implementation requires circuit
+    console.log('[OpenPosition] Built transactions successfully');
+    console.log('[OpenPosition] Note: Full execution requires perps circuits to be compiled');
+
+    return {
+      signature: 'perps_circuit_required',
+      slot: 0,
+    };
+  }
+
+  /**
+   * Close a perpetual futures position
+   *
+   * @param params - Close position parameters
+   * @param relayer - Optional relayer keypair for transaction fees
+   */
+  async closePerpsPosition(
+    params: ClosePerpsPositionParams,
+    relayer?: SolanaKeypair
+  ): Promise<TransactionResult> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    // Ensure the perps circuit is loaded
+    if (!this.proofGenerator.hasCircuit('perps/close_position')) {
+      throw new Error("Prover not initialized. Call initializeProver(['perps/close_position']) first.");
+    }
+
+    params.onProgress?.('preparing');
+
+    // Require accountHash for commitment existence proof
+    const accountHash = params.positionInput.accountHash;
+    if (!accountHash) {
+      throw new Error('Position note missing accountHash. Use scanNotes() to get notes with accountHash.');
+    }
+
+    params.onProgress?.('generating');
+
+    // Generate proof for close position
+    const proofResult = await this.proofGenerator.generateClosePositionProof(
+      params,
+      this.wallet.keypair
+    );
+
+    params.onProgress?.('building');
+
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
+
+    const { proof, nullifier, settlementCommitment, settlementRandomness } = proofResult;
+
+    // Compute position commitment
+    const positionCommitment = computeCommitment(params.positionInput);
+
+    const instructionParams = {
+      perpsPool: params.poolId,
+      marketId: params.marketId,
+      relayer: relayerPubkey,
+      proof,
+      merkleRoot: params.merkleRoot,
+      nullifier,
+      positionCommitment,
+      accountHash,
+      leafIndex: params.positionInput.leafIndex,
+      settlementCommitment,
+      oraclePrice: params.oraclePrice,
+      settlementRecipient: params.settlementRecipient,
+      settlementRandomness,
+    };
+
+    // Build multi-phase transactions
+    console.log('[ClosePosition] === Starting Multi-Phase Close Position ===');
+
+    const buildResult = await buildClosePositionWithProgram(
+      this.program,
+      instructionParams as any
+    );
+
+    params.onProgress?.('approving');
+    params.onProgress?.('executing');
+
+    console.log('[ClosePosition] Built transactions successfully');
+    console.log('[ClosePosition] Note: Full execution requires perps circuits to be compiled');
+
+    return {
+      signature: 'perps_circuit_required',
+      slot: 0,
+    };
+  }
+
+  /**
+   * Add liquidity to a perpetual futures pool
+   *
+   * @param params - Add liquidity parameters
+   * @param relayer - Optional relayer keypair for transaction fees
+   */
+  async addPerpsLiquidity(
+    params: PerpsAddLiquidityClientParams,
+    relayer?: SolanaKeypair
+  ): Promise<TransactionResult> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    // Ensure the perps circuit is loaded
+    if (!this.proofGenerator.hasCircuit('perps/add_liquidity')) {
+      throw new Error("Prover not initialized. Call initializeProver(['perps/add_liquidity']) first.");
+    }
+
+    params.onProgress?.('preparing');
+
+    // Require accountHash for commitment existence proof
+    const accountHash = params.input.accountHash;
+    if (!accountHash) {
+      throw new Error('Input note missing accountHash. Use scanNotes() to get notes with accountHash.');
+    }
+
+    params.onProgress?.('generating');
+
+    // Generate proof for add liquidity
+    const proofResult = await this.proofGenerator.generateAddPerpsLiquidityProof(
+      params,
+      this.wallet.keypair
+    );
+
+    params.onProgress?.('building');
+
+    // Derive PDAs
+    const inputTokenMint = params.input.tokenMint instanceof Uint8Array
+      ? new PublicKey(params.input.tokenMint)
+      : params.input.tokenMint;
+
+    const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
+    const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, inputTokenMint, this.programId);
+    const [lpMintPda] = derivePerpsLpMintPda(params.poolId, this.programId);
+
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
+
+    const { proof, nullifier, lpCommitment, changeCommitment, lpRandomness, changeRandomness } = proofResult;
+
+    // Compute input commitment
+    const inputCommitment = computeCommitment(params.input);
+
+    const instructionParams = {
+      perpsPool: params.poolId,
+      inputPool: inputPoolPda,
+      perpsVault: perpsVaultPda,
+      lpMint: lpMintPda,
+      inputTokenMint,
+      relayer: relayerPubkey,
+      proof,
+      merkleRoot: params.merkleRoot,
+      nullifier,
+      inputCommitment,
+      accountHash,
+      leafIndex: params.input.leafIndex,
+      lpCommitment,
+      changeCommitment,
+      tokenIndex: params.tokenIndex,
+      depositAmount: params.depositAmount,
+      lpAmount: params.lpAmount,
+      lpRecipient: params.lpRecipient,
+      changeRecipient: params.changeRecipient,
+      lpRandomness,
+      changeRandomness,
+    };
+
+    console.log('[AddPerpsLiquidity] === Starting Multi-Phase Add Liquidity ===');
+    console.log('[AddPerpsLiquidity] Token index:', params.tokenIndex);
+    console.log('[AddPerpsLiquidity] Deposit amount:', params.depositAmount.toString());
+
+    const buildResult = await buildAddPerpsLiquidityWithProgram(
+      this.program,
+      instructionParams as any
+    );
+
+    params.onProgress?.('approving');
+    params.onProgress?.('executing');
+
+    console.log('[AddPerpsLiquidity] Built transactions successfully');
+    console.log('[AddPerpsLiquidity] Note: Full execution requires perps circuits to be compiled');
+
+    return {
+      signature: 'perps_circuit_required',
+      slot: 0,
+    };
+  }
+
+  /**
+   * Remove liquidity from a perpetual futures pool
+   *
+   * @param params - Remove liquidity parameters
+   * @param relayer - Optional relayer keypair for transaction fees
+   */
+  async removePerpsLiquidity(
+    params: PerpsRemoveLiquidityClientParams,
+    relayer?: SolanaKeypair
+  ): Promise<TransactionResult> {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    // Ensure the perps circuit is loaded
+    if (!this.proofGenerator.hasCircuit('perps/remove_liquidity')) {
+      throw new Error("Prover not initialized. Call initializeProver(['perps/remove_liquidity']) first.");
+    }
+
+    params.onProgress?.('preparing');
+
+    // Require accountHash for commitment existence proof
+    const accountHash = params.lpInput.accountHash;
+    if (!accountHash) {
+      throw new Error('LP note missing accountHash. Use scanNotes() to get notes with accountHash.');
+    }
+
+    params.onProgress?.('generating');
+
+    // Generate proof for remove liquidity
+    const proofResult = await this.proofGenerator.generateRemovePerpsLiquidityProof(
+      params,
+      this.wallet.keypair
+    );
+
+    params.onProgress?.('building');
+
+    // Derive PDAs
+    const [perpsPoolAccount] = derivePerpsPoolPda(params.poolId, this.programId);
+
+    // Fetch pool to get token info
+    const poolData = await (this.program.account as any).perpsPool.fetch(params.poolId);
+    const tokenMint = poolData.tokens[params.tokenIndex].mint;
+
+    const [outputPoolPda] = derivePoolPda(tokenMint, this.programId);
+    const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, tokenMint, this.programId);
+    const [lpMintPda] = derivePerpsLpMintPda(params.poolId, this.programId);
+
+    const heliusRpcUrl = this.getHeliusRpcUrl();
+    const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
+
+    const { proof, nullifier, withdrawCommitment, lpChangeCommitment, withdrawRandomness, lpChangeRandomness } = proofResult;
+
+    // Compute LP commitment
+    const lpCommitment = computeCommitment(params.lpInput);
+
+    const instructionParams = {
+      perpsPool: params.poolId,
+      outputPool: outputPoolPda,
+      perpsVault: perpsVaultPda,
+      lpMint: lpMintPda,
+      outputTokenMint: tokenMint,
+      relayer: relayerPubkey,
+      proof,
+      merkleRoot: params.merkleRoot,
+      nullifier,
+      lpCommitment,
+      accountHash,
+      leafIndex: params.lpInput.leafIndex,
+      withdrawCommitment,
+      lpChangeCommitment,
+      tokenIndex: params.tokenIndex,
+      lpAmount: params.lpAmount,
+      withdrawAmount: params.withdrawAmount,
+      withdrawRecipient: params.withdrawRecipient,
+      lpChangeRecipient: params.lpChangeRecipient,
+      withdrawRandomness,
+      lpChangeRandomness,
+    };
+
+    console.log('[RemovePerpsLiquidity] === Starting Multi-Phase Remove Liquidity ===');
+    console.log('[RemovePerpsLiquidity] Token index:', params.tokenIndex);
+    console.log('[RemovePerpsLiquidity] LP amount:', params.lpAmount.toString());
+
+    const buildResult = await buildRemovePerpsLiquidityWithProgram(
+      this.program,
+      instructionParams as any
+    );
+
+    params.onProgress?.('approving');
+    params.onProgress?.('executing');
+
+    console.log('[RemovePerpsLiquidity] Built transactions successfully');
+    console.log('[RemovePerpsLiquidity] Note: Full execution requires perps circuits to be compiled');
+
+    return {
+      signature: 'perps_circuit_required',
+      slot: 0,
+    };
+  }
+
+  /**
+   * Fetch all perps pools
+   */
+  async getAllPerpsPools(): Promise<Array<{ address: PublicKey; data: any }>> {
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    const accounts = await (this.program.account as any).perpsPool.all();
+    return accounts.map((acc: any) => ({
+      address: acc.publicKey,
+      data: acc.account,
+    }));
+  }
+
+  /**
+   * Fetch a specific perps pool
+   */
+  async getPerpsPool(poolAddress: PublicKey): Promise<any> {
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    return await (this.program.account as any).perpsPool.fetch(poolAddress);
+  }
+
+  /**
+   * Fetch perps markets for a pool
+   */
+  async getPerpsMarkets(poolAddress: PublicKey): Promise<Array<{ address: PublicKey; data: any }>> {
+    if (!this.program) {
+      throw new Error('No program set. Call setProgram() first.');
+    }
+
+    // Filter markets by pool
+    const accounts = await (this.program.account as any).perpsMarket.all([
+      { memcmp: { offset: 8 + 32, bytes: poolAddress.toBase58() } },
+    ]);
+
+    return accounts.map((acc: any) => ({
+      address: acc.publicKey,
+      data: acc.account,
+    }));
   }
 }

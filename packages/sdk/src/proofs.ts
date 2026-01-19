@@ -1443,6 +1443,123 @@ export class ProofGenerator {
     };
   }
 
+  // =============================================================================
+  // Perpetual Futures Proof Generation
+  // =============================================================================
+
+  /**
+   * Generate proof for opening a perps position
+   *
+   * Note: This is a stub - requires perps/open_position circuit to be implemented
+   */
+  async generateOpenPositionProof(
+    params: any,
+    keypair: any
+  ): Promise<{
+    proof: Uint8Array;
+    nullifier: Uint8Array;
+    positionCommitment: Uint8Array;
+    changeCommitment: Uint8Array;
+    positionRandomness: Uint8Array;
+    changeRandomness: Uint8Array;
+  }> {
+    // Check if circuit exists
+    if (!this.hasCircuit('perps/open_position')) {
+      throw new Error('perps/open_position circuit not loaded. Circuits need to be compiled first.');
+    }
+
+    // Generate randomness for commitments
+    const positionRandomness = generateRandomness();
+    const changeRandomness = generateRandomness();
+
+    // Placeholder - actual implementation requires circuit
+    throw new Error('perps/open_position circuit implementation pending');
+  }
+
+  /**
+   * Generate proof for closing a perps position
+   *
+   * Note: This is a stub - requires perps/close_position circuit to be implemented
+   */
+  async generateClosePositionProof(
+    params: any,
+    keypair: any
+  ): Promise<{
+    proof: Uint8Array;
+    nullifier: Uint8Array;
+    settlementCommitment: Uint8Array;
+    settlementRandomness: Uint8Array;
+  }> {
+    // Check if circuit exists
+    if (!this.hasCircuit('perps/close_position')) {
+      throw new Error('perps/close_position circuit not loaded. Circuits need to be compiled first.');
+    }
+
+    // Generate randomness for settlement commitment
+    const settlementRandomness = generateRandomness();
+
+    // Placeholder - actual implementation requires circuit
+    throw new Error('perps/close_position circuit implementation pending');
+  }
+
+  /**
+   * Generate proof for adding perps liquidity
+   *
+   * Note: This is a stub - requires perps/add_liquidity circuit to be implemented
+   */
+  async generateAddPerpsLiquidityProof(
+    params: any,
+    keypair: any
+  ): Promise<{
+    proof: Uint8Array;
+    nullifier: Uint8Array;
+    lpCommitment: Uint8Array;
+    changeCommitment: Uint8Array;
+    lpRandomness: Uint8Array;
+    changeRandomness: Uint8Array;
+  }> {
+    // Check if circuit exists
+    if (!this.hasCircuit('perps/add_liquidity')) {
+      throw new Error('perps/add_liquidity circuit not loaded. Circuits need to be compiled first.');
+    }
+
+    // Generate randomness for commitments
+    const lpRandomness = generateRandomness();
+    const changeRandomness = generateRandomness();
+
+    // Placeholder - actual implementation requires circuit
+    throw new Error('perps/add_liquidity circuit implementation pending');
+  }
+
+  /**
+   * Generate proof for removing perps liquidity
+   *
+   * Note: This is a stub - requires perps/remove_liquidity circuit to be implemented
+   */
+  async generateRemovePerpsLiquidityProof(
+    params: any,
+    keypair: any
+  ): Promise<{
+    proof: Uint8Array;
+    nullifier: Uint8Array;
+    withdrawCommitment: Uint8Array;
+    lpChangeCommitment: Uint8Array;
+    withdrawRandomness: Uint8Array;
+    lpChangeRandomness: Uint8Array;
+  }> {
+    // Check if circuit exists
+    if (!this.hasCircuit('perps/remove_liquidity')) {
+      throw new Error('perps/remove_liquidity circuit not loaded. Circuits need to be compiled first.');
+    }
+
+    // Generate randomness for commitments
+    const withdrawRandomness = generateRandomness();
+    const lpChangeRandomness = generateRandomness();
+
+    // Placeholder - actual implementation requires circuit
+    throw new Error('perps/remove_liquidity circuit implementation pending');
+  }
+
 }
 
 // =============================================================================

@@ -746,3 +746,124 @@ export interface SyncStatus {
   indexedSlot: number;
   isSynced: boolean;
 }
+
+// =============================================================================
+// Perpetual Futures Types
+// =============================================================================
+
+/** Progress stages for perps operations */
+export type PerpsProgressStage =
+  | 'preparing'
+  | 'generating'
+  | 'building'
+  | 'approving'
+  | 'executing'
+  | 'confirming';
+
+/** Open position parameters for client */
+export interface OpenPerpsPositionParams {
+  /** Input margin note */
+  input: DecryptedNote;
+  /** Perps pool address */
+  poolId: PublicKey;
+  /** Market ID */
+  marketId: Uint8Array;
+  /** Position direction */
+  direction: 'long' | 'short';
+  /** Margin amount */
+  marginAmount: bigint;
+  /** Leverage (1-100) */
+  leverage: number;
+  /** Current oracle price */
+  oraclePrice: bigint;
+  /** Stealth address for position commitment */
+  positionRecipient: StealthAddress;
+  /** Stealth address for change commitment */
+  changeRecipient: StealthAddress;
+  /** Merkle root for input proof */
+  merkleRoot: Uint8Array;
+  /** Merkle path for input */
+  merklePath: Uint8Array[];
+  /** Merkle path indices */
+  merkleIndices: number[];
+  /** Progress callback */
+  onProgress?: (stage: PerpsProgressStage) => void;
+}
+
+/** Close position parameters for client */
+export interface ClosePerpsPositionParams {
+  /** Position note to close */
+  positionInput: DecryptedNote;
+  /** Perps pool address */
+  poolId: PublicKey;
+  /** Market ID */
+  marketId: Uint8Array;
+  /** Current oracle price */
+  oraclePrice: bigint;
+  /** Stealth address for settlement output */
+  settlementRecipient: StealthAddress;
+  /** Merkle root for position proof */
+  merkleRoot: Uint8Array;
+  /** Merkle path for position */
+  merklePath: Uint8Array[];
+  /** Merkle path indices */
+  merkleIndices: number[];
+  /** Progress callback */
+  onProgress?: (stage: PerpsProgressStage) => void;
+}
+
+/** Add perps liquidity client parameters */
+export interface PerpsAddLiquidityClientParams {
+  /** Input token note */
+  input: DecryptedNote;
+  /** Perps pool address */
+  poolId: PublicKey;
+  /** Token index in pool */
+  tokenIndex: number;
+  /** Deposit amount */
+  depositAmount: bigint;
+  /** Expected LP tokens to receive */
+  lpAmount: bigint;
+  /** Current oracle prices for pool tokens */
+  oraclePrices: bigint[];
+  /** Stealth address for LP commitment */
+  lpRecipient: StealthAddress;
+  /** Stealth address for change commitment */
+  changeRecipient: StealthAddress;
+  /** Merkle root for input proof */
+  merkleRoot: Uint8Array;
+  /** Merkle path for input */
+  merklePath: Uint8Array[];
+  /** Merkle path indices */
+  merkleIndices: number[];
+  /** Progress callback */
+  onProgress?: (stage: PerpsProgressStage) => void;
+}
+
+/** Remove perps liquidity client parameters */
+export interface PerpsRemoveLiquidityClientParams {
+  /** LP token note to burn */
+  lpInput: DecryptedNote;
+  /** Perps pool address */
+  poolId: PublicKey;
+  /** Token index to withdraw */
+  tokenIndex: number;
+  /** LP amount to burn */
+  lpAmount: bigint;
+  /** Expected token amount to receive */
+  withdrawAmount: bigint;
+  /** Current oracle prices for pool tokens */
+  oraclePrices: bigint[];
+  /** Stealth address for withdrawal output */
+  withdrawRecipient: StealthAddress;
+  /** Stealth address for LP change (if any) */
+  lpChangeRecipient: StealthAddress;
+  /** Merkle root for LP proof */
+  merkleRoot: Uint8Array;
+  /** Merkle path for LP note */
+  merklePath: Uint8Array[];
+  /** Merkle path indices */
+  merkleIndices: number[];
+  /** Progress callback */
+  onProgress?: (stage: PerpsProgressStage) => void;
+}
