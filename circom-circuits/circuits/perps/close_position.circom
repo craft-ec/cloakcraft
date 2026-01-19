@@ -203,8 +203,18 @@ template ClosePosition() {
 
     // If profit is capped, effective_pnl = margin
     // Otherwise, effective_pnl = pnl_amount
+    // Split into quadratic constraints to avoid non-quadratic error
+    signal term1_pnl;
+    term1_pnl <== pnl_capped.out * pnl_amount;
+
+    signal one_minus_capped;
+    one_minus_capped <== 1 - pnl_capped.out;
+
+    signal term2_pnl;
+    term2_pnl <== one_minus_capped * position_margin;
+
     signal effective_pnl;
-    effective_pnl <== pnl_capped.out * pnl_amount + (1 - pnl_capped.out) * position_margin;
+    effective_pnl <== term1_pnl + term2_pnl;
 
     // Calculate expected settlement
     // profit case: margin + effective_pnl - close_fee
@@ -215,8 +225,18 @@ template ClosePosition() {
     signal loss_settlement;
     loss_settlement <== position_margin - pnl_amount - close_fee;
 
+    // Split into quadratic constraints
+    signal term1_settlement;
+    term1_settlement <== is_profit * profit_settlement;
+
+    signal one_minus_profit;
+    one_minus_profit <== 1 - is_profit;
+
+    signal term2_settlement;
+    term2_settlement <== one_minus_profit * loss_settlement;
+
     signal expected_settlement;
-    expected_settlement <== is_profit * profit_settlement + (1 - is_profit) * loss_settlement;
+    expected_settlement <== term1_settlement + term2_settlement;
 
     out_amount === expected_settlement;
 
@@ -224,8 +244,11 @@ template ClosePosition() {
     // 5. Verify Loss Doesn't Exceed Margin
     // ========================================================================
     // In loss case, pnl_amount must be <= margin (otherwise liquidation)
+    signal loss_pnl_product;
+    loss_pnl_product <== one_minus_profit * pnl_amount;
+
     component loss_check = LessEqThan(64);
-    loss_check.in[0] <== (1 - is_profit) * pnl_amount;
+    loss_check.in[0] <== loss_pnl_product;
     loss_check.in[1] <== position_margin;
     loss_check.out === 1;
 
