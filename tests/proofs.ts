@@ -1,5 +1,6 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Program, BN } from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
+import BN from "bn.js";
 import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
 import * as fs from "fs";
@@ -12,6 +13,7 @@ import {
   serializeGroth16Proof,
   computeCommitment,
   createNote,
+  initPoseidon,
 } from "../packages/sdk/dist/index.mjs";
 
 /**
@@ -24,8 +26,14 @@ import {
  */
 
 describe("Proof Integration", () => {
-  const provider = anchor.AnchorProvider.env();
-  anchor.setProvider(provider);
+  // Try to get provider, skip blockchain tests if not available
+  let provider: anchor.AnchorProvider | null = null;
+  try {
+    provider = anchor.AnchorProvider.env();
+    anchor.setProvider(provider);
+  } catch {
+    // Provider not available, unit tests will still run
+  }
 
   // Circuit IDs (must match constants in Solana program)
   const CIRCUIT_IDS = {
@@ -173,7 +181,10 @@ describe("Proof Integration", () => {
       expect(bytes[30]).to.equal(0xcd);
     });
 
-    it("commitment is 32 bytes", () => {
+    it("commitment is 32 bytes", async () => {
+      // Initialize Poseidon for commitment computation
+      await initPoseidon();
+
       // These would be actual field elements in production
       const stealthPubX = new Uint8Array(32);
       const randomness = new Uint8Array(32);

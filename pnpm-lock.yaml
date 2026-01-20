@@ -334,6 +334,9 @@ importers:
       '@solana/spl-token':
         specifier: ^0.4.0
         version: 0.4.14(@solana/web3.js@1.98.4)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)
+      bn.js:
+        specifier: ^5.2.2
+        version: 5.2.2
       bs58:
         specifier: ^6.0.0
         version: 6.0.0
@@ -347,6 +350,9 @@ importers:
       '@solana/web3.js':
         specifier: ^1.91.0
         version: 1.98.4(typescript@5.9.3)
+      '@types/bn.js':
+        specifier: ^5.2.0
+        version: 5.2.0
       '@types/bs58':
         specifier: ^5.0.0
         version: 5.0.0
@@ -5731,6 +5737,12 @@ packages:
     resolution: {integrity: sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==}
     dependencies:
       '@babel/types': 7.28.5
+
+  /@types/bn.js@5.2.0:
+    resolution: {integrity: sha512-DLbJ1BPqxvQhIGbeu8VbUC1DiAiahHtAYvA0ZEAa4P31F7IaArc8z3C3BRQdWX4mtLQuABG4yzp76ZrS02Ui1Q==}
+    dependencies:
+      '@types/node': 20.19.28
+    dev: true
 
   /@types/bs58@5.0.0:
     resolution: {integrity: sha512-cAw/jKBzo98m6Xz1X5ETqymWfIMbXbu6nK15W4LQYjeHJkVqSmM5PO8Bd9KVHQJ/F4rHcSso9LcjtgCW6TGu2w==}

@@ -15,7 +15,8 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountIdempotentInstruction,
 } from '@solana/spl-token';
-import { Program, BN } from '@coral-xyz/anchor';
+import { Program } from '@coral-xyz/anchor';
+import BN from 'bn.js';
 import type { Point } from '@cloakcraft/types';
 
 import {

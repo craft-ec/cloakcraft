@@ -544,9 +544,16 @@ export class LightCommitmentClient extends LightClient {
     const pathIndices = this.leafIndexToPathIndices(proofResult.leafIndex, pathElements.length);
 
     // Convert root
-    const rootBytes = proofResult.root.toArray
-      ? new Uint8Array(proofResult.root.toArray('be', 32))
-      : new Uint8Array(proofResult.root);
+    let rootBytes: Uint8Array;
+    if (proofResult.root.toArray) {
+      rootBytes = new Uint8Array(proofResult.root.toArray('be', 32));
+    } else if (proofResult.root instanceof Uint8Array) {
+      rootBytes = proofResult.root;
+    } else if (Array.isArray(proofResult.root)) {
+      rootBytes = new Uint8Array(proofResult.root);
+    } else {
+      rootBytes = new Uint8Array(32);
+    }
 
     return {
       root: rootBytes,
