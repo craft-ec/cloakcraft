@@ -65,6 +65,27 @@ const CIRCUITS: CircuitConfig[] = [
     id: "perps_liquidate",
     vkJsonPath: "circom-circuits/build/perps/liquidate_verification_key.json",
   },
+  // Voting circuits
+  {
+    id: "vote_snapshot",
+    vkJsonPath: "circom-circuits/build/voting/vote_snapshot_verification_key.json",
+  },
+  {
+    id: "change_vote_snapshot",
+    vkJsonPath: "circom-circuits/build/voting/change_vote_snapshot_verification_key.json",
+  },
+  {
+    id: "vote_spend",
+    vkJsonPath: "circom-circuits/build/voting/vote_spend_verification_key.json",
+  },
+  {
+    id: "voting_close_position",
+    vkJsonPath: "circom-circuits/build/voting/close_position_verification_key.json",
+  },
+  {
+    id: "voting_claim",
+    vkJsonPath: "circom-circuits/build/voting/claim_verification_key.json",
+  },
 ];
 
 // Convert decimal string to 32-byte big-endian buffer
