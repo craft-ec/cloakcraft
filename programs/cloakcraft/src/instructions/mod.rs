@@ -8,6 +8,7 @@ pub mod governance;
 pub mod admin;
 pub mod generic;
 pub mod perps;
+pub mod voting;
 
 pub use pool::*;
 pub use adapter::*;
@@ -17,3 +18,4 @@ pub use governance::*;
 pub use admin::*;
 pub use generic::*;
 pub use perps::*;
+pub use voting::*;

@@ -18,6 +18,20 @@ pub mod domains {
     pub const STEALTH: u64 = 0x05;
     pub const MERKLE: u64 = 0x06;
     pub const EMPTY_LEAF: u64 = 0x07;
+
+    // Voting domains
+    /// vote_nullifier = hash(VOTE_NULLIFIER, nullifier_key, ballot_id)
+    /// ONE per user per ballot, ensures single active vote
+    pub const VOTE_NULLIFIER: u64 = 0x10;
+    /// vote_commitment_nullifier = hash(VOTE_COMMITMENT, nullifier_key, vote_commitment)
+    /// Used when changing vote in Snapshot mode
+    pub const VOTE_COMMITMENT: u64 = 0x11;
+    /// spending_nullifier for vote_spend = hash(SPENDING, nullifier_key, note_commitment)
+    /// Reuses SPENDING_NULLIFIER domain for SpendToVote
+    pub const VOTE_SPENDING: u64 = 0x12;
+    /// position_nullifier = hash(POSITION, nullifier_key, position_commitment)
+    /// Used for close_position and claim
+    pub const POSITION: u64 = 0x13;
 }
 
 /// Circuit IDs for verification key lookup
@@ -45,6 +59,18 @@ pub mod circuits {
     pub const PERPS_LIQUIDATE: [u8; 32] = *b"perps_liquidate_________________";
     pub const PERPS_ADD_LIQUIDITY: [u8; 32] = *b"perps_add_liquidity_____________";
     pub const PERPS_REMOVE_LIQUIDITY: [u8; 32] = *b"perps_remove_liquidity__________";
+
+    // Voting circuits
+    /// Snapshot mode first vote circuit
+    pub const VOTE_SNAPSHOT: [u8; 32] = *b"vote_snapshot___________________";
+    /// Snapshot mode vote change circuit (atomic close+new)
+    pub const CHANGE_VOTE_SNAPSHOT: [u8; 32] = *b"change_vote_snapshot____________";
+    /// SpendToVote mode voting circuit
+    pub const VOTE_SPEND: [u8; 32] = *b"vote_spend______________________";
+    /// SpendToVote mode close position circuit (for vote change/exit)
+    pub const CLOSE_POSITION: [u8; 32] = *b"close_position__________________";
+    /// SpendToVote mode claim circuit
+    pub const CLAIM: [u8; 32] = *b"claim___________________________";
 }
 
 /// PDA seeds
@@ -65,6 +91,12 @@ pub mod seeds {
     pub const PERPS_LP_MINT: &[u8] = b"perps_lp_mint";
     pub const PERPS_VAULT: &[u8] = b"perps_vault";
     pub const PERPS_MARKET: &[u8] = b"perps_market";
+
+    // Voting seeds
+    /// Ballot PDA seed: ["ballot", ballot_id]
+    pub const BALLOT: &[u8] = b"ballot";
+    /// Ballot vault PDA seed: ["ballot_vault", ballot_id]
+    pub const BALLOT_VAULT: &[u8] = b"ballot_vault";
 }
 
 /// Operation types for pending operations
@@ -81,6 +113,18 @@ pub mod operation_types {
     pub const PERPS_LIQUIDATE: u8 = 12;
     pub const PERPS_ADD_LIQUIDITY: u8 = 13;
     pub const PERPS_REMOVE_LIQUIDITY: u8 = 14;
+
+    // Voting operation types
+    /// Snapshot mode first vote
+    pub const VOTE_SNAPSHOT: u8 = 20;
+    /// Snapshot mode vote change (atomic close+new)
+    pub const CHANGE_VOTE_SNAPSHOT: u8 = 21;
+    /// SpendToVote mode voting
+    pub const VOTE_SPEND: u8 = 22;
+    /// SpendToVote mode close vote position
+    pub const CLOSE_VOTE_POSITION: u8 = 23;
+    /// SpendToVote mode claim
+    pub const CLAIM: u8 = 24;
 }
 
 /// Encrypted note size in bytes

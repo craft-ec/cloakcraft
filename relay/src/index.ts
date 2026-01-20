@@ -24,3 +24,9 @@ export {
   type ErrorMessage,
 } from './protocol';
 export { DiscoveryService, RELAY_TOPIC, type DiscoveryConfig } from './discovery';
+
+// Voting services
+export { EligibilityService, type EligibilityCriteria, type EligibilityResult, type MerkleProof } from './services/eligibility';
+export { AttestationService, type BalanceAttestation, createIndexerKeypair } from './services/attestation';
+export { PreimageScannerService, type VotePreimage, type DecryptedPreimage, decryptPreimage } from './services/preimage-scanner';
+export { VotingApi, type VotingApiConfig, createVotingRouteHandlers } from './routes/voting';

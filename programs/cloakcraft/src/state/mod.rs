@@ -14,6 +14,7 @@ pub mod pending_operation;
 pub mod protocol_config;
 pub mod perps_pool;
 pub mod perps_market;
+pub mod ballot;
 
 pub use pool::*;
 pub use order::*;
@@ -29,3 +30,4 @@ pub use pending_operation::*;
 pub use protocol_config::*;
 pub use perps_pool::*;
 pub use perps_market::*;
+pub use ballot::*;

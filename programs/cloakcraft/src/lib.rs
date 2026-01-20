@@ -926,4 +926,259 @@ pub mod cloakcraft {
     ) -> Result<()> {
         perps::emit_profit_bound_event(ctx, position_commitment, margin, pnl, current_price)
     }
+
+    // ============ Voting Operations ============
+
+    /// Create a voting ballot
+    ///
+    /// Initializes a new ballot with the specified configuration.
+    /// Supports Snapshot (tokens liquid) and SpendToVote (tokens locked) modes.
+    /// For SpendToVote mode, creates a token vault.
+    pub fn create_ballot(
+        ctx: Context<CreateBallot>,
+        ballot_id: [u8; 32],
+        config: state::BallotConfigInput,
+    ) -> Result<()> {
+        voting::create_ballot(ctx, ballot_id, config)
+    }
+
+    /// Resolve a voting ballot
+    ///
+    /// Determines the outcome based on the configured resolution mode:
+    /// - TallyBased: Winner = argmax(option_weights[])
+    /// - Oracle: Reads outcome from oracle
+    /// - Authority: Designated resolver sets outcome
+    pub fn resolve_ballot(
+        ctx: Context<ResolveBallot>,
+        ballot_id: [u8; 32],
+        outcome: Option<u8>,
+    ) -> Result<()> {
+        voting::resolve_ballot(ctx, ballot_id, outcome)
+    }
+
+    /// Finalize a voting ballot
+    ///
+    /// Called after claim period expires (SpendToVote only).
+    /// Transfers unclaimed tokens from vault to protocol treasury.
+    pub fn finalize_ballot(
+        ctx: Context<FinalizeBallot>,
+        ballot_id: [u8; 32],
+    ) -> Result<()> {
+        voting::finalize_ballot(ctx, ballot_id)
+    }
+
+    /// Decrypt voting tally
+    ///
+    /// Called after timelock expires for TimeLocked and PermanentPrivate modes.
+    /// Decrypts the homomorphic tally to reveal aggregate vote counts.
+    /// For PermanentPrivate mode, this reveals ONLY aggregates, not individual votes.
+    pub fn decrypt_tally(
+        ctx: Context<DecryptTally>,
+        ballot_id: [u8; 32],
+        decryption_key: [u8; 32],
+        decrypted_weights: Vec<u64>,
+    ) -> Result<()> {
+        voting::decrypt_tally(ctx, ballot_id, decryption_key, decrypted_weights)
+    }
+
+    // ============ Snapshot Voting (Multi-Phase) ============
+
+    /// Create Pending with Proof - Vote Snapshot (Phase 0)
+    ///
+    /// Verifies ZK proof for snapshot voting and creates PendingOperation.
+    /// Uses indexer attestation for balance verification.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_vote_snapshot<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofVoteSnapshot<'info>>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        proof: Vec<u8>,
+        vote_nullifier: [u8; 32],
+        vote_commitment: [u8; 32],
+        vote_choice: u64,
+        total_amount: u64,
+        weight: u64,
+        attestation_signature: [u8; 64],
+        encrypted_contributions: Option<voting::EncryptedContributions>,
+        encrypted_preimage: Option<Vec<u8>>,
+        output_randomness: [u8; 32],
+    ) -> Result<()> {
+        voting::create_pending_with_proof_vote_snapshot(
+            ctx, operation_id, ballot_id, proof, vote_nullifier, vote_commitment,
+            vote_choice, total_amount, weight, attestation_signature,
+            encrypted_contributions, encrypted_preimage, output_randomness
+        )
+    }
+
+    /// Execute Vote Snapshot (Phase 2)
+    ///
+    /// Updates ballot tally based on the verified vote.
+    pub fn execute_vote_snapshot(
+        ctx: Context<ExecuteVoteSnapshot>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        encrypted_contributions: Option<voting::EncryptedContributions>,
+    ) -> Result<()> {
+        voting::execute_vote_snapshot(ctx, operation_id, ballot_id, encrypted_contributions)
+    }
+
+    /// Create Pending with Proof - Change Vote Snapshot (Phase 0)
+    ///
+    /// Atomic vote change: nullifies old vote_commitment and creates new one.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_change_vote_snapshot<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofChangeVoteSnapshot<'info>>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        proof: Vec<u8>,
+        old_vote_commitment: [u8; 32],
+        old_vote_commitment_nullifier: [u8; 32],
+        new_vote_commitment: [u8; 32],
+        vote_nullifier: [u8; 32],
+        old_vote_choice: u64,
+        new_vote_choice: u64,
+        weight: u64,
+        old_encrypted_contributions: Option<voting::EncryptedContributions>,
+        new_encrypted_contributions: Option<voting::EncryptedContributions>,
+        output_randomness: [u8; 32],
+    ) -> Result<()> {
+        voting::create_pending_with_proof_change_vote_snapshot(
+            ctx, operation_id, ballot_id, proof, old_vote_commitment,
+            old_vote_commitment_nullifier, new_vote_commitment, vote_nullifier,
+            old_vote_choice, new_vote_choice, weight,
+            old_encrypted_contributions, new_encrypted_contributions, output_randomness
+        )
+    }
+
+    /// Execute Change Vote Snapshot (Phase 3)
+    ///
+    /// Updates ballot tally for vote change: decrements old, increments new.
+    pub fn execute_change_vote_snapshot(
+        ctx: Context<ExecuteChangeVoteSnapshot>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        old_encrypted_contributions: Option<voting::EncryptedContributions>,
+        new_encrypted_contributions: Option<voting::EncryptedContributions>,
+    ) -> Result<()> {
+        voting::execute_change_vote_snapshot(
+            ctx, operation_id, ballot_id, old_encrypted_contributions, new_encrypted_contributions
+        )
+    }
+
+    // ============ SpendToVote (Multi-Phase) ============
+
+    /// Create Pending with Proof - Vote Spend (Phase 0)
+    ///
+    /// SpendToVote mode: Locks tokens in ballot vault.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_vote_spend<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofVoteSpend<'info>>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        proof: Vec<u8>,
+        merkle_root: [u8; 32],
+        input_commitment: [u8; 32],
+        spending_nullifier: [u8; 32],
+        position_commitment: [u8; 32],
+        vote_choice: u64,
+        amount: u64,
+        weight: u64,
+        encrypted_contributions: Option<voting::EncryptedContributions>,
+        encrypted_preimage: Option<Vec<u8>>,
+        output_randomness: [u8; 32],
+    ) -> Result<()> {
+        voting::create_pending_with_proof_vote_spend(
+            ctx, operation_id, ballot_id, proof, merkle_root, input_commitment,
+            spending_nullifier, position_commitment, vote_choice, amount, weight,
+            encrypted_contributions, encrypted_preimage, output_randomness
+        )
+    }
+
+    /// Execute Vote Spend (Phase 3)
+    ///
+    /// Updates ballot tally and locks tokens.
+    pub fn execute_vote_spend(
+        ctx: Context<ExecuteVoteSpend>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        encrypted_contributions: Option<voting::EncryptedContributions>,
+    ) -> Result<()> {
+        voting::execute_vote_spend(ctx, operation_id, ballot_id, encrypted_contributions)
+    }
+
+    // ============ Close Position (Multi-Phase) ============
+
+    /// Create Pending with Proof - Close Position (Phase 0)
+    ///
+    /// Allows closing position during voting to change vote or exit.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_close_vote_position<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofCloseVotePosition<'info>>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        proof: Vec<u8>,
+        position_commitment: [u8; 32],
+        position_nullifier: [u8; 32],
+        token_commitment: [u8; 32],
+        vote_choice: u64,
+        amount: u64,
+        weight: u64,
+        encrypted_contributions: Option<voting::EncryptedContributions>,
+        output_randomness: [u8; 32],
+    ) -> Result<()> {
+        voting::create_pending_with_proof_close_vote_position(
+            ctx, operation_id, ballot_id, proof, position_commitment, position_nullifier,
+            token_commitment, vote_choice, amount, weight, encrypted_contributions, output_randomness
+        )
+    }
+
+    /// Execute Close Vote Position (Phase 3)
+    ///
+    /// Decrements ballot tally and releases tokens.
+    pub fn execute_close_vote_position(
+        ctx: Context<ExecuteCloseVotePosition>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        encrypted_contributions: Option<voting::EncryptedContributions>,
+    ) -> Result<()> {
+        voting::execute_close_vote_position(ctx, operation_id, ballot_id, encrypted_contributions)
+    }
+
+    // ============ Claim (Multi-Phase, SpendToVote Only) ============
+
+    /// Create Pending with Proof - Claim (Phase 0)
+    ///
+    /// Allows winners to claim their payout.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_claim<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofClaim<'info>>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        proof: Vec<u8>,
+        position_commitment: [u8; 32],
+        position_nullifier: [u8; 32],
+        payout_commitment: [u8; 32],
+        user_vote_choice: u64,
+        user_weight: u64,
+        gross_payout: u64,
+        net_payout: u64,
+        output_randomness: [u8; 32],
+    ) -> Result<()> {
+        voting::create_pending_with_proof_claim(
+            ctx, operation_id, ballot_id, proof, position_commitment, position_nullifier,
+            payout_commitment, user_vote_choice, user_weight, gross_payout, net_payout,
+            output_randomness
+        )
+    }
+
+    /// Execute Claim (Phase 3)
+    ///
+    /// Transfers payout from ballot vault.
+    pub fn execute_claim(
+        ctx: Context<ExecuteClaim>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+    ) -> Result<()> {
+        voting::execute_claim(ctx, operation_id, ballot_id)
+    }
 }

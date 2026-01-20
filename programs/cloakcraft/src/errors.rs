@@ -365,4 +365,110 @@ pub enum CloakCraftError {
 
     #[msg("Invalid token index")]
     InvalidTokenIndex,
+
+    // ============ Voting/Ballot Errors ============
+    #[msg("Ballot not found")]
+    BallotNotFound,
+
+    #[msg("Ballot is not active for voting")]
+    BallotNotActive,
+
+    #[msg("Ballot has not been resolved yet")]
+    BallotNotResolved,
+
+    #[msg("Ballot has not been finalized yet")]
+    BallotNotFinalized,
+
+    #[msg("Ballot has already been finalized")]
+    BallotAlreadyFinalized,
+
+    #[msg("Ballot is already resolved")]
+    BallotAlreadyResolved,
+
+    #[msg("Invalid vote option - exceeds num_options")]
+    InvalidVoteOptionRange,
+
+    #[msg("Vote nullifier not found - user must vote before changing")]
+    VoteNullifierNotFound,
+
+    #[msg("Invalid binding mode for this operation")]
+    InvalidBindingMode,
+
+    #[msg("Invalid vote type for this ballot")]
+    InvalidVoteTypeForBallot,
+
+    #[msg("Invalid reveal mode for this operation")]
+    InvalidRevealModeForOperation,
+
+    #[msg("User not eligible to vote (not in whitelist)")]
+    NotEligible,
+
+    #[msg("Cannot vote with zero amount")]
+    ZeroAmount,
+
+    #[msg("Quorum threshold not met")]
+    QuorumNotMet,
+
+    #[msg("Invalid outcome value")]
+    InvalidOutcomeValue,
+
+    #[msg("Claims not allowed for Snapshot mode")]
+    ClaimsNotAllowed,
+
+    #[msg("Position already claimed (nullifier exists)")]
+    ClaimAlreadyProcessed,
+
+    #[msg("Claim deadline has passed")]
+    ClaimDeadlinePassed,
+
+    #[msg("Timelock has not expired yet")]
+    TimelockNotExpired,
+
+    #[msg("Invalid decryption key - does not match time_lock_pubkey")]
+    InvalidDecryptionKey,
+
+    #[msg("Invalid attestation signature")]
+    InvalidAttestationSignature,
+
+    #[msg("Invalid weight formula - evaluation error")]
+    InvalidWeightFormula,
+
+    #[msg("Position close not allowed outside voting period")]
+    PositionCloseNotAllowed,
+
+    #[msg("Invalid snapshot slot")]
+    InvalidSnapshotSlot,
+
+    #[msg("Invalid ballot timing - start_time must be before end_time")]
+    InvalidBallotTiming,
+
+    #[msg("Invalid number of options - must be between 1 and 16")]
+    InvalidNumOptions,
+
+    #[msg("Voting period has not started yet")]
+    VotingNotStarted,
+
+    #[msg("Voting period has ended")]
+    VotingEnded,
+
+    #[msg("Only authority can resolve in Authority mode")]
+    UnauthorizedResolver,
+
+    #[msg("Oracle has not submitted outcome")]
+    OracleOutcomeNotSubmitted,
+
+    #[msg("Tally must be decrypted before resolution")]
+    TallyNotDecrypted,
+
+    #[msg("Invalid eligibility proof")]
+    InvalidEligibilityProof,
+
+    #[msg("Weight formula too long")]
+    WeightFormulaTooLong,
+
+    #[msg("Too many weight parameters")]
+    TooManyWeightParams,
+
+    #[msg("Protocol fee exceeds maximum (10000 bps = 100%)")]
+    ProtocolFeeExceedsMax,
 }

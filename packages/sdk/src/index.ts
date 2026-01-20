@@ -64,3 +64,6 @@ export * from './auto-consolidator';
 
 // Export perpetual futures module
 export * from './perps';
+
+// Export voting module
+export * from './voting';

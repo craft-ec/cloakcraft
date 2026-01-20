@@ -423,6 +423,9 @@ importers:
       protomux:
         specifier: ^3.5.0
         version: 3.10.1
+      tweetnacl:
+        specifier: ^1.0.3
+        version: 1.0.3
     devDependencies:
       '@types/node':
         specifier: ^20.10.0
@@ -11747,6 +11750,10 @@ packages:
       turbo-windows-64: 2.7.3
       turbo-windows-arm64: 2.7.3
     dev: true
+
+  /tweetnacl@1.0.3:
+    resolution: {integrity: sha512-6rt+RN7aOi1nGMyC4Xa5DdYiukl2UWCbcJft7YhxReBGQD7OAM8Pbxw6YMo4r2diNEA8FEmu32YOn9rhaiE5yw==}
+    dev: false
 
   /type-check@0.3.2:
     resolution: {integrity: sha512-ZCmOJdvOWDBYJlzAoFkC+Q0+bUyEOS1ltgp1MGU03fqHG+dbi9tBFU2Rd9QKiDZFAYrhPh2JUf7rZRIuHRKtOg==}
