@@ -37,11 +37,11 @@ use instructions::perps::{
     CheckProfitBound, EmitProfitBoundEvent,
 };
 
-declare_id!("DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha");
+declare_id!("FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a");
 
 /// Light Protocol CPI signer for compressed account operations
 pub const LIGHT_CPI_SIGNER: CpiSigner =
-    derive_light_cpi_signer!("DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha");
+    derive_light_cpi_signer!("FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a");
 
 #[program]
 pub mod cloakcraft {
@@ -491,52 +491,6 @@ pub mod cloakcraft {
         generic::create_commitment(ctx, operation_id, commitment_index, stealth_ephemeral_pubkey, encrypted_note, light_params)
     }
 
-    // ============ Governance Operations ============
-
-    /// Create a voting aggregation
-    pub fn create_aggregation(
-        ctx: Context<CreateAggregation>,
-        id: [u8; 32],
-        threshold_pubkey: [u8; 32],
-        threshold: u8,
-        num_options: u8,
-        deadline: i64,
-        action_domain: [u8; 32],
-    ) -> Result<()> {
-        governance::create_aggregation(ctx, id, threshold_pubkey, threshold, num_options, deadline, action_domain)
-    }
-
-    /// Submit an encrypted vote
-    ///
-    /// Uses Light Protocol for action nullifier storage to prevent double-voting.
-    pub fn submit_encrypted<'info>(
-        ctx: Context<'_, '_, '_, 'info, SubmitEncrypted<'info>>,
-        proof: Vec<u8>,
-        merkle_root: [u8; 32],
-        action_nullifier: [u8; 32],
-        encrypted_votes: Vec<[u8; 64]>,
-        light_params: Option<governance::LightVoteParams>,
-    ) -> Result<()> {
-        governance::submit_encrypted(ctx, proof, merkle_root, action_nullifier, encrypted_votes, light_params)
-    }
-
-    /// Submit a decryption share
-    pub fn submit_decryption_share(
-        ctx: Context<SubmitDecryptionShare>,
-        shares: Vec<[u8; 32]>,
-        dleq_proofs: Vec<Vec<u8>>,
-    ) -> Result<()> {
-        governance::submit_decryption_share(ctx, shares, dleq_proofs)
-    }
-
-    /// Finalize decryption and reveal results
-    pub fn finalize_decryption(
-        ctx: Context<FinalizeDecryption>,
-        totals: Vec<u64>,
-    ) -> Result<()> {
-        governance::finalize_decryption(ctx, totals)
-    }
-
     // ============ Admin Operations ============
 
     /// Register an adapter module
@@ -747,14 +701,16 @@ pub mod cloakcraft {
         input_commitment: [u8; 32],
         nullifier: [u8; 32],
         position_commitment: [u8; 32],
+        change_commitment: [u8; 32],
         is_long: bool,
         margin_amount: u64,
         leverage: u8,
         position_fee: u64,
+        change_amount: u64,
     ) -> Result<()> {
         perps::create_pending_with_proof_open_position(
             ctx, operation_id, proof, merkle_root, input_commitment, nullifier,
-            position_commitment, is_long, margin_amount, leverage, position_fee
+            position_commitment, change_commitment, is_long, margin_amount, leverage, position_fee, change_amount
         )
     }
 

@@ -8,7 +8,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { PoolType } from '@cloakcraft/types';
 import type { AmmPoolState } from '@cloakcraft/types';
-import { deriveAmmPoolPda } from '../instructions/swap';
+import { deriveAmmPoolPda } from '../instructions/constants';
 
 /**
  * Fetch AMM pool state from on-chain account

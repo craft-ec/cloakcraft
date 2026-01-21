@@ -2998,11 +2998,9 @@ function CreatePoolForm({
     try {
       const tokenA = new import_web34.PublicKey(tokenAMint);
       const tokenB = new import_web34.PublicKey(tokenBMint);
-      const lpMintKeypair = import_web34.Keypair.generate();
       const signature = await client.initializeAmmPool(
         tokenA,
         tokenB,
-        lpMintKeypair,
         Math.floor(feeNum)
       );
       setResult(signature);

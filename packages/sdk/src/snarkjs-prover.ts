@@ -22,6 +22,15 @@ export interface CircomArtifacts {
 const artifactsCache: Map<string, CircomArtifacts> = new Map();
 
 /**
+ * Clear the circuit artifacts cache
+ *
+ * Call this to force reloading of circuit files after they've been recompiled.
+ */
+export function clearCircomCache(): void {
+  artifactsCache.clear();
+}
+
+/**
  * Load circuit artifacts from URLs or file paths
  *
  * In browser: Uses fetch with URLs
@@ -111,15 +120,16 @@ export async function generateSnarkjsProof(
   });
 
   // Log raw proof from snarkjs BEFORE formatting
+  const typedProof = proof as { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
   console.log('[snarkjs] Raw proof from snarkjs:');
-  console.log('  pi_a[0] (Ax):', proof.pi_a[0]);
-  console.log('  pi_a[1] (Ay):', proof.pi_a[1]);
-  console.log('  pi_b[0][0] (Bx_re):', proof.pi_b[0][0]);
-  console.log('  pi_b[0][1] (Bx_im):', proof.pi_b[0][1]);
-  console.log('  pi_b[1][0] (By_re):', proof.pi_b[1][0]);
-  console.log('  pi_b[1][1] (By_im):', proof.pi_b[1][1]);
-  console.log('  pi_c[0] (Cx):', proof.pi_c[0]);
-  console.log('  pi_c[1] (Cy):', proof.pi_c[1]);
+  console.log('  pi_a[0] (Ax):', typedProof.pi_a[0]);
+  console.log('  pi_a[1] (Ay):', typedProof.pi_a[1]);
+  console.log('  pi_b[0][0] (Bx_re):', typedProof.pi_b[0][0]);
+  console.log('  pi_b[0][1] (Bx_im):', typedProof.pi_b[0][1]);
+  console.log('  pi_b[1][0] (By_re):', typedProof.pi_b[1][0]);
+  console.log('  pi_b[1][1] (By_im):', typedProof.pi_b[1][1]);
+  console.log('  pi_c[0] (Cx):', typedProof.pi_c[0]);
+  console.log('  pi_c[1] (Cy):', typedProof.pi_c[1]);
 
   // Convert to bytes and format for Solana
   const formattedProof = formatSnarkjsProofForSolana(proof as { pi_a: string[]; pi_b: string[][]; pi_c: string[] });

@@ -5,7 +5,7 @@
  */
 
 import React, { useState } from 'react';
-import { PublicKey, Keypair } from '@solana/web3.js';
+import { PublicKey } from '@solana/web3.js';
 import { useCloakCraft } from '@cloakcraft/hooks';
 import { styles, colors } from '../styles';
 
@@ -115,14 +115,11 @@ export function CreatePoolForm({
       const tokenA = new PublicKey(tokenAMint);
       const tokenB = new PublicKey(tokenBMint);
 
-      // Generate new LP mint keypair
-      const lpMintKeypair = Keypair.generate();
-
+      // LP mint is now a PDA derived from the AMM pool, no keypair needed
       // Call without payer - SDK will use wallet from provider automatically
       const signature = await client.initializeAmmPool(
         tokenA,
         tokenB,
-        lpMintKeypair,
         Math.floor(feeNum)
       );
 

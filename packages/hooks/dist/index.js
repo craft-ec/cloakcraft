@@ -125,12 +125,16 @@ function CloakCraftProvider({
   const [syncStatus, setSyncStatus] = (0, import_react.useState)(null);
   const [notes, setNotes] = (0, import_react.useState)([]);
   const [error, setError] = (0, import_react.useState)(null);
+  const syncLockRef = (0, import_react.useRef)(false);
+  const hasAutoSyncedRef = (0, import_react.useRef)(false);
+  const syncRef = (0, import_react.useRef)(null);
   const STORAGE_KEY = solanaWalletPubkey ? `cloakcraft_spending_key_${solanaWalletPubkey}` : "cloakcraft_spending_key";
   (0, import_react.useEffect)(() => {
     if (solanaWalletPubkey) {
       setWallet(null);
       setNotes([]);
       setIsProverReady(false);
+      hasAutoSyncedRef.current = false;
     }
   }, [solanaWalletPubkey]);
   const client = (0, import_react.useMemo)(
@@ -174,10 +178,12 @@ function CloakCraftProvider({
     }
   }, [isInitialized, wallet, client]);
   (0, import_react.useEffect)(() => {
-    if (wallet && isProgramReady && !isSyncing && notes.length === 0) {
+    if (wallet && isProgramReady && !hasAutoSyncedRef.current && !syncLockRef.current && syncRef.current) {
+      hasAutoSyncedRef.current = true;
       console.log("[CloakCraft] Auto-syncing notes on wallet connect...");
-      sync().catch((err) => {
+      syncRef.current().catch((err) => {
         console.error("[CloakCraft] Auto-sync failed:", err);
+        hasAutoSyncedRef.current = false;
       });
     }
   }, [wallet, isProgramReady]);
@@ -216,6 +222,8 @@ function CloakCraftProvider({
     setNotes([]);
     setSyncStatus(null);
     setError(null);
+    hasAutoSyncedRef.current = false;
+    syncLockRef.current = false;
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -223,6 +231,11 @@ function CloakCraftProvider({
   }, []);
   const sync = (0, import_react.useCallback)(async (tokenMint, clearCache = false) => {
     if (!wallet) return;
+    if (syncLockRef.current) {
+      console.log("[CloakCraft] Sync already in progress, skipping...");
+      return;
+    }
+    syncLockRef.current = true;
     setIsSyncing(true);
     setError(null);
     try {
@@ -235,10 +248,24 @@ function CloakCraftProvider({
           const otherNotes = prevNotes.filter(
             (n) => n.tokenMint && !n.tokenMint.equals(tokenMint)
           );
-          return [...otherNotes, ...scannedNotes];
+          const seen = /* @__PURE__ */ new Set();
+          const uniqueNotes = scannedNotes.filter((note) => {
+            const key = Buffer.from(note.commitment).toString("hex");
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          return [...otherNotes, ...uniqueNotes];
         });
       } else {
-        setNotes(scannedNotes);
+        const seen = /* @__PURE__ */ new Set();
+        const uniqueNotes = scannedNotes.filter((note) => {
+          const key = Buffer.from(note.commitment).toString("hex");
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        setNotes(uniqueNotes);
       }
       const status = await client.getSyncStatus();
       setSyncStatus(status);
@@ -246,9 +273,13 @@ function CloakCraftProvider({
       const message = err instanceof Error ? err.message : "Sync failed";
       setError(message);
     } finally {
+      syncLockRef.current = false;
       setIsSyncing(false);
     }
   }, [client, wallet]);
+  (0, import_react.useEffect)(() => {
+    syncRef.current = sync;
+  }, [sync]);
   const createWallet = (0, import_react.useCallback)(() => {
     return client.createWallet();
   }, [client]);
@@ -1344,7 +1375,6 @@ function useOrders() {
 // src/useSwap.ts
 var import_react12 = require("react");
 var import_sdk4 = require("@cloakcraft/sdk");
-var import_web33 = require("@solana/web3.js");
 function useSwap() {
   const { client, wallet, sync } = useCloakCraft();
   const [state, setState] = (0, import_react12.useState)({
@@ -1506,11 +1536,9 @@ function useInitializeAmmPool() {
       }
       setState({ isInitializing: true, error: null, result: null });
       try {
-        const lpMintKeypair = import_web33.Keypair.generate();
         const signature = await client.initializeAmmPool(
           tokenAMint,
           tokenBMint,
-          lpMintKeypair,
           feeBps,
           poolType,
           amplification
@@ -2559,7 +2587,7 @@ function useIsConsolidationRecommended(tokenMint) {
 
 // src/useProtocolFees.ts
 var import_react18 = require("react");
-var import_web34 = require("@solana/web3.js");
+var import_web33 = require("@solana/web3.js");
 var import_sdk13 = require("@cloakcraft/sdk");
 var DEFAULT_FEES = {
   transferFeeBps: 10,
@@ -2598,8 +2626,8 @@ function useProtocolFees() {
         return;
       }
       const data = accountInfo.data;
-      const authority = new import_web34.PublicKey(data.subarray(8, 40));
-      const treasury = new import_web34.PublicKey(data.subarray(40, 72));
+      const authority = new import_web33.PublicKey(data.subarray(8, 40));
+      const treasury = new import_web33.PublicKey(data.subarray(40, 72));
       const transferFeeBps = data.readUInt16LE(72);
       const unshieldFeeBps = data.readUInt16LE(74);
       const swapFeeShareBps = data.readUInt16LE(76);
@@ -2629,8 +2657,8 @@ function useProtocolFees() {
     (amount, operation) => {
       const cfg = config ?? {
         ...DEFAULT_FEES,
-        authority: import_web34.PublicKey.default,
-        treasury: import_web34.PublicKey.default
+        authority: import_web33.PublicKey.default,
+        treasury: import_web33.PublicKey.default
       };
       if (!cfg.feesEnabled) {
         return 0n;
@@ -2686,7 +2714,7 @@ function usePerpsPools() {
       const poolData = accounts.map((acc) => ({
         ...acc.account,
         address: acc.publicKey
-      }));
+      })).filter((pool) => pool.numTokens > 0);
       setPools(poolData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch perps pools");

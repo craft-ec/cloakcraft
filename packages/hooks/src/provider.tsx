@@ -2,7 +2,7 @@
  * CloakCraft React Context Provider
  */
 
-import React, { createContext, useContext, useMemo, useState, useCallback, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { PublicKey, Keypair as SolanaKeypair } from '@solana/web3.js';
 import { CloakCraftClient, Wallet, initPoseidon } from '@cloakcraft/sdk';
 import type { DecryptedNote, SyncStatus } from '@cloakcraft/types';
@@ -71,6 +71,13 @@ export function CloakCraftProvider({
   const [notes, setNotes] = useState<DecryptedNote[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // Ref to prevent concurrent syncs (more reliable than state for race conditions)
+  const syncLockRef = useRef(false);
+  // Ref to track if initial auto-sync has been done
+  const hasAutoSyncedRef = useRef(false);
+  // Ref to hold sync function for use in effects (avoids circular dependency)
+  const syncRef = useRef<((tokenMint?: PublicKey, clearCache?: boolean) => Promise<void>) | null>(null);
+
   // Storage key is per-Solana-wallet to prevent cross-wallet stealth key sharing
   const STORAGE_KEY = solanaWalletPubkey
     ? `cloakcraft_spending_key_${solanaWalletPubkey}`
@@ -83,6 +90,8 @@ export function CloakCraftProvider({
       setWallet(null);
       setNotes([]);
       setIsProverReady(false);
+      // Reset auto-sync flag so new wallet can sync
+      hasAutoSyncedRef.current = false;
     }
   }, [solanaWalletPubkey]);
 
@@ -137,11 +146,16 @@ export function CloakCraftProvider({
   }, [isInitialized, wallet, client]);
 
   // Auto-sync notes when wallet connects and program is ready
+  // Use ref to prevent double-sync (React Strict Mode can cause double effect runs)
   useEffect(() => {
-    if (wallet && isProgramReady && !isSyncing && notes.length === 0) {
+    // Only auto-sync once per wallet session
+    if (wallet && isProgramReady && !hasAutoSyncedRef.current && !syncLockRef.current && syncRef.current) {
+      hasAutoSyncedRef.current = true;
       console.log('[CloakCraft] Auto-syncing notes on wallet connect...');
-      sync().catch((err) => {
+      syncRef.current().catch((err) => {
         console.error('[CloakCraft] Auto-sync failed:', err);
+        // Reset flag on error so user can retry
+        hasAutoSyncedRef.current = false;
       });
     }
   }, [wallet, isProgramReady]);
@@ -189,6 +203,9 @@ export function CloakCraftProvider({
     setNotes([]);
     setSyncStatus(null);
     setError(null);
+    // Reset sync refs so next connect can sync fresh
+    hasAutoSyncedRef.current = false;
+    syncLockRef.current = false;
     // Clear from localStorage
     try {
       localStorage.removeItem(STORAGE_KEY);
@@ -200,6 +217,13 @@ export function CloakCraftProvider({
   const sync = useCallback(async (tokenMint?: PublicKey, clearCache = false) => {
     if (!wallet) return;
 
+    // Prevent concurrent syncs using ref (more reliable than state for async operations)
+    if (syncLockRef.current) {
+      console.log('[CloakCraft] Sync already in progress, skipping...');
+      return;
+    }
+
+    syncLockRef.current = true;
     setIsSyncing(true);
     setError(null);
     try {
@@ -218,12 +242,26 @@ export function CloakCraftProvider({
           const otherNotes = prevNotes.filter(
             (n) => n.tokenMint && !n.tokenMint.equals(tokenMint)
           );
-          // Add fresh notes for this token
-          return [...otherNotes, ...scannedNotes];
+          // Deduplicate scanned notes by commitment hash to prevent duplicates
+          const seen = new Set<string>();
+          const uniqueNotes = scannedNotes.filter((note) => {
+            const key = Buffer.from(note.commitment).toString('hex');
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          return [...otherNotes, ...uniqueNotes];
         });
       } else {
-        // Full sync - replace all notes
-        setNotes(scannedNotes);
+        // Full sync - replace all notes, but deduplicate first
+        const seen = new Set<string>();
+        const uniqueNotes = scannedNotes.filter((note) => {
+          const key = Buffer.from(note.commitment).toString('hex');
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        setNotes(uniqueNotes);
       }
 
       const status = await client.getSyncStatus();
@@ -232,9 +270,15 @@ export function CloakCraftProvider({
       const message = err instanceof Error ? err.message : 'Sync failed';
       setError(message);
     } finally {
+      syncLockRef.current = false;
       setIsSyncing(false);
     }
   }, [client, wallet]);
+
+  // Keep syncRef in sync with the sync callback
+  useEffect(() => {
+    syncRef.current = sync;
+  }, [sync]);
 
   const createWallet = useCallback(() => {
     return client.createWallet();

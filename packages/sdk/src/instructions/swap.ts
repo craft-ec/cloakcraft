@@ -23,6 +23,8 @@ import {
   derivePoolPda,
   deriveCommitmentCounterPda,
   deriveVerificationKeyPda,
+  deriveAmmPoolPda,
+  deriveLpMintPda,
   CIRCUIT_IDS,
 } from './constants';
 import { LightProtocol } from './light-helpers';
@@ -32,25 +34,6 @@ import { encryptNote, serializeEncryptedNote } from '../crypto/encryption';
 // =============================================================================
 // Common Types
 // =============================================================================
-
-/**
- * AMM Pool derivation
- */
-export function deriveAmmPoolPda(
-  tokenAMint: PublicKey,
-  tokenBMint: PublicKey,
-  programId: PublicKey
-): [PublicKey, number] {
-  // Ensure consistent ordering (lower pubkey first)
-  const [first, second] = tokenAMint.toBuffer().compare(tokenBMint.toBuffer()) < 0
-    ? [tokenAMint, tokenBMint]
-    : [tokenBMint, tokenAMint];
-
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from('amm_pool'), first.toBuffer(), second.toBuffer()],
-    programId
-  );
-}
 
 /**
  * Derive pending operation PDA
@@ -122,8 +105,6 @@ export interface InitializeAmmPoolParams {
   tokenAMint: PublicKey;
   /** Token B mint */
   tokenBMint: PublicKey;
-  /** LP token mint keypair (must be signer) */
-  lpMint: PublicKey;
   /** Fee in basis points (e.g., 30 = 0.3%) */
   feeBps: number;
   /** Authority */
@@ -155,7 +136,7 @@ export function canonicalTokenOrder(
 export async function buildInitializeAmmPoolWithProgram(
   program: Program,
   params: InitializeAmmPoolParams
-): Promise<any> {
+): Promise<{ tx: any; lpMint: PublicKey; ammPool: PublicKey }> {
   const programId = program.programId;
 
   // Sort tokens into canonical order (enforced on-chain)
@@ -163,6 +144,9 @@ export async function buildInitializeAmmPoolWithProgram(
 
   // Derive AMM pool PDA (uses same canonical ordering)
   const [ammPoolPda] = deriveAmmPoolPda(canonicalA, canonicalB, programId);
+
+  // Derive LP mint PDA from token pair (same canonical ordering)
+  const [lpMintPda] = deriveLpMintPda(canonicalA, canonicalB, programId);
 
   // Convert pool type string to Anchor enum format
   const poolTypeEnum: PoolTypeParam = params.poolType === 'stableSwap'
@@ -183,7 +167,7 @@ export async function buildInitializeAmmPoolWithProgram(
     )
     .accountsStrict({
       ammPool: ammPoolPda,
-      lpMint: params.lpMint,
+      lpMint: lpMintPda,
       tokenAMintAccount: canonicalA,
       tokenBMintAccount: canonicalB,
       authority: params.authority,
@@ -196,7 +180,7 @@ export async function buildInitializeAmmPoolWithProgram(
       ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
     ]);
 
-  return tx;
+  return { tx, lpMint: lpMintPda, ammPool: ammPoolPda };
 }
 
 // =============================================================================

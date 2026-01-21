@@ -5,7 +5,7 @@
 
 pub mod babyjubjub;
 
-pub use babyjubjub::{add_elgamal_ciphertexts, Point};
+pub use babyjubjub::Point;
 
 use anchor_lang::prelude::*;
 use groth16_solana::groth16::{Groth16Verifier, Groth16Verifyingkey};

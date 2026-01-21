@@ -17,4 +17,3 @@ export * from './store-commitment';
 export * from './initialize';
 export * from './swap';
 export * from './market';
-export * from './governance';

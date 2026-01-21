@@ -32,11 +32,13 @@ import { computeCommitment, generateRandomness } from './crypto/commitment';
 import { deriveStealthPrivateKey } from './crypto/stealth';
 import { bytesToField, fieldToBytes, poseidonHash, poseidonHashDomain, DOMAIN_COMMITMENT } from './crypto/poseidon';
 import { pubkeyToField } from './crypto/field';
+import { PublicKey } from '@solana/web3.js';
 import {
   loadCircomArtifacts,
   generateSnarkjsProof,
   bytesToFieldString,
   bigintToFieldString,
+  clearCircomCache,
   type CircomArtifacts,
 } from './snarkjs-prover';
 
@@ -70,8 +72,6 @@ interface NodeProverConfig {
  */
 const CIRCUIT_FILE_MAP: Record<string, string> = {
   'transfer/1x2': 'transfer_1x2',
-  'transfer/1x3': 'transfer_1x3',
-  'transfer/2x2': 'transfer_2x2',
   'consolidate/3x1': 'consolidate_3x1',
   'adapter/1x1': 'adapter_1x1',
   'adapter/1x2': 'adapter_1x2',
@@ -81,7 +81,6 @@ const CIRCUIT_FILE_MAP: Record<string, string> = {
   'swap/add_liquidity': 'swap_add_liquidity',
   'swap/remove_liquidity': 'swap_remove_liquidity',
   'swap/swap': 'swap_swap',
-  'governance/encrypted_submit': 'governance_encrypted_submit',
   // Perps circuits
   'perps/open_position': 'open_position',
   'perps/close_position': 'close_position',
@@ -95,8 +94,6 @@ const CIRCUIT_FILE_MAP: Record<string, string> = {
  */
 const CIRCUIT_DIR_MAP: Record<string, string> = {
   'transfer/1x2': 'transfer/1x2',
-  'transfer/1x3': 'transfer/1x3',
-  'transfer/2x2': 'transfer/2x2',
   'consolidate/3x1': 'consolidate/3x1',
   'adapter/1x1': 'adapter/1x1',
   'adapter/1x2': 'adapter/1x2',
@@ -106,7 +103,6 @@ const CIRCUIT_DIR_MAP: Record<string, string> = {
   'swap/add_liquidity': 'swap/add_liquidity',
   'swap/remove_liquidity': 'swap/remove_liquidity',
   'swap/swap': 'swap/swap',
-  'governance/encrypted_submit': 'governance/encrypted_submit',
   // Perps circuits
   'perps/open_position': 'perps/open_position',
   'perps/close_position': 'perps/close_position',
@@ -139,13 +135,22 @@ export class ProofGenerator {
   }
 
   /**
+   * Clear all circuit caches
+   *
+   * Call this to force reloading of circuit files after they've been recompiled.
+   */
+  clearCache(): void {
+    this.circuits.clear();
+    this.circomArtifacts.clear();
+    clearCircomCache();
+  }
+
+  /**
    * Initialize the prover with circuit artifacts
    */
   async initialize(circuitNames?: string[]): Promise<void> {
     const circuits = circuitNames ?? [
       'transfer/1x2',
-      'transfer/1x3',
-      'transfer/2x2',
       'consolidate/3x1',
       'adapter/1x1',
       'adapter/1x2',
@@ -155,7 +160,6 @@ export class ProofGenerator {
       'swap/add_liquidity',
       'swap/remove_liquidity',
       'swap/swap',
-      'governance/encrypted_submit',
     ];
 
     await Promise.all(circuits.map(name => this.loadCircuit(name)));
@@ -182,6 +186,10 @@ export class ProofGenerator {
 
   /**
    * Load circuit from file system (Node.js)
+   *
+   * Note: For circom circuits, we use on-demand loading via snarkjs.
+   * The manifest/pk files are optional - if they don't exist, we skip
+   * and rely on the .wasm/.zkey files being loaded during proof generation.
    */
   private async loadCircuitFromFs(name: string): Promise<void> {
     if (!this.nodeConfig) {
@@ -190,12 +198,38 @@ export class ProofGenerator {
 
     const circuitFileName = CIRCUIT_FILE_MAP[name];
     if (!circuitFileName) {
+      // Check if this is a circom circuit path (contains /)
+      if (name.includes('/')) {
+        // Circom circuits are loaded on-demand via snarkjs, no pre-loading needed
+        // Just verify the circuit files exist in the build directory
+        const { wasmPath } = this.getCircomFilePaths(name);
+        const fullWasmPath = path.join(this.nodeConfig.circomBuildDir, wasmPath);
+        if (fs.existsSync(fullWasmPath)) {
+          // Mark as available (empty artifacts - actual loading happens on-demand)
+          this.circuits.set(name, { manifest: {}, provingKey: new Uint8Array() });
+          return;
+        }
+      }
       throw new Error(`Unknown circuit: ${name}`);
     }
 
     const targetDir = path.join(this.nodeConfig.circuitsDir, 'target');
     const manifestPath = path.join(targetDir, `${circuitFileName}.json`);
     const pkPath = path.join(targetDir, `${circuitFileName}.pk`);
+
+    // Check if manifest files exist - if not, use on-demand loading
+    if (!fs.existsSync(manifestPath)) {
+      // Try circom build directory instead
+      const { wasmPath } = this.getCircomFilePaths(name);
+      const fullWasmPath = path.join(this.nodeConfig.circomBuildDir, wasmPath);
+      if (fs.existsSync(fullWasmPath)) {
+        // Mark as available (empty artifacts - actual loading happens on-demand)
+        this.circuits.set(name, { manifest: {}, provingKey: new Uint8Array() });
+        return;
+      }
+      console.warn(`Circuit ${name} not found in target or build directory`);
+      return;
+    }
 
     try {
       // Load compiled circuit manifest
@@ -241,8 +275,6 @@ export class ProofGenerator {
     // Check if it's a known Circom circuit (will be auto-loaded)
     const knownCircuits = [
       'transfer/1x2',
-      'transfer/1x3',
-      'transfer/2x2',
       'consolidate/3x1',
       'adapter/1x1',
       'adapter/1x2',
@@ -252,7 +284,6 @@ export class ProofGenerator {
       'swap/add_liquidity',
       'swap/remove_liquidity',
       'swap/swap',
-      'governance/encrypted_submit',
       // Perps circuits
       'perps/open_position',
       'perps/close_position',
@@ -1084,79 +1115,6 @@ export class ProofGenerator {
     return this.prove(circuitName, witnessInputs);
   }
 
-  /**
-   * Generate a governance vote proof
-   *
-   * Proves ownership of voting power and correct encryption of the vote.
-   */
-  async generateVoteProof(
-    params: VoteParams,
-    keypair: Keypair
-  ): Promise<Uint8Array> {
-    const circuitName = 'governance/encrypted_submit';
-
-    if (!this.hasCircuit(circuitName)) {
-      throw new Error(`Circuit not loaded: ${circuitName}`);
-    }
-
-    // Derive effective spending key for input note
-    let effectiveKey: bigint;
-    if (params.input.stealthEphemeralPubkey) {
-      effectiveKey = deriveStealthPrivateKey(
-        bytesToField(keypair.spending.sk),
-        params.input.stealthEphemeralPubkey
-      );
-    } else {
-      effectiveKey = bytesToField(keypair.spending.sk);
-    }
-    const effectiveNullifierKey = deriveNullifierKey(fieldToBytes(effectiveKey));
-
-    // Compute commitment and action nullifier
-    const inputCommitment = computeCommitment(params.input);
-
-    // Action nullifier is derived from: H(nullifierKey, proposalId)
-    // This prevents double voting on the same proposal
-    const actionNullifier = poseidonHash([
-      effectiveNullifierKey,
-      params.proposalId,
-    ]);
-
-    // Convert token mint to bytes
-    const tokenMint = params.input.tokenMint instanceof Uint8Array
-      ? params.input.tokenMint
-      : params.input.tokenMint.toBytes();
-
-    const witnessInputs = {
-      // Public inputs
-      merkle_root: fieldToHex(params.merkleRoot),
-      action_nullifier: fieldToHex(actionNullifier),
-      proposal_id: fieldToHex(params.proposalId),
-      token_mint: fieldToHex(tokenMint),
-      threshold_pubkey_x: fieldToHex(params.electionPubkey.x),
-      threshold_pubkey_y: fieldToHex(params.electionPubkey.y),
-
-      // Encrypted votes (3 options: yes, no, abstain)
-      encrypted_yes_r: fieldToHex(params.encryptionRandomness.yes),
-      encrypted_no_r: fieldToHex(params.encryptionRandomness.no),
-      encrypted_abstain_r: fieldToHex(params.encryptionRandomness.abstain),
-
-      // Private inputs
-      in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
-      in_amount: params.input.amount.toString(),
-      in_randomness: fieldToHex(params.input.randomness),
-      in_stealth_spending_key: fieldToHex(fieldToBytes(effectiveKey)),
-
-      // Merkle proof
-      merkle_path: params.merklePath.map(e => fieldToHex(e)),
-      merkle_indices: params.merkleIndices.map(i => i.toString()),
-
-      // Vote choice (0=yes, 1=no, 2=abstain)
-      vote_choice: params.voteChoice.toString(),
-    };
-
-    return this.prove(circuitName, witnessInputs);
-  }
-
   // =============================================================================
   // Core Proving
   // =============================================================================
@@ -1231,12 +1189,15 @@ export class ProofGenerator {
     inputs: Record<string, any>,
     _artifacts: CircuitArtifacts
   ): Promise<Uint8Array> {
-    // Map circuit name to circom file names
-    const circomFileName = this.getCircomFileName(circuitName);
+    // Map circuit name to circom file paths (wasm and zkey have different structures)
+    const { wasmPath, zkeyPath } = this.getCircomFilePaths(circuitName);
     // Add cache-busting timestamp (v2 = circuit update on Jan 15, 2026)
     const cacheBuster = 'v2';
-    const wasmUrl = `${this.circomBaseUrl}/${circomFileName}.wasm?${cacheBuster}`;
-    const zkeyUrl = `${this.circomBaseUrl}/${circomFileName}_final.zkey?${cacheBuster}`;
+
+    // In Node.js mode with nodeConfig, use circomBuildDir for file paths
+    const baseUrl = this.nodeConfig?.circomBuildDir ?? this.circomBaseUrl;
+    const wasmUrl = `${baseUrl}/${wasmPath}?${cacheBuster}`;
+    const zkeyUrl = `${baseUrl}/${zkeyPath}?${cacheBuster}`;
 
 
     // Load or get cached artifacts
@@ -1257,23 +1218,48 @@ export class ProofGenerator {
   }
 
   /**
-   * Get circom file name from circuit name
+   * Get circom file paths from circuit name
+   * WASM files are in {name}_js/ subdirectories, zkey files are directly in the parent dir
+   *
+   * Examples:
+   *   transfer/1x2: wasm=transfer_1x2_js/transfer_1x2.wasm, zkey=transfer_1x2_final.zkey
+   *   perps/open_position: wasm=perps/open_position_js/open_position.wasm, zkey=perps/open_position_final.zkey
    */
-  private getCircomFileName(circuitName: string): string {
-    const mapping: Record<string, string> = {
-      'transfer/1x2': 'transfer_1x2',
-      'transfer/1x3': 'transfer_1x3',
-      'swap/swap': 'swap',
-      'swap/add_liquidity': 'add_liquidity',
-      'swap/remove_liquidity': 'remove_liquidity',
+  private getCircomFilePaths(circuitName: string): { wasmPath: string; zkeyPath: string } {
+    // Mapping for circuits with non-standard paths
+    const mapping: Record<string, { wasmPath: string; zkeyPath: string }> = {
+      // Transfer circuits
+      'transfer/1x2': { wasmPath: 'transfer_1x2_js/transfer_1x2.wasm', zkeyPath: 'transfer_1x2_final.zkey' },
+      // Consolidation circuits
+      'consolidate/3x1': { wasmPath: 'consolidate_3x1/consolidate_3x1_js/consolidate_3x1.wasm', zkeyPath: 'consolidate_3x1/consolidate_3x1_final.zkey' },
+      // Swap/AMM circuits
+      'swap/swap': { wasmPath: 'swap_js/swap.wasm', zkeyPath: 'swap_final.zkey' },
+      'swap/add_liquidity': { wasmPath: 'add_liquidity_js/add_liquidity.wasm', zkeyPath: 'add_liquidity_final.zkey' },
+      'swap/remove_liquidity': { wasmPath: 'remove_liquidity_js/remove_liquidity.wasm', zkeyPath: 'remove_liquidity_final.zkey' },
       // Perps circuits
-      'perps/open_position': 'open_position',
-      'perps/close_position': 'close_position',
-      'perps/add_liquidity': 'perps_add_liquidity',
-      'perps/remove_liquidity': 'perps_remove_liquidity',
-      'perps/liquidate': 'liquidate',
+      'perps/open_position': { wasmPath: 'perps/open_position_js/open_position.wasm', zkeyPath: 'perps/open_position_final.zkey' },
+      'perps/close_position': { wasmPath: 'perps/close_position_js/close_position.wasm', zkeyPath: 'perps/close_position_final.zkey' },
+      'perps/add_liquidity': { wasmPath: 'perps/add_liquidity_js/add_liquidity.wasm', zkeyPath: 'perps/add_liquidity_final.zkey' },
+      'perps/remove_liquidity': { wasmPath: 'perps/remove_liquidity_js/remove_liquidity.wasm', zkeyPath: 'perps/remove_liquidity_final.zkey' },
+      'perps/liquidate': { wasmPath: 'perps/liquidate_js/liquidate.wasm', zkeyPath: 'perps/liquidate_final.zkey' },
+      // Voting circuits
+      'voting/vote_snapshot': { wasmPath: 'voting/vote_snapshot_js/vote_snapshot.wasm', zkeyPath: 'voting/vote_snapshot_final.zkey' },
+      'voting/change_vote_snapshot': { wasmPath: 'voting/change_vote_snapshot_js/change_vote_snapshot.wasm', zkeyPath: 'voting/change_vote_snapshot_final.zkey' },
+      'voting/vote_spend': { wasmPath: 'voting/vote_spend_js/vote_spend.wasm', zkeyPath: 'voting/vote_spend_final.zkey' },
+      'voting/close_position': { wasmPath: 'voting/close_position_js/close_position.wasm', zkeyPath: 'voting/close_position_final.zkey' },
+      'voting/claim': { wasmPath: 'voting/claim_js/claim.wasm', zkeyPath: 'voting/claim_final.zkey' },
     };
-    return mapping[circuitName] ?? circuitName.replace('/', '_');
+
+    if (mapping[circuitName]) {
+      return mapping[circuitName];
+    }
+
+    // Default: assume {name}_js/{name}.wasm and {name}_final.zkey structure
+    const baseName = circuitName.replace('/', '_');
+    return {
+      wasmPath: `${baseName}_js/${baseName}.wasm`,
+      zkeyPath: `${baseName}_final.zkey`,
+    };
   }
 
   /**
@@ -1525,6 +1511,9 @@ export class ProofGenerator {
     nullifier: Uint8Array;
     positionCommitment: Uint8Array;
     positionRandomness: Uint8Array;
+    changeCommitment: Uint8Array;
+    changeRandomness: Uint8Array;
+    changeAmount: bigint;
   }> {
     const circuitName = 'perps/open_position';
 
@@ -1556,6 +1545,29 @@ export class ProofGenerator {
       ? params.input.tokenMint
       : params.input.tokenMint.toBytes();
 
+    // Calculate change amount (input - margin - fee)
+    const totalRequired = params.marginAmount + params.positionFee;
+    const changeAmount = params.input.amount - totalRequired;
+
+    // Generate change randomness and compute change commitment
+    const changeRandomness = generateRandomness();
+    let changeCommitment: Uint8Array;
+    if (changeAmount > 0n) {
+      // Compute change commitment using the standard commitment formula
+      // commitment = poseidon(DOMAIN_COMMITMENT, stealth_pub_x, token_mint, amount, randomness)
+      const COMMITMENT_DOMAIN = 1n;
+      changeCommitment = poseidonHashDomain(
+        COMMITMENT_DOMAIN,
+        params.input.stealthPubX,
+        tokenMint,
+        fieldToBytes(changeAmount),
+        changeRandomness
+      );
+    } else {
+      // No change - commitment is zero
+      changeCommitment = new Uint8Array(32);
+    }
+
     // Compute position commitment using Poseidon hash (matches circuit)
     // PositionCommitment: two-stage hash
     // Stage 1: H(POSITION_COMMITMENT_DOMAIN, stealth_pub_x, market_id, is_long, margin)
@@ -1586,17 +1598,26 @@ export class ProofGenerator {
       merkleIndices.push(0);
     }
 
+    // Debug: Log market_id value
+    console.log('[OpenPosition] market_id debug:');
+    console.log('  params.marketId (bigint):', params.marketId.toString());
+    console.log('  params.marketId (hex):', '0x' + params.marketId.toString(16).padStart(64, '0'));
+
     const witnessInputs = {
       // Public inputs
       merkle_root: fieldToHex(params.merkleRoot),
       nullifier: fieldToHex(nullifier),
-      perps_pool_id: fieldToHex(params.perpsPoolId),
-      market_id: params.marketId.toString(),
+      // IMPORTANT: Use pubkeyToField to match on-chain pubkey_to_field reduction
+      perps_pool_id: fieldToHex(pubkeyToField(new PublicKey(params.perpsPoolId))),
+      // IMPORTANT: market_id is already reduced by bytesToField in client.ts, convert to hex format
+      market_id: '0x' + params.marketId.toString(16).padStart(64, '0'),
       position_commitment: fieldToHex(positionCommitment),
+      change_commitment: fieldToHex(changeCommitment),
       is_long: params.isLong ? '1' : '0',
       margin_amount: params.marginAmount.toString(),
       leverage: params.leverage.toString(),
       position_fee: params.positionFee.toString(),
+      change_amount: changeAmount.toString(),
 
       // Private inputs
       in_stealth_pub_x: fieldToHex(params.input.stealthPubX),
@@ -1610,7 +1631,16 @@ export class ProofGenerator {
       position_size: params.positionSize.toString(),
       entry_price: params.entryPrice.toString(),
       position_randomness: fieldToHex(positionRandomness),
+      change_randomness: fieldToHex(changeRandomness),
     };
+
+    console.log('[OpenPosition] Public inputs for circuit:');
+    console.log('  merkle_root:', witnessInputs.merkle_root);
+    console.log('  nullifier:', witnessInputs.nullifier);
+    console.log('  perps_pool_id:', witnessInputs.perps_pool_id);
+    console.log('  market_id:', witnessInputs.market_id);
+    console.log('  position_commitment:', witnessInputs.position_commitment);
+    console.log('  change_commitment:', witnessInputs.change_commitment);
 
     const proof = await this.prove(circuitName, witnessInputs);
 
@@ -1619,6 +1649,9 @@ export class ProofGenerator {
       nullifier,
       positionCommitment,
       positionRandomness,
+      changeCommitment,
+      changeRandomness,
+      changeAmount,
     };
   }
 
@@ -1747,7 +1780,8 @@ export class ProofGenerator {
       // Public inputs
       merkle_root: fieldToHex(params.merkleRoot),
       position_nullifier: fieldToHex(positionNullifier),
-      perps_pool_id: fieldToHex(params.perpsPoolId),
+      // IMPORTANT: Use pubkeyToField to match on-chain pubkey_to_field reduction
+      perps_pool_id: fieldToHex(pubkeyToField(new PublicKey(params.perpsPoolId))),
       out_commitment: fieldToHex(settlementCommitment),
       is_long: params.position.isLong ? '1' : '0',
       exit_price: params.exitPrice.toString(),
@@ -1757,7 +1791,8 @@ export class ProofGenerator {
 
       // Private inputs
       position_stealth_pub_x: fieldToHex(params.position.stealthPubX),
-      market_id: params.position.marketId.toString(),
+      // IMPORTANT: market_id must be in hex format to match circuit expectations
+      market_id: '0x' + params.position.marketId.toString(16).padStart(64, '0'),
       position_margin: params.position.margin.toString(),
       position_size: params.position.size.toString(),
       position_leverage: params.position.leverage.toString(),
@@ -1885,7 +1920,8 @@ export class ProofGenerator {
       // Public inputs
       merkle_root: fieldToHex(params.merkleRoot),
       nullifier: fieldToHex(nullifier),
-      perps_pool_id: fieldToHex(params.perpsPoolId),
+      // IMPORTANT: Use pubkeyToField to match on-chain pubkey_to_field reduction
+      perps_pool_id: fieldToHex(pubkeyToField(new PublicKey(params.perpsPoolId))),
       lp_commitment: fieldToHex(lpCommitment),
       token_index: params.tokenIndex.toString(),
       deposit_amount: params.depositAmount.toString(),
@@ -2028,7 +2064,8 @@ export class ProofGenerator {
       // Public inputs
       merkle_root: fieldToHex(params.merkleRoot),
       lp_nullifier: fieldToHex(lpNullifier),
-      perps_pool_id: fieldToHex(params.perpsPoolId),
+      // IMPORTANT: Use pubkeyToField to match on-chain pubkey_to_field reduction
+      perps_pool_id: fieldToHex(pubkeyToField(new PublicKey(params.perpsPoolId))),
       out_commitment: fieldToHex(outputCommitment),
       token_index: params.tokenIndex.toString(),
       withdraw_amount: params.withdrawAmount.toString(),

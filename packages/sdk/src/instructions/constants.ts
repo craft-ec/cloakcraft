@@ -5,7 +5,7 @@
 import { PublicKey } from '@solana/web3.js';
 
 // Default program ID (devnet deployment)
-export const PROGRAM_ID = new PublicKey('DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha');
+export const PROGRAM_ID = new PublicKey('FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a');
 
 // PDA seeds
 export const SEEDS = {
@@ -14,6 +14,8 @@ export const SEEDS = {
   VERIFICATION_KEY: Buffer.from('vk'),
   COMMITMENT_COUNTER: Buffer.from('commitment_counter'),
   PROTOCOL_CONFIG: Buffer.from('protocol_config'),
+  AMM_POOL: Buffer.from('amm_pool'),
+  LP_MINT: Buffer.from('lp_mint'),
 } as const;
 
 // V2 Batch Trees (Devnet)
@@ -26,11 +28,6 @@ export const DEVNET_V2_TREES = {
 // Circuit IDs
 export const CIRCUIT_IDS = {
   TRANSFER_1X2: 'transfer_1x2',
-  TRANSFER_1X3: 'transfer_1x3',
-  TRANSFER_2X2: 'transfer_2x2',
-  TRANSFER_2X3: 'transfer_2x3',
-  TRANSFER_3X2: 'transfer_3x2',
-  TRANSFER_3X3: 'transfer_3x3',
   CONSOLIDATE_3X1: 'consolidate_3x1',
   SWAP: 'swap_swap',
   ADD_LIQUIDITY: 'swap_add_liquidity',
@@ -38,7 +35,6 @@ export const CIRCUIT_IDS = {
   ORDER_CREATE: 'market_order_create',
   ORDER_FILL: 'market_order_fill',
   ORDER_CANCEL: 'market_order_cancel',
-  GOVERNANCE_VOTE: 'governance_encrypted_submit',
   // Perpetual futures circuits
   PERPS_OPEN_POSITION: 'perps_open_position',
   PERPS_CLOSE_POSITION: 'perps_close_position',
@@ -102,6 +98,44 @@ export function deriveVerificationKeyPda(circuitId: string, programId: PublicKey
 export function deriveProtocolConfigPda(programId: PublicKey = PROGRAM_ID): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [SEEDS.PROTOCOL_CONFIG],
+    programId
+  );
+}
+
+/**
+ * Derive AMM pool PDA from token pair (uses canonical ordering)
+ */
+export function deriveAmmPoolPda(
+  tokenAMint: PublicKey,
+  tokenBMint: PublicKey,
+  programId: PublicKey = PROGRAM_ID
+): [PublicKey, number] {
+  // Canonical ordering: lower pubkey bytes first
+  const [first, second] = tokenAMint.toBuffer().compare(tokenBMint.toBuffer()) < 0
+    ? [tokenAMint, tokenBMint]
+    : [tokenBMint, tokenAMint];
+
+  return PublicKey.findProgramAddressSync(
+    [SEEDS.AMM_POOL, first.toBuffer(), second.toBuffer()],
+    programId
+  );
+}
+
+/**
+ * Derive LP mint PDA from token pair (uses canonical ordering)
+ */
+export function deriveLpMintPda(
+  tokenAMint: PublicKey,
+  tokenBMint: PublicKey,
+  programId: PublicKey = PROGRAM_ID
+): [PublicKey, number] {
+  // Canonical ordering: lower pubkey bytes first
+  const [first, second] = tokenAMint.toBuffer().compare(tokenBMint.toBuffer()) < 0
+    ? [tokenAMint, tokenBMint]
+    : [tokenBMint, tokenAMint];
+
+  return PublicKey.findProgramAddressSync(
+    [SEEDS.LP_MINT, first.toBuffer(), second.toBuffer()],
     programId
   );
 }

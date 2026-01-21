@@ -5,7 +5,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
-const PROGRAM_ID = new PublicKey("DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha");
+const PROGRAM_ID = new PublicKey("FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a");
 
 async function main() {
   // Load test data to get token mint

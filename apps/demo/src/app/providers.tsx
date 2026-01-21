@@ -17,7 +17,7 @@ const CloakCraftProvider = dynamic(
 const DEMO_CONFIG = {
   rpcUrl: process.env.NEXT_PUBLIC_RPC_URL || 'https://api.devnet.solana.com',
   indexerUrl: process.env.NEXT_PUBLIC_INDEXER_URL || 'https://indexer.cloakcraft.io',
-  programId: process.env.NEXT_PUBLIC_PROGRAM_ID || 'DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha',
+  programId: process.env.NEXT_PUBLIC_PROGRAM_ID || 'FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a',
   network: (process.env.NEXT_PUBLIC_NETWORK || 'devnet') as 'devnet' | 'mainnet-beta',
   heliusApiKey: process.env.NEXT_PUBLIC_HELIUS_API_KEY,
   // Address Lookup Table for atomic transaction compression

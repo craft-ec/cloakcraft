@@ -12,7 +12,7 @@ import * as path from "path";
 import * as os from "os";
 
 // Program ID
-const PROGRAM_ID = new PublicKey("DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha");
+const PROGRAM_ID = new PublicKey("FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a");
 
 // Seeds
 const VK_SEED = Buffer.from("vk");

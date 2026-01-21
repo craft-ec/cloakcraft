@@ -2,7 +2,7 @@ import { PublicKey } from '@solana/web3.js';
 
 // CloakCraft Program
 export const PROGRAM_ID = new PublicKey(
-  process.env.NEXT_PUBLIC_PROGRAM_ID || 'DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha'
+  process.env.NEXT_PUBLIC_PROGRAM_ID || 'FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a'
 );
 
 // Network Configuration

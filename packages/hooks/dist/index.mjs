@@ -1,5 +1,5 @@
 // src/provider.tsx
-import { createContext, useContext, useMemo, useState, useCallback, useEffect } from "react";
+import { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { PublicKey } from "@solana/web3.js";
 import { CloakCraftClient, initPoseidon } from "@cloakcraft/sdk";
 import { jsx } from "react/jsx-runtime";
@@ -24,12 +24,16 @@ function CloakCraftProvider({
   const [syncStatus, setSyncStatus] = useState(null);
   const [notes, setNotes] = useState([]);
   const [error, setError] = useState(null);
+  const syncLockRef = useRef(false);
+  const hasAutoSyncedRef = useRef(false);
+  const syncRef = useRef(null);
   const STORAGE_KEY = solanaWalletPubkey ? `cloakcraft_spending_key_${solanaWalletPubkey}` : "cloakcraft_spending_key";
   useEffect(() => {
     if (solanaWalletPubkey) {
       setWallet(null);
       setNotes([]);
       setIsProverReady(false);
+      hasAutoSyncedRef.current = false;
     }
   }, [solanaWalletPubkey]);
   const client = useMemo(
@@ -73,10 +77,12 @@ function CloakCraftProvider({
     }
   }, [isInitialized, wallet, client]);
   useEffect(() => {
-    if (wallet && isProgramReady && !isSyncing && notes.length === 0) {
+    if (wallet && isProgramReady && !hasAutoSyncedRef.current && !syncLockRef.current && syncRef.current) {
+      hasAutoSyncedRef.current = true;
       console.log("[CloakCraft] Auto-syncing notes on wallet connect...");
-      sync().catch((err) => {
+      syncRef.current().catch((err) => {
         console.error("[CloakCraft] Auto-sync failed:", err);
+        hasAutoSyncedRef.current = false;
       });
     }
   }, [wallet, isProgramReady]);
@@ -115,6 +121,8 @@ function CloakCraftProvider({
     setNotes([]);
     setSyncStatus(null);
     setError(null);
+    hasAutoSyncedRef.current = false;
+    syncLockRef.current = false;
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -122,6 +130,11 @@ function CloakCraftProvider({
   }, []);
   const sync = useCallback(async (tokenMint, clearCache = false) => {
     if (!wallet) return;
+    if (syncLockRef.current) {
+      console.log("[CloakCraft] Sync already in progress, skipping...");
+      return;
+    }
+    syncLockRef.current = true;
     setIsSyncing(true);
     setError(null);
     try {
@@ -134,10 +147,24 @@ function CloakCraftProvider({
           const otherNotes = prevNotes.filter(
             (n) => n.tokenMint && !n.tokenMint.equals(tokenMint)
           );
-          return [...otherNotes, ...scannedNotes];
+          const seen = /* @__PURE__ */ new Set();
+          const uniqueNotes = scannedNotes.filter((note) => {
+            const key = Buffer.from(note.commitment).toString("hex");
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          return [...otherNotes, ...uniqueNotes];
         });
       } else {
-        setNotes(scannedNotes);
+        const seen = /* @__PURE__ */ new Set();
+        const uniqueNotes = scannedNotes.filter((note) => {
+          const key = Buffer.from(note.commitment).toString("hex");
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        setNotes(uniqueNotes);
       }
       const status = await client.getSyncStatus();
       setSyncStatus(status);
@@ -145,9 +172,13 @@ function CloakCraftProvider({
       const message = err instanceof Error ? err.message : "Sync failed";
       setError(message);
     } finally {
+      syncLockRef.current = false;
       setIsSyncing(false);
     }
   }, [client, wallet]);
+  useEffect(() => {
+    syncRef.current = sync;
+  }, [sync]);
   const createWallet = useCallback(() => {
     return client.createWallet();
   }, [client]);
@@ -799,7 +830,7 @@ function useUnshield() {
 }
 
 // src/useScanner.ts
-import { useState as useState8, useCallback as useCallback8, useEffect as useEffect3, useRef } from "react";
+import { useState as useState8, useCallback as useCallback8, useEffect as useEffect3, useRef as useRef2 } from "react";
 function usePrivateBalance(tokenMint) {
   const { client, wallet } = useCloakCraft();
   const [balance, setBalance] = useState8(0n);
@@ -849,7 +880,7 @@ function useScanner(tokenMint, autoRefreshMs) {
     lastScanned: null,
     error: null
   });
-  const intervalRef = useRef(null);
+  const intervalRef = useRef2(null);
   const scan = useCallback8(async () => {
     if (!client || !wallet) {
       setState((s) => ({ ...s, error: "Wallet not connected" }));
@@ -1251,7 +1282,6 @@ import {
   computeAmmStateHash,
   PoolType
 } from "@cloakcraft/sdk";
-import { Keypair as SolanaKeypair3 } from "@solana/web3.js";
 function useSwap() {
   const { client, wallet, sync } = useCloakCraft();
   const [state, setState] = useState12({
@@ -1413,11 +1443,9 @@ function useInitializeAmmPool() {
       }
       setState({ isInitializing: true, error: null, result: null });
       try {
-        const lpMintKeypair = SolanaKeypair3.generate();
         const signature = await client.initializeAmmPool(
           tokenAMint,
           tokenBMint,
-          lpMintKeypair,
           feeBps,
           poolType,
           amplification
@@ -1619,7 +1647,7 @@ function useRemoveLiquidity() {
 }
 
 // src/useTransactionHistory.ts
-import { useState as useState13, useEffect as useEffect8, useCallback as useCallback13, useMemo as useMemo6, useRef as useRef2 } from "react";
+import { useState as useState13, useEffect as useEffect8, useCallback as useCallback13, useMemo as useMemo6, useRef as useRef3 } from "react";
 import {
   TransactionHistory,
   TransactionStatus,
@@ -1636,7 +1664,7 @@ function useTransactionHistory(filter) {
     () => JSON.stringify(filter ?? {}),
     [filter?.type, filter?.status, filter?.limit, filter?.tokenMint, filter?.after?.getTime(), filter?.before?.getTime()]
   );
-  const filterRef = useRef2(filter);
+  const filterRef = useRef3(filter);
   filterRef.current = filter;
   useEffect8(() => {
     if (!wallet?.publicKey) {
@@ -1789,7 +1817,7 @@ function useRecentTransactions(limit = 5) {
 }
 
 // src/useTokenPrices.ts
-import { useState as useState14, useEffect as useEffect9, useCallback as useCallback14, useMemo as useMemo7, useRef as useRef3 } from "react";
+import { useState as useState14, useEffect as useEffect9, useCallback as useCallback14, useMemo as useMemo7, useRef as useRef4 } from "react";
 import {
   TokenPriceFetcher
 } from "@cloakcraft/sdk";
@@ -1807,7 +1835,7 @@ function useTokenPrices(mints, refreshInterval) {
   const [error, setError] = useState14(null);
   const [lastUpdated, setLastUpdated] = useState14(null);
   const [isAvailable, setIsAvailable] = useState14(true);
-  const fetcher = useRef3(getPriceFetcher());
+  const fetcher = useRef4(getPriceFetcher());
   const mintStrings = useMemo7(
     () => mints.map((m) => typeof m === "string" ? m : m.toBase58()),
     [mints]
@@ -1952,7 +1980,7 @@ function usePortfolioValue(balances) {
 }
 
 // src/usePoolAnalytics.ts
-import { useState as useState15, useEffect as useEffect10, useCallback as useCallback15, useMemo as useMemo8, useRef as useRef4 } from "react";
+import { useState as useState15, useEffect as useEffect10, useCallback as useCallback15, useMemo as useMemo8, useRef as useRef5 } from "react";
 import {
   PoolAnalyticsCalculator,
   formatTvl
@@ -1971,7 +1999,7 @@ function usePoolAnalytics(decimalsMap, refreshInterval) {
   const [isLoading, setIsLoading] = useState15(true);
   const [error, setError] = useState15(null);
   const [lastUpdated, setLastUpdated] = useState15(null);
-  const calculator = useRef4(getCalculator());
+  const calculator = useRef5(getCalculator());
   const calculateAnalytics = useCallback15(async () => {
     if (pools.length === 0) {
       setAnalytics(null);
@@ -2023,7 +2051,7 @@ function usePoolStats(pool, tokenADecimals = 9, tokenBDecimals = 9) {
   const [stats, setStats] = useState15(null);
   const [isLoading, setIsLoading] = useState15(true);
   const [error, setError] = useState15(null);
-  const calculator = useRef4(getCalculator());
+  const calculator = useRef5(getCalculator());
   const calculateStats = useCallback15(async () => {
     if (!pool) {
       setStats(null);
@@ -2059,7 +2087,7 @@ function useUserPosition(pool, lpBalance, tokenADecimals = 9, tokenBDecimals = 9
   const [position, setPosition] = useState15(null);
   const [isLoading, setIsLoading] = useState15(true);
   const [error, setError] = useState15(null);
-  const calculator = useRef4(getCalculator());
+  const calculator = useRef5(getCalculator());
   const calculatePosition = useCallback15(async () => {
     if (!pool || lpBalance === 0n) {
       setPosition(null);
@@ -2096,7 +2124,7 @@ function useUserPosition(pool, lpBalance, tokenADecimals = 9, tokenBDecimals = 9
   };
 }
 function useImpermanentLoss(initialPriceRatio, currentPriceRatio) {
-  const calculator = useRef4(getCalculator());
+  const calculator = useRef5(getCalculator());
   const impermanentLoss = useMemo8(() => {
     return calculator.current.calculateImpermanentLoss(
       initialPriceRatio,
@@ -2113,7 +2141,7 @@ function useImpermanentLoss(initialPriceRatio, currentPriceRatio) {
 }
 
 // src/useConsolidation.ts
-import { useState as useState16, useCallback as useCallback16, useMemo as useMemo9, useRef as useRef5 } from "react";
+import { useState as useState16, useCallback as useCallback16, useMemo as useMemo9, useRef as useRef6 } from "react";
 import {
   ConsolidationService
 } from "@cloakcraft/sdk";
@@ -2127,7 +2155,7 @@ function useConsolidation(options) {
     totalBatches: 0,
     error: null
   });
-  const isConsolidatingRef = useRef5(false);
+  const isConsolidatingRef = useRef6(false);
   const service = useMemo9(
     () => new ConsolidationService(dustThreshold),
     [dustThreshold]
@@ -2618,7 +2646,7 @@ function usePerpsPools() {
       const poolData = accounts.map((acc) => ({
         ...acc.account,
         address: acc.publicKey
-      }));
+      })).filter((pool) => pool.numTokens > 0);
       setPools(poolData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch perps pools");

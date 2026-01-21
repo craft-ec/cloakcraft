@@ -32,10 +32,6 @@ import type {
   RemoveLiquidityParams,
   FillOrderParams,
   CancelOrderParams,
-  CreateAggregationParams,
-  SubmitVoteParams,
-  SubmitDecryptionShareParams,
-  FinalizeVotingParams,
   OpenPerpsPositionParams,
   ClosePerpsPositionParams,
   PerpsAddLiquidityClientParams,
@@ -50,14 +46,6 @@ import { derivePublicKey } from './crypto/babyjubjub';
 import { poseidonHash, fieldToBytes, bytesToField, initPoseidon } from './crypto/poseidon';
 import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier';
 import { deriveStealthPrivateKey, generateStealthAddress, checkStealthOwnership } from './crypto/stealth';
-import {
-  encryptVote,
-  serializeEncryptedVote,
-  generateVoteRandomness,
-  VoteOption,
-  computeDecryptionShare,
-  generateDleqProof,
-} from './crypto/elgamal';
 import {
   LightCommitmentClient,
   LightNullifierParams,
@@ -76,14 +64,9 @@ import {
   buildRemoveLiquidityWithProgram,
   buildFillOrderWithProgram,
   buildCancelOrderWithProgram,
-  buildCreateAggregationWithProgram,
-  buildSubmitVoteWithProgram,
-  buildSubmitDecryptionShareWithProgram,
-  buildFinalizeDecryptionWithProgram,
   deriveAmmPoolPda,
   derivePoolPda,
   deriveOrderPda,
-  deriveAggregationPda,
   deriveProtocolConfigPda,
   CIRCUIT_IDS,
 } from './instructions';
@@ -203,6 +186,136 @@ export class CloakCraftClient {
       throw new Error('Helius API key not configured. Light Protocol operations require heliusApiKey in config.');
     }
     return this.heliusRpcUrl;
+  }
+
+  /**
+   * Build Light Protocol params for spending operations (perps, swaps, etc.)
+   *
+   * This is a centralized helper that:
+   * 1. Gets commitment inclusion proof (proves input exists)
+   * 2. Gets nullifier non-inclusion proof (proves not double-spent)
+   * 3. Builds packed accounts with correct tree indices
+   *
+   * @param accountHash - Account hash of the commitment (from scanNotes)
+   * @param nullifier - Nullifier to be created
+   * @param pool - Pool PDA (used for nullifier address derivation)
+   * @param rpcUrl - Helius RPC URL for Light Protocol queries
+   */
+  async buildLightProtocolParams(
+    accountHash: string,
+    nullifier: Uint8Array,
+    pool: PublicKey,
+    rpcUrl: string
+  ): Promise<{
+    lightVerifyParams: {
+      commitmentAccountHash: number[];
+      commitmentMerkleContext: {
+        merkleTreePubkeyIndex: number;
+        queuePubkeyIndex: number;
+        leafIndex: number;
+        rootIndex: number;
+      };
+      commitmentInclusionProof: { a: number[]; b: number[]; c: number[] };
+      commitmentAddressTreeInfo: {
+        addressMerkleTreePubkeyIndex: number;
+        addressQueuePubkeyIndex: number;
+        rootIndex: number;
+      };
+    };
+    lightNullifierParams: {
+      proof: { a: number[]; b: number[]; c: number[] };
+      addressTreeInfo: {
+        addressMerkleTreePubkeyIndex: number;
+        addressQueuePubkeyIndex: number;
+        rootIndex: number;
+      };
+      outputTreeIndex: number;
+    };
+    remainingAccounts: import('@solana/web3.js').AccountMeta[];
+  }> {
+    const { LightProtocol } = await import('./instructions/light-helpers');
+    const { SystemAccountMetaConfig, PackedAccounts } = await import('@lightprotocol/stateless.js');
+    const { DEVNET_V2_TREES } = await import('./instructions/constants');
+
+    const lightProtocol = new LightProtocol(rpcUrl, this.programId);
+
+    // Get commitment inclusion proof
+    console.log('[buildLightProtocolParams] Fetching commitment inclusion proof...');
+    const commitmentProof = await lightProtocol.getInclusionProofByHash(accountHash);
+    console.log('[buildLightProtocolParams] Commitment proof leaf index:', commitmentProof.leafIndex);
+
+    // Get nullifier non-inclusion proof
+    console.log('[buildLightProtocolParams] Fetching nullifier non-inclusion proof...');
+    const nullifierAddress = lightProtocol.deriveNullifierAddress(pool, nullifier);
+    const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
+
+    // Extract trees from proof
+    const commitmentTree = new PublicKey(commitmentProof.treeInfo.tree);
+    const commitmentQueue = new PublicKey(commitmentProof.treeInfo.queue);
+
+    // Build packed accounts
+    const systemConfig = SystemAccountMetaConfig.new(this.programId);
+    const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
+
+    // Add output queue
+    const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES.OUTPUT_QUEUE);
+
+    // Add address tree (for both commitment and nullifier)
+    const addressTree = DEVNET_V2_TREES.ADDRESS_TREE;
+    const addressTreeIndex = packedAccounts.insertOrGet(addressTree);
+
+    // Add commitment STATE tree from proof
+    const commitmentStateTreeIndex = packedAccounts.insertOrGet(commitmentTree);
+    const commitmentQueueIndex = packedAccounts.insertOrGet(commitmentQueue);
+
+    // Add CPI context if present
+    const commitmentCpiContext = commitmentProof.treeInfo.cpiContext
+      ? new PublicKey(commitmentProof.treeInfo.cpiContext)
+      : null;
+    if (commitmentCpiContext) {
+      packedAccounts.insertOrGet(commitmentCpiContext);
+    }
+
+    const { remainingAccounts } = packedAccounts.toAccountMetas();
+    const accounts = remainingAccounts.map((acc: any) => ({
+      pubkey: acc.pubkey,
+      isWritable: Boolean(acc.isWritable),
+      isSigner: Boolean(acc.isSigner),
+    }));
+
+    // Build verify params
+    const lightVerifyParams = {
+      commitmentAccountHash: Array.from(new PublicKey(accountHash).toBytes()),
+      commitmentMerkleContext: {
+        merkleTreePubkeyIndex: commitmentStateTreeIndex,
+        queuePubkeyIndex: commitmentQueueIndex,
+        leafIndex: commitmentProof.leafIndex,
+        rootIndex: commitmentProof.rootIndex,
+      },
+      commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+      commitmentAddressTreeInfo: {
+        addressMerkleTreePubkeyIndex: addressTreeIndex,
+        addressQueuePubkeyIndex: addressTreeIndex,
+        rootIndex: nullifierProof.rootIndices[0] ?? 0,
+      },
+    };
+
+    // Build nullifier params (field names must match createNullifierAndPending instruction)
+    const lightNullifierParams = {
+      proof: LightProtocol.convertCompressedProof(nullifierProof),
+      addressTreeInfo: {
+        addressMerkleTreePubkeyIndex: addressTreeIndex,
+        addressQueuePubkeyIndex: addressTreeIndex,
+        rootIndex: nullifierProof.rootIndices[0] ?? 0,
+      },
+      outputTreeIndex,
+    };
+
+    return {
+      lightVerifyParams,
+      lightNullifierParams,
+      remainingAccounts: accounts,
+    };
   }
 
   /**
@@ -1129,10 +1242,10 @@ export class CloakCraftClient {
 
     // Detect pure unshield scenario:
     // - Has unshield (withdrawing to public wallet)
-    // - ALL outputs are to self (no transfer to others)
+    // - NO outputs OR ALL outputs are to self (no transfer to others)
     // For pure unshield, we restructure outputs so transfer_amount = 0 (fair fee)
     const hasUnshield = request.unshield && request.unshield.amount > 0n;
-    const allOutputsToSelf = preparedOutputs.length > 0 && preparedOutputs.every(output =>
+    const allOutputsToSelf = preparedOutputs.length === 0 || preparedOutputs.every(output =>
       checkStealthOwnership(
         output.recipient.stealthPubkey,
         output.recipient.ephemeralPubkey,
@@ -1168,10 +1281,32 @@ export class CloakCraftClient {
         randomness: new Uint8Array(32),
       };
 
-      // Put dummy first (out_1), then actual change (out_2)
-      // If there are multiple change outputs, use the first one
-      preparedOutputs = [dummyOutput, preparedOutputs[0]];
-      console.log('[prepareAndTransfer] Restructured: out_1=dummy(0), out_2=change');
+      // Put dummy first (out_1), then actual change or another dummy (out_2)
+      if (preparedOutputs.length > 0) {
+        // Has change output
+        preparedOutputs = [dummyOutput, preparedOutputs[0]];
+        console.log('[prepareAndTransfer] Restructured: out_1=dummy(0), out_2=change');
+      } else {
+        // Full unshield with no change - need two dummy outputs for 1x2 circuit
+        // Generate a self-stealth address for the zero-amount "dust" output
+        const selfStealth = generateStealthAddress(this.wallet.keypair.publicKey);
+        const dustNote = createNote(
+          selfStealth.stealthAddress.stealthPubkey.x,
+          tokenMint,
+          0n,
+          generateRandomness()
+        );
+        const dustCommitment = computeCommitment(dustNote);
+        const dustOutput: TransferOutput = {
+          recipient: selfStealth.stealthAddress,
+          amount: 0n,
+          commitment: dustCommitment,
+          stealthPubX: selfStealth.stealthAddress.stealthPubkey.x,
+          randomness: dustNote.randomness,
+        };
+        preparedOutputs = [dummyOutput, dustOutput];
+        console.log('[prepareAndTransfer] Full unshield: out_1=dummy(0), out_2=dust(0)');
+      }
     }
 
     // Use commitment as merkle_root with dummy path
@@ -1760,9 +1895,10 @@ export class CloakCraftClient {
    * Creates a new AMM pool for a token pair. This must be done before
    * anyone can add liquidity or swap between these tokens.
    *
+   * LP mint is now a PDA derived from the AMM pool, no keypair needed.
+   *
    * @param tokenAMint - First token mint
    * @param tokenBMint - Second token mint
-   * @param lpMintKeypair - LP token mint keypair (newly generated)
    * @param feeBps - Trading fee in basis points (e.g., 30 = 0.3%)
    * @param poolType - Pool type: 'constantProduct' (default) or 'stableSwap'
    * @param amplification - Amplification coefficient for StableSwap (100-10000, default: 200)
@@ -1772,7 +1908,6 @@ export class CloakCraftClient {
   async initializeAmmPool(
     tokenAMint: PublicKey,
     tokenBMint: PublicKey,
-    lpMintKeypair: SolanaKeypair,
     feeBps: number,
     poolType: 'constantProduct' | 'stableSwap' = 'constantProduct',
     amplification: number = 200,
@@ -1803,11 +1938,10 @@ export class CloakCraftClient {
         payerPublicKey = wallet;
       }
 
-      // Build transaction
-      const tx = await buildInitializeAmmPoolWithProgram(this.program, {
+      // Build transaction - LP mint is now derived as PDA
+      const { tx, lpMint } = await buildInitializeAmmPoolWithProgram(this.program, {
         tokenAMint,
         tokenBMint,
-        lpMint: lpMintKeypair.publicKey,
         feeBps,
         authority: payerPublicKey,
         payer: payerPublicKey,
@@ -1815,53 +1949,24 @@ export class CloakCraftClient {
         amplification,
       });
 
-      // Sign and send
+      // Sign and send - no lpMintKeypair needed since LP mint is now a PDA
       let ammSignature: string;
       if (payerKeypair) {
         // CLI mode: explicitly sign with payer keypair
-        ammSignature = await tx.signers([payerKeypair, lpMintKeypair]).rpc();
+        ammSignature = await tx.signers([payerKeypair]).rpc();
         console.log(`[AMM] Pool initialized (CLI): ${ammSignature}`);
       } else {
-        // Wallet adapter mode: build transaction, partial sign with lpMintKeypair, then send
-        const transaction = await tx.transaction();
-
-        // Get latest blockhash
-        const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
-        transaction.recentBlockhash = blockhash;
-        transaction.lastValidBlockHeight = lastValidBlockHeight;
-        transaction.feePayer = payerPublicKey;
-
-        // Partial sign with lpMintKeypair
-        transaction.partialSign(lpMintKeypair);
-
-        // Get wallet from provider
-        const wallet = this.program.provider.wallet;
-        if (!wallet || !wallet.signTransaction) {
-          throw new Error('Wallet does not support transaction signing');
-        }
-
-        // Have wallet sign the transaction
-        const signedTx = await wallet.signTransaction(transaction);
-
-        // Send the signed transaction
-        ammSignature = await this.connection.sendRawTransaction(signedTx.serialize());
-
-        // Wait for confirmation
-        await this.connection.confirmTransaction({
-          signature: ammSignature,
-          blockhash,
-          lastValidBlockHeight
-        });
-
+        // Wallet adapter mode: just send transaction (no partial signing needed)
+        ammSignature = await tx.rpc();
         console.log(`[AMM] Pool initialized (wallet): ${ammSignature}`);
       }
 
       // Initialize the LP pool for storing LP token commitments
       // This is required before users can add/remove liquidity and scan LP notes
-      console.log(`[AMM] Initializing LP token pool: ${lpMintKeypair.publicKey.toBase58()}`);
+      console.log(`[AMM] Initializing LP token pool: ${lpMint.toBase58()}`);
       try {
         // Call initPool directly which will use wallet adapter
-        const lpPoolInit = await initPool(this.program, lpMintKeypair.publicKey, payerPublicKey, payerPublicKey);
+        const lpPoolInit = await initPool(this.program, lpMint, payerPublicKey, payerPublicKey);
         console.log(`[AMM] LP pool initialized: pool=${lpPoolInit.poolTx}, counter=${lpPoolInit.counterTx}`);
       } catch (err) {
         // If pool already exists, that's fine. Otherwise, throw to alert user.
@@ -2973,257 +3078,6 @@ export class CloakCraftClient {
     };
   }
 
-  // =============================================================================
-  // Governance Methods
-  // =============================================================================
-
-  /**
-   * Create a new vote aggregation
-   *
-   * Sets up an encrypted voting aggregation for a proposal.
-   *
-   * @param params - Aggregation parameters
-   * @param payer - Payer for transaction fees
-   */
-  async createAggregation(
-    params: CreateAggregationParams,
-    payer: SolanaKeypair
-  ): Promise<TransactionResult> {
-    if (!this.program) {
-      throw new Error('No program set. Call setProgram() first.');
-    }
-
-    const tx = await buildCreateAggregationWithProgram(
-      this.program,
-      {
-        id: params.id,
-        tokenMint: params.tokenMint,
-        thresholdPubkey: params.thresholdPubkey.x,
-        threshold: params.threshold,
-        numOptions: params.numOptions,
-        deadline: params.deadline,
-        actionDomain: params.actionDomain,
-        authority: payer.publicKey,
-        payer: payer.publicKey,
-      }
-    );
-
-    const signature = await tx.rpc();
-
-    return {
-      signature,
-      slot: 0,
-    };
-  }
-
-  /**
-   * Submit an encrypted vote
-   *
-   * Generates ZK proof of voting power and encrypts vote choice.
-   *
-   * @param params - Vote parameters
-   * @param relayer - Optional relayer keypair for transaction fees
-   */
-  async submitVote(
-    params: SubmitVoteParams,
-    relayer?: SolanaKeypair
-  ): Promise<TransactionResult> {
-    if (!this.wallet) {
-      throw new Error('No wallet loaded');
-    }
-    if (!this.program) {
-      throw new Error('No program set. Call setProgram() first.');
-    }
-
-    // Ensure the circuit is loaded
-    if (!this.proofGenerator.hasCircuit('governance/encrypted_submit')) {
-      throw new Error("Prover not initialized. Call initializeProver(['governance/encrypted_submit']) first.");
-    }
-
-    // Derive token pool PDA from input's token mint
-    const tokenMint = params.input.tokenMint instanceof Uint8Array
-      ? new PublicKey(params.input.tokenMint)
-      : params.input.tokenMint;
-    const [tokenPool] = derivePoolPda(tokenMint, this.programId);
-
-    // Generate encryption randomness for each vote option
-    const randomness = generateVoteRandomness();
-
-    // Encrypt the vote
-    const voteOption = params.voteChoice === 0 ? VoteOption.Yes
-      : params.voteChoice === 1 ? VoteOption.No
-      : VoteOption.Abstain;
-
-    const encryptedVote = encryptVote(
-      params.input.amount, // voting power
-      voteOption,
-      params.electionPubkey,
-      randomness
-    );
-
-    // Serialize for on-chain submission
-    const encryptedVotes = serializeEncryptedVote(encryptedVote);
-
-    // Compute action nullifier (prevents double voting)
-    const actionNullifier = poseidonHash([
-      params.aggregationId,
-      this.wallet.keypair.spending.sk,
-    ]);
-
-    // Generate vote proof
-    const proof = await this.proofGenerator.generateVoteProof(
-      {
-        input: params.input,
-        merkleRoot: params.input.commitment, // Dummy - verified via Light Protocol
-        merklePath: Array(32).fill(new Uint8Array(32)),
-        merkleIndices: Array(32).fill(0),
-        proposalId: params.aggregationId,
-        voteChoice: params.voteChoice,
-        electionPubkey: params.electionPubkey,
-        encryptionRandomness: {
-          yes: fieldToBytes(randomness.yes),
-          no: fieldToBytes(randomness.no),
-          abstain: fieldToBytes(randomness.abstain),
-        },
-      },
-      this.wallet.keypair
-    );
-
-    // Build transaction
-    const heliusRpcUrl = this.getHeliusRpcUrl();
-    const tx = await buildSubmitVoteWithProgram(
-      this.program,
-      {
-        aggregationId: params.aggregationId,
-        tokenPool,
-        input: {
-          stealthPubX: params.input.stealthPubX,
-          amount: params.input.amount,
-          randomness: params.input.randomness,
-          leafIndex: params.input.leafIndex,
-          accountHash: params.input.accountHash!,
-        },
-        actionNullifier,
-        encryptedVotes,
-        proof,
-        relayer: relayer?.publicKey ?? (await this.getRelayerPubkey()),
-      },
-      heliusRpcUrl
-    );
-
-    // Execute transaction
-    const signature = await tx.rpc();
-
-    return {
-      signature,
-      slot: 0,
-    };
-  }
-
-  /**
-   * Submit a decryption share (committee member only)
-   *
-   * After voting ends, committee members submit their decryption shares
-   * to enable threshold decryption of the aggregated votes.
-   *
-   * @param params - Decryption share parameters
-   * @param memberKeypair - Committee member's keypair (has secret share)
-   * @param secretKeyShare - Member's secret key share for decryption
-   */
-  async submitDecryptionShare(
-    params: SubmitDecryptionShareParams,
-    memberKeypair: SolanaKeypair,
-    secretKeyShare: bigint,
-    memberIndex: number
-  ): Promise<TransactionResult> {
-    if (!this.program) {
-      throw new Error('No program set. Call setProgram() first.');
-    }
-
-    // Shares are already FieldElement[] (Uint8Array[])
-    const sharesArray = params.shares;
-    const proofsArray = params.dleqProofs;
-
-    const tx = await buildSubmitDecryptionShareWithProgram(
-      this.program,
-      {
-        aggregationId: params.aggregationId,
-        memberIndex,
-        shares: sharesArray,
-        dleqProofs: proofsArray,
-        member: memberKeypair.publicKey,
-      }
-    );
-
-    const signature = await tx.rpc();
-
-    return {
-      signature,
-      slot: 0,
-    };
-  }
-
-  /**
-   * Finalize voting and publish results
-   *
-   * Called by the authority after threshold decryption completes.
-   *
-   * @param params - Finalize parameters with decrypted totals
-   * @param authority - Authority keypair
-   */
-  async finalizeVoting(
-    params: FinalizeVotingParams,
-    authority: SolanaKeypair
-  ): Promise<TransactionResult> {
-    if (!this.program) {
-      throw new Error('No program set. Call setProgram() first.');
-    }
-
-    const tx = await buildFinalizeDecryptionWithProgram(
-      this.program,
-      {
-        aggregationId: params.aggregationId,
-        totals: params.totals,
-        authority: authority.publicKey,
-      }
-    );
-
-    const signature = await tx.rpc();
-
-    return {
-      signature,
-      slot: 0,
-    };
-  }
-
-  /**
-   * Get aggregation state
-   *
-   * Fetches the current state of a vote aggregation.
-   */
-  async getAggregation(aggregationId: Uint8Array): Promise<any | null> {
-    if (!this.program) {
-      throw new Error('No program set. Call setProgram() first.');
-    }
-
-    const [aggregationPda] = deriveAggregationPda(aggregationId, this.programId);
-
-    try {
-      const aggregation = await (this.program.account as any).aggregation.fetch(aggregationPda);
-      return aggregation;
-    } catch (e: any) {
-      const msg = e.message?.toLowerCase() ?? '';
-      if (
-        msg.includes('account does not exist') ||
-        msg.includes('could not find') ||
-        msg.includes('not found')
-      ) {
-        return null;
-      }
-      throw e;
-    }
-  }
-
   /**
    * Helper to compute input nullifier
    */
@@ -3499,6 +3353,11 @@ export class CloakCraftClient {
       ? params.input.tokenMint
       : params.input.tokenMint.toBytes();
 
+    // Fetch the PerpsPool account to get the actual pool_id used in proofs
+    // IMPORTANT: The on-chain verification uses perps_pool.pool_id, not the PDA address
+    const perpsPoolAccount = await (this.program.account as any).perpsPool.fetch(params.poolId);
+    const actualPoolId = perpsPoolAccount.poolId as PublicKey;
+
     // Transform client params to proof generator format
     const proofParams = {
       input: {
@@ -3509,7 +3368,7 @@ export class CloakCraftClient {
         leafIndex: params.input.leafIndex,
         stealthEphemeralPubkey: params.input.stealthEphemeralPubkey,
       },
-      perpsPoolId: params.poolId.toBytes(),
+      perpsPoolId: actualPoolId.toBytes(),
       marketId: bytesToField(params.marketId),
       isLong: params.direction === 'long',
       marginAmount: params.marginAmount,
@@ -3526,12 +3385,6 @@ export class CloakCraftClient {
       proofParams,
       this.wallet.keypair
     );
-
-    // Generate change commitment (for remaining input after margin + fee)
-    // Note: In current circuit design, input must equal margin + fee exactly
-    // This is placeholder for future multi-output circuit support
-    const changeRandomness = generateRandomness();
-    const changeCommitment = new Uint8Array(32); // No change in current design
 
     params.onProgress?.('building');
 
@@ -3553,33 +3406,45 @@ export class CloakCraftClient {
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
 
-    const { proof, nullifier, positionCommitment, positionRandomness } = proofResult;
+    const { proof, nullifier, positionCommitment, positionRandomness, changeCommitment, changeRandomness, changeAmount } = proofResult;
+
+    // Derive the perps market PDA
+    const [perpsMarketPda] = derivePerpsMarketPda(params.poolId, params.marketId, this.programId);
+
+    // Build Light Protocol params
+    const lightParams = await this.buildLightProtocolParams(
+      accountHash,
+      nullifier,
+      inputPoolPda,
+      heliusRpcUrl
+    );
 
     const instructionParams = {
+      // Required fields matching OpenPositionInstructionParams
+      settlementPool: inputPoolPda,
       perpsPool: params.poolId,
-      marketId: params.marketId,
-      inputPool: inputPoolPda,
-      inputVault,
-      inputTokenMint,
-      protocolConfig: protocolConfigPda,
-      relayer: relayerPubkey,
+      market: perpsMarketPda,
       proof,
       merkleRoot: params.merkleRoot,
-      nullifier,
       inputCommitment,
-      accountHash,
-      leafIndex: params.input.leafIndex,
+      nullifier,
       positionCommitment,
       changeCommitment,
-      direction: params.direction,
+      isLong: params.direction === 'long',
       marginAmount: params.marginAmount,
       leverage: params.leverage,
-      positionSize,
-      oraclePrice: params.oraclePrice,
+      positionFee,
+      entryPrice: params.oraclePrice,
+      relayer: relayerPubkey,
       positionRecipient: params.positionRecipient,
       changeRecipient: params.changeRecipient,
       positionRandomness,
       changeRandomness,
+      changeAmount,
+      tokenMint: inputTokenMint,
+      lightVerifyParams: lightParams.lightVerifyParams,
+      lightNullifierParams: lightParams.lightNullifierParams,
+      remainingAccounts: lightParams.remainingAccounts,
     };
 
     // Build multi-phase transactions
@@ -3593,16 +3458,92 @@ export class CloakCraftClient {
       instructionParams as any
     );
 
-    // Execute multi-phase pattern similar to swap
     params.onProgress?.('approving');
+
+    // Import generic builders for Phase 4+ and Final
+    const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
+
+    // Execute multi-phase transactions
+    const { VersionedTransaction, TransactionMessage } = await import('@solana/web3.js');
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+    const lookupTables = await this.getAddressLookupTables();
+
+    // Build all transactions including Phase 3, 4+, and Final
+    const transactionBuilders: { name: string; builder: any }[] = [];
+
+    // Phases 0-2: Create Pending, Verify, Nullifier
+    transactionBuilders.push({ name: 'Phase 0 (Create Pending)', builder: buildResult.tx });
+    transactionBuilders.push({ name: 'Phase 1 (Verify Commitment)', builder: buildResult.phase1Tx });
+    transactionBuilders.push({ name: 'Phase 2 (Create Nullifier)', builder: buildResult.phase2Tx });
+
+    // Phase 3: Execute Open Position
+    transactionBuilders.push({ name: 'Phase 3 (Execute Open Position)', builder: buildResult.phase3Tx });
+
+    // Phase 4+: Create commitments (position + change)
+    const { operationId, pendingCommitments } = buildResult;
+    for (let i = 0; i < pendingCommitments.length; i++) {
+      const pc = pendingCommitments[i];
+      // Skip dummy commitments (all zeros)
+      if (pc.commitment.every((b: number) => b === 0)) continue;
+
+      const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
+        this.program,
+        {
+          operationId,
+          commitmentIndex: i,
+          pool: pc.pool,
+          relayer: relayerPubkey,
+          stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+          encryptedNote: pc.encryptedNote,
+          commitment: pc.commitment,
+        },
+        heliusRpcUrl
+      );
+      transactionBuilders.push({ name: `Phase ${4 + i} (Commitment ${i})`, builder: commitmentTx });
+    }
+
+    // Final: Close pending operation
+    const { tx: closeTx } = await buildClosePendingOperationWithProgram(
+      this.program,
+      operationId,
+      relayerPubkey
+    );
+    transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
+
+    // Build all versioned transactions
+    const transactions = [];
+    for (const { name, builder } of transactionBuilders) {
+      const mainIx = await builder.instruction();
+      const preIxs = builder._preInstructions || [];
+      const allInstructions = [...preIxs, mainIx];
+
+      const tx = new VersionedTransaction(
+        new TransactionMessage({
+          payerKey: relayerPubkey,
+          recentBlockhash: blockhash,
+          instructions: allInstructions,
+        }).compileToV0Message(lookupTables)
+      );
+      transactions.push({ name, tx });
+    }
+
     params.onProgress?.('executing');
 
-    // For now, return placeholder - full implementation requires circuit
-    console.log('[OpenPosition] Built transactions successfully');
-    console.log('[OpenPosition] Note: Full execution requires perps circuits to be compiled');
+    // Execute transactions in order
+    let finalSignature = '';
+    for (const { name, tx } of transactions) {
+      console.log(`[OpenPosition] Executing ${name}...`);
+      if (relayer) {
+        tx.sign([relayer]);
+      }
+      const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
+      await this.connection.confirmTransaction(sig, 'confirmed');
+      console.log(`[OpenPosition] ${name} confirmed: ${sig}`);
+      finalSignature = sig;
+    }
 
     return {
-      signature: 'perps_circuit_required',
+      signature: finalSignature,
       slot: 0,
     };
   }
@@ -3650,6 +3591,11 @@ export class CloakCraftClient {
       ? params.positionInput.tokenMint
       : params.positionInput.tokenMint.toBytes();
 
+    // Fetch the PerpsPool account to get the actual pool_id used in proofs
+    // IMPORTANT: The on-chain verification uses perps_pool.pool_id, not the PDA address
+    const perpsPoolAccount = await (this.program.account as any).perpsPool.fetch(params.poolId);
+    const actualPoolId = perpsPoolAccount.poolId as PublicKey;
+
     const proofParams = {
       position: {
         stealthPubX: params.positionInput.stealthPubX,
@@ -3663,7 +3609,7 @@ export class CloakCraftClient {
         leafIndex: params.positionInput.leafIndex,
         spendingKey: this.wallet.keypair.spending.sk,
       },
-      perpsPoolId: params.poolId.toBytes(),
+      perpsPoolId: actualPoolId.toBytes(),
       exitPrice: params.oraclePrice,
       pnlAmount,
       isProfit,
@@ -3715,13 +3661,91 @@ export class CloakCraftClient {
     );
 
     params.onProgress?.('approving');
+
+    // Import generic builders for Phase 4+ and Final
+    const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
+
+    // Execute multi-phase transactions
+    const { VersionedTransaction, TransactionMessage } = await import('@solana/web3.js');
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+    const lookupTables = await this.getAddressLookupTables();
+
+    // Build all transactions including Phase 3, 4+, and Final
+    const transactionBuilders: { name: string; builder: any }[] = [];
+
+    // Phases 0-2: Create Pending, Verify, Nullifier
+    transactionBuilders.push({ name: 'Phase 0 (Create Pending)', builder: buildResult.tx });
+    transactionBuilders.push({ name: 'Phase 1 (Verify Commitment)', builder: buildResult.phase1Tx });
+    transactionBuilders.push({ name: 'Phase 2 (Create Nullifier)', builder: buildResult.phase2Tx });
+
+    // Phase 3: Execute Close Position
+    transactionBuilders.push({ name: 'Phase 3 (Execute Close Position)', builder: buildResult.phase3Tx });
+
+    // Phase 4+: Create commitments (settlement payout)
+    const { operationId, pendingCommitments } = buildResult;
+    for (let i = 0; i < pendingCommitments.length; i++) {
+      const pc = pendingCommitments[i];
+      // Skip dummy commitments (all zeros)
+      if (pc.commitment.every((b: number) => b === 0)) continue;
+
+      const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
+        this.program,
+        {
+          operationId,
+          commitmentIndex: i,
+          pool: pc.pool,
+          relayer: relayerPubkey,
+          stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+          encryptedNote: pc.encryptedNote,
+          commitment: pc.commitment,
+        },
+        heliusRpcUrl
+      );
+      transactionBuilders.push({ name: `Phase ${4 + i} (Commitment ${i})`, builder: commitmentTx });
+    }
+
+    // Final: Close pending operation
+    const { tx: closeTx } = await buildClosePendingOperationWithProgram(
+      this.program,
+      operationId,
+      relayerPubkey
+    );
+    transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
+
+    // Build all versioned transactions
+    const transactions = [];
+    for (const { name, builder } of transactionBuilders) {
+      const mainIx = await builder.instruction();
+      const preIxs = builder._preInstructions || [];
+      const allInstructions = [...preIxs, mainIx];
+
+      const tx = new VersionedTransaction(
+        new TransactionMessage({
+          payerKey: relayerPubkey,
+          recentBlockhash: blockhash,
+          instructions: allInstructions,
+        }).compileToV0Message(lookupTables)
+      );
+      transactions.push({ name, tx });
+    }
+
     params.onProgress?.('executing');
 
-    console.log('[ClosePosition] Built transactions successfully');
-    console.log('[ClosePosition] Note: Full execution requires perps circuits to be compiled');
+    // Execute transactions in order
+    let finalSignature = '';
+    for (const { name, tx } of transactions) {
+      console.log(`[ClosePosition] Executing ${name}...`);
+      if (relayer) {
+        tx.sign([relayer]);
+      }
+      const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
+      await this.connection.confirmTransaction(sig, 'confirmed');
+      console.log(`[ClosePosition] ${name} confirmed: ${sig}`);
+      finalSignature = sig;
+    }
 
     return {
-      signature: 'perps_circuit_required',
+      signature: finalSignature,
       slot: 0,
     };
   }
@@ -3761,6 +3785,11 @@ export class CloakCraftClient {
     // Calculate fee (if any)
     const feeAmount = 0n; // No deposit fee currently
 
+    // Fetch the PerpsPool account to get the actual pool_id used in proofs
+    // IMPORTANT: The on-chain verification uses perps_pool.pool_id, not the PDA address
+    const perpsPoolAccount = await (this.program.account as any).perpsPool.fetch(params.poolId);
+    const actualPoolId = perpsPoolAccount.poolId as PublicKey;
+
     // Convert input note to proof generator format
     const tokenMint = params.input.tokenMint instanceof Uint8Array
       ? params.input.tokenMint
@@ -3776,7 +3805,7 @@ export class CloakCraftClient {
         leafIndex: params.input.leafIndex,
         stealthEphemeralPubkey: params.input.stealthEphemeralPubkey,
       },
-      perpsPoolId: params.poolId.toBytes(),
+      perpsPoolId: actualPoolId.toBytes(),
       tokenIndex: params.tokenIndex,
       depositAmount: params.depositAmount,
       lpAmountMinted: params.lpAmount,
@@ -3817,10 +3846,11 @@ export class CloakCraftClient {
 
     const instructionParams = {
       perpsPool: params.poolId,
-      inputPool: inputPoolPda,
+      settlementPool: inputPoolPda,
       perpsVault: perpsVaultPda,
       lpMint: lpMintPda,
       inputTokenMint,
+      tokenMint: inputTokenMint,
       relayer: relayerPubkey,
       proof,
       merkleRoot: params.merkleRoot,
@@ -3832,7 +3862,9 @@ export class CloakCraftClient {
       changeCommitment,
       tokenIndex: params.tokenIndex,
       depositAmount: params.depositAmount,
-      lpAmount: params.lpAmount,
+      lpAmountMinted: params.lpAmount,
+      feeAmount: 0n,
+      oraclePrices: params.oraclePrices ?? [1_000_000_000n], // Default to $1 if not provided
       lpRecipient: params.lpRecipient,
       changeRecipient: params.changeRecipient,
       lpRandomness,
@@ -3849,13 +3881,91 @@ export class CloakCraftClient {
     );
 
     params.onProgress?.('approving');
+
+    // Import generic builders for Phase 4+ and Final
+    const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
+
+    // Execute multi-phase transactions
+    const { VersionedTransaction, TransactionMessage } = await import('@solana/web3.js');
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+    const lookupTables = await this.getAddressLookupTables();
+
+    // Build all transactions including Phase 3, 4+, and Final
+    const transactionBuilders: { name: string; builder: any }[] = [];
+
+    // Phases 0-2: Create Pending, Verify, Nullifier
+    transactionBuilders.push({ name: 'Phase 0 (Create Pending)', builder: buildResult.tx });
+    transactionBuilders.push({ name: 'Phase 1 (Verify Commitment)', builder: buildResult.phase1Tx });
+    transactionBuilders.push({ name: 'Phase 2 (Create Nullifier)', builder: buildResult.phase2Tx });
+
+    // Phase 3: Execute Add Liquidity
+    transactionBuilders.push({ name: 'Phase 3 (Execute Add Liquidity)', builder: buildResult.phase3Tx });
+
+    // Phase 4+: Create commitments (LP token + change)
+    const { operationId, pendingCommitments } = buildResult;
+    for (let i = 0; i < pendingCommitments.length; i++) {
+      const pc = pendingCommitments[i];
+      // Skip dummy commitments (all zeros)
+      if (pc.commitment.every((b: number) => b === 0)) continue;
+
+      const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
+        this.program,
+        {
+          operationId,
+          commitmentIndex: i,
+          pool: pc.pool,
+          relayer: relayerPubkey,
+          stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+          encryptedNote: pc.encryptedNote,
+          commitment: pc.commitment,
+        },
+        heliusRpcUrl
+      );
+      transactionBuilders.push({ name: `Phase ${4 + i} (Commitment ${i})`, builder: commitmentTx });
+    }
+
+    // Final: Close pending operation
+    const { tx: closeTx } = await buildClosePendingOperationWithProgram(
+      this.program,
+      operationId,
+      relayerPubkey
+    );
+    transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
+
+    // Build all versioned transactions
+    const transactions = [];
+    for (const { name, builder } of transactionBuilders) {
+      const mainIx = await builder.instruction();
+      const preIxs = builder._preInstructions || [];
+      const allInstructions = [...preIxs, mainIx];
+
+      const tx = new VersionedTransaction(
+        new TransactionMessage({
+          payerKey: relayerPubkey,
+          recentBlockhash: blockhash,
+          instructions: allInstructions,
+        }).compileToV0Message(lookupTables)
+      );
+      transactions.push({ name, tx });
+    }
+
     params.onProgress?.('executing');
 
-    console.log('[AddPerpsLiquidity] Built transactions successfully');
-    console.log('[AddPerpsLiquidity] Note: Full execution requires perps circuits to be compiled');
+    // Execute transactions in order
+    let finalSignature = '';
+    for (const { name, tx } of transactions) {
+      console.log(`[AddPerpsLiquidity] Executing ${name}...`);
+      if (relayer) {
+        tx.sign([relayer]);
+      }
+      const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
+      await this.connection.confirmTransaction(sig, 'confirmed');
+      console.log(`[AddPerpsLiquidity] ${name} confirmed: ${sig}`);
+      finalSignature = sig;
+    }
 
     return {
-      signature: 'perps_circuit_required',
+      signature: finalSignature,
       slot: 0,
     };
   }
@@ -3895,8 +4005,10 @@ export class CloakCraftClient {
     // Derive PDAs first to get token mint
     const [perpsPoolAccount] = derivePerpsPoolPda(params.poolId, this.programId);
 
-    // Fetch pool to get token info
+    // Fetch pool to get token info and actual pool_id for proofs
+    // IMPORTANT: The on-chain verification uses perps_pool.pool_id, not the PDA address
     const poolData = await (this.program.account as any).perpsPool.fetch(params.poolId);
+    const actualPoolId = poolData.poolId as PublicKey;
     const tokenMint = poolData.tokens[params.tokenIndex].mint;
     const tokenMintBytes = tokenMint.toBytes();
 
@@ -3913,7 +4025,7 @@ export class CloakCraftClient {
         leafIndex: params.lpInput.leafIndex,
         spendingKey: this.wallet.keypair.spending.sk,
       },
-      perpsPoolId: params.poolId.toBytes(),
+      perpsPoolId: actualPoolId.toBytes(),
       tokenIndex: params.tokenIndex,
       lpAmountBurned: params.lpAmount,
       withdrawAmount: params.withdrawAmount,
@@ -3986,13 +4098,91 @@ export class CloakCraftClient {
     );
 
     params.onProgress?.('approving');
+
+    // Import generic builders for Phase 4+ and Final
+    const { buildCreateCommitmentWithProgram, buildClosePendingOperationWithProgram } = await import('./instructions/swap');
+
+    // Execute multi-phase transactions
+    const { VersionedTransaction, TransactionMessage } = await import('@solana/web3.js');
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+    const lookupTables = await this.getAddressLookupTables();
+
+    // Build all transactions including Phase 3, 4+, and Final
+    const transactionBuilders: { name: string; builder: any }[] = [];
+
+    // Phases 0-2: Create Pending, Verify, Nullifier
+    transactionBuilders.push({ name: 'Phase 0 (Create Pending)', builder: buildResult.tx });
+    transactionBuilders.push({ name: 'Phase 1 (Verify Commitment)', builder: buildResult.phase1Tx });
+    transactionBuilders.push({ name: 'Phase 2 (Create Nullifier)', builder: buildResult.phase2Tx });
+
+    // Phase 3: Execute Remove Liquidity
+    transactionBuilders.push({ name: 'Phase 3 (Execute Remove Liquidity)', builder: buildResult.phase3Tx });
+
+    // Phase 4+: Create commitments (output tokens + LP change)
+    const { operationId, pendingCommitments } = buildResult;
+    for (let i = 0; i < pendingCommitments.length; i++) {
+      const pc = pendingCommitments[i];
+      // Skip dummy commitments (all zeros)
+      if (pc.commitment.every((b: number) => b === 0)) continue;
+
+      const { tx: commitmentTx } = await buildCreateCommitmentWithProgram(
+        this.program,
+        {
+          operationId,
+          commitmentIndex: i,
+          pool: pc.pool,
+          relayer: relayerPubkey,
+          stealthEphemeralPubkey: pc.stealthEphemeralPubkey,
+          encryptedNote: pc.encryptedNote,
+          commitment: pc.commitment,
+        },
+        heliusRpcUrl
+      );
+      transactionBuilders.push({ name: `Phase ${4 + i} (Commitment ${i})`, builder: commitmentTx });
+    }
+
+    // Final: Close pending operation
+    const { tx: closeTx } = await buildClosePendingOperationWithProgram(
+      this.program,
+      operationId,
+      relayerPubkey
+    );
+    transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
+
+    // Build all versioned transactions
+    const transactions = [];
+    for (const { name, builder } of transactionBuilders) {
+      const mainIx = await builder.instruction();
+      const preIxs = builder._preInstructions || [];
+      const allInstructions = [...preIxs, mainIx];
+
+      const tx = new VersionedTransaction(
+        new TransactionMessage({
+          payerKey: relayerPubkey,
+          recentBlockhash: blockhash,
+          instructions: allInstructions,
+        }).compileToV0Message(lookupTables)
+      );
+      transactions.push({ name, tx });
+    }
+
     params.onProgress?.('executing');
 
-    console.log('[RemovePerpsLiquidity] Built transactions successfully');
-    console.log('[RemovePerpsLiquidity] Note: Full execution requires perps circuits to be compiled');
+    // Execute transactions in order
+    let finalSignature = '';
+    for (const { name, tx } of transactions) {
+      console.log(`[RemovePerpsLiquidity] Executing ${name}...`);
+      if (relayer) {
+        tx.sign([relayer]);
+      }
+      const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
+      await this.connection.confirmTransaction(sig, 'confirmed');
+      console.log(`[RemovePerpsLiquidity] ${name} confirmed: ${sig}`);
+      finalSignature = sig;
+    }
 
     return {
-      signature: 'perps_circuit_required',
+      signature: finalSignature,
       slot: 0,
     };
   }

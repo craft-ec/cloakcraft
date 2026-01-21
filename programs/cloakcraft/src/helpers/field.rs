@@ -49,6 +49,26 @@ pub fn u64_to_field(value: u64) -> [u8; 32] {
     result
 }
 
+/// Convert arbitrary 32 bytes to a BN254 field element
+///
+/// Similar to pubkey_to_field, but takes raw bytes (e.g., market_id).
+/// Ensures the resulting value is less than the BN254 scalar field modulus.
+pub fn bytes_to_field(bytes: &[u8; 32]) -> [u8; 32] {
+    let mut value = *bytes;
+
+    // Subtract modulus while value >= modulus
+    // Max 4 subtractions needed since input is 256 bits and modulus is ~254 bits
+    for _ in 0..4 {
+        if ge_modulus(&value) {
+            value = subtract_modulus(&value);
+        } else {
+            break;
+        }
+    }
+
+    value
+}
+
 /// Subtract BN254 scalar field modulus from value: result = value - modulus
 fn subtract_modulus(value: &[u8; 32]) -> [u8; 32] {
     let mut result = [0u8; 32];

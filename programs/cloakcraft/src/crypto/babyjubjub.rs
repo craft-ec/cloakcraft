@@ -442,42 +442,6 @@ fn field_sqrt_bytes(a: &[u8; 32]) -> Option<[u8; 32]> {
 }
 
 // =============================================================================
-// ElGamal Ciphertext Operations
-// =============================================================================
-
-use crate::state::ElGamalCiphertext;
-
-/// Add two ElGamal ciphertexts (homomorphic addition)
-///
-/// For ElGamal: (c1_a, c2_a) + (c1_b, c2_b) = (c1_a + c1_b, c2_a + c2_b)
-/// where + is point addition on BabyJubJub
-pub fn add_elgamal_ciphertexts(a: &ElGamalCiphertext, b: &ElGamalCiphertext) -> ElGamalCiphertext {
-    // Decompress points from c1 and c2
-    let p1_c1 = Point::decompress(&a.c1);
-    let p1_c2 = Point::decompress(&a.c2);
-    let p2_c1 = Point::decompress(&b.c1);
-    let p2_c2 = Point::decompress(&b.c2);
-
-    // Add points
-    let (new_c1, new_c2) = match (p1_c1, p1_c2, p2_c1, p2_c2) {
-        (Some(a_c1), Some(a_c2), Some(b_c1), Some(b_c2)) => {
-            let c1 = point_add(&a_c1, &b_c1).unwrap_or(Point::identity());
-            let c2 = point_add(&a_c2, &b_c2).unwrap_or(Point::identity());
-            (c1.compress(), c2.compress())
-        }
-        _ => {
-            // If any decompression fails, return identity (all zeros acts as identity)
-            msg!("Warning: ElGamal point decompression failed, using identity");
-            (a.c1, a.c2) // Return original if addition fails
-        }
-    };
-
-    ElGamalCiphertext {
-        c1: new_c1,
-        c2: new_c2,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

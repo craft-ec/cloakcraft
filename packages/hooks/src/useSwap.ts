@@ -16,7 +16,6 @@ import {
   computeAmmStateHash,
   PoolType,
 } from '@cloakcraft/sdk';
-import { Keypair as SolanaKeypair } from '@solana/web3.js';
 import type { DecryptedNote, AmmPoolState, TransactionResult } from '@cloakcraft/types';
 
 interface SwapState {
@@ -286,13 +285,10 @@ export function useInitializeAmmPool() {
       setState({ isInitializing: true, error: null, result: null });
 
       try {
-        // Generate LP mint keypair
-        const lpMintKeypair = SolanaKeypair.generate();
-
+        // LP mint is now a PDA derived from the AMM pool, no keypair needed
         const signature = await client.initializeAmmPool(
           tokenAMint,
           tokenBMint,
-          lpMintKeypair,
           feeBps,
           poolType,
           amplification

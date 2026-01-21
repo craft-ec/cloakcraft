@@ -37,11 +37,6 @@ pub mod domains {
 /// Circuit IDs for verification key lookup
 pub mod circuits {
     pub const TRANSFER_1X2: [u8; 32] = *b"transfer_1x2____________________";
-    pub const TRANSFER_1X3: [u8; 32] = *b"transfer_1x3____________________";
-    pub const TRANSFER_2X2: [u8; 32] = *b"transfer_2x2____________________";
-    pub const TRANSFER_2X3: [u8; 32] = *b"transfer_2x3____________________";
-    pub const TRANSFER_3X2: [u8; 32] = *b"transfer_3x2____________________";
-    pub const TRANSFER_3X3: [u8; 32] = *b"transfer_3x3____________________";
     pub const CONSOLIDATE_3X1: [u8; 32] = *b"consolidate_3x1_________________";
     pub const ADAPTER_1X1: [u8; 32] = *b"adapter_1x1_____________________";
     pub const ADAPTER_1X2: [u8; 32] = *b"adapter_1x2_____________________";
@@ -51,7 +46,6 @@ pub mod circuits {
     pub const SWAP_ADD_LIQUIDITY: [u8; 32] = *b"swap_add_liquidity______________";
     pub const SWAP_REMOVE_LIQUIDITY: [u8; 32] = *b"swap_remove_liquidity___________";
     pub const SWAP_SWAP: [u8; 32] = *b"swap_swap_______________________";
-    pub const GOVERNANCE_ENCRYPTED: [u8; 32] = *b"governance_encrypted_submit_____";
 
     // Perpetual futures circuits
     pub const PERPS_OPEN_POSITION: [u8; 32] = *b"perps_open_position_____________";

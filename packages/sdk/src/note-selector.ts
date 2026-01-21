@@ -20,11 +20,10 @@ export type SelectionStrategy =
 
 /**
  * Circuit type based on inputs/outputs
+ * Note: Only transfer_1x2 is supported for transfers. Use consolidate_3x1 first if multiple inputs needed.
  */
 export type CircuitType =
-  | 'transfer_1x2'  // 1 input, 2 outputs
-  | 'transfer_2x2'  // 2 inputs, 2 outputs
-  | 'transfer_3x2'  // 3 inputs, 2 outputs (future)
+  | 'transfer_1x2'     // 1 input, 2 outputs
   | 'consolidate_3x1'; // 3 inputs, 1 output (consolidation)
 
 /**
@@ -246,8 +245,8 @@ export class SmartNoteSelector {
               notes: [notes[i], notes[j]],
               totalAmount: target,
               changeAmount: 0n,
-              circuitType: 'transfer_2x2',
-              needsConsolidation: false,
+              circuitType: 'transfer_1x2',
+              needsConsolidation: true, // Multiple inputs require consolidation first
             };
           }
         }
@@ -296,8 +295,8 @@ export class SmartNoteSelector {
                 notes: [notes[i], notes[j]],
                 totalAmount: sum,
                 changeAmount: change,
-                circuitType: 'transfer_2x2',
-                needsConsolidation: false,
+                circuitType: 'transfer_1x2',
+              needsConsolidation: true, // Multiple inputs require consolidation first
               };
             }
           }
@@ -351,8 +350,8 @@ export class SmartNoteSelector {
                 notes: [regular, dust], // Put larger first for consistency
                 totalAmount: sum,
                 changeAmount: sum - target,
-                circuitType: 'transfer_2x2',
-                needsConsolidation: false,
+                circuitType: 'transfer_1x2',
+              needsConsolidation: true, // Multiple inputs require consolidation first
               };
             }
           }
@@ -431,18 +430,11 @@ export class SmartNoteSelector {
 
   /**
    * Get circuit type based on number of inputs
+   * Note: Only transfer_1x2 is supported. For multiple inputs, consolidate first.
    */
   private getCircuitType(numInputs: number): CircuitType {
-    switch (numInputs) {
-      case 1:
-        return 'transfer_1x2';
-      case 2:
-        return 'transfer_2x2';
-      case 3:
-        return 'transfer_3x2';
-      default:
-        return 'transfer_1x2';
-    }
+    // Only transfer_1x2 is supported - use consolidate_3x1 first for multiple inputs
+    return 'transfer_1x2';
   }
 
   /**
@@ -452,10 +444,6 @@ export class SmartNoteSelector {
     switch (circuitType) {
       case 'transfer_1x2':
         return CIRCUIT_IDS.TRANSFER_1X2;
-      case 'transfer_2x2':
-        return CIRCUIT_IDS.TRANSFER_2X2;
-      case 'transfer_3x2':
-        return CIRCUIT_IDS.TRANSFER_3X2;
       case 'consolidate_3x1':
         return CIRCUIT_IDS.CONSOLIDATE_3X1;
       default:

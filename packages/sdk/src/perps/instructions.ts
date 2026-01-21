@@ -126,12 +126,12 @@ export interface LightVerifyParams {
 
 /** Light params for create nullifier */
 export interface LightNullifierParams {
-  nullifierNonInclusionProof: {
+  proof: {
     a: number[];
     b: number[];
     c: number[];
   };
-  nullifierAddressTreeInfo: {
+  addressTreeInfo: {
     addressMerkleTreePubkeyIndex: number;
     addressQueuePubkeyIndex: number;
     rootIndex: number;
@@ -160,6 +160,8 @@ export interface OpenPositionInstructionParams {
   nullifier: Uint8Array;
   /** Position commitment */
   positionCommitment: Uint8Array;
+  /** Change commitment (0x00...00 if no change) */
+  changeCommitment: Uint8Array;
   /** Is long position */
   isLong: boolean;
   /** Margin amount */
@@ -228,13 +230,15 @@ export async function buildOpenPositionWithProgram(
       Array.from(params.inputCommitment),
       Array.from(params.nullifier),
       Array.from(params.positionCommitment),
+      Array.from(params.changeCommitment),
       params.isLong,
       new BN(params.marginAmount.toString()),
       params.leverage,
-      new BN(params.positionFee.toString())
+      new BN(params.positionFee.toString()),
+      new BN(params.changeAmount.toString())
     )
     .accountsStrict({
-      settlementPool: params.settlementPool,
+      marginPool: params.settlementPool,
       perpsPool: params.perpsPool,
       perpsMarket: params.market,
       verificationKey: vkPda,
@@ -287,7 +291,7 @@ export async function buildOpenPositionWithProgram(
       new BN(params.entryPrice.toString())
     )
     .accountsStrict({
-      settlementPool: params.settlementPool,
+      marginPool: params.settlementPool,
       perpsPool: params.perpsPool,
       perpsMarket: params.market,
       pendingOperation: pendingOpPda,
@@ -331,7 +335,7 @@ export async function buildOpenPositionWithProgram(
 
     pendingCommitments.push({
       pool: params.settlementPool,
-      commitment: new Uint8Array(32), // Change commitment computed during proof
+      commitment: params.changeCommitment, // Use change commitment from params
       stealthEphemeralPubkey: new Uint8Array([
         ...params.changeRecipient.ephemeralPubkey.x,
         ...params.changeRecipient.ephemeralPubkey.y,

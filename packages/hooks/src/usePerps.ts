@@ -142,10 +142,13 @@ export function usePerpsPools() {
       }
       // Fetch all PerpsPool accounts
       const accounts = await program.account.perpsPool.all();
-      const poolData = accounts.map((acc: { publicKey: PublicKey; account: PerpsPoolState }) => ({
-        ...acc.account,
-        address: acc.publicKey,
-      }));
+      const poolData = accounts
+        .map((acc: { publicKey: PublicKey; account: PerpsPoolState }) => ({
+          ...acc.account,
+          address: acc.publicKey,
+        }))
+        // Filter out pools with no tokens (can't trade on them)
+        .filter((pool: PerpsPoolState) => pool.numTokens > 0);
       setPools(poolData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch perps pools');

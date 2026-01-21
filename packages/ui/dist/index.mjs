@@ -2856,7 +2856,7 @@ function WalletManager({ className }) {
 
 // src/components/CreatePoolForm.tsx
 import { useState as useState9 } from "react";
-import { PublicKey as PublicKey4, Keypair } from "@solana/web3.js";
+import { PublicKey as PublicKey4 } from "@solana/web3.js";
 import { useCloakCraft as useCloakCraft7 } from "@cloakcraft/hooks";
 import { Fragment as Fragment3, jsx as jsx15, jsxs as jsxs15 } from "react/jsx-runtime";
 function CreatePoolForm({
@@ -2934,11 +2934,9 @@ function CreatePoolForm({
     try {
       const tokenA = new PublicKey4(tokenAMint);
       const tokenB = new PublicKey4(tokenBMint);
-      const lpMintKeypair = Keypair.generate();
       const signature = await client.initializeAmmPool(
         tokenA,
         tokenB,
-        lpMintKeypair,
         Math.floor(feeNum)
       );
       setResult(signature);

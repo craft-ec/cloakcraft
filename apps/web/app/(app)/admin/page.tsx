@@ -48,14 +48,7 @@ const KNOWN_TOKENS = {
 const CIRCUIT_CATEGORIES = {
   'Core Transfer': [
     { id: CIRCUIT_IDS.TRANSFER_1X2, name: 'Transfer 1→2', required: true },
-    { id: CIRCUIT_IDS.TRANSFER_2X2, name: 'Transfer 2→2', required: true },
     { id: CIRCUIT_IDS.CONSOLIDATE_3X1, name: 'Consolidate 3→1', required: true },
-  ],
-  'Extended Transfer': [
-    { id: CIRCUIT_IDS.TRANSFER_1X3, name: 'Transfer 1→3', required: false },
-    { id: CIRCUIT_IDS.TRANSFER_2X3, name: 'Transfer 2→3', required: false },
-    { id: CIRCUIT_IDS.TRANSFER_3X2, name: 'Transfer 3→2', required: false },
-    { id: CIRCUIT_IDS.TRANSFER_3X3, name: 'Transfer 3→3', required: false },
   ],
   'AMM Swap': [
     { id: CIRCUIT_IDS.SWAP, name: 'Swap', required: true },
@@ -66,9 +59,6 @@ const CIRCUIT_CATEGORIES = {
     { id: CIRCUIT_IDS.ORDER_CREATE, name: 'Create Order', required: false },
     { id: CIRCUIT_IDS.ORDER_FILL, name: 'Fill Order', required: false },
     { id: CIRCUIT_IDS.ORDER_CANCEL, name: 'Cancel Order', required: false },
-  ],
-  'Governance': [
-    { id: CIRCUIT_IDS.GOVERNANCE_VOTE, name: 'Encrypted Vote', required: false },
   ],
   'Perpetual Futures': [
     { id: CIRCUIT_IDS.PERPS_OPEN_POSITION, name: 'Open Position', required: true },

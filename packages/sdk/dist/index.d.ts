@@ -1,4 +1,4 @@
-import { DecryptedNote, Keypair, SpendingKey, ViewingKey, Point, TransferParams, AdapterSwapParams, OrderParams, AmmSwapParams, AddLiquidityParams, RemoveLiquidityParams, ConsolidationParams, FillOrderParams, CancelOrderParams, VoteParams, Groth16Proof, PoolState, AmmPoolState, ShieldParams, TransactionResult, StealthAddress, TransferProgressStage, SyncStatus, CreateAggregationParams, SubmitVoteParams, SubmitDecryptionShareParams, FinalizeVotingParams, OpenPerpsPositionParams, ClosePerpsPositionParams, PerpsAddLiquidityClientParams, PerpsRemoveLiquidityClientParams, FieldElement, PoseidonHash, Note, Commitment, Nullifier, EncryptedNote, ElGamalCiphertext, PoolType, PreparedInput } from '@cloakcraft/types';
+import { DecryptedNote, Keypair, SpendingKey, ViewingKey, Point, TransferParams, AdapterSwapParams, OrderParams, AmmSwapParams, AddLiquidityParams, RemoveLiquidityParams, ConsolidationParams, FillOrderParams, CancelOrderParams, Groth16Proof, PoolState, AmmPoolState, ShieldParams, TransactionResult, StealthAddress, TransferProgressStage, SyncStatus, OpenPerpsPositionParams, ClosePerpsPositionParams, PerpsAddLiquidityClientParams, PerpsRemoveLiquidityClientParams, FieldElement, PoseidonHash, Note, Commitment, Nullifier, EncryptedNote, ElGamalCiphertext, PoolType, PreparedInput } from '@cloakcraft/types';
 export * from '@cloakcraft/types';
 export { PoolType } from '@cloakcraft/types';
 import * as _solana_web3_js from '@solana/web3.js';
@@ -450,6 +450,12 @@ declare class ProofGenerator {
      */
     configureForNode(config?: Partial<NodeProverConfig>): void;
     /**
+     * Clear all circuit caches
+     *
+     * Call this to force reloading of circuit files after they've been recompiled.
+     */
+    clearCache(): void;
+    /**
      * Initialize the prover with circuit artifacts
      */
     initialize(circuitNames?: string[]): Promise<void>;
@@ -462,6 +468,10 @@ declare class ProofGenerator {
     loadCircuit(name: string): Promise<void>;
     /**
      * Load circuit from file system (Node.js)
+     *
+     * Note: For circom circuits, we use on-demand loading via snarkjs.
+     * The manifest/pk files are optional - if they don't exist, we skip
+     * and rely on the .wasm/.zkey files being loaded during proof generation.
      */
     private loadCircuitFromFs;
     /**
@@ -552,12 +562,6 @@ declare class ProofGenerator {
      */
     generateCancelOrderProof(params: CancelOrderParams, keypair: Keypair): Promise<Uint8Array>;
     /**
-     * Generate a governance vote proof
-     *
-     * Proves ownership of voting power and correct encryption of the vote.
-     */
-    generateVoteProof(params: VoteParams, keypair: Keypair): Promise<Uint8Array>;
-    /**
      * Generate a Groth16 proof for a circuit
      *
      * Returns 256-byte proof formatted for Solana's alt_bn128 verifier
@@ -591,9 +595,14 @@ declare class ProofGenerator {
      */
     private proveViaWasm;
     /**
-     * Get circom file name from circuit name
+     * Get circom file paths from circuit name
+     * WASM files are in {name}_js/ subdirectories, zkey files are directly in the parent dir
+     *
+     * Examples:
+     *   transfer/1x2: wasm=transfer_1x2_js/transfer_1x2.wasm, zkey=transfer_1x2_final.zkey
+     *   perps/open_position: wasm=perps/open_position_js/open_position.wasm, zkey=perps/open_position_final.zkey
      */
-    private getCircomFileName;
+    private getCircomFilePaths;
     /**
      * Convert SDK inputs to circom format (string field elements)
      */
@@ -659,6 +668,9 @@ declare class ProofGenerator {
         nullifier: Uint8Array;
         positionCommitment: Uint8Array;
         positionRandomness: Uint8Array;
+        changeCommitment: Uint8Array;
+        changeRandomness: Uint8Array;
+        changeAmount: bigint;
     }>;
     /**
      * Generate proof for closing a perps position
@@ -869,6 +881,54 @@ declare class CloakCraftClient {
      * Get the Helius RPC URL (required for Light Protocol operations)
      */
     getHeliusRpcUrl(): string;
+    /**
+     * Build Light Protocol params for spending operations (perps, swaps, etc.)
+     *
+     * This is a centralized helper that:
+     * 1. Gets commitment inclusion proof (proves input exists)
+     * 2. Gets nullifier non-inclusion proof (proves not double-spent)
+     * 3. Builds packed accounts with correct tree indices
+     *
+     * @param accountHash - Account hash of the commitment (from scanNotes)
+     * @param nullifier - Nullifier to be created
+     * @param pool - Pool PDA (used for nullifier address derivation)
+     * @param rpcUrl - Helius RPC URL for Light Protocol queries
+     */
+    buildLightProtocolParams(accountHash: string, nullifier: Uint8Array, pool: PublicKey, rpcUrl: string): Promise<{
+        lightVerifyParams: {
+            commitmentAccountHash: number[];
+            commitmentMerkleContext: {
+                merkleTreePubkeyIndex: number;
+                queuePubkeyIndex: number;
+                leafIndex: number;
+                rootIndex: number;
+            };
+            commitmentInclusionProof: {
+                a: number[];
+                b: number[];
+                c: number[];
+            };
+            commitmentAddressTreeInfo: {
+                addressMerkleTreePubkeyIndex: number;
+                addressQueuePubkeyIndex: number;
+                rootIndex: number;
+            };
+        };
+        lightNullifierParams: {
+            proof: {
+                a: number[];
+                b: number[];
+                c: number[];
+            };
+            addressTreeInfo: {
+                addressMerkleTreePubkeyIndex: number;
+                addressQueuePubkeyIndex: number;
+                rootIndex: number;
+            };
+            outputTreeIndex: number;
+        };
+        remainingAccounts: _solana_web3_js.AccountMeta[];
+    }>;
     /**
      * Initialize proof generator
      *
@@ -1093,16 +1153,17 @@ declare class CloakCraftClient {
      * Creates a new AMM pool for a token pair. This must be done before
      * anyone can add liquidity or swap between these tokens.
      *
+     * LP mint is now a PDA derived from the AMM pool, no keypair needed.
+     *
      * @param tokenAMint - First token mint
      * @param tokenBMint - Second token mint
-     * @param lpMintKeypair - LP token mint keypair (newly generated)
      * @param feeBps - Trading fee in basis points (e.g., 30 = 0.3%)
      * @param poolType - Pool type: 'constantProduct' (default) or 'stableSwap'
      * @param amplification - Amplification coefficient for StableSwap (100-10000, default: 200)
      * @param payer - Payer for transaction fees and rent
      * @returns Transaction signature
      */
-    initializeAmmPool(tokenAMint: PublicKey, tokenBMint: PublicKey, lpMintKeypair: Keypair$1, feeBps: number, poolType?: 'constantProduct' | 'stableSwap', amplification?: number, payer?: Keypair$1): Promise<string>;
+    initializeAmmPool(tokenAMint: PublicKey, tokenBMint: PublicKey, feeBps: number, poolType?: 'constantProduct' | 'stableSwap', amplification?: number, payer?: Keypair$1): Promise<string>;
     /**
      * Initialize LP pool for an existing AMM pool
      *
@@ -1164,50 +1225,6 @@ declare class CloakCraftClient {
      * @param relayer - Optional relayer keypair for transaction fees
      */
     cancelOrder(params: CancelOrderParams, relayer?: Keypair$1): Promise<TransactionResult>;
-    /**
-     * Create a new vote aggregation
-     *
-     * Sets up an encrypted voting aggregation for a proposal.
-     *
-     * @param params - Aggregation parameters
-     * @param payer - Payer for transaction fees
-     */
-    createAggregation(params: CreateAggregationParams, payer: Keypair$1): Promise<TransactionResult>;
-    /**
-     * Submit an encrypted vote
-     *
-     * Generates ZK proof of voting power and encrypts vote choice.
-     *
-     * @param params - Vote parameters
-     * @param relayer - Optional relayer keypair for transaction fees
-     */
-    submitVote(params: SubmitVoteParams, relayer?: Keypair$1): Promise<TransactionResult>;
-    /**
-     * Submit a decryption share (committee member only)
-     *
-     * After voting ends, committee members submit their decryption shares
-     * to enable threshold decryption of the aggregated votes.
-     *
-     * @param params - Decryption share parameters
-     * @param memberKeypair - Committee member's keypair (has secret share)
-     * @param secretKeyShare - Member's secret key share for decryption
-     */
-    submitDecryptionShare(params: SubmitDecryptionShareParams, memberKeypair: Keypair$1, secretKeyShare: bigint, memberIndex: number): Promise<TransactionResult>;
-    /**
-     * Finalize voting and publish results
-     *
-     * Called by the authority after threshold decryption completes.
-     *
-     * @param params - Finalize parameters with decrypted totals
-     * @param authority - Authority keypair
-     */
-    finalizeVoting(params: FinalizeVotingParams, authority: Keypair$1): Promise<TransactionResult>;
-    /**
-     * Get aggregation state
-     *
-     * Fetches the current state of a vote aggregation.
-     */
-    getAggregation(aggregationId: Uint8Array): Promise<any | null>;
     /**
      * Helper to compute input nullifier
      */
@@ -1774,6 +1791,12 @@ interface CircomArtifacts {
     zkeyBuffer: ArrayBuffer;
 }
 /**
+ * Clear the circuit artifacts cache
+ *
+ * Call this to force reloading of circuit files after they've been recompiled.
+ */
+declare function clearCircomCache(): void;
+/**
  * Load circuit artifacts from URLs or file paths
  *
  * In browser: Uses fetch with URLs
@@ -1808,19 +1831,16 @@ declare const SEEDS: {
     readonly VERIFICATION_KEY: Buffer<ArrayBuffer>;
     readonly COMMITMENT_COUNTER: Buffer<ArrayBuffer>;
     readonly PROTOCOL_CONFIG: Buffer<ArrayBuffer>;
+    readonly AMM_POOL: Buffer<ArrayBuffer>;
+    readonly LP_MINT: Buffer<ArrayBuffer>;
 };
 declare const DEVNET_V2_TREES: {
     readonly STATE_TREE: PublicKey;
     readonly OUTPUT_QUEUE: PublicKey;
     readonly ADDRESS_TREE: PublicKey;
 };
-declare const CIRCUIT_IDS: {
+declare const CIRCUIT_IDS$1: {
     readonly TRANSFER_1X2: "transfer_1x2";
-    readonly TRANSFER_1X3: "transfer_1x3";
-    readonly TRANSFER_2X2: "transfer_2x2";
-    readonly TRANSFER_2X3: "transfer_2x3";
-    readonly TRANSFER_3X2: "transfer_3x2";
-    readonly TRANSFER_3X3: "transfer_3x3";
     readonly CONSOLIDATE_3X1: "consolidate_3x1";
     readonly SWAP: "swap_swap";
     readonly ADD_LIQUIDITY: "swap_add_liquidity";
@@ -1828,7 +1848,6 @@ declare const CIRCUIT_IDS: {
     readonly ORDER_CREATE: "market_order_create";
     readonly ORDER_FILL: "market_order_fill";
     readonly ORDER_CANCEL: "market_order_cancel";
-    readonly GOVERNANCE_VOTE: "governance_encrypted_submit";
     readonly PERPS_OPEN_POSITION: "perps_open_position";
     readonly PERPS_CLOSE_POSITION: "perps_close_position";
     readonly PERPS_ADD_LIQUIDITY: "perps_add_liquidity";
@@ -1854,11 +1873,19 @@ declare function deriveCommitmentCounterPda(pool: PublicKey, programId?: PublicK
 /**
  * Derive verification key PDA
  */
-declare function deriveVerificationKeyPda(circuitId: string, programId?: PublicKey): [PublicKey, number];
+declare function deriveVerificationKeyPda$1(circuitId: string, programId?: PublicKey): [PublicKey, number];
 /**
  * Derive protocol config PDA
  */
 declare function deriveProtocolConfigPda(programId?: PublicKey): [PublicKey, number];
+/**
+ * Derive AMM pool PDA from token pair (uses canonical ordering)
+ */
+declare function deriveAmmPoolPda(tokenAMint: PublicKey, tokenBMint: PublicKey, programId?: PublicKey): [PublicKey, number];
+/**
+ * Derive LP mint PDA from token pair (uses canonical ordering)
+ */
+declare function deriveLpMintPda(tokenAMint: PublicKey, tokenBMint: PublicKey, programId?: PublicKey): [PublicKey, number];
 
 /**
  * Light Protocol RPC client wrapper
@@ -2359,13 +2386,9 @@ declare function initializePool(program: Program, tokenMint: PublicKey, authorit
  */
 
 /**
- * AMM Pool derivation
- */
-declare function deriveAmmPoolPda(tokenAMint: PublicKey, tokenBMint: PublicKey, programId: PublicKey): [PublicKey, number];
-/**
  * Derive pending operation PDA
  */
-declare function derivePendingOperationPda(operationId: Uint8Array, programId: PublicKey): [PublicKey, number];
+declare function derivePendingOperationPda$1(operationId: Uint8Array, programId: PublicKey): [PublicKey, number];
 /**
  * Generate unique operation ID
  */
@@ -2404,8 +2427,6 @@ interface InitializeAmmPoolParams {
     tokenAMint: PublicKey;
     /** Token B mint */
     tokenBMint: PublicKey;
-    /** LP token mint keypair (must be signer) */
-    lpMint: PublicKey;
     /** Fee in basis points (e.g., 30 = 0.3%) */
     feeBps: number;
     /** Authority */
@@ -2425,7 +2446,11 @@ declare function canonicalTokenOrder(tokenA: PublicKey, tokenB: PublicKey): [Pub
 /**
  * Build initialize AMM pool transaction
  */
-declare function buildInitializeAmmPoolWithProgram(program: Program, params: InitializeAmmPoolParams): Promise<any>;
+declare function buildInitializeAmmPoolWithProgram(program: Program, params: InitializeAmmPoolParams): Promise<{
+    tx: any;
+    lpMint: PublicKey;
+    ammPool: PublicKey;
+}>;
 /**
  * Swap Phase 1 instruction parameters
  */
@@ -2869,107 +2894,6 @@ declare function buildCancelOrderWithProgram(program: Program, params: CancelOrd
     tx: any;
     result: CancelOrderResult;
 }>;
-
-/**
- * Governance Instruction Builders
- *
- * Builds instructions for encrypted voting operations.
- */
-
-/**
- * Derive aggregation PDA from ID
- */
-declare function deriveAggregationPda(id: Uint8Array, programId: PublicKey): [PublicKey, number];
-/**
- * Create aggregation instruction parameters
- */
-interface CreateAggregationInstructionParams {
-    /** Unique aggregation ID */
-    id: Uint8Array;
-    /** Token mint for voting power */
-    tokenMint: PublicKey;
-    /** Election/threshold public key (32 bytes, compressed) */
-    thresholdPubkey: Uint8Array;
-    /** Threshold for decryption (t of n) */
-    threshold: number;
-    /** Number of voting options */
-    numOptions: number;
-    /** Voting deadline (unix timestamp) */
-    deadline: number;
-    /** Action domain for nullifier derivation */
-    actionDomain: Uint8Array;
-    /** Authority (can finalize) */
-    authority: PublicKey;
-    /** Payer for account creation */
-    payer: PublicKey;
-}
-/**
- * Build create aggregation transaction
- */
-declare function buildCreateAggregationWithProgram(program: Program, params: CreateAggregationInstructionParams): Promise<any>;
-/**
- * Submit vote instruction parameters
- */
-interface SubmitVoteInstructionParams {
-    /** Aggregation ID */
-    aggregationId: Uint8Array;
-    /** Token pool (for voting power verification) */
-    tokenPool: PublicKey;
-    /** Input note for voting power proof */
-    input: {
-        stealthPubX: Uint8Array;
-        amount: bigint;
-        randomness: Uint8Array;
-        leafIndex: number;
-        accountHash: string;
-    };
-    /** Action nullifier (prevents double voting) */
-    actionNullifier: Uint8Array;
-    /** Encrypted votes (one per option) */
-    encryptedVotes: Uint8Array[];
-    /** ZK proof */
-    proof: Uint8Array;
-    /** Relayer public key */
-    relayer: PublicKey;
-}
-/**
- * Build submit vote transaction
- */
-declare function buildSubmitVoteWithProgram(program: Program, params: SubmitVoteInstructionParams, rpcUrl: string): Promise<any>;
-/**
- * Submit decryption share instruction parameters
- */
-interface SubmitDecryptionShareInstructionParams {
-    /** Aggregation ID */
-    aggregationId: Uint8Array;
-    /** Committee member index */
-    memberIndex: number;
-    /** Decryption shares (one per option) */
-    shares: Uint8Array[];
-    /** DLEQ proofs */
-    dleqProofs: Uint8Array[];
-    /** Committee member (signer) */
-    member: PublicKey;
-}
-/**
- * Build submit decryption share transaction
- */
-declare function buildSubmitDecryptionShareWithProgram(program: Program, params: SubmitDecryptionShareInstructionParams): Promise<any>;
-/**
- * Finalize decryption instruction parameters
- */
-interface FinalizeDecryptionInstructionParams {
-    /** Aggregation ID */
-    aggregationId: Uint8Array;
-    /** Final decrypted totals */
-    totals: bigint[];
-    /** Authority (signer) */
-    authority: PublicKey;
-}
-/**
- * Build finalize decryption transaction
- */
-declare function buildFinalizeDecryptionWithProgram(program: Program, params: FinalizeDecryptionInstructionParams): Promise<any>;
 
 /**
  * AMM Pool Management
@@ -4004,8 +3928,9 @@ declare function estimateTotalCost(amount: bigint, operation: OperationType, con
 type SelectionStrategy = 'greedy' | 'exact' | 'minimize-change' | 'consolidation-aware' | 'smallest-first';
 /**
  * Circuit type based on inputs/outputs
+ * Note: Only transfer_1x2 is supported for transfers. Use consolidate_3x1 first if multiple inputs needed.
  */
-type CircuitType = 'transfer_1x2' | 'transfer_2x2' | 'transfer_3x2' | 'consolidate_3x1';
+type CircuitType = 'transfer_1x2' | 'consolidate_3x1';
 /**
  * Result of note selection
  */
@@ -4102,6 +4027,7 @@ declare class SmartNoteSelector {
     private wouldSucceedWithMoreInputs;
     /**
      * Get circuit type based on number of inputs
+     * Note: Only transfer_1x2 is supported. For multiple inputs, consolidate first.
      */
     private getCircuitType;
     /**
@@ -4522,7 +4448,7 @@ interface OpenPositionParams {
     onProgress?: (stage: TransferProgressStage) => void;
 }
 /** Close position parameters */
-interface ClosePositionParams {
+interface ClosePositionParams$1 {
     /** Position note to close */
     position: DecryptedPerpsPosition;
     /** Perps pool */
@@ -4888,12 +4814,12 @@ interface LightVerifyParams {
 }
 /** Light params for create nullifier */
 interface LightNullifierParams {
-    nullifierNonInclusionProof: {
+    proof: {
         a: number[];
         b: number[];
         c: number[];
     };
-    nullifierAddressTreeInfo: {
+    addressTreeInfo: {
         addressMerkleTreePubkeyIndex: number;
         addressQueuePubkeyIndex: number;
         rootIndex: number;
@@ -4917,6 +4843,8 @@ interface OpenPositionInstructionParams {
     nullifier: Uint8Array;
     /** Position commitment */
     positionCommitment: Uint8Array;
+    /** Change commitment (0x00...00 if no change) */
+    changeCommitment: Uint8Array;
     /** Is long position */
     isLong: boolean;
     /** Margin amount */
@@ -5202,4 +5130,449 @@ declare function buildUpdateBorrowFeesWithProgram(program: Program, perpsPool: P
     tx: any;
 }>;
 
-export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, type AddMarketParams, type AddPerpsLiquidityInstructionParams, type AddPerpsLiquidityParams, type AddPerpsLiquidityProofResult, type AddTokenToPoolParams, type AutoConsolidationConfig, type AutoConsolidationState, AutoConsolidator, BPS_DIVISOR, CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type CircomArtifacts, type CircuitType, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type ClosePositionInstructionParams, type ClosePositionParams, type ClosePositionProofResult, type CommitmentMerkleProof, type CompressedAccountInfo, type ConsolidationBatch, type ConsolidationInput, type ConsolidationInstructionParams, type ConsolidationOptions, type ConsolidationResult, ConsolidationService, type ConsolidationSuggestion, type CreateAggregationInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEFAULT_FEE_CONFIG, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptedPerpsPosition, type DecryptionShareData, type DleqProof, type EncryptedBallot, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FeeCalculation, type FeeableOperation, type FillOrderInstructionParams, type FillOrderResult, type FinalizeDecryptionInstructionParams, type FragmentationReport, type FreeOperation, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePerpsPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams$1 as LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, type LiquidatePositionParams, type LiquidateProofResult, type LiquidationPriceResult, type LpValueResult, MAINNET_LIGHT_TREES, MAX_FEE_BPS, MAX_PERPS_TOKENS, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, type NoteSelectionOptions, type NoteSelectionResult, type OpenPositionInstructionParams, type OpenPositionParams, type OpenPositionProofResult, type OperationType, PERPS_CIRCUIT_IDS, PERPS_SEEDS, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, type PerpsMarketState, type PerpsPoolState, type PerpsPosition, type PerpsToken, type PnLResult, type PoolAnalytics, PoolAnalyticsCalculator, type PoolStats, type PoolTypeParam, type PositionDirection, ProofGenerator, type ProtocolFeeConfig, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, type RemovePerpsLiquidityInstructionParams, type RemovePerpsLiquidityParams, type RemovePerpsLiquidityProofResult, SEEDS, type ScannedNote, type SelectionStrategy, type ShieldInstructionParams, type ShieldResult, SmartNoteSelector, type StateTreeSet, type StoreCommitmentParams, type SubmitDecryptionShareInstructionParams, type SubmitVoteInstructionParams, type SwapInstructionParams, type SwapPhase2Params, type TokenPrice, TokenPriceFetcher, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type TransactionFilter, TransactionHistory, type TransactionRecord, TransactionStatus, TransactionType, type UserPoolPosition, type ValidityProof, type VersionedTransactionConfig, VoteOption, WALLET_DERIVATION_MESSAGE, Wallet, type WithdrawableResult, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAddMarketWithProgram, buildAddPerpsLiquidityWithProgram, buildAddTokenToPoolWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildClosePendingOperationWithProgram, buildClosePositionWithProgram, buildConsolidationWithProgram, buildCreateAggregationWithProgram, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildFillOrderWithProgram, buildFinalizeDecryptionWithProgram, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePerpsPoolWithProgram, buildInitializePoolWithProgram, buildOpenPositionWithProgram, buildRemoveLiquidityWithProgram, buildRemovePerpsLiquidityWithProgram, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSubmitDecryptionShareWithProgram, buildSubmitVoteWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildUpdateBorrowFeesWithProgram, buildVersionedTransaction, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateBorrowFees, calculateBorrowRate, calculateImbalanceFee, calculateInvariant, calculateLiquidationPrice, calculateLpMintAmount, calculateLpValue, calculateMaxWithdrawable, calculateMinOutput, calculateMinimumFee, calculatePnL, calculatePositionFee, calculatePriceImpact, calculatePriceRatio, calculateProtocolFee, calculateRemoveLiquidityOutput, calculateSlippage, calculateStableSwapOutput, calculateSwapOutputUnified, calculateSwapProtocolFee, calculateTotalLiquidity, calculateUsdPriceImpact, calculateUtilization, calculateWithdrawAmount, canFitInSingleTransaction, canonicalTokenOrder, checkNullifierSpent, checkStealthOwnership, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, consolidationService, createAddressLookupTable, createCloakCraftALT, createNote, createPendingTransaction, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAggregationPda, deriveAmmPoolPda, deriveCommitmentCounterPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda, derivePerpsLpMintPda, derivePerpsMarketPda, derivePerpsPoolPda, derivePerpsVaultPda, derivePoolPda, deriveProtocolConfigPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, disableAutoConsolidation, elgamalEncrypt, enableAutoConsolidation, encryptNote, encryptVote, estimateTotalCost, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fetchProtocolFeeConfig, fieldToBytes, formatAmmPool, formatApy, formatFeeAmount, formatFeeRate, formatPrice, formatPriceChange, formatShare, formatTvl, generateDleqProof, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, getAmmPool, getAutoConsolidator, getFeeBps, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isFeeableOperation, isFreeOperation, isInSubgroup, isOnCurve, isValidLeverage, isValidPositionSize, lagrangeCoefficient, loadCircomArtifacts, loadWallet, noteSelector, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof, verifyFeeAmount, verifyInvariant, wouldExceedUtilization };
+/**
+ * Voting Types
+ *
+ * Type definitions for the voting protocol
+ */
+
+declare enum VoteBindingMode {
+    Snapshot = 0,
+    SpendToVote = 1
+}
+declare enum RevealMode {
+    Public = 0,
+    TimeLocked = 1,
+    PermanentPrivate = 2
+}
+declare enum VoteType {
+    Single = 0,
+    Approval = 1,
+    Ranked = 2,
+    Weighted = 3
+}
+declare enum ResolutionMode {
+    TallyBased = 0,
+    Oracle = 1,
+    Authority = 2
+}
+declare enum BallotStatus {
+    Pending = 0,
+    Active = 1,
+    Closed = 2,
+    Resolved = 3,
+    Finalized = 4
+}
+interface BallotConfig {
+    ballotId: Uint8Array;
+    authority: PublicKey;
+    tokenMint: PublicKey;
+    bindingMode: VoteBindingMode;
+    revealMode: RevealMode;
+    voteType: VoteType;
+    resolutionMode: ResolutionMode;
+    numOptions: number;
+    quorumThreshold: bigint;
+    protocolFeeBps: number;
+    protocolTreasury: PublicKey;
+    startTime: number;
+    endTime: number;
+    snapshotSlot?: number;
+    indexerPubkey?: PublicKey;
+    eligibilityRoot?: Uint8Array;
+    timeLockPubkey?: Uint8Array;
+    unlockSlot?: number;
+    claimDeadline?: number;
+    resolver?: PublicKey;
+    oracle?: PublicKey;
+    weightFormula?: WeightOp[];
+    weightParams?: bigint[];
+}
+declare enum WeightOp {
+    PushAmount = 0,
+    PushConst = 1,
+    PushUserData = 2,
+    Add = 3,
+    Sub = 4,
+    Mul = 5,
+    Div = 6,
+    Sqrt = 7,
+    Min = 8,
+    Max = 9
+}
+interface Ballot {
+    ballotId: Uint8Array;
+    authority: PublicKey;
+    tokenMint: PublicKey;
+    tokenPool: PublicKey;
+    bindingMode: VoteBindingMode;
+    revealMode: RevealMode;
+    voteType: VoteType;
+    resolutionMode: ResolutionMode;
+    status: BallotStatus;
+    numOptions: number;
+    quorumThreshold: bigint;
+    protocolFeeBps: number;
+    protocolTreasury: PublicKey;
+    startTime: number;
+    endTime: number;
+    snapshotSlot: number;
+    indexerPubkey: PublicKey;
+    hasEligibilityRoot: boolean;
+    eligibilityRoot: Uint8Array;
+    timeLockPubkey: Uint8Array;
+    unlockSlot: number;
+    optionWeights: bigint[];
+    optionAmounts: bigint[];
+    totalWeight: bigint;
+    totalAmount: bigint;
+    voteCount: bigint;
+    poolBalance: bigint;
+    totalDistributed: bigint;
+    feesCollected: bigint;
+    encryptedTally: Uint8Array[];
+    hasOutcome: boolean;
+    outcome: number;
+    winnerWeight: bigint;
+    resolver?: PublicKey;
+    oracle?: PublicKey;
+    claimDeadline: number;
+}
+interface VoteSnapshotParams {
+    ballotId: Uint8Array;
+    pubkey: PublicKey;
+    stealthSpendingKey: Uint8Array;
+    voteChoice: number;
+    attestation: BalanceAttestation;
+    eligibilityProof?: MerkleProof;
+}
+interface VoteSpendParams {
+    ballotId: Uint8Array;
+    noteCommitment: Uint8Array;
+    noteAmount: bigint;
+    noteRandomness: Uint8Array;
+    stealthSpendingKey: Uint8Array;
+    voteChoice: number;
+    merklePath: Uint8Array[];
+    merklePathIndices: number[];
+    leafIndex: number;
+    eligibilityProof?: MerkleProof;
+}
+interface ChangeVoteSnapshotParams {
+    ballotId: Uint8Array;
+    oldVoteCommitment: Uint8Array;
+    oldVoteChoice: number;
+    oldRandomness: Uint8Array;
+    newVoteChoice: number;
+    stealthSpendingKey: Uint8Array;
+}
+interface ClosePositionParams {
+    ballotId: Uint8Array;
+    positionCommitment: Uint8Array;
+    voteChoice: number;
+    amount: bigint;
+    weight: bigint;
+    positionRandomness: Uint8Array;
+    stealthSpendingKey: Uint8Array;
+}
+interface ClaimParams {
+    ballotId: Uint8Array;
+    positionCommitment: Uint8Array;
+    voteChoice: number;
+    amount: bigint;
+    weight: bigint;
+    positionRandomness: Uint8Array;
+    stealthSpendingKey: Uint8Array;
+}
+interface Position {
+    ballotId: Uint8Array;
+    commitment: Uint8Array;
+    pubkey: PublicKey;
+    voteChoice: number;
+    amount: bigint;
+    weight: bigint;
+    randomness: Uint8Array;
+    isNullified: boolean;
+}
+interface VoteStatus {
+    hasVoted: boolean;
+    voteNullifier?: Uint8Array;
+    voteCommitment?: Uint8Array;
+    voteChoice?: number;
+    weight?: bigint;
+}
+interface BalanceAttestation {
+    pubkey: string;
+    ballotId: string;
+    tokenMint: string;
+    totalAmount: string;
+    snapshotSlot: number;
+    signature: string;
+    indexerPubkey: string;
+}
+interface MerkleProof {
+    pubkey: string;
+    isEligible: boolean;
+    merkleProof: string[];
+    pathIndices: number[];
+    leafIndex: number;
+}
+interface EncryptedContributions {
+    ciphertexts: Uint8Array[];
+}
+interface VotePreimage {
+    ballotId: Uint8Array;
+    commitment: Uint8Array;
+    encryptedData: Uint8Array;
+    encryptionType: number;
+    bindingMode: VoteBindingMode;
+}
+interface DecryptedVotePreimage {
+    voteChoice: number;
+    weight: bigint;
+    randomness: Uint8Array;
+    ballotId: Uint8Array;
+    amount?: bigint;
+}
+interface VoteSnapshotProofInputs {
+    ballotId: bigint;
+    voteNullifier: bigint;
+    voteCommitment: bigint;
+    totalAmount: bigint;
+    weight: bigint;
+    tokenMint: bigint;
+    snapshotSlot: bigint;
+    indexerPubkeyX: bigint;
+    indexerPubkeyY: bigint;
+    eligibilityRoot: bigint;
+    hasEligibility: bigint;
+    voteChoice: bigint;
+    isPublicMode: bigint;
+    spendingKey: bigint;
+    pubkey: bigint;
+    attestationSignatureR8x: bigint;
+    attestationSignatureR8y: bigint;
+    attestationSignatureS: bigint;
+    randomness: bigint;
+    eligibilityPath: bigint[];
+    eligibilityPathIndices: bigint[];
+    privateVoteChoice: bigint;
+}
+interface ClaimProofInputs {
+    ballotId: bigint;
+    positionCommitment: bigint;
+    positionNullifier: bigint;
+    payoutCommitment: bigint;
+    grossPayout: bigint;
+    netPayout: bigint;
+    voteType: bigint;
+    userWeight: bigint;
+    outcome: bigint;
+    totalPool: bigint;
+    winnerWeight: bigint;
+    protocolFeeBps: bigint;
+    tokenMint: bigint;
+    userVoteChoice: bigint;
+    isPrivateMode: bigint;
+    spendingKey: bigint;
+    pubkey: bigint;
+    positionAmount: bigint;
+    positionRandomness: bigint;
+    privateVoteChoice: bigint;
+    payoutRandomness: bigint;
+}
+
+/**
+ * Voting Instruction Builders
+ *
+ * High-level instruction builders for voting operations
+ */
+
+declare function deriveBallotPda(ballotId: Uint8Array, programId?: PublicKey): [PublicKey, number];
+declare function deriveBallotVaultPda(ballotId: Uint8Array, programId?: PublicKey): [PublicKey, number];
+declare function derivePendingOperationPda(operationId: Uint8Array, programId?: PublicKey): [PublicKey, number];
+declare function deriveVerificationKeyPda(circuitId: Uint8Array, programId?: PublicKey): [PublicKey, number];
+/**
+ * Build create_ballot instruction
+ */
+declare function buildCreateBallotInstruction(config: BallotConfig, payer: PublicKey, programId?: PublicKey): Promise<TransactionInstruction[]>;
+/**
+ * Build resolve_ballot instruction
+ */
+declare function buildResolveBallotInstruction(ballotId: Uint8Array, outcome: number | null, resolver: PublicKey, programId?: PublicKey): TransactionInstruction;
+/**
+ * Build finalize_ballot instruction
+ */
+declare function buildFinalizeBallotInstruction(ballotId: Uint8Array, authority: PublicKey, programId?: PublicKey): TransactionInstruction;
+/**
+ * Build decrypt_tally instruction
+ */
+declare function buildDecryptTallyInstruction(ballotId: Uint8Array, decryptionKey: Uint8Array, authority: PublicKey, programId?: PublicKey): TransactionInstruction;
+/**
+ * Build vote_snapshot instructions (all phases)
+ * Returns array of instructions for each phase
+ */
+declare function buildVoteSnapshotInstructions(params: VoteSnapshotParams, proof: Uint8Array, rpcUrl: string, relayer: PublicKey, payer: PublicKey, programId?: PublicKey): Promise<TransactionInstruction[][]>;
+/**
+ * Build change_vote_snapshot instructions (all phases)
+ */
+declare function buildChangeVoteSnapshotInstructions(params: ChangeVoteSnapshotParams, proof: Uint8Array, rpcUrl: string, relayer: PublicKey, payer: PublicKey, programId?: PublicKey): Promise<TransactionInstruction[][]>;
+/**
+ * Build vote_spend instructions (all phases)
+ */
+declare function buildVoteSpendInstructions(params: VoteSpendParams, proof: Uint8Array, rpcUrl: string, relayer: PublicKey, payer: PublicKey, programId?: PublicKey): Promise<TransactionInstruction[][]>;
+/**
+ * Build close_position instructions (all phases)
+ */
+declare function buildClosePositionInstructions(params: ClosePositionParams, proof: Uint8Array, rpcUrl: string, relayer: PublicKey, payer: PublicKey, programId?: PublicKey): Promise<TransactionInstruction[][]>;
+/**
+ * Build claim instructions (all phases)
+ */
+declare function buildClaimInstructions(params: ClaimParams, proof: Uint8Array, rpcUrl: string, relayer: PublicKey, payer: PublicKey, programId?: PublicKey): Promise<TransactionInstruction[][]>;
+/**
+ * Generate encrypted contributions for encrypted modes
+ * Each option gets an ElGamal ciphertext of the weight (or 0 if not voted for)
+ */
+declare function generateEncryptedContributions(voteChoice: number, weight: bigint, numOptions: number, timeLockPubkey: Uint8Array, encryptionSeed: Uint8Array): EncryptedContributions;
+/**
+ * Generate negated encrypted contributions for close position
+ */
+declare function generateNegatedEncryptedContributions(voteChoice: number, weight: bigint, numOptions: number, timeLockPubkey: Uint8Array, encryptionSeed: Uint8Array): EncryptedContributions;
+/**
+ * Circuit IDs for verification key lookup
+ */
+declare const CIRCUIT_IDS: {
+    VOTE_SNAPSHOT: Uint8Array<ArrayBuffer>;
+    CHANGE_VOTE_SNAPSHOT: Uint8Array<ArrayBuffer>;
+    VOTE_SPEND: Uint8Array<ArrayBuffer>;
+    CLOSE_POSITION: Uint8Array<ArrayBuffer>;
+    CLAIM: Uint8Array<ArrayBuffer>;
+};
+
+/**
+ * Voting Proof Generation
+ *
+ * ZK proof generation for voting operations
+ */
+
+/**
+ * Generate vote_snapshot proof inputs
+ */
+declare function generateVoteSnapshotInputs(params: VoteSnapshotParams, revealMode: RevealMode, numOptions: number, indexerPubkeyX: bigint, indexerPubkeyY: bigint, eligibilityRoot?: bigint): Promise<{
+    inputs: VoteSnapshotProofInputs;
+    voteNullifier: Uint8Array;
+    voteCommitment: Uint8Array;
+    randomness: Uint8Array;
+}>;
+/**
+ * Generate change_vote_snapshot proof inputs
+ */
+declare function generateChangeVoteSnapshotInputs(params: ChangeVoteSnapshotParams, revealMode: RevealMode, weight: bigint): Promise<{
+    oldVoteCommitmentNullifier: Uint8Array;
+    newVoteCommitment: Uint8Array;
+    newRandomness: Uint8Array;
+    inputs: Record<string, bigint | bigint[]>;
+}>;
+/**
+ * Generate vote_spend proof inputs
+ */
+declare function generateVoteSpendInputs(params: VoteSpendParams, revealMode: RevealMode, eligibilityRoot?: bigint): Promise<{
+    spendingNullifier: Uint8Array;
+    positionCommitment: Uint8Array;
+    positionRandomness: Uint8Array;
+    inputs: Record<string, bigint | bigint[]>;
+}>;
+/**
+ * Generate claim proof inputs
+ */
+declare function generateClaimInputs(params: ClaimParams, ballot: {
+    outcome: number;
+    totalPool: bigint;
+    winnerWeight: bigint;
+    protocolFeeBps: number;
+    voteType: number;
+    tokenMint: Uint8Array;
+    revealMode: RevealMode;
+}): Promise<{
+    positionNullifier: Uint8Array;
+    payoutCommitment: Uint8Array;
+    payoutRandomness: Uint8Array;
+    grossPayout: bigint;
+    netPayout: bigint;
+    inputs: ClaimProofInputs;
+}>;
+
+/**
+ * Voting Recovery Module
+ *
+ * Handles recovery of vote preimages for claim operations.
+ * Similar to notes.ts but for voting-specific data.
+ */
+
+interface VoteRecoveryConfig {
+    indexerUrl: string;
+    programId?: PublicKey;
+}
+interface RecoveredClaim {
+    ballotId: Uint8Array;
+    positionCommitment: Uint8Array;
+    voteChoice: number;
+    amount: bigint;
+    weight: bigint;
+    randomness: Uint8Array;
+}
+interface RecoveredVote {
+    ballotId: Uint8Array;
+    voteCommitment: Uint8Array;
+    voteChoice: number;
+    weight: bigint;
+    randomness: Uint8Array;
+}
+/**
+ * Manager for recovering vote preimages
+ */
+declare class VoteRecoveryManager {
+    private indexerUrl;
+    private programId;
+    private cachedPreimages;
+    constructor(config: VoteRecoveryConfig);
+    /**
+     * Scan for user's vote preimages
+     */
+    scanPreimages(pubkey: PublicKey, options?: {
+        ballotId?: Uint8Array;
+        includeNullified?: boolean;
+    }): Promise<VotePreimage[]>;
+    /**
+     * Decrypt a vote preimage with user's secret key
+     * For PermanentPrivate mode (encryption_type = 0)
+     */
+    decryptWithUserKey(preimage: VotePreimage, secretKey: Uint8Array): DecryptedVotePreimage | null;
+    /**
+     * Decrypt a vote preimage with timelock key
+     * For TimeLocked mode (encryption_type = 1)
+     */
+    decryptWithTimelockKey(preimage: VotePreimage, timelockDecryptionKey: Uint8Array): DecryptedVotePreimage | null;
+    /**
+     * Recover claim data for a SpendToVote position
+     */
+    recoverClaimData(secretKey: Uint8Array, ballotId: Uint8Array, ballot: Ballot): Promise<RecoveredClaim[]>;
+    /**
+     * Recover vote data for Snapshot mode (for change vote)
+     */
+    recoverVoteData(secretKey: Uint8Array, ballotId: Uint8Array, ballot: Ballot): Promise<RecoveredVote[]>;
+    /**
+     * Get active positions for a user on a ballot
+     */
+    getActivePositions(secretKey: Uint8Array, ballotId: Uint8Array, ballot: Ballot): Promise<Position[]>;
+    /**
+     * Clear cached preimages
+     */
+    clearCache(): void;
+}
+/**
+ * Encrypt preimage data for storage
+ */
+declare function encryptPreimage(preimage: DecryptedVotePreimage, encryptionKey: Uint8Array, isTimelockKey: boolean): Uint8Array;
+
+export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, type AddMarketParams, type AddPerpsLiquidityInstructionParams, type AddPerpsLiquidityParams, type AddPerpsLiquidityProofResult, type AddTokenToPoolParams, type AutoConsolidationConfig, type AutoConsolidationState, AutoConsolidator, BPS_DIVISOR, type Ballot, BallotStatus, CIRCUIT_IDS$1 as CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type ChangeVoteSnapshotParams, type CircomArtifacts, type CircuitType, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type ClosePositionInstructionParams, type ClosePositionParams$1 as ClosePositionParams, type ClosePositionProofResult, type CommitmentMerkleProof, type CompressedAccountInfo, type ConsolidationBatch, type ConsolidationInput, type ConsolidationInstructionParams, type ConsolidationOptions, type ConsolidationResult, ConsolidationService, type ConsolidationSuggestion, type CreateCommitmentParams, type CreateNullifierParams, DEFAULT_FEE_CONFIG, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptedPerpsPosition, type DecryptedVotePreimage, type DecryptionShareData, type DleqProof, type EncryptedBallot, type EncryptedContributions, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FeeCalculation, type FeeableOperation, type FillOrderInstructionParams, type FillOrderResult, type FragmentationReport, type FreeOperation, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePerpsPoolParams, type InitializePoolParams, LightClient, LightCommitmentClient, type LightNullifierParams$1 as LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, type LiquidatePositionParams, type LiquidateProofResult, type LiquidationPriceResult, type LpValueResult, MAINNET_LIGHT_TREES, MAX_FEE_BPS, MAX_PERPS_TOKENS, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NoteManager, type NoteSelectionOptions, type NoteSelectionResult, type OpenPositionInstructionParams, type OpenPositionParams, type OpenPositionProofResult, type OperationType, PERPS_CIRCUIT_IDS, PERPS_SEEDS, PROGRAM_ID, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, type PerpsMarketState, type PerpsPoolState, type PerpsPosition, type PerpsToken, type PnLResult, type PoolAnalytics, PoolAnalyticsCalculator, type PoolStats, type PoolTypeParam, type PositionDirection, ProofGenerator, type ProtocolFeeConfig, type RecoveredClaim, type RecoveredVote, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, type RemovePerpsLiquidityInstructionParams, type RemovePerpsLiquidityParams, type RemovePerpsLiquidityProofResult, ResolutionMode, RevealMode, SEEDS, type ScannedNote, type SelectionStrategy, type ShieldInstructionParams, type ShieldResult, SmartNoteSelector, type StateTreeSet, type StoreCommitmentParams, type SwapInstructionParams, type SwapPhase2Params, type TokenPrice, TokenPriceFetcher, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type TransactionFilter, TransactionHistory, type TransactionRecord, TransactionStatus, TransactionType, type UserPoolPosition, CIRCUIT_IDS as VOTING_CIRCUIT_IDS, type ValidityProof, type VersionedTransactionConfig, VoteBindingMode, VoteOption, type VotePreimage, type VoteRecoveryConfig, VoteRecoveryManager, type VoteSnapshotParams, type VoteSnapshotProofInputs, type VoteSpendParams, type VoteStatus, VoteType, type BalanceAttestation as VotingBalanceAttestation, type BallotConfig as VotingBallotConfig, type ClaimParams as VotingClaimParams, type ClaimProofInputs as VotingClaimProofInputs, type ClosePositionParams as VotingClosePositionParams, type MerkleProof as VotingMerkleProof, type Position as VotingPosition, WALLET_DERIVATION_MESSAGE, Wallet, WeightOp, type WithdrawableResult, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAddMarketWithProgram, buildAddPerpsLiquidityWithProgram, buildAddTokenToPoolWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildChangeVoteSnapshotInstructions, buildClosePendingOperationWithProgram, buildClosePositionWithProgram, buildClosePositionInstructions as buildCloseVotingPositionInstructions, buildConsolidationWithProgram, buildCreateBallotInstruction, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildDecryptTallyInstruction, buildFillOrderWithProgram, buildFinalizeBallotInstruction, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePerpsPoolWithProgram, buildInitializePoolWithProgram, buildOpenPositionWithProgram, buildRemoveLiquidityWithProgram, buildRemovePerpsLiquidityWithProgram, buildResolveBallotInstruction, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildUpdateBorrowFeesWithProgram, buildVersionedTransaction, buildVoteSnapshotInstructions, buildVoteSpendInstructions, buildClaimInstructions as buildVotingClaimInstructions, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateBorrowFees, calculateBorrowRate, calculateImbalanceFee, calculateInvariant, calculateLiquidationPrice, calculateLpMintAmount, calculateLpValue, calculateMaxWithdrawable, calculateMinOutput, calculateMinimumFee, calculatePnL, calculatePositionFee, calculatePriceImpact, calculatePriceRatio, calculateProtocolFee, calculateRemoveLiquidityOutput, calculateSlippage, calculateStableSwapOutput, calculateSwapOutputUnified, calculateSwapProtocolFee, calculateTotalLiquidity, calculateUsdPriceImpact, calculateUtilization, calculateWithdrawAmount, canFitInSingleTransaction, canonicalTokenOrder, checkNullifierSpent, checkStealthOwnership, clearCircomCache, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, consolidationService, createAddressLookupTable, createCloakCraftALT, createNote, createPendingTransaction, createWallet, createWatchOnlyWallet, decryptNote, deriveActionNullifier, deriveAmmPoolPda, deriveBallotPda, deriveBallotVaultPda, deriveCommitmentCounterPda, deriveLpMintPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda$1 as derivePendingOperationPda, derivePerpsLpMintPda, derivePerpsMarketPda, derivePerpsPoolPda, derivePerpsVaultPda, derivePoolPda, deriveProtocolConfigPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda$1 as deriveVerificationKeyPda, derivePendingOperationPda as deriveVotingPendingOperationPda, deriveVerificationKeyPda as deriveVotingVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, disableAutoConsolidation, elgamalEncrypt, enableAutoConsolidation, encryptNote, encryptPreimage, encryptVote, estimateTotalCost, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, fetchAddressLookupTable, fetchAmmPool, fetchProtocolFeeConfig, fieldToBytes, formatAmmPool, formatApy, formatFeeAmount, formatFeeRate, formatPrice, formatPriceChange, formatShare, formatTvl, generateChangeVoteSnapshotInputs, generateDleqProof, generateEncryptedContributions, generateNegatedEncryptedContributions, generateOperationId, generateRandomness, generateSnarkjsProof, generateStealthAddress, generateVoteRandomness, generateVoteSnapshotInputs, generateVoteSpendInputs, generateClaimInputs as generateVotingClaimInputs, getAmmPool, getAutoConsolidator, getFeeBps, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isFeeableOperation, isFreeOperation, isInSubgroup, isOnCurve, isValidLeverage, isValidPositionSize, lagrangeCoefficient, loadCircomArtifacts, loadWallet, noteSelector, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, storeCommitments, tryDecryptNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof, verifyFeeAmount, verifyInvariant, wouldExceedUtilization };

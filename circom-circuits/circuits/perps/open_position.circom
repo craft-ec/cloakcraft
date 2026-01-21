@@ -96,13 +96,14 @@ template RangeCheck64() {
 }
 
 // ============================================================================
-// Open Perpetual Position Circuit: 1 Input (margin) -> 1 Output (position)
+// Open Perpetual Position Circuit: 1 Input (margin) -> 1 Position + 1 Change
 // ============================================================================
 //
 // Flow:
 // 1. User spends margin commitment (USD for long, base token for short)
 // 2. Creates position commitment with position details
-// 3. Circuit proves ownership and correct fee calculation
+// 3. Creates change commitment for excess input
+// 4. Circuit proves ownership and correct fee calculation
 //
 // On-chain verification handles:
 // - Utilization limits
@@ -118,10 +119,12 @@ template OpenPosition() {
     signal input perps_pool_id;         // Perps pool identifier
     signal input market_id;             // Trading pair (e.g., SOL/USD)
     signal input position_commitment;   // New position commitment
+    signal input change_commitment;     // Change commitment (0 if no change)
     signal input is_long;               // Position direction (1 = long, 0 = short)
     signal input margin_amount;         // Margin deposited (public for pool accounting)
     signal input leverage;              // Leverage multiplier (1-100)
     signal input position_fee;          // Fee amount (public for treasury)
+    signal input change_amount;         // Change amount (public for verification)
 
     // ========================================================================
     // Private Inputs
@@ -143,6 +146,7 @@ template OpenPosition() {
     signal input position_size;         // Size in base token units
     signal input entry_price;           // Entry price (oracle price)
     signal input position_randomness;   // Randomness for position commitment
+    signal input change_randomness;     // Randomness for change commitment
 
     // ========================================================================
     // 1. Verify Margin Input Commitment
@@ -184,10 +188,31 @@ template OpenPosition() {
     // ========================================================================
     // 4. Balance Check
     // ========================================================================
-    // Input amount = margin + fee
+    // Input amount = margin + fee + change
     signal total_required;
     total_required <== margin_amount + position_fee;
-    in_amount === total_required;
+    in_amount === total_required + change_amount;
+
+    // ========================================================================
+    // 4b. Verify Change Commitment (if change_amount > 0)
+    // ========================================================================
+    // If change_amount is 0, change_commitment should be 0
+    // If change_amount > 0, change_commitment should be valid commitment
+    component change_commit = Commitment();
+    change_commit.stealth_pub_x <== in_stealth_pub_x;
+    change_commit.token_mint <== token_mint;
+    change_commit.amount <== change_amount;
+    change_commit.randomness <== change_randomness;
+
+    // Use IsZero to check if change_amount is 0
+    component change_is_zero = IsZero();
+    change_is_zero.in <== change_amount;
+
+    // If change is zero, commitment should be 0; otherwise it should match computed
+    // commitment_check = change_is_zero ? (change_commitment == 0) : (change_commitment == computed)
+    signal expected_change_commitment;
+    expected_change_commitment <== (1 - change_is_zero.out) * change_commit.out;
+    change_commitment === expected_change_commitment;
 
     // ========================================================================
     // 5. Leverage Verification
@@ -232,6 +257,9 @@ template OpenPosition() {
     component range_price = RangeCheck64();
     range_price.in <== entry_price;
 
+    component range_change = RangeCheck64();
+    range_change.in <== change_amount;
+
     // Note: On-chain verification handles:
     // - Oracle price validation
     // - Utilization limit checks
@@ -245,8 +273,10 @@ component main {public [
     perps_pool_id,
     market_id,
     position_commitment,
+    change_commitment,
     is_long,
     margin_amount,
     leverage,
-    position_fee
+    position_fee,
+    change_amount
 ]} = OpenPosition();

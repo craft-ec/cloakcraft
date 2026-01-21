@@ -62,7 +62,7 @@ import {
   TransactionStep,
 } from '@/components/operations';
 import { SUPPORTED_TOKENS, TokenInfo } from '@/lib/constants';
-import { formatAmount, parseAmount } from '@/lib/utils';
+import { formatAmount, parseAmount, toBigInt } from '@/lib/utils';
 
 const VALID_TABS = ['trade', 'positions', 'liquidity'] as const;
 type TabValue = (typeof VALID_TABS)[number];
@@ -725,8 +725,12 @@ function LiquidityTab({
   const utilization = useMemo(() => {
     if (!selectedPool) return null;
     const token = selectedPool.tokens[selectedTokenIndex];
-    if (!token || token.balance === 0n) return 0;
-    return Number((token.locked * 100n) / token.balance);
+    if (!token) return 0;
+    // Convert BN to BigInt (Anchor returns BN objects)
+    const balance = toBigInt(token.balance);
+    const locked = toBigInt(token.locked);
+    if (balance === 0n) return 0;
+    return Number((locked * 100n) / balance);
   }, [selectedPool, selectedTokenIndex]);
 
   const handleSubmit = async () => {

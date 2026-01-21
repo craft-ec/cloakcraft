@@ -7,12 +7,28 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
- * Format a token amount with decimals
+ * Convert BN or number-like to BigInt
+ * Handles Anchor BN objects, strings, numbers, and BigInt
  */
-export function formatAmount(amount: bigint, decimals: number = 9): string {
+export function toBigInt(value: unknown): bigint {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number') return BigInt(value);
+  if (typeof value === 'string') return BigInt(value);
+  if (value && typeof (value as any).toString === 'function') {
+    return BigInt((value as any).toString());
+  }
+  return 0n;
+}
+
+/**
+ * Format a token amount with decimals
+ * Accepts BigInt, BN, or number-like values
+ */
+export function formatAmount(amount: bigint | unknown, decimals: number = 9): string {
+  const amountBigInt = toBigInt(amount);
   const divisor = BigInt(10 ** decimals);
-  const whole = amount / divisor;
-  const fraction = amount % divisor;
+  const whole = amountBigInt / divisor;
+  const fraction = amountBigInt % divisor;
 
   if (fraction === 0n) {
     return whole.toString();

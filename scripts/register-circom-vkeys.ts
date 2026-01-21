@@ -22,7 +22,7 @@ import * as path from "path";
 import * as os from "os";
 
 // Program ID
-const PROGRAM_ID = new PublicKey("DsCP619hPxpvY1SKfCqoKMB7om52UJBKBewevvoNN7Ha");
+const PROGRAM_ID = new PublicKey("FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a");
 const VK_SEED = Buffer.from("vk");
 
 // Circuit configurations
@@ -37,12 +37,21 @@ const CIRCUITS: CircuitConfig[] = [
     vkJsonPath: "circom-circuits/build/transfer_1x2/verification_key.json",
   },
   {
-    id: "transfer_2x2",
-    vkJsonPath: "circom-circuits/build/transfer_2x2/verification_key.json",
-  },
-  {
     id: "consolidate_3x1",
     vkJsonPath: "circom-circuits/build/consolidate_3x1/verification_key.json",
+  },
+  // AMM circuits
+  {
+    id: "swap_swap",
+    vkJsonPath: "circom-circuits/build/swap_verification_key.json",
+  },
+  {
+    id: "swap_add_liquidity",
+    vkJsonPath: "circom-circuits/build/add_liquidity_verification_key.json",
+  },
+  {
+    id: "swap_remove_liquidity",
+    vkJsonPath: "circom-circuits/build/remove_liquidity_verification_key.json",
   },
   // Perps circuits
   {
