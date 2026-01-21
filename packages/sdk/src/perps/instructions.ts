@@ -23,6 +23,47 @@ import { derivePendingOperationPda, generateOperationId, PendingCommitmentData }
 import { encryptNote, serializeEncryptedNote } from '../crypto/encryption';
 
 // =============================================================================
+// Pyth Price Feed IDs
+// =============================================================================
+
+/**
+ * Well-known Pyth price feed IDs for common trading pairs.
+ * These can be used when adding tokens to a perps pool.
+ *
+ * Feed IDs sourced from: https://pyth.network/developers/price-feed-ids
+ */
+export const PYTH_FEED_IDS = {
+  /** SOL/USD price feed */
+  SOL_USD: new Uint8Array([
+    0xef, 0x0d, 0x8b, 0x6f, 0xda, 0x2c, 0xeb, 0xa4,
+    0x1d, 0xa1, 0x5d, 0x40, 0x95, 0xd1, 0xda, 0x39,
+    0x2a, 0x0d, 0x2f, 0x8e, 0xd0, 0xc6, 0xc7, 0xbc,
+    0x0f, 0x4c, 0xfa, 0xc8, 0xc2, 0x80, 0xb5, 0x6d,
+  ]),
+  /** BTC/USD price feed */
+  BTC_USD: new Uint8Array([
+    0xe6, 0x2d, 0xf6, 0xc8, 0xb4, 0xa8, 0x5f, 0xe1,
+    0xa6, 0x7d, 0xb4, 0x4d, 0xc1, 0x2d, 0xe5, 0xdb,
+    0x33, 0x0f, 0x7a, 0xc6, 0x6b, 0x72, 0xdc, 0x65,
+    0x8a, 0xfe, 0xdf, 0x0f, 0x4a, 0x41, 0x5b, 0x43,
+  ]),
+  /** ETH/USD price feed */
+  ETH_USD: new Uint8Array([
+    0xff, 0x61, 0x49, 0x1a, 0x93, 0x11, 0x12, 0xdd,
+    0xf1, 0xbd, 0x81, 0x47, 0xcd, 0x1b, 0x64, 0x13,
+    0x75, 0xf7, 0x9f, 0x58, 0x25, 0x12, 0x6d, 0x66,
+    0x54, 0x80, 0x87, 0x46, 0x34, 0xfd, 0x0a, 0xce,
+  ]),
+  /** USDC/USD price feed (stablecoin) */
+  USDC_USD: new Uint8Array([
+    0xea, 0xa0, 0x20, 0xc6, 0x1c, 0xc4, 0x79, 0x71,
+    0x2a, 0x35, 0x7a, 0xb5, 0xe4, 0xc7, 0x9a, 0x98,
+    0xed, 0x97, 0x9e, 0xd4, 0x30, 0x24, 0xf7, 0x50,
+    0x56, 0xbe, 0x2d, 0xb8, 0xbf, 0x6a, 0x43, 0x58,
+  ]),
+} as const;
+
+// =============================================================================
 // Perps Seeds and Circuit IDs
 // =============================================================================
 
@@ -150,6 +191,8 @@ export interface OpenPositionInstructionParams {
   perpsPool: PublicKey;
   /** Market */
   market: PublicKey;
+  /** Pyth price update account for the base token */
+  priceUpdate: PublicKey;
   /** ZK proof */
   proof: Uint8Array;
   /** Merkle root */
@@ -296,6 +339,7 @@ export async function buildOpenPositionWithProgram(
       perpsMarket: params.market,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
+      priceUpdate: params.priceUpdate,
     })
     .preInstructions([
       ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
@@ -365,6 +409,8 @@ export interface ClosePositionInstructionParams {
   perpsPool: PublicKey;
   /** Market */
   market: PublicKey;
+  /** Pyth price update account for the base token */
+  priceUpdate: PublicKey;
   /** ZK proof */
   proof: Uint8Array;
   /** Merkle root */
@@ -502,6 +548,7 @@ export async function buildClosePositionWithProgram(
       perpsMarket: params.market,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
+      priceUpdate: params.priceUpdate,
     })
     .preInstructions([
       ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
@@ -541,10 +588,16 @@ export async function buildClosePositionWithProgram(
 // =============================================================================
 
 export interface AddPerpsLiquidityInstructionParams {
-  /** Settlement pool */
-  settlementPool: PublicKey;
+  /** Deposit token pool */
+  depositPool: PublicKey;
   /** Perps pool */
   perpsPool: PublicKey;
+  /** Pyth price update account for the deposit token */
+  priceUpdate: PublicKey;
+  /** LP mint for LP tokens */
+  lpMintAccount: PublicKey;
+  /** Token vault for the deposited token */
+  tokenVault: PublicKey;
   /** ZK proof */
   proof: Uint8Array;
   /** Merkle root */
@@ -625,7 +678,7 @@ export async function buildAddPerpsLiquidityWithProgram(
       new BN(params.feeAmount.toString())
     )
     .accountsStrict({
-      settlementPool: params.settlementPool,
+      settlementPool: params.depositPool,
       perpsPool: params.perpsPool,
       verificationKey: vkPda,
       pendingOperation: pendingOpPda,
@@ -640,7 +693,7 @@ export async function buildAddPerpsLiquidityWithProgram(
   const phase1Tx = await program.methods
     .verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams)
     .accountsStrict({
-      pool: params.settlementPool,
+      pool: params.depositPool,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
     })
@@ -653,7 +706,7 @@ export async function buildAddPerpsLiquidityWithProgram(
   const phase2Tx = await program.methods
     .createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams)
     .accountsStrict({
-      pool: params.settlementPool,
+      pool: params.depositPool,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
     })
@@ -666,10 +719,13 @@ export async function buildAddPerpsLiquidityWithProgram(
   const phase3Tx = await program.methods
     .executeAddPerpsLiquidity(Array.from(operationId), oraclePricesBN)
     .accountsStrict({
-      settlementPool: params.settlementPool,
+      depositPool: params.depositPool,
       perpsPool: params.perpsPool,
+      lpMint: params.lpMintAccount,
+      tokenVault: params.tokenVault,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
+      priceUpdate: params.priceUpdate,
       tokenProgram: TOKEN_PROGRAM_ID,
     })
     .preInstructions([
@@ -686,7 +742,7 @@ export async function buildAddPerpsLiquidityWithProgram(
   const lpEncrypted = encryptNote(lpNote as any, params.lpRecipient.stealthPubkey);
 
   const pendingCommitments: PendingCommitmentData[] = [{
-    pool: params.settlementPool,
+    pool: params.depositPool,
     commitment: params.lpCommitment,
     stealthEphemeralPubkey: new Uint8Array([
       ...params.lpRecipient.ephemeralPubkey.x,
@@ -710,10 +766,16 @@ export async function buildAddPerpsLiquidityWithProgram(
 // =============================================================================
 
 export interface RemovePerpsLiquidityInstructionParams {
-  /** Settlement pool */
-  settlementPool: PublicKey;
+  /** Withdrawal token pool */
+  withdrawalPool: PublicKey;
   /** Perps pool */
   perpsPool: PublicKey;
+  /** Pyth price update account for the withdrawal token */
+  priceUpdate: PublicKey;
+  /** LP mint for LP tokens */
+  lpMintAccount: PublicKey;
+  /** Token vault for the withdrawal token */
+  tokenVault: PublicKey;
   /** ZK proof */
   proof: Uint8Array;
   /** Merkle root */
@@ -802,7 +864,7 @@ export async function buildRemovePerpsLiquidityWithProgram(
       new BN(params.feeAmount.toString())
     )
     .accountsStrict({
-      settlementPool: params.settlementPool,
+      settlementPool: params.withdrawalPool,
       perpsPool: params.perpsPool,
       verificationKey: vkPda,
       pendingOperation: pendingOpPda,
@@ -817,7 +879,7 @@ export async function buildRemovePerpsLiquidityWithProgram(
   const phase1Tx = await program.methods
     .verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams)
     .accountsStrict({
-      pool: params.settlementPool,
+      pool: params.withdrawalPool,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
     })
@@ -830,7 +892,7 @@ export async function buildRemovePerpsLiquidityWithProgram(
   const phase2Tx = await program.methods
     .createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams)
     .accountsStrict({
-      pool: params.settlementPool,
+      pool: params.withdrawalPool,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
     })
@@ -843,10 +905,13 @@ export async function buildRemovePerpsLiquidityWithProgram(
   const phase3Tx = await program.methods
     .executeRemovePerpsLiquidity(Array.from(operationId), oraclePricesBN)
     .accountsStrict({
-      settlementPool: params.settlementPool,
+      withdrawalPool: params.withdrawalPool,
       perpsPool: params.perpsPool,
+      lpMint: params.lpMintAccount,
+      tokenVault: params.tokenVault,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
+      priceUpdate: params.priceUpdate,
       tokenProgram: TOKEN_PROGRAM_ID,
     })
     .preInstructions([
@@ -863,7 +928,7 @@ export async function buildRemovePerpsLiquidityWithProgram(
   const outputEncrypted = encryptNote(outputNote as any, params.outputRecipient.stealthPubkey);
 
   const pendingCommitments: PendingCommitmentData[] = [{
-    pool: params.settlementPool,
+    pool: params.withdrawalPool,
     commitment: params.outputCommitment,
     stealthEphemeralPubkey: new Uint8Array([
       ...params.outputRecipient.ephemeralPubkey.x,
@@ -883,7 +948,7 @@ export async function buildRemovePerpsLiquidityWithProgram(
     const lpChangeEncrypted = encryptNote(lpChangeNote as any, params.lpChangeRecipient.stealthPubkey);
 
     pendingCommitments.push({
-      pool: params.settlementPool,
+      pool: params.withdrawalPool,
       commitment: params.changeLpCommitment,
       stealthEphemeralPubkey: new Uint8Array([
         ...params.lpChangeRecipient.ephemeralPubkey.x,
@@ -956,32 +1021,39 @@ export async function buildInitializePerpsPoolWithProgram(
 export interface AddTokenToPoolParams {
   perpsPool: PublicKey;
   tokenMint: PublicKey;
-  oracle: PublicKey;
+  /** Pyth price feed ID (32 bytes) for this token */
+  pythFeedId: Uint8Array;
   authority: PublicKey;
   payer: PublicKey;
 }
 
 /**
  * Build add token to pool instruction
+ *
+ * @param program - Anchor program instance
+ * @param params - Instruction parameters including Pyth feed ID
  */
 export async function buildAddTokenToPoolWithProgram(
   program: Program,
   params: AddTokenToPoolParams
 ): Promise<{ tx: any }> {
   const programId = program.programId;
-  const [vaultPda] = derivePerpsVaultPda(params.perpsPool, params.tokenMint, programId);
+
+  // Token vault is an ATA (Associated Token Account) owned by the perps pool
+  const { getAssociatedTokenAddressSync } = await import('@solana/spl-token');
+  const vaultPda = getAssociatedTokenAddressSync(params.tokenMint, params.perpsPool, true);
 
   const tx = await program.methods
-    .addTokenToPool()
+    .addTokenToPool(Array.from(params.pythFeedId))
     .accountsStrict({
       perpsPool: params.perpsPool,
       tokenMint: params.tokenMint,
-      vault: vaultPda,
-      oracle: params.oracle,
+      tokenVault: vaultPda,
       authority: params.authority,
       payer: params.payer,
       systemProgram: SystemProgram.programId,
       tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'),
     });
 
   return { tx };

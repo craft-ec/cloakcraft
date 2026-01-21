@@ -21,10 +21,12 @@
 //! Final: Close pending operation
 
 use anchor_lang::prelude::*;
+use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 
 use crate::state::{Pool, PerpsPool, PerpsMarket, PendingOperation};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
+use crate::pyth;
 
 #[derive(Accounts)]
 #[instruction(operation_id: [u8; 32])]
@@ -71,9 +73,8 @@ pub struct ExecuteClosePosition<'info> {
     )]
     pub relayer: Signer<'info>,
 
-    /// Oracle account for price verification
-    /// CHECK: Validated by oracle integration
-    pub oracle: AccountInfo<'info>,
+    /// Pyth price update account for the base token
+    pub price_update: Account<'info, PriceUpdateV2>,
 }
 
 /// Phase 3: Execute close position by settling PnL and unlocking tokens
@@ -87,21 +88,31 @@ pub fn execute_close_position<'info>(
     let perps_pool = &mut ctx.accounts.perps_pool;
     let perps_market = &mut ctx.accounts.perps_market;
     let pending_op = &ctx.accounts.pending_operation;
+    let price_update = &ctx.accounts.price_update;
+    let clock = Clock::get()?;
 
     msg!("=== Phase 3: Execute Close Position ===");
 
     // Get close parameters from Phase 0
     let pnl_amount = pending_op.swap_amount;
-    let exit_price = pending_op.output_amount;
+    let _exit_price_param = pending_op.output_amount; // Kept for backwards compatibility
     let close_fee = pending_op.min_output;
     let is_long = pending_op.swap_a_to_b;
     let is_profit = pending_op.extra_amount == 1;
+
+    // Get base token's Pyth feed ID and validate price
+    let base_token_index = perps_market.base_token_index;
+    let base_token = perps_pool.get_token(base_token_index)
+        .ok_or(CloakCraftError::TokenNotInPool)?;
+
+    // Read and validate exit price from Pyth
+    let exit_price = pyth::get_price(price_update, &base_token.pyth_feed_id, &clock)?;
 
     msg!("Closing {} position: margin={}, size={}, entry={}, exit={}",
         if is_long { "LONG" } else { "SHORT" },
         position_margin, position_size, entry_price, exit_price);
 
-    // Validate exit price (should be validated against oracle)
+    // Price is already validated by pyth::get_price
     require!(exit_price > 0, CloakCraftError::InvalidOraclePrice);
 
     // Verify PnL calculation

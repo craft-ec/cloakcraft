@@ -342,6 +342,15 @@ pub enum CloakCraftError {
     #[msg("Oracle price is stale")]
     StaleOraclePrice,
 
+    #[msg("Invalid Pyth price feed - feed ID mismatch")]
+    InvalidPriceFeed,
+
+    #[msg("Pyth price is stale - exceeds maximum age")]
+    PriceStale,
+
+    #[msg("Pyth price confidence interval too high")]
+    PriceConfidenceTooHigh,
+
     #[msg("Invalid position direction")]
     InvalidPositionDirection,
 

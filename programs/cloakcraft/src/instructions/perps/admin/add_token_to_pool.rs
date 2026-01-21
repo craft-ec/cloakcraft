@@ -1,7 +1,7 @@
 //! Add a token to a perpetual futures pool
 //!
 //! Adds a new supported token to the multi-token pool.
-//! Each token has its own vault, oracle, and utilization tracking.
+//! Each token has its own vault and Pyth price feed for oracle pricing.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount};
@@ -34,10 +34,6 @@ pub struct AddTokenToPool<'info> {
     )]
     pub token_vault: Account<'info, TokenAccount>,
 
-    /// Price oracle for the token
-    /// CHECK: Validated by admin, stores oracle address
-    pub oracle: AccountInfo<'info>,
-
     /// Pool authority
     pub authority: Signer<'info>,
 
@@ -55,7 +51,11 @@ pub struct AddTokenToPool<'info> {
     pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
-pub fn add_token_to_pool(ctx: Context<AddTokenToPool>) -> Result<()> {
+/// Add a token to the perps pool with its Pyth price feed ID
+///
+/// # Arguments
+/// * `pyth_feed_id` - The 32-byte Pyth price feed ID for this token (e.g., SOL/USD feed)
+pub fn add_token_to_pool(ctx: Context<AddTokenToPool>, pyth_feed_id: [u8; 32]) -> Result<()> {
     let perps_pool = &mut ctx.accounts.perps_pool;
     let token_mint = &ctx.accounts.token_mint;
 
@@ -80,7 +80,7 @@ pub fn add_token_to_pool(ctx: Context<AddTokenToPool>) -> Result<()> {
     perps_pool.tokens[token_index] = PerpsToken {
         mint: token_mint.key(),
         vault: ctx.accounts.token_vault.key(),
-        oracle: ctx.accounts.oracle.key(),
+        pyth_feed_id,
         balance: 0,
         locked: 0,
         cumulative_borrow_fee: 0,

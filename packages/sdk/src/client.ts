@@ -52,6 +52,7 @@ import {
   DEVNET_LIGHT_TREES,
   MAINNET_LIGHT_TREES,
 } from './light';
+import { PythPriceService, PYTH_FEED_IDS } from './pyth';
 import {
   buildShieldWithProgram,
   buildTransactWithProgram,
@@ -3343,6 +3344,31 @@ export class CloakCraftClient {
       throw new Error('Input note missing accountHash. Use scanNotes() to get notes with accountHash.');
     }
 
+    // Get price from Pyth if not provided
+    const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
+    let oraclePrice = params.oraclePrice;
+    let pythPriceUpdate = params.priceUpdate;
+    let pythPostIxs: any[] = [];
+    let pythCloseIxs: any[] = [];
+
+    if (!oraclePrice || !pythPriceUpdate) {
+      const pythService = new PythPriceService(this.connection);
+      const relayerKeypair = relayer || SolanaKeypair.generate(); // Use relayer or temp keypair
+
+      if (!oraclePrice) {
+        // Fetch current price from Pyth Hermes
+        oraclePrice = await pythService.getPriceUsd(feedId, 9); // 9 decimals for price
+      }
+
+      if (!pythPriceUpdate) {
+        // Prepare price update instructions (Jupiter style)
+        const pythResult = await pythService.preparePriceUpdate(feedId, relayerKeypair);
+        pythPriceUpdate = pythResult.priceUpdateAccount;
+        pythPostIxs = pythResult.postInstructions;
+        pythCloseIxs = pythResult.closeInstructions;
+      }
+    }
+
     params.onProgress?.('generating');
 
     // Calculate position fee (0.06% of position size)
@@ -3374,7 +3400,7 @@ export class CloakCraftClient {
       marginAmount: params.marginAmount,
       leverage: params.leverage,
       positionSize,
-      entryPrice: params.oraclePrice,
+      entryPrice: oraclePrice,
       positionFee,
       merkleRoot: params.merkleRoot,
       merklePath: params.merklePath,
@@ -3424,6 +3450,7 @@ export class CloakCraftClient {
       settlementPool: inputPoolPda,
       perpsPool: params.poolId,
       market: perpsMarketPda,
+      priceUpdate: pythPriceUpdate!,
       proof,
       merkleRoot: params.merkleRoot,
       inputCommitment,
@@ -3434,7 +3461,7 @@ export class CloakCraftClient {
       marginAmount: params.marginAmount,
       leverage: params.leverage,
       positionFee,
-      entryPrice: params.oraclePrice,
+      entryPrice: oraclePrice,
       relayer: relayerPubkey,
       positionRecipient: params.positionRecipient,
       changeRecipient: params.changeRecipient,
@@ -3511,11 +3538,22 @@ export class CloakCraftClient {
     transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
 
     // Build all versioned transactions
+    // Jupiter-style bundling: prepend Pyth post to Phase 3, append Pyth close to Final
     const transactions = [];
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
-      const allInstructions = [...preIxs, mainIx];
+      let allInstructions = [...preIxs, mainIx];
+
+      // Bundle Pyth instructions Jupiter-style
+      if (name.includes('Phase 3') && pythPostIxs.length > 0) {
+        // Prepend Pyth price post instructions to Phase 3
+        allInstructions = [...pythPostIxs, ...allInstructions];
+      }
+      if (name.includes('Final') && pythCloseIxs.length > 0) {
+        // Append Pyth close instructions to Final transaction
+        allInstructions = [...allInstructions, ...pythCloseIxs];
+      }
 
       const tx = new VersionedTransaction(
         new TransactionMessage({
@@ -3578,6 +3616,29 @@ export class CloakCraftClient {
       throw new Error('Position note missing accountHash. Use scanNotes() to get notes with accountHash.');
     }
 
+    // Get price from Pyth if not provided
+    const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
+    let oraclePrice = params.oraclePrice;
+    let pythPriceUpdate = params.priceUpdate;
+    let pythPostIxs: any[] = [];
+    let pythCloseIxs: any[] = [];
+
+    if (!oraclePrice || !pythPriceUpdate) {
+      const pythService = new PythPriceService(this.connection);
+      const relayerKeypair = relayer || SolanaKeypair.generate();
+
+      if (!oraclePrice) {
+        oraclePrice = await pythService.getPriceUsd(feedId, 9);
+      }
+
+      if (!pythPriceUpdate) {
+        const pythResult = await pythService.preparePriceUpdate(feedId, relayerKeypair);
+        pythPriceUpdate = pythResult.priceUpdateAccount;
+        pythPostIxs = pythResult.postInstructions;
+        pythCloseIxs = pythResult.closeInstructions;
+      }
+    }
+
     params.onProgress?.('generating');
 
     // Calculate PnL and fees (simplified - actual calculation uses oracle prices)
@@ -3604,13 +3665,13 @@ export class CloakCraftClient {
         margin: params.positionInput.amount,
         size: params.positionInput.amount, // TODO: Get actual size
         leverage: 1, // TODO: Get from position data
-        entryPrice: params.oraclePrice, // TODO: Get from position data
+        entryPrice: oraclePrice, // Use resolved oracle price
         randomness: params.positionInput.randomness,
         leafIndex: params.positionInput.leafIndex,
         spendingKey: this.wallet.keypair.spending.sk,
       },
       perpsPoolId: actualPoolId.toBytes(),
-      exitPrice: params.oraclePrice,
+      exitPrice: oraclePrice, // Use resolved oracle price
       pnlAmount,
       isProfit,
       closeFee,
@@ -3631,25 +3692,52 @@ export class CloakCraftClient {
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
 
-    const { proof, positionNullifier: nullifier, settlementCommitment, settlementRandomness } = proofResult;
+    const { proof, positionNullifier: nullifier, settlementCommitment, settlementRandomness, settlementAmount } = proofResult;
 
     // Compute position commitment
     const positionCommitment = computeCommitment(params.positionInput);
 
+    // Derive PDAs
+    const settlementTokenMint = params.positionInput.tokenMint instanceof Uint8Array
+      ? new PublicKey(params.positionInput.tokenMint)
+      : params.positionInput.tokenMint;
+    const [settlementPoolPda] = derivePoolPda(settlementTokenMint, this.programId);
+    const [perpsMarketPda] = derivePerpsMarketPda(params.poolId, params.marketId, this.programId);
+
+    // Build Light Protocol params
+    const lightParams = await this.buildLightProtocolParams(
+      accountHash,
+      nullifier,
+      settlementPoolPda,
+      heliusRpcUrl
+    );
+
     const instructionParams = {
+      settlementPool: settlementPoolPda,
       perpsPool: params.poolId,
-      marketId: params.marketId,
-      relayer: relayerPubkey,
+      market: perpsMarketPda,
+      priceUpdate: pythPriceUpdate!,
       proof,
       merkleRoot: params.merkleRoot,
-      nullifier,
       positionCommitment,
-      accountHash,
-      leafIndex: params.positionInput.leafIndex,
+      positionNullifier: nullifier,
       settlementCommitment,
-      oraclePrice: params.oraclePrice,
+      isLong: true, // TODO: Get from position data
+      exitPrice: oraclePrice,
+      closeFee,
+      pnlAmount,
+      isProfit,
+      positionMargin: params.positionInput.amount,
+      positionSize: params.positionInput.amount, // TODO: Get actual size
+      entryPrice: oraclePrice, // TODO: Get from position data
+      relayer: relayerPubkey,
       settlementRecipient: params.settlementRecipient,
       settlementRandomness,
+      settlementAmount: settlementAmount ?? params.positionInput.amount,
+      tokenMint: settlementTokenMint,
+      lightVerifyParams: lightParams.lightVerifyParams,
+      lightNullifierParams: lightParams.lightNullifierParams,
+      remainingAccounts: lightParams.remainingAccounts,
     };
 
     // Build multi-phase transactions
@@ -3713,11 +3801,22 @@ export class CloakCraftClient {
     transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
 
     // Build all versioned transactions
+    // Jupiter-style bundling: prepend Pyth post to Phase 3, append Pyth close to Final
     const transactions = [];
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
-      const allInstructions = [...preIxs, mainIx];
+      let allInstructions = [...preIxs, mainIx];
+
+      // Bundle Pyth instructions Jupiter-style
+      if (name.includes('Phase 3') && pythPostIxs.length > 0) {
+        // Prepend Pyth price post instructions to Phase 3
+        allInstructions = [...pythPostIxs, ...allInstructions];
+      }
+      if (name.includes('Final') && pythCloseIxs.length > 0) {
+        // Append Pyth close instructions to Final transaction
+        allInstructions = [...allInstructions, ...pythCloseIxs];
+      }
 
       const tx = new VersionedTransaction(
         new TransactionMessage({
@@ -3780,6 +3879,32 @@ export class CloakCraftClient {
       throw new Error('Input note missing accountHash. Use scanNotes() to get notes with accountHash.');
     }
 
+    // Get price from Pyth if not provided
+    const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
+    let oraclePrices = params.oraclePrices;
+    let pythPriceUpdate = params.priceUpdate;
+    let pythPostIxs: any[] = [];
+    let pythCloseIxs: any[] = [];
+
+    if (!oraclePrices || !pythPriceUpdate) {
+      const pythService = new PythPriceService(this.connection);
+      const relayerKeypair = relayer || SolanaKeypair.generate();
+
+      if (!oraclePrices) {
+        // Fetch current price from Pyth Hermes (9 decimals for price)
+        const price = await pythService.getPriceUsd(feedId, 9);
+        oraclePrices = [price];
+      }
+
+      if (!pythPriceUpdate) {
+        // Prepare price update instructions (Jupiter style)
+        const pythResult = await pythService.preparePriceUpdate(feedId, relayerKeypair);
+        pythPriceUpdate = pythResult.priceUpdateAccount;
+        pythPostIxs = pythResult.postInstructions;
+        pythCloseIxs = pythResult.closeInstructions;
+      }
+    }
+
     params.onProgress?.('generating');
 
     // Calculate fee (if any)
@@ -3832,7 +3957,8 @@ export class CloakCraftClient {
       ? new PublicKey(params.input.tokenMint)
       : params.input.tokenMint;
 
-    const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
+    const [depositPoolPda] = derivePoolPda(inputTokenMint, this.programId);
+    const depositPoolAccount = await (this.program.account as any).pool.fetch(depositPoolPda);
     const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, inputTokenMint, this.programId);
     const [lpMintPda] = derivePerpsLpMintPda(params.poolId, this.programId);
 
@@ -3844,31 +3970,38 @@ export class CloakCraftClient {
     // Compute input commitment
     const inputCommitment = computeCommitment(params.input);
 
+    // Build Light Protocol params
+    const lightParams = await this.buildLightProtocolParams(
+      accountHash,
+      nullifier,
+      depositPoolPda,
+      heliusRpcUrl
+    );
+
     const instructionParams = {
+      depositPool: depositPoolPda,
       perpsPool: params.poolId,
-      settlementPool: inputPoolPda,
-      perpsVault: perpsVaultPda,
-      lpMint: lpMintPda,
-      inputTokenMint,
-      tokenMint: inputTokenMint,
-      relayer: relayerPubkey,
+      priceUpdate: pythPriceUpdate!,
+      lpMintAccount: lpMintPda,
+      tokenVault: depositPoolAccount.tokenVault,
       proof,
       merkleRoot: params.merkleRoot,
-      nullifier,
       inputCommitment,
-      accountHash,
-      leafIndex: params.input.leafIndex,
+      nullifier,
       lpCommitment,
-      changeCommitment,
       tokenIndex: params.tokenIndex,
       depositAmount: params.depositAmount,
       lpAmountMinted: params.lpAmount,
       feeAmount: 0n,
-      oraclePrices: params.oraclePrices ?? [1_000_000_000n], // Default to $1 if not provided
+      oraclePrices: oraclePrices!,
+      relayer: relayerPubkey,
       lpRecipient: params.lpRecipient,
-      changeRecipient: params.changeRecipient,
       lpRandomness,
-      changeRandomness,
+      tokenMint: inputTokenMint,
+      lpMint: lpMintPda,
+      lightVerifyParams: lightParams.lightVerifyParams,
+      lightNullifierParams: lightParams.lightNullifierParams,
+      remainingAccounts: lightParams.remainingAccounts,
     };
 
     console.log('[AddPerpsLiquidity] === Starting Multi-Phase Add Liquidity ===');
@@ -3933,11 +4066,22 @@ export class CloakCraftClient {
     transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
 
     // Build all versioned transactions
+    // Jupiter-style bundling: prepend Pyth post to Phase 3, append Pyth close to Final
     const transactions = [];
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
-      const allInstructions = [...preIxs, mainIx];
+      let allInstructions = [...preIxs, mainIx];
+
+      // Bundle Pyth instructions Jupiter-style
+      if (name.includes('Phase 3') && pythPostIxs.length > 0) {
+        // Prepend Pyth price post instructions to Phase 3
+        allInstructions = [...pythPostIxs, ...allInstructions];
+      }
+      if (name.includes('Final') && pythCloseIxs.length > 0) {
+        // Append Pyth close instructions to Final transaction
+        allInstructions = [...allInstructions, ...pythCloseIxs];
+      }
 
       const tx = new VersionedTransaction(
         new TransactionMessage({
@@ -4000,6 +4144,32 @@ export class CloakCraftClient {
       throw new Error('LP note missing accountHash. Use scanNotes() to get notes with accountHash.');
     }
 
+    // Get price from Pyth if not provided
+    const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
+    let oraclePrices = params.oraclePrices;
+    let pythPriceUpdate = params.priceUpdate;
+    let pythPostIxs: any[] = [];
+    let pythCloseIxs: any[] = [];
+
+    if (!oraclePrices || !pythPriceUpdate) {
+      const pythService = new PythPriceService(this.connection);
+      const relayerKeypair = relayer || SolanaKeypair.generate();
+
+      if (!oraclePrices) {
+        // Fetch current price from Pyth Hermes (9 decimals for price)
+        const price = await pythService.getPriceUsd(feedId, 9);
+        oraclePrices = [price];
+      }
+
+      if (!pythPriceUpdate) {
+        // Prepare price update instructions (Jupiter style)
+        const pythResult = await pythService.preparePriceUpdate(feedId, relayerKeypair);
+        pythPriceUpdate = pythResult.priceUpdateAccount;
+        pythPostIxs = pythResult.postInstructions;
+        pythCloseIxs = pythResult.closeInstructions;
+      }
+    }
+
     params.onProgress?.('generating');
 
     // Derive PDAs first to get token mint
@@ -4045,7 +4215,8 @@ export class CloakCraftClient {
 
     params.onProgress?.('building');
 
-    const [outputPoolPda] = derivePoolPda(tokenMint, this.programId);
+    const [withdrawalPoolPda] = derivePoolPda(tokenMint, this.programId);
+    const withdrawalPoolAccount = await (this.program.account as any).pool.fetch(withdrawalPoolPda);
     const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, tokenMint, this.programId);
     const [lpMintPda] = derivePerpsLpMintPda(params.poolId, this.programId);
 
@@ -4064,28 +4235,42 @@ export class CloakCraftClient {
     // Compute LP commitment
     const lpCommitment = computeCommitment(params.lpInput);
 
+    // Build Light Protocol params
+    const lightParams = await this.buildLightProtocolParams(
+      accountHash,
+      nullifier,
+      withdrawalPoolPda,
+      heliusRpcUrl
+    );
+
     const instructionParams = {
+      withdrawalPool: withdrawalPoolPda,
       perpsPool: params.poolId,
-      outputPool: outputPoolPda,
-      perpsVault: perpsVaultPda,
-      lpMint: lpMintPda,
-      outputTokenMint: tokenMint,
-      relayer: relayerPubkey,
+      priceUpdate: pythPriceUpdate!,
+      lpMintAccount: lpMintPda,
+      tokenVault: withdrawalPoolAccount.tokenVault,
       proof,
       merkleRoot: params.merkleRoot,
-      nullifier,
       lpCommitment,
-      accountHash,
-      leafIndex: params.lpInput.leafIndex,
-      withdrawCommitment,
-      lpChangeCommitment,
+      lpNullifier: nullifier,
+      outputCommitment: withdrawCommitment,
+      changeLpCommitment: lpChangeCommitment,
       tokenIndex: params.tokenIndex,
-      lpAmount: params.lpAmount,
       withdrawAmount: params.withdrawAmount,
-      withdrawRecipient: params.withdrawRecipient,
+      lpAmountBurned: params.lpAmount,
+      feeAmount: 0n,
+      oraclePrices: oraclePrices!,
+      relayer: relayerPubkey,
+      outputRecipient: params.withdrawRecipient,
       lpChangeRecipient: params.lpChangeRecipient,
-      withdrawRandomness,
+      outputRandomness: withdrawRandomness,
       lpChangeRandomness,
+      tokenMint,
+      lpMint: lpMintPda,
+      lpChangeAmount: changeLpAmount,
+      lightVerifyParams: lightParams.lightVerifyParams,
+      lightNullifierParams: lightParams.lightNullifierParams,
+      remainingAccounts: lightParams.remainingAccounts,
     };
 
     console.log('[RemovePerpsLiquidity] === Starting Multi-Phase Remove Liquidity ===');
@@ -4150,11 +4335,22 @@ export class CloakCraftClient {
     transactionBuilders.push({ name: 'Final (Close Pending)', builder: closeTx });
 
     // Build all versioned transactions
+    // Jupiter-style bundling: prepend Pyth post to Phase 3, append Pyth close to Final
     const transactions = [];
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
-      const allInstructions = [...preIxs, mainIx];
+      let allInstructions = [...preIxs, mainIx];
+
+      // Bundle Pyth instructions Jupiter-style
+      if (name.includes('Phase 3') && pythPostIxs.length > 0) {
+        // Prepend Pyth price post instructions to Phase 3
+        allInstructions = [...pythPostIxs, ...allInstructions];
+      }
+      if (name.includes('Final') && pythCloseIxs.length > 0) {
+        // Append Pyth close instructions to Final transaction
+        allInstructions = [...allInstructions, ...pythCloseIxs];
+      }
 
       const tx = new VersionedTransaction(
         new TransactionMessage({

@@ -10,6 +10,7 @@ name = "cloakcraft"
 
 [features]
 default = []
+devnet = []  # Use relaxed staleness checks for devnet
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
@@ -29,5 +30,8 @@ groth16-solana = { workspace = true }
 light-sdk = { workspace = true }
 light-hasher = { workspace = true }
 light-compressed-account = { workspace = true }
+
+# Pyth Oracle
+pyth-solana-receiver-sdk = { workspace = true }
 
 [dev-dependencies]

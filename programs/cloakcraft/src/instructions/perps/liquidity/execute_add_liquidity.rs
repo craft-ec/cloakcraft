@@ -18,10 +18,12 @@
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, MintTo};
+use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 
 use crate::state::{Pool, PerpsPool, PendingOperation, MAX_PERPS_TOKENS};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
+use crate::pyth;
 
 #[derive(Accounts)]
 #[instruction(operation_id: [u8; 32])]
@@ -74,9 +76,8 @@ pub struct ExecuteAddPerpsLiquidity<'info> {
     )]
     pub relayer: Signer<'info>,
 
-    /// Oracle account for price feed
-    /// CHECK: Validated by oracle integration
-    pub oracle: AccountInfo<'info>,
+    /// Pyth price update account for the deposit token
+    pub price_update: Account<'info, PriceUpdateV2>,
 
     /// Token program
     pub token_program: Program<'info, Token>,
@@ -86,10 +87,12 @@ pub struct ExecuteAddPerpsLiquidity<'info> {
 pub fn execute_add_perps_liquidity<'info>(
     ctx: Context<'_, '_, '_, 'info, ExecuteAddPerpsLiquidity<'info>>,
     _operation_id: [u8; 32],
-    oracle_prices: [u64; MAX_PERPS_TOKENS], // Current oracle prices for all tokens
+    oracle_prices: [u64; MAX_PERPS_TOKENS], // Current oracle prices for all tokens (validated below)
 ) -> Result<()> {
     let perps_pool = &mut ctx.accounts.perps_pool;
     let pending_op = &ctx.accounts.pending_operation;
+    let price_update = &ctx.accounts.price_update;
+    let clock = Clock::get()?;
 
     msg!("=== Phase 3: Execute Add Perps Liquidity ===");
 
@@ -107,8 +110,18 @@ pub fn execute_add_perps_liquidity<'info>(
         .ok_or(CloakCraftError::TokenNotInPool)?;
     require!(token.is_active, CloakCraftError::TokenNotActive);
 
-    // Calculate deposit value in USD
-    let token_price = oracle_prices[token_index as usize];
+    // Get and validate deposit token price from Pyth
+    let token_price = pyth::get_price(price_update, &token.pyth_feed_id, &clock)?;
+
+    // Verify the passed oracle_prices matches Pyth for deposit token (within 1% tolerance)
+    let passed_price = oracle_prices[token_index as usize];
+    let price_tolerance = token_price / 100; // 1% tolerance
+    require!(
+        passed_price <= token_price.saturating_add(price_tolerance) &&
+        passed_price >= token_price.saturating_sub(price_tolerance),
+        CloakCraftError::InvalidOraclePrice
+    );
+
     require!(token_price > 0, CloakCraftError::InvalidOraclePrice);
 
     let deposit_value = (deposit_amount as u128)

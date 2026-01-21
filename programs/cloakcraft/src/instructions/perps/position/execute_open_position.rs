@@ -17,10 +17,12 @@
 //! Final: Close pending operation
 
 use anchor_lang::prelude::*;
+use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 
 use crate::state::{Pool, PerpsPool, PerpsMarket, PendingOperation};
 use crate::constants::seeds;
 use crate::errors::CloakCraftError;
+use crate::pyth;
 
 #[derive(Accounts)]
 #[instruction(operation_id: [u8; 32])]
@@ -67,20 +69,21 @@ pub struct ExecuteOpenPosition<'info> {
     )]
     pub relayer: Signer<'info>,
 
-    /// Oracle account for price feed
-    /// CHECK: Validated by oracle integration (Pyth, Switchboard, etc.)
-    pub oracle: AccountInfo<'info>,
+    /// Pyth price update account for the base token
+    pub price_update: Account<'info, PriceUpdateV2>,
 }
 
 /// Phase 3: Execute open position by locking tokens and updating market OI
 pub fn execute_open_position<'info>(
     ctx: Context<'_, '_, '_, 'info, ExecuteOpenPosition<'info>>,
     _operation_id: [u8; 32],
-    entry_price: u64,  // Oracle price (verified on-chain)
+    _entry_price: u64,  // Kept for backwards compatibility, actual price read from Pyth
 ) -> Result<()> {
     let perps_pool = &mut ctx.accounts.perps_pool;
     let perps_market = &mut ctx.accounts.perps_market;
     let pending_op = &ctx.accounts.pending_operation;
+    let price_update = &ctx.accounts.price_update;
+    let clock = Clock::get()?;
 
     msg!("=== Phase 3: Execute Open Position ===");
 
@@ -90,11 +93,19 @@ pub fn execute_open_position<'info>(
     let position_fee = pending_op.min_output;
     let is_long = pending_op.swap_a_to_b;
 
+    // Get base token's Pyth feed ID and validate price
+    let base_token_index = perps_market.base_token_index;
+    let base_token = perps_pool.get_token(base_token_index)
+        .ok_or(CloakCraftError::TokenNotInPool)?;
+
+    // Read and validate price from Pyth
+    let entry_price = pyth::get_price(price_update, &base_token.pyth_feed_id, &clock)?;
+
     msg!("Opening {} position: margin={}, leverage={}x, entry_price={}",
         if is_long { "LONG" } else { "SHORT" },
         margin_amount, leverage, entry_price);
 
-    // Validate entry price (should be validated against oracle)
+    // Price is already validated by pyth::get_price
     require!(entry_price > 0, CloakCraftError::InvalidOraclePrice);
 
     // Calculate position size (margin * leverage)

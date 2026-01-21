@@ -145,7 +145,7 @@
       "docs": [
         "Add a token to a perps pool",
         "",
-        "Adds a new supported token with its own vault and oracle."
+        "Adds a new supported token with its own vault and Pyth price feed."
       ],
       "discriminator": [
         35,
@@ -289,12 +289,6 @@
           }
         },
         {
-          "name": "oracle",
-          "docs": [
-            "Price oracle for the token"
-          ]
-        },
-        {
           "name": "authority",
           "docs": [
             "Pool authority"
@@ -334,7 +328,17 @@
           "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "pyth_feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "append_verification_key_data",
@@ -5737,9 +5741,9 @@
           "signer": true
         },
         {
-          "name": "oracle",
+          "name": "price_update",
           "docs": [
-            "Oracle account for price feed"
+            "Pyth price update account for the deposit token"
           ]
         },
         {
@@ -6189,9 +6193,9 @@
           "signer": true
         },
         {
-          "name": "oracle",
+          "name": "price_update",
           "docs": [
-            "Oracle account for price verification"
+            "Pyth price update account for the base token"
           ]
         }
       ],
@@ -6654,9 +6658,9 @@
           "signer": true
         },
         {
-          "name": "oracle",
+          "name": "price_update",
           "docs": [
-            "Oracle account for price feed"
+            "Pyth price update account for the base token"
           ]
         }
       ],
@@ -7050,9 +7054,9 @@
           "signer": true
         },
         {
-          "name": "oracle",
+          "name": "price_update",
           "docs": [
-            "Oracle account for price feed"
+            "Pyth price update account for the withdrawal token"
           ]
         },
         {
@@ -7994,10 +7998,33 @@
         {
           "name": "lp_mint",
           "docs": [
-            "LP token mint (created as regular mint with amm_pool as authority)"
+            "LP token mint (PDA derived from token pair)"
           ],
           "writable": true,
-          "signer": true
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  112,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "token_a_mint"
+              },
+              {
+                "kind": "arg",
+                "path": "token_b_mint"
+              }
+            ]
+          }
         },
         {
           "name": "token_a_mint_account",
@@ -10708,6 +10735,19 @@
       ]
     },
     {
+      "name": "PriceUpdateV2",
+      "discriminator": [
+        34,
+        241,
+        35,
+        99,
+        157,
+        126,
+        244,
+        205
+      ]
+    },
+    {
       "name": "ProtocolConfig",
       "discriminator": [
         207,
@@ -11290,216 +11330,231 @@
     },
     {
       "code": 6105,
+      "name": "InvalidPriceFeed",
+      "msg": "Invalid Pyth price feed - feed ID mismatch"
+    },
+    {
+      "code": 6106,
+      "name": "PriceStale",
+      "msg": "Pyth price is stale - exceeds maximum age"
+    },
+    {
+      "code": 6107,
+      "name": "PriceConfidenceTooHigh",
+      "msg": "Pyth price confidence interval too high"
+    },
+    {
+      "code": 6108,
       "name": "InvalidPositionDirection",
       "msg": "Invalid position direction"
     },
     {
-      "code": 6106,
+      "code": 6109,
       "name": "InvalidMarginAmount",
       "msg": "Invalid margin amount"
     },
     {
-      "code": 6107,
+      "code": 6110,
       "name": "InvalidPositionSize",
       "msg": "Invalid position size"
     },
     {
-      "code": 6108,
+      "code": 6111,
       "name": "LpAmountMismatch",
       "msg": "LP token amount mismatch"
     },
     {
-      "code": 6109,
+      "code": 6112,
       "name": "WithdrawalExceedsAvailable",
       "msg": "Withdrawal exceeds available balance"
     },
     {
-      "code": 6110,
+      "code": 6113,
       "name": "InvalidBorrowFee",
       "msg": "Invalid borrow fee calculation"
     },
     {
-      "code": 6111,
+      "code": 6114,
       "name": "SameBaseQuoteToken",
       "msg": "Market base and quote tokens must be different"
     },
     {
-      "code": 6112,
+      "code": 6115,
       "name": "InvalidTokenIndex",
       "msg": "Invalid token index"
     },
     {
-      "code": 6113,
+      "code": 6116,
       "name": "BallotNotFound",
       "msg": "Ballot not found"
     },
     {
-      "code": 6114,
+      "code": 6117,
       "name": "BallotNotActive",
       "msg": "Ballot is not active for voting"
     },
     {
-      "code": 6115,
+      "code": 6118,
       "name": "BallotNotResolved",
       "msg": "Ballot has not been resolved yet"
     },
     {
-      "code": 6116,
+      "code": 6119,
       "name": "BallotNotFinalized",
       "msg": "Ballot has not been finalized yet"
     },
     {
-      "code": 6117,
+      "code": 6120,
       "name": "BallotAlreadyFinalized",
       "msg": "Ballot has already been finalized"
     },
     {
-      "code": 6118,
+      "code": 6121,
       "name": "BallotAlreadyResolved",
       "msg": "Ballot is already resolved"
     },
     {
-      "code": 6119,
+      "code": 6122,
       "name": "InvalidVoteOptionRange",
       "msg": "Invalid vote option - exceeds num_options"
     },
     {
-      "code": 6120,
+      "code": 6123,
       "name": "VoteNullifierNotFound",
       "msg": "Vote nullifier not found - user must vote before changing"
     },
     {
-      "code": 6121,
+      "code": 6124,
       "name": "InvalidBindingMode",
       "msg": "Invalid binding mode for this operation"
     },
     {
-      "code": 6122,
+      "code": 6125,
       "name": "InvalidVoteTypeForBallot",
       "msg": "Invalid vote type for this ballot"
     },
     {
-      "code": 6123,
+      "code": 6126,
       "name": "InvalidRevealModeForOperation",
       "msg": "Invalid reveal mode for this operation"
     },
     {
-      "code": 6124,
+      "code": 6127,
       "name": "NotEligible",
       "msg": "User not eligible to vote (not in whitelist)"
     },
     {
-      "code": 6125,
+      "code": 6128,
       "name": "ZeroAmount",
       "msg": "Cannot vote with zero amount"
     },
     {
-      "code": 6126,
+      "code": 6129,
       "name": "QuorumNotMet",
       "msg": "Quorum threshold not met"
     },
     {
-      "code": 6127,
+      "code": 6130,
       "name": "InvalidOutcomeValue",
       "msg": "Invalid outcome value"
     },
     {
-      "code": 6128,
+      "code": 6131,
       "name": "ClaimsNotAllowed",
       "msg": "Claims not allowed for Snapshot mode"
     },
     {
-      "code": 6129,
+      "code": 6132,
       "name": "ClaimAlreadyProcessed",
       "msg": "Position already claimed (nullifier exists)"
     },
     {
-      "code": 6130,
+      "code": 6133,
       "name": "ClaimDeadlinePassed",
       "msg": "Claim deadline has passed"
     },
     {
-      "code": 6131,
+      "code": 6134,
       "name": "TimelockNotExpired",
       "msg": "Timelock has not expired yet"
     },
     {
-      "code": 6132,
+      "code": 6135,
       "name": "InvalidDecryptionKey",
       "msg": "Invalid decryption key - does not match time_lock_pubkey"
     },
     {
-      "code": 6133,
+      "code": 6136,
       "name": "InvalidAttestationSignature",
       "msg": "Invalid attestation signature"
     },
     {
-      "code": 6134,
+      "code": 6137,
       "name": "InvalidWeightFormula",
       "msg": "Invalid weight formula - evaluation error"
     },
     {
-      "code": 6135,
+      "code": 6138,
       "name": "PositionCloseNotAllowed",
       "msg": "Position close not allowed outside voting period"
     },
     {
-      "code": 6136,
+      "code": 6139,
       "name": "InvalidSnapshotSlot",
       "msg": "Invalid snapshot slot"
     },
     {
-      "code": 6137,
+      "code": 6140,
       "name": "InvalidBallotTiming",
       "msg": "Invalid ballot timing - start_time must be before end_time"
     },
     {
-      "code": 6138,
+      "code": 6141,
       "name": "InvalidNumOptions",
       "msg": "Invalid number of options - must be between 1 and 16"
     },
     {
-      "code": 6139,
+      "code": 6142,
       "name": "VotingNotStarted",
       "msg": "Voting period has not started yet"
     },
     {
-      "code": 6140,
+      "code": 6143,
       "name": "VotingEnded",
       "msg": "Voting period has ended"
     },
     {
-      "code": 6141,
+      "code": 6144,
       "name": "UnauthorizedResolver",
       "msg": "Only authority can resolve in Authority mode"
     },
     {
-      "code": 6142,
+      "code": 6145,
       "name": "OracleOutcomeNotSubmitted",
       "msg": "Oracle has not submitted outcome"
     },
     {
-      "code": 6143,
+      "code": 6146,
       "name": "TallyNotDecrypted",
       "msg": "Tally must be decrypted before resolution"
     },
     {
-      "code": 6144,
+      "code": 6147,
       "name": "InvalidEligibilityProof",
       "msg": "Invalid eligibility proof"
     },
     {
-      "code": 6145,
+      "code": 6148,
       "name": "WeightFormulaTooLong",
       "msg": "Weight formula too long"
     },
     {
-      "code": 6146,
+      "code": 6149,
       "name": "TooManyWeightParams",
       "msg": "Too many weight parameters"
     },
     {
-      "code": 6147,
+      "code": 6150,
       "name": "ProtocolFeeExceedsMax",
       "msg": "Protocol fee exceeds maximum (10000 bps = 100%)"
     }
@@ -13714,11 +13769,17 @@
             "type": "pubkey"
           },
           {
-            "name": "oracle",
+            "name": "pyth_feed_id",
             "docs": [
-              "Price oracle (Pyth or custom)"
+              "Pyth price feed ID (32 bytes hex)",
+              "Used to validate the passed price update account"
             ],
-            "type": "pubkey"
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
           },
           {
             "name": "balance",
@@ -13897,6 +13958,114 @@
           },
           {
             "name": "StableSwap"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceFeedMessage",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "feed_id",
+            "docs": [
+              "`FeedId` but avoid the type alias because of compatibility issues with Anchor's `idl-build` feature."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "price",
+            "type": "i64"
+          },
+          {
+            "name": "conf",
+            "type": "u64"
+          },
+          {
+            "name": "exponent",
+            "type": "i32"
+          },
+          {
+            "name": "publish_time",
+            "docs": [
+              "The timestamp of this price update in seconds"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "prev_publish_time",
+            "docs": [
+              "The timestamp of the previous price update. This field is intended to allow users to",
+              "identify the single unique price update for any moment in time:",
+              "for any time t, the unique update is the one such that prev_publish_time < t <= publish_time.",
+              "",
+              "Note that there may not be such an update while we are migrating to the new message-sending logic,",
+              "as some price updates on pythnet may not be sent to other chains (because the message-sending",
+              "logic may not have triggered). We can solve this problem by making the message-sending mandatory",
+              "(which we can do once publishers have migrated over).",
+              "",
+              "Additionally, this field may be equal to publish_time if the message is sent on a slot where",
+              "where the aggregation was unsuccesful. This problem will go away once all publishers have",
+              "migrated over to a recent version of pyth-agent."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "ema_price",
+            "type": "i64"
+          },
+          {
+            "name": "ema_conf",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceUpdateV2",
+      "docs": [
+        "A price update account. This account is used by the Pyth Receiver program to store a verified price update from a Pyth price feed.",
+        "It contains:",
+        "- `write_authority`: The write authority for this account. This authority can close this account to reclaim rent or update the account to contain a different price update.",
+        "- `verification_level`: The [`VerificationLevel`] of this price update. This represents how many Wormhole guardian signatures have been verified for this price update.",
+        "- `price_message`: The actual price update.",
+        "- `posted_slot`: The slot at which this price update was posted."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "write_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "verification_level",
+            "type": {
+              "defined": {
+                "name": "VerificationLevel"
+              }
+            }
+          },
+          {
+            "name": "price_message",
+            "type": {
+              "defined": {
+                "name": "PriceFeedMessage"
+              }
+            }
+          },
+          {
+            "name": "posted_slot",
+            "type": "u64"
           }
         ]
       }
@@ -14351,6 +14520,39 @@
               "PDA bump"
             ],
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VerificationLevel",
+      "docs": [
+        "Pyth price updates are bridged to all blockchains via Wormhole.",
+        "Using the price updates on another chain requires verifying the signatures of the Wormhole guardians.",
+        "The usual process is to check the signatures for two thirds of the total number of guardians, but this can be cumbersome on Solana because of the transaction size limits,",
+        "so we also allow for partial verification.",
+        "",
+        "This enum represents how much a price update has been verified:",
+        "- If `Full`, we have verified the signatures for two thirds of the current guardians.",
+        "- If `Partial`, only `num_signatures` guardian signatures have been checked.",
+        "",
+        "# Warning",
+        "Using partially verified price updates is dangerous, as it lowers the threshold of guardians that need to collude to produce a malicious price update."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Partial",
+            "fields": [
+              {
+                "name": "num_signatures",
+                "type": "u8"
+              }
+            ]
+          },
+          {
+            "name": "Full"
           }
         ]
       }

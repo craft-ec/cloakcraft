@@ -15,6 +15,7 @@ pub mod crypto;
 pub mod cpi;
 pub mod light_cpi;
 pub mod helpers;
+pub mod pyth;
 
 use instructions::*;
 
@@ -638,9 +639,9 @@ pub mod cloakcraft {
 
     /// Add a token to a perps pool
     ///
-    /// Adds a new supported token with its own vault and oracle.
-    pub fn add_token_to_pool(ctx: Context<AddTokenToPool>) -> Result<()> {
-        perps::add_token_to_pool(ctx)
+    /// Adds a new supported token with its own vault and Pyth price feed.
+    pub fn add_token_to_pool(ctx: Context<AddTokenToPool>, pyth_feed_id: [u8; 32]) -> Result<()> {
+        perps::add_token_to_pool(ctx, pyth_feed_id)
     }
 
     /// Add a trading market to a perps pool

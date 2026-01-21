@@ -65,5 +65,8 @@ export * from './auto-consolidator';
 // Export perpetual futures module
 export * from './perps';
 
+// Export Pyth oracle integration
+export * from './pyth';
+
 // Export voting module
 export * from './voting';

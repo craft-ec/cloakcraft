@@ -23,8 +23,9 @@ pub struct PerpsToken {
     /// Token vault PDA holding pool assets
     pub vault: Pubkey,
 
-    /// Price oracle (Pyth or custom)
-    pub oracle: Pubkey,
+    /// Pyth price feed ID (32 bytes hex)
+    /// Used to validate the passed price update account
+    pub pyth_feed_id: [u8; 32],
 
     /// Total balance in the pool (deposited by LPs)
     pub balance: u64,
