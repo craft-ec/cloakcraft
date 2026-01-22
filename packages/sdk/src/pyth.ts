@@ -1,11 +1,12 @@
 /**
- * Pyth Oracle Integration
+ * Pyth Oracle Integration (Lightweight)
  *
- * Provides helpers for fetching and posting Pyth price updates.
- * Follows Jupiter's pattern: bundle price post + execute + close in one tx.
+ * Uses Hermes API directly to fetch prices without the heavy SDK dependencies.
+ * For posting price updates on-chain, users should use the Pyth SDK directly
+ * or pass an existing price update account.
  */
 
-import { Connection, PublicKey, TransactionInstruction, Keypair } from '@solana/web3.js';
+import { Connection, PublicKey } from '@solana/web3.js';
 
 // Pyth Feed IDs (from https://pyth.network/developers/price-feed-ids)
 export const PYTH_FEED_IDS = {
@@ -44,146 +45,53 @@ export function feedIdToHex(feedId: Uint8Array): string {
   return '0x' + Array.from(feedId).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Result of preparing Pyth price update instructions */
-export interface PythPriceUpdateResult {
-  /** The PriceUpdateV2 account address */
-  priceUpdateAccount: PublicKey;
-  /** Instructions to post the price update (prepend to your tx) */
-  postInstructions: TransactionInstruction[];
-  /** Instructions to close the price account (append to your tx to reclaim rent) */
-  closeInstructions: TransactionInstruction[];
+/** Pyth price data from Hermes API */
+export interface PythPrice {
+  price: bigint;
+  confidence: bigint;
+  expo: number;
+  publishTime: number;
 }
 
 /**
- * Pyth Price Service
+ * Pyth Price Service (Lightweight)
  *
- * Handles fetching price updates from Hermes and building instructions
- * to post/close price update accounts on Solana.
+ * Fetches prices directly from Hermes API without heavy SDK dependencies.
  */
 export class PythPriceService {
-  private connection: Connection;
   private hermesUrl: string;
-  private pythReceiver: any = null;
-  private hermesClient: any = null;
 
   constructor(
-    connection: Connection,
+    _connection?: Connection, // Keep for backward compatibility but unused
     hermesUrl: string = 'https://hermes.pyth.network'
   ) {
-    this.connection = connection;
     this.hermesUrl = hermesUrl;
   }
 
   /**
-   * Initialize the Pyth SDK (lazy load to avoid import issues)
-   */
-  private async init(payer: Keypair): Promise<void> {
-    if (this.pythReceiver && this.hermesClient) return;
-
-    // Dynamic imports to avoid module resolution issues
-    const { HermesClient } = await import('@pythnetwork/hermes-client');
-    const { PythSolanaReceiver } = await import('@pythnetwork/pyth-solana-receiver');
-
-    this.hermesClient = new HermesClient(this.hermesUrl);
-    this.pythReceiver = new PythSolanaReceiver({
-      connection: this.connection,
-      wallet: {
-        publicKey: payer.publicKey,
-        signTransaction: async (tx: any) => {
-          tx.sign([payer]);
-          return tx;
-        },
-        signAllTransactions: async (txs: any[]) => {
-          txs.forEach(tx => tx.sign([payer]));
-          return txs;
-        },
-      } as any,
-    });
-  }
-
-  /**
-   * Get instructions to post and close a Pyth price update.
-   *
-   * Usage (Jupiter style - all in one tx):
-   * ```
-   * const pyth = await pythService.preparePriceUpdate(feedId, payer);
-   *
-   * const tx = new Transaction()
-   *   .add(...pyth.postInstructions)    // Post price update
-   *   .add(yourPerpsInstruction)         // Your perps operation
-   *   .add(...pyth.closeInstructions);  // Reclaim rent
-   * ```
+   * Get the current price from Hermes API
    *
    * @param feedId - The Pyth feed ID (e.g., PYTH_FEED_IDS.BTC_USD)
-   * @param payer - The payer keypair
-   * @returns Instructions and price update account address
-   */
-  async preparePriceUpdate(
-    feedId: Uint8Array,
-    payer: Keypair
-  ): Promise<PythPriceUpdateResult> {
-    await this.init(payer);
-
-    const feedIdHex = feedIdToHex(feedId);
-
-    // Fetch latest price update from Hermes
-    const priceUpdates = await this.hermesClient.getLatestPriceUpdates([feedIdHex]);
-
-    if (!priceUpdates?.binary?.data?.length) {
-      throw new Error(`No price update available for feed ${feedIdHex}`);
-    }
-
-    // Build transaction to post price update
-    const txBuilder = this.pythReceiver.newTransactionBuilder({
-      closeUpdateAccounts: false, // We'll close manually
-    });
-    await txBuilder.addPostPriceUpdates(priceUpdates.binary.data);
-
-    // Get the instructions
-    const postInstructions = await txBuilder.buildInstructions();
-
-    // Get the price update account address
-    const priceUpdateAccount = this.pythReceiver.getPriceFeedAccountAddress(0, feedIdHex);
-
-    // Build close instruction
-    const closeBuilder = this.pythReceiver.newTransactionBuilder({
-      closeUpdateAccounts: true,
-    });
-    await closeBuilder.addClosePriceUpdateAccounts([priceUpdateAccount]);
-    const closeInstructions = await closeBuilder.buildInstructions();
-
-    return {
-      priceUpdateAccount,
-      postInstructions,
-      closeInstructions,
-    };
-  }
-
-  /**
-   * Get the current price from Hermes (off-chain, no tx needed)
-   *
-   * @param feedId - The Pyth feed ID
    * @returns The current price with metadata
    */
-  async getPrice(feedId: Uint8Array): Promise<{
-    price: bigint;
-    confidence: bigint;
-    expo: number;
-    publishTime: number;
-  }> {
-    if (!this.hermesClient) {
-      const { HermesClient } = await import('@pythnetwork/hermes-client');
-      this.hermesClient = new HermesClient(this.hermesUrl);
+  async getPrice(feedId: Uint8Array): Promise<PythPrice> {
+    const feedIdHex = feedIdToHex(feedId);
+
+    const response = await fetch(
+      `${this.hermesUrl}/v2/updates/price/latest?ids[]=${feedIdHex}`
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch price: ${response.statusText}`);
     }
 
-    const feedIdHex = feedIdToHex(feedId);
-    const priceUpdates = await this.hermesClient.getLatestPriceUpdates([feedIdHex]);
+    const data = await response.json();
 
-    if (!priceUpdates?.parsed?.length) {
+    if (!data?.parsed?.length) {
       throw new Error(`No price available for feed ${feedIdHex}`);
     }
 
-    const parsed = priceUpdates.parsed[0].price;
+    const parsed = data.parsed[0].price;
     return {
       price: BigInt(parsed.price),
       confidence: BigInt(parsed.conf),
@@ -196,10 +104,10 @@ export class PythPriceService {
    * Get price in USD with decimals normalized
    *
    * @param feedId - The Pyth feed ID
-   * @param decimals - Desired decimal places (default 6)
+   * @param decimals - Desired decimal places (default 9 for Solana token standard)
    * @returns Price in USD * 10^decimals
    */
-  async getPriceUsd(feedId: Uint8Array, decimals: number = 6): Promise<bigint> {
+  async getPriceUsd(feedId: Uint8Array, decimals: number = 9): Promise<bigint> {
     const { price, expo } = await this.getPrice(feedId);
 
     // Pyth prices have negative exponent (e.g., expo = -8 means price is in 10^-8)
@@ -212,14 +120,65 @@ export class PythPriceService {
       return price / BigInt(10 ** (-expoAdjustment));
     }
   }
+
+  /**
+   * Get the VAA (Verified Action Approval) data for posting on-chain
+   *
+   * Returns the raw binary data that can be used with Pyth Receiver program
+   * to post a price update on-chain.
+   *
+   * @param feedId - The Pyth feed ID
+   * @returns The VAA binary data as base64 string
+   */
+  async getVaaData(feedId: Uint8Array): Promise<string[]> {
+    const feedIdHex = feedIdToHex(feedId);
+
+    const response = await fetch(
+      `${this.hermesUrl}/v2/updates/price/latest?ids[]=${feedIdHex}&encoding=base64`
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch VAA: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (!data?.binary?.data?.length) {
+      throw new Error(`No VAA available for feed ${feedIdHex}`);
+    }
+
+    return data.binary.data;
+  }
 }
 
 // Export singleton for convenience
 let defaultPythService: PythPriceService | null = null;
 
-export function getPythService(connection: Connection): PythPriceService {
+export function getPythService(connection?: Connection): PythPriceService {
   if (!defaultPythService) {
     defaultPythService = new PythPriceService(connection);
   }
   return defaultPythService;
 }
+
+/**
+ * NOTE: For posting price updates on-chain, you have two options:
+ *
+ * 1. Use the Pyth SDK directly in your application:
+ *    ```
+ *    import { PythSolanaReceiver } from '@pythnetwork/pyth-solana-receiver';
+ *    // ... create and post price update
+ *    ```
+ *
+ * 2. Pass an existing price update account to the perps functions:
+ *    ```
+ *    await client.openPerpsPosition({
+ *      ...params,
+ *      priceUpdate: existingPriceUpdateAccount,
+ *      oraclePrice: priceFromOracle,
+ *    });
+ *    ```
+ *
+ * The SDK will auto-fetch prices if oraclePrice is not provided,
+ * but you need to pass the priceUpdate account separately.
+ */

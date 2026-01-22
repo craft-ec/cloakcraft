@@ -4,8 +4,8 @@
 //! Tokens are added separately via add_token_to_pool instruction.
 
 use anchor_lang::prelude::*;
-use anchor_lang::system_program::{create_account, CreateAccount};
-use anchor_spl::token::{Token, InitializeMint};
+use anchor_lang::solana_program::program::invoke_signed;
+use anchor_spl::token::Token;
 
 use crate::state::PerpsPool;
 use crate::constants::seeds;
@@ -23,9 +23,13 @@ pub struct InitializePerpsPool<'info> {
     )]
     pub perps_pool: Account<'info, PerpsPool>,
 
-    /// LP token mint (created as regular mint with perps_pool as authority)
-    /// CHECK: This account is initialized as a mint via CPI and must be a signer
-    #[account(mut, signer)]
+    /// LP token mint (PDA derived from perps pool)
+    /// CHECK: This account is initialized as a mint via CPI
+    #[account(
+        mut,
+        seeds = [seeds::PERPS_LP_MINT, perps_pool.key().as_ref()],
+        bump
+    )]
     pub lp_mint: AccountInfo<'info>,
 
     /// Pool authority (admin)
@@ -84,36 +88,50 @@ pub fn initialize_perps_pool(
     params: InitializePerpsPoolParams,
 ) -> Result<()> {
     let perps_pool = &mut ctx.accounts.perps_pool;
+    let lp_mint_bump = ctx.bumps.lp_mint;
+    let perps_pool_key = perps_pool.key();
 
-    // Create LP mint account
+    // Create LP mint account as PDA using invoke_signed
     let rent = Rent::get()?;
     let space = 82; // Mint account size
     let lamports = rent.minimum_balance(space);
 
-    create_account(
-        CpiContext::new(
-            ctx.accounts.system_program.to_account_info(),
-            CreateAccount {
-                from: ctx.accounts.payer.to_account_info(),
-                to: ctx.accounts.lp_mint.to_account_info(),
-            },
+    // LP mint PDA seeds: [PERPS_LP_MINT, perps_pool.key()]
+    let bump_bytes = [lp_mint_bump];
+    let lp_mint_seeds: &[&[u8]] = &[
+        seeds::PERPS_LP_MINT,
+        perps_pool_key.as_ref(),
+        &bump_bytes,
+    ];
+
+    invoke_signed(
+        &anchor_lang::solana_program::system_instruction::create_account(
+            ctx.accounts.payer.key,
+            ctx.accounts.lp_mint.key,
+            lamports,
+            space as u64,
+            &ctx.accounts.token_program.key(),
         ),
-        lamports,
-        space as u64,
-        &ctx.accounts.token_program.key(),
+        &[
+            ctx.accounts.payer.to_account_info(),
+            ctx.accounts.lp_mint.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+        &[lp_mint_seeds],
     )?;
 
-    // Initialize the LP mint via CPI
+    // Initialize the LP mint via CPI with PDA signer
     let cpi_accounts = anchor_spl::token::InitializeMint {
         mint: ctx.accounts.lp_mint.to_account_info(),
         rent: ctx.accounts.rent.to_account_info(),
     };
     let cpi_program = ctx.accounts.token_program.to_account_info();
-    let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+    let signer_seeds: &[&[&[u8]]] = &[lp_mint_seeds];
+    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
 
     // Set perps_pool as mint authority, no freeze authority
     // Using 6 decimals for LP token (matches USD value precision)
-    anchor_spl::token::initialize_mint(cpi_ctx, 6, &perps_pool.key(), None)?;
+    anchor_spl::token::initialize_mint(cpi_ctx, 6, &perps_pool_key, None)?;
 
     // Initialize pool state
     perps_pool.pool_id = pool_id;
@@ -135,13 +153,13 @@ pub fn initialize_perps_pool(
     // State
     perps_pool.is_active = true;
     perps_pool.bump = ctx.bumps.perps_pool;
-    perps_pool.lp_mint_bump = 0; // Not a PDA
+    perps_pool.lp_mint_bump = lp_mint_bump;
 
     msg!(
-        "Perps pool initialized: pool_id={}, max_leverage={}x, position_fee={}bps",
+        "Perps pool initialized: pool_id={}, lp_mint={}, max_leverage={}x",
         pool_id,
-        params.max_leverage,
-        params.position_fee_bps
+        ctx.accounts.lp_mint.key(),
+        params.max_leverage
     );
 
     Ok(())

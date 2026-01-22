@@ -6,18 +6,19 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-cloakcraft = "FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a"
+cloakcraft = "HWRkcHVYDnMYrvVY9oQXaXU9dnxHA3RnRJpbXHW1BouZ"
 
 [programs.devnet]
-cloakcraft = "FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a"
+cloakcraft = "HWRkcHVYDnMYrvVY9oQXaXU9dnxHA3RnRJpbXHW1BouZ"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "https://devnet.helius-rpc.com/?api-key=88ac54a3-8850-4686-a521-70d116779182"
+cluster = "https://devnet.helius-rpc.com/?api-key=59353f30-dd17-43ae-9913-3599b9d99b11"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
 build = "./scripts/build-circuits.sh && anchor build"
+build-devnet = "./scripts/build-circuits.sh && anchor build -- --features devnet"

@@ -3347,26 +3347,16 @@ export class CloakCraftClient {
     // Get price from Pyth if not provided
     const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
     let oraclePrice = params.oraclePrice;
-    let pythPriceUpdate = params.priceUpdate;
-    let pythPostIxs: any[] = [];
-    let pythCloseIxs: any[] = [];
+    const pythPriceUpdate = params.priceUpdate;
 
-    if (!oraclePrice || !pythPriceUpdate) {
+    if (!oraclePrice) {
+      // Fetch current price from Pyth Hermes API
       const pythService = new PythPriceService(this.connection);
-      const relayerKeypair = relayer || SolanaKeypair.generate(); // Use relayer or temp keypair
+      oraclePrice = await pythService.getPriceUsd(feedId, 9); // 9 decimals for price
+    }
 
-      if (!oraclePrice) {
-        // Fetch current price from Pyth Hermes
-        oraclePrice = await pythService.getPriceUsd(feedId, 9); // 9 decimals for price
-      }
-
-      if (!pythPriceUpdate) {
-        // Prepare price update instructions (Jupiter style)
-        const pythResult = await pythService.preparePriceUpdate(feedId, relayerKeypair);
-        pythPriceUpdate = pythResult.priceUpdateAccount;
-        pythPostIxs = pythResult.postInstructions;
-        pythCloseIxs = pythResult.closeInstructions;
-      }
+    if (!pythPriceUpdate) {
+      throw new Error('priceUpdate account is required. Use @pythnetwork/pyth-solana-receiver to create one.');
     }
 
     params.onProgress?.('generating');
@@ -3539,20 +3529,24 @@ export class CloakCraftClient {
 
     // Build all versioned transactions
     // Jupiter-style bundling: prepend Pyth post to Phase 3, append Pyth close to Final
-    const transactions = [];
+    const transactions: { name: string; tx: any; extraSigners?: any[] }[] = [];
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
       let allInstructions = [...preIxs, mainIx];
+      let extraSigners: any[] = [];
 
-      // Bundle Pyth instructions Jupiter-style
-      if (name.includes('Phase 3') && pythPostIxs.length > 0) {
-        // Prepend Pyth price post instructions to Phase 3
-        allInstructions = [...pythPostIxs, ...allInstructions];
+      // Bundle Pyth post instructions into Phase 3
+      if (name.includes('Phase 3') && params.pythPostInstructions?.length) {
+        allInstructions = [...params.pythPostInstructions, ...allInstructions];
+        if (params.priceUpdateKeypair) {
+          extraSigners.push(params.priceUpdateKeypair);
+        }
       }
-      if (name.includes('Final') && pythCloseIxs.length > 0) {
-        // Append Pyth close instructions to Final transaction
-        allInstructions = [...allInstructions, ...pythCloseIxs];
+
+      // Bundle Pyth close instructions into Final
+      if (name.includes('Final') && params.pythCloseInstructions?.length) {
+        allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
 
       const tx = new VersionedTransaction(
@@ -3562,17 +3556,21 @@ export class CloakCraftClient {
           instructions: allInstructions,
         }).compileToV0Message(lookupTables)
       );
-      transactions.push({ name, tx });
+      transactions.push({ name, tx, extraSigners });
     }
 
     params.onProgress?.('executing');
 
     // Execute transactions in order
     let finalSignature = '';
-    for (const { name, tx } of transactions) {
+    for (const { name, tx, extraSigners } of transactions) {
       console.log(`[OpenPosition] Executing ${name}...`);
-      if (relayer) {
-        tx.sign([relayer]);
+      const signers = relayer ? [relayer] : [];
+      if (extraSigners?.length) {
+        signers.push(...extraSigners);
+      }
+      if (signers.length > 0) {
+        tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
       await this.connection.confirmTransaction(sig, 'confirmed');
@@ -3619,24 +3617,15 @@ export class CloakCraftClient {
     // Get price from Pyth if not provided
     const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
     let oraclePrice = params.oraclePrice;
-    let pythPriceUpdate = params.priceUpdate;
-    let pythPostIxs: any[] = [];
-    let pythCloseIxs: any[] = [];
+    const pythPriceUpdate = params.priceUpdate;
 
-    if (!oraclePrice || !pythPriceUpdate) {
+    if (!oraclePrice) {
       const pythService = new PythPriceService(this.connection);
-      const relayerKeypair = relayer || SolanaKeypair.generate();
+      oraclePrice = await pythService.getPriceUsd(feedId, 9);
+    }
 
-      if (!oraclePrice) {
-        oraclePrice = await pythService.getPriceUsd(feedId, 9);
-      }
-
-      if (!pythPriceUpdate) {
-        const pythResult = await pythService.preparePriceUpdate(feedId, relayerKeypair);
-        pythPriceUpdate = pythResult.priceUpdateAccount;
-        pythPostIxs = pythResult.postInstructions;
-        pythCloseIxs = pythResult.closeInstructions;
-      }
+    if (!pythPriceUpdate) {
+      throw new Error('priceUpdate account is required. Use @pythnetwork/pyth-solana-receiver to create one.');
     }
 
     params.onProgress?.('generating');
@@ -3802,20 +3791,24 @@ export class CloakCraftClient {
 
     // Build all versioned transactions
     // Jupiter-style bundling: prepend Pyth post to Phase 3, append Pyth close to Final
-    const transactions = [];
+    const transactions: { name: string; tx: any; extraSigners?: any[] }[] = [];
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
       let allInstructions = [...preIxs, mainIx];
+      let extraSigners: any[] = [];
 
-      // Bundle Pyth instructions Jupiter-style
-      if (name.includes('Phase 3') && pythPostIxs.length > 0) {
-        // Prepend Pyth price post instructions to Phase 3
-        allInstructions = [...pythPostIxs, ...allInstructions];
+      // Bundle Pyth post instructions into Phase 3
+      if (name.includes('Phase 3') && params.pythPostInstructions?.length) {
+        allInstructions = [...params.pythPostInstructions, ...allInstructions];
+        if (params.priceUpdateKeypair) {
+          extraSigners.push(params.priceUpdateKeypair);
+        }
       }
-      if (name.includes('Final') && pythCloseIxs.length > 0) {
-        // Append Pyth close instructions to Final transaction
-        allInstructions = [...allInstructions, ...pythCloseIxs];
+
+      // Bundle Pyth close instructions into Final
+      if (name.includes('Final') && params.pythCloseInstructions?.length) {
+        allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
 
       const tx = new VersionedTransaction(
@@ -3825,17 +3818,21 @@ export class CloakCraftClient {
           instructions: allInstructions,
         }).compileToV0Message(lookupTables)
       );
-      transactions.push({ name, tx });
+      transactions.push({ name, tx, extraSigners });
     }
 
     params.onProgress?.('executing');
 
     // Execute transactions in order
     let finalSignature = '';
-    for (const { name, tx } of transactions) {
+    for (const { name, tx, extraSigners } of transactions) {
       console.log(`[ClosePosition] Executing ${name}...`);
-      if (relayer) {
-        tx.sign([relayer]);
+      const signers = relayer ? [relayer] : [];
+      if (extraSigners?.length) {
+        signers.push(...extraSigners);
+      }
+      if (signers.length > 0) {
+        tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
       await this.connection.confirmTransaction(sig, 'confirmed');
@@ -3882,27 +3879,16 @@ export class CloakCraftClient {
     // Get price from Pyth if not provided
     const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
     let oraclePrices = params.oraclePrices;
-    let pythPriceUpdate = params.priceUpdate;
-    let pythPostIxs: any[] = [];
-    let pythCloseIxs: any[] = [];
+    const pythPriceUpdate = params.priceUpdate;
 
-    if (!oraclePrices || !pythPriceUpdate) {
+    if (!oraclePrices) {
       const pythService = new PythPriceService(this.connection);
-      const relayerKeypair = relayer || SolanaKeypair.generate();
+      const price = await pythService.getPriceUsd(feedId, 9);
+      oraclePrices = [price];
+    }
 
-      if (!oraclePrices) {
-        // Fetch current price from Pyth Hermes (9 decimals for price)
-        const price = await pythService.getPriceUsd(feedId, 9);
-        oraclePrices = [price];
-      }
-
-      if (!pythPriceUpdate) {
-        // Prepare price update instructions (Jupiter style)
-        const pythResult = await pythService.preparePriceUpdate(feedId, relayerKeypair);
-        pythPriceUpdate = pythResult.priceUpdateAccount;
-        pythPostIxs = pythResult.postInstructions;
-        pythCloseIxs = pythResult.closeInstructions;
-      }
+    if (!pythPriceUpdate) {
+      throw new Error('priceUpdate account is required. Use @pythnetwork/pyth-solana-receiver to create one.');
     }
 
     params.onProgress?.('generating');
@@ -3960,7 +3946,9 @@ export class CloakCraftClient {
     const [depositPoolPda] = derivePoolPda(inputTokenMint, this.programId);
     const depositPoolAccount = await (this.program.account as any).pool.fetch(depositPoolPda);
     const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, inputTokenMint, this.programId);
-    const [lpMintPda] = derivePerpsLpMintPda(params.poolId, this.programId);
+
+    // Get LP mint from already-fetched perps pool account (stored during initialization)
+    const lpMint = perpsPoolAccount.lpMint as PublicKey;
 
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
@@ -3982,7 +3970,7 @@ export class CloakCraftClient {
       depositPool: depositPoolPda,
       perpsPool: params.poolId,
       priceUpdate: pythPriceUpdate!,
-      lpMintAccount: lpMintPda,
+      lpMintAccount: lpMint,
       tokenVault: depositPoolAccount.tokenVault,
       proof,
       merkleRoot: params.merkleRoot,
@@ -3998,7 +3986,7 @@ export class CloakCraftClient {
       lpRecipient: params.lpRecipient,
       lpRandomness,
       tokenMint: inputTokenMint,
-      lpMint: lpMintPda,
+      lpMint: lpMint,
       lightVerifyParams: lightParams.lightVerifyParams,
       lightNullifierParams: lightParams.lightNullifierParams,
       remainingAccounts: lightParams.remainingAccounts,
@@ -4067,20 +4055,24 @@ export class CloakCraftClient {
 
     // Build all versioned transactions
     // Jupiter-style bundling: prepend Pyth post to Phase 3, append Pyth close to Final
-    const transactions = [];
+    const transactions: { name: string; tx: any; extraSigners?: any[] }[] = [];
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
       let allInstructions = [...preIxs, mainIx];
+      let extraSigners: any[] = [];
 
-      // Bundle Pyth instructions Jupiter-style
-      if (name.includes('Phase 3') && pythPostIxs.length > 0) {
-        // Prepend Pyth price post instructions to Phase 3
-        allInstructions = [...pythPostIxs, ...allInstructions];
+      // Bundle Pyth post instructions into Phase 3
+      if (name.includes('Phase 3') && params.pythPostInstructions?.length) {
+        allInstructions = [...params.pythPostInstructions, ...allInstructions];
+        if (params.priceUpdateKeypair) {
+          extraSigners.push(params.priceUpdateKeypair);
+        }
       }
-      if (name.includes('Final') && pythCloseIxs.length > 0) {
-        // Append Pyth close instructions to Final transaction
-        allInstructions = [...allInstructions, ...pythCloseIxs];
+
+      // Bundle Pyth close instructions into Final
+      if (name.includes('Final') && params.pythCloseInstructions?.length) {
+        allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
 
       const tx = new VersionedTransaction(
@@ -4090,17 +4082,21 @@ export class CloakCraftClient {
           instructions: allInstructions,
         }).compileToV0Message(lookupTables)
       );
-      transactions.push({ name, tx });
+      transactions.push({ name, tx, extraSigners });
     }
 
     params.onProgress?.('executing');
 
     // Execute transactions in order
     let finalSignature = '';
-    for (const { name, tx } of transactions) {
+    for (const { name, tx, extraSigners } of transactions) {
       console.log(`[AddPerpsLiquidity] Executing ${name}...`);
-      if (relayer) {
-        tx.sign([relayer]);
+      const signers = relayer ? [relayer] : [];
+      if (extraSigners?.length) {
+        signers.push(...extraSigners);
+      }
+      if (signers.length > 0) {
+        tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
       await this.connection.confirmTransaction(sig, 'confirmed');
@@ -4147,27 +4143,16 @@ export class CloakCraftClient {
     // Get price from Pyth if not provided
     const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
     let oraclePrices = params.oraclePrices;
-    let pythPriceUpdate = params.priceUpdate;
-    let pythPostIxs: any[] = [];
-    let pythCloseIxs: any[] = [];
+    const pythPriceUpdate = params.priceUpdate;
 
-    if (!oraclePrices || !pythPriceUpdate) {
+    if (!oraclePrices) {
       const pythService = new PythPriceService(this.connection);
-      const relayerKeypair = relayer || SolanaKeypair.generate();
+      const price = await pythService.getPriceUsd(feedId, 9);
+      oraclePrices = [price];
+    }
 
-      if (!oraclePrices) {
-        // Fetch current price from Pyth Hermes (9 decimals for price)
-        const price = await pythService.getPriceUsd(feedId, 9);
-        oraclePrices = [price];
-      }
-
-      if (!pythPriceUpdate) {
-        // Prepare price update instructions (Jupiter style)
-        const pythResult = await pythService.preparePriceUpdate(feedId, relayerKeypair);
-        pythPriceUpdate = pythResult.priceUpdateAccount;
-        pythPostIxs = pythResult.postInstructions;
-        pythCloseIxs = pythResult.closeInstructions;
-      }
+    if (!pythPriceUpdate) {
+      throw new Error('priceUpdate account is required. Use @pythnetwork/pyth-solana-receiver to create one.');
     }
 
     params.onProgress?.('generating');
@@ -4218,7 +4203,9 @@ export class CloakCraftClient {
     const [withdrawalPoolPda] = derivePoolPda(tokenMint, this.programId);
     const withdrawalPoolAccount = await (this.program.account as any).pool.fetch(withdrawalPoolPda);
     const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, tokenMint, this.programId);
-    const [lpMintPda] = derivePerpsLpMintPda(params.poolId, this.programId);
+
+    // Get LP mint from already-fetched perps pool data (stored during initialization)
+    const lpMint = poolData.lpMint as PublicKey;
 
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? (await this.getRelayerPubkey());
@@ -4247,7 +4234,7 @@ export class CloakCraftClient {
       withdrawalPool: withdrawalPoolPda,
       perpsPool: params.poolId,
       priceUpdate: pythPriceUpdate!,
-      lpMintAccount: lpMintPda,
+      lpMintAccount: lpMint,
       tokenVault: withdrawalPoolAccount.tokenVault,
       proof,
       merkleRoot: params.merkleRoot,
@@ -4266,7 +4253,7 @@ export class CloakCraftClient {
       outputRandomness: withdrawRandomness,
       lpChangeRandomness,
       tokenMint,
-      lpMint: lpMintPda,
+      lpMint: lpMint,
       lpChangeAmount: changeLpAmount,
       lightVerifyParams: lightParams.lightVerifyParams,
       lightNullifierParams: lightParams.lightNullifierParams,
@@ -4336,20 +4323,24 @@ export class CloakCraftClient {
 
     // Build all versioned transactions
     // Jupiter-style bundling: prepend Pyth post to Phase 3, append Pyth close to Final
-    const transactions = [];
+    const transactions: { name: string; tx: any; extraSigners?: any[] }[] = [];
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
       let allInstructions = [...preIxs, mainIx];
+      let extraSigners: any[] = [];
 
-      // Bundle Pyth instructions Jupiter-style
-      if (name.includes('Phase 3') && pythPostIxs.length > 0) {
-        // Prepend Pyth price post instructions to Phase 3
-        allInstructions = [...pythPostIxs, ...allInstructions];
+      // Bundle Pyth post instructions into Phase 3
+      if (name.includes('Phase 3') && params.pythPostInstructions?.length) {
+        allInstructions = [...params.pythPostInstructions, ...allInstructions];
+        if (params.priceUpdateKeypair) {
+          extraSigners.push(params.priceUpdateKeypair);
+        }
       }
-      if (name.includes('Final') && pythCloseIxs.length > 0) {
-        // Append Pyth close instructions to Final transaction
-        allInstructions = [...allInstructions, ...pythCloseIxs];
+
+      // Bundle Pyth close instructions into Final
+      if (name.includes('Final') && params.pythCloseInstructions?.length) {
+        allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
 
       const tx = new VersionedTransaction(
@@ -4359,17 +4350,21 @@ export class CloakCraftClient {
           instructions: allInstructions,
         }).compileToV0Message(lookupTables)
       );
-      transactions.push({ name, tx });
+      transactions.push({ name, tx, extraSigners });
     }
 
     params.onProgress?.('executing');
 
     // Execute transactions in order
     let finalSignature = '';
-    for (const { name, tx } of transactions) {
+    for (const { name, tx, extraSigners } of transactions) {
       console.log(`[RemovePerpsLiquidity] Executing ${name}...`);
-      if (relayer) {
-        tx.sign([relayer]);
+      const signers = relayer ? [relayer] : [];
+      if (extraSigners?.length) {
+        signers.push(...extraSigners);
+      }
+      if (signers.length > 0) {
+        tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
       await this.connection.confirmTransaction(sig, 'confirmed');

@@ -38,11 +38,11 @@ use instructions::perps::{
     CheckProfitBound, EmitProfitBoundEvent,
 };
 
-declare_id!("FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a");
+declare_id!("HWRkcHVYDnMYrvVY9oQXaXU9dnxHA3RnRJpbXHW1BouZ");
 
 /// Light Protocol CPI signer for compressed account operations
 pub const LIGHT_CPI_SIGNER: CpiSigner =
-    derive_light_cpi_signer!("FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a");
+    derive_light_cpi_signer!("HWRkcHVYDnMYrvVY9oQXaXU9dnxHA3RnRJpbXHW1BouZ");
 
 #[program]
 pub mod cloakcraft {

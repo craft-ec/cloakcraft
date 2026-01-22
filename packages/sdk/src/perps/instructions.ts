@@ -17,6 +17,7 @@ import type { StealthAddress } from '@cloakcraft/types';
 
 import {
   deriveVerificationKeyPda,
+  derivePoolPda,
   PROGRAM_ID,
 } from '../instructions/constants';
 import { derivePendingOperationPda, generateOperationId, PendingCommitmentData } from '../instructions/swap';
@@ -71,7 +72,7 @@ export const PERPS_SEEDS = {
   PERPS_POOL: Buffer.from('perps_pool'),
   PERPS_MARKET: Buffer.from('perps_market'),
   PERPS_VAULT: Buffer.from('perps_vault'),
-  PERPS_LP_MINT: Buffer.from('perps_lp'),
+  PERPS_LP_MINT: Buffer.from('perps_lp_mint'),
 } as const;
 
 export const PERPS_CIRCUIT_IDS = {
@@ -656,6 +657,8 @@ export async function buildAddPerpsLiquidityWithProgram(
 
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(PERPS_CIRCUIT_IDS.ADD_LIQUIDITY, programId);
+  // LP tokens are tracked in the LP pool (derived from LP mint)
+  const [lpPoolPda] = derivePoolPda(params.lpMint, programId);
 
   // Convert oracle prices to BN array (pad to 8)
   const oraclePricesBN: BN[] = [];
@@ -678,7 +681,7 @@ export async function buildAddPerpsLiquidityWithProgram(
       new BN(params.feeAmount.toString())
     )
     .accountsStrict({
-      settlementPool: params.depositPool,
+      depositPool: params.depositPool,
       perpsPool: params.perpsPool,
       verificationKey: vkPda,
       pendingOperation: pendingOpPda,
@@ -742,7 +745,7 @@ export async function buildAddPerpsLiquidityWithProgram(
   const lpEncrypted = encryptNote(lpNote as any, params.lpRecipient.stealthPubkey);
 
   const pendingCommitments: PendingCommitmentData[] = [{
-    pool: params.depositPool,
+    pool: lpPoolPda,
     commitment: params.lpCommitment,
     stealthEphemeralPubkey: new Uint8Array([
       ...params.lpRecipient.ephemeralPubkey.x,
@@ -842,6 +845,8 @@ export async function buildRemovePerpsLiquidityWithProgram(
 
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(PERPS_CIRCUIT_IDS.REMOVE_LIQUIDITY, programId);
+  // LP tokens are tracked in the LP pool (derived from LP mint)
+  const [lpPoolPda] = derivePoolPda(params.lpMint, programId);
 
   const oraclePricesBN: BN[] = [];
   for (let i = 0; i < 8; i++) {
@@ -864,7 +869,7 @@ export async function buildRemovePerpsLiquidityWithProgram(
       new BN(params.feeAmount.toString())
     )
     .accountsStrict({
-      settlementPool: params.withdrawalPool,
+      withdrawalPool: params.withdrawalPool,
       perpsPool: params.perpsPool,
       verificationKey: vkPda,
       pendingOperation: pendingOpPda,
@@ -875,11 +880,11 @@ export async function buildRemovePerpsLiquidityWithProgram(
       ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
     ]);
 
-  // Phase 1
+  // Phase 1 - Verify LP commitment exists (LP tokens are in LP pool)
   const phase1Tx = await program.methods
     .verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams)
     .accountsStrict({
-      pool: params.withdrawalPool,
+      pool: lpPoolPda,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
     })
@@ -888,11 +893,11 @@ export async function buildRemovePerpsLiquidityWithProgram(
       ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
     ]);
 
-  // Phase 2
+  // Phase 2 - Create nullifier for LP commitment (LP tokens are in LP pool)
   const phase2Tx = await program.methods
     .createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams)
     .accountsStrict({
-      pool: params.withdrawalPool,
+      pool: lpPoolPda,
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
     })
@@ -948,7 +953,7 @@ export async function buildRemovePerpsLiquidityWithProgram(
     const lpChangeEncrypted = encryptNote(lpChangeNote as any, params.lpChangeRecipient.stealthPubkey);
 
     pendingCommitments.push({
-      pool: params.withdrawalPool,
+      pool: lpPoolPda,  // LP change goes back to LP pool
       commitment: params.changeLpCommitment,
       stealthEphemeralPubkey: new Uint8Array([
         ...params.lpChangeRecipient.ephemeralPubkey.x,

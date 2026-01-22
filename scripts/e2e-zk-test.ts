@@ -349,7 +349,7 @@ function clearCache() {
 }
 
 // Program ID
-const PROGRAM_ID = new PublicKey("FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a");
+const PROGRAM_ID = new PublicKey("HWRkcHVYDnMYrvVY9oQXaXU9dnxHA3RnRJpbXHW1BouZ");
 
 // Seeds
 const POOL_SEED = Buffer.from("pool");
@@ -389,13 +389,422 @@ const PYTH_FEED_IDS = {
   ]),
 } as const;
 
-// Pyth price updates are now handled automatically by the SDK
-// The SDK fetches from Hermes, posts to Solana, and closes the account (Jupiter-style)
-// Just pass pythFeedId to perps operations and the SDK handles the rest
+// ============================================================================
+// PYTH ORACLE INTEGRATION (Production - No SDK Dependency Conflicts)
+// ============================================================================
+// Uses @pythnetwork/price-service-sdk for parsing (only depends on bn.js)
+// Builds raw instructions to Pyth Receiver program manually
 
-// Note: Pyth price updates are now handled automatically by the SDK
-// The SDK uses Jupiter-style bundling: post price -> execute -> close account
-// No manual setup needed - just pass pythFeedId to perps operations
+import { parseAccumulatorUpdateData } from "@pythnetwork/price-service-sdk";
+import { TransactionInstruction } from "@solana/web3.js";
+
+// Pyth program addresses
+const PYTH_RECEIVER_PROGRAM_ID = new PublicKey("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
+const WORMHOLE_PROGRAM_ID = new PublicKey("HDwcJBJXjL9FpJ7UBsYBtaDjsBUhuLCUYoz3zr8SWWaQ");
+
+// Constants for VAA manipulation
+const VAA_SIGNATURE_SIZE = 66;  // 1 byte guardian index + 65 bytes signature
+const DEFAULT_REDUCED_GUARDIAN_SET_SIZE = 4;  // Reduced to 4 signatures to fit in one tx (saves 66 bytes per sig removed)
+const CONFIG_SEED = Buffer.from("config");
+const TREASURY_SEED = Buffer.from("treasury");
+const GUARDIAN_SET_SEED = Buffer.from("GuardianSet");
+
+// PriceUpdateV2 account size (from Pyth Receiver program)
+const PRICE_UPDATE_V2_LEN = 8 + 32 + 1 + 8 + 8 + 4 + 8 + 8 + 32 + 8 + 8 + 200; // ~320 bytes
+
+interface PythPriceResult {
+  priceUpdate: PublicKey;
+  oraclePrice: bigint;
+  postInstructions: TransactionInstruction[];
+  closeInstructions: TransactionInstruction[];
+  priceUpdateKeypair: Keypair;
+}
+
+function feedIdToHex(feedId: Uint8Array): string {
+  return '0x' + Array.from(feedId).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Get guardian set index from VAA (byte 1-4, big-endian uint32)
+function getGuardianSetIndex(vaa: Buffer): number {
+  return vaa.readUInt32BE(1);
+}
+
+// Trim VAA signatures to fit in single transaction
+function trimSignatures(vaa: Buffer, n: number = DEFAULT_REDUCED_GUARDIAN_SET_SIZE): Buffer {
+  const numSignatures = vaa[5];
+  if (n > numSignatures) {
+    throw new Error(`Cannot trim to ${n} signatures, VAA only has ${numSignatures}`);
+  }
+
+  // Header: version (1) + guardian_set_index (4) + num_signatures (1) = 6 bytes
+  const headerSize = 6;
+  const signaturesStart = headerSize;
+  const signaturesEnd = signaturesStart + numSignatures * VAA_SIGNATURE_SIZE;
+  const payloadStart = signaturesEnd;
+
+  // Build new VAA with fewer signatures
+  const newVaa = Buffer.alloc(headerSize + n * VAA_SIGNATURE_SIZE + (vaa.length - payloadStart));
+
+  // Copy header (first 5 bytes)
+  vaa.copy(newVaa, 0, 0, 5);
+  // Update signature count
+  newVaa[5] = n;
+  // Copy first n signatures
+  vaa.copy(newVaa, headerSize, signaturesStart, signaturesStart + n * VAA_SIGNATURE_SIZE);
+  // Copy payload
+  vaa.copy(newVaa, headerSize + n * VAA_SIGNATURE_SIZE, payloadStart);
+
+  return newVaa;
+}
+
+// PDA derivation functions
+function getConfigPda(): PublicKey {
+  return PublicKey.findProgramAddressSync([CONFIG_SEED], PYTH_RECEIVER_PROGRAM_ID)[0];
+}
+
+function getTreasuryPda(treasuryId: number): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [TREASURY_SEED, Buffer.from([treasuryId])],
+    PYTH_RECEIVER_PROGRAM_ID
+  )[0];
+}
+
+function getGuardianSetPda(guardianSetIndex: number): PublicKey {
+  const indexBuf = Buffer.alloc(4);
+  indexBuf.writeUInt32BE(guardianSetIndex, 0);  // Wormhole uses big endian for guardian set index
+  return PublicKey.findProgramAddressSync(
+    [GUARDIAN_SET_SEED, indexBuf],
+    WORMHOLE_PROGRAM_ID
+  )[0];
+}
+
+// Serialize MerklePriceUpdate for instruction data
+// IMPORTANT: proof elements are fixed-size [u8; 20] arrays, NOT Vec<u8>
+// So we don't include length prefixes for individual proof elements
+function serializeMerklePriceUpdate(update: { message: Buffer; proof: number[][] }): Buffer {
+  // Message: Vec<u8> = 4-byte length + data
+  // Proof: Vec<[u8; 20]> = 4-byte count + (20 bytes per element, NO length prefixes)
+  const messageLen = update.message.length;
+  const proofCount = update.proof.length;
+
+  // Each proof element is exactly 20 bytes (fixed-size MerklePath)
+  const MERKLE_PATH_SIZE = 20;
+  let totalSize = 4 + messageLen + 4 + (proofCount * MERKLE_PATH_SIZE);
+
+  const buf = Buffer.alloc(totalSize);
+  let offset = 0;
+
+  // Write message length and message
+  buf.writeUInt32LE(messageLen, offset);
+  offset += 4;
+  Buffer.from(update.message).copy(buf, offset);
+  offset += messageLen;
+
+  // Write proof count (number of MerklePath elements)
+  buf.writeUInt32LE(proofCount, offset);
+  offset += 4;
+
+  // Write each proof element as fixed-size [u8; 20] - NO length prefix!
+  for (const p of update.proof) {
+    if (p.length !== MERKLE_PATH_SIZE) {
+      throw new Error(`Merkle proof element must be ${MERKLE_PATH_SIZE} bytes, got ${p.length}`);
+    }
+    Buffer.from(p).copy(buf, offset);
+    offset += MERKLE_PATH_SIZE;
+  }
+
+  return buf;
+}
+
+// Build postUpdateAtomic instruction
+function buildPostUpdateAtomicInstruction(
+  payer: PublicKey,
+  priceUpdateAccount: PublicKey,
+  guardianSetIndex: number,
+  vaa: Buffer,
+  update: { message: Buffer; proof: number[][] },
+  treasuryId: number = 0
+): TransactionInstruction {
+  /// Anchor discriminator for post_update_atomic (first 8 bytes of sha256("global:post_update_atomic"))
+  const discriminator = Buffer.from([49, 172, 84, 192, 175, 180, 52, 234]);
+
+  // Serialize instruction data
+  const serializedUpdate = serializeMerklePriceUpdate(update);
+
+  // VAA: 4-byte length prefix + data
+  const vaaLenBuf = Buffer.alloc(4);
+  vaaLenBuf.writeUInt32LE(vaa.length, 0);
+
+  const instructionData = Buffer.concat([
+    discriminator,
+    vaaLenBuf,
+    vaa,
+    serializedUpdate,
+    Buffer.from([treasuryId]),
+  ]);
+
+  // Account order must match IDL exactly:
+  // 0: payer (signer, mut)
+  // 1: guardian_set
+  // 2: config
+  // 3: treasury (mut)
+  // 4: price_update_account (signer, mut)
+  // 5: system_program
+  // 6: write_authority (signer)
+  const treasuryPda = getTreasuryPda(treasuryId);
+  const guardianSetPda = getGuardianSetPda(guardianSetIndex);
+  const configPda = getConfigPda();
+
+  console.log(`   [PostUpdateAtomic] Accounts:`);
+  console.log(`     [0] payer: ${payer.toBase58()}`);
+  console.log(`     [1] guardianSet: ${guardianSetPda.toBase58()}`);
+  console.log(`     [2] config: ${configPda.toBase58()}`);
+  console.log(`     [3] treasury: ${treasuryPda.toBase58()}`);
+  console.log(`     [4] priceUpdateAccount: ${priceUpdateAccount.toBase58()}`);
+  console.log(`     [5] systemProgram: ${SystemProgram.programId.toBase58()}`);
+  console.log(`     [6] writeAuthority: ${payer.toBase58()}`);
+
+  const accounts = [
+    { pubkey: payer, isSigner: true, isWritable: true },                    // payer
+    { pubkey: guardianSetPda, isSigner: false, isWritable: false },         // guardian_set
+    { pubkey: configPda, isSigner: false, isWritable: false },              // config
+    { pubkey: treasuryPda, isSigner: false, isWritable: true },             // treasury
+    { pubkey: priceUpdateAccount, isSigner: true, isWritable: true },       // price_update_account
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+    { pubkey: payer, isSigner: true, isWritable: false },                   // write_authority (same as payer)
+  ];
+
+  return new TransactionInstruction({
+    programId: PYTH_RECEIVER_PROGRAM_ID,
+    keys: accounts,
+    data: instructionData,
+  });
+}
+
+// Build close price update account instruction
+function buildClosePriceUpdateInstruction(
+  payer: PublicKey,
+  priceUpdateAccount: PublicKey
+): TransactionInstruction {
+  // Anchor discriminator for reclaim_rent (first 8 bytes of sha256("global:reclaim_rent"))
+  const discriminator = Buffer.from([218, 200, 19, 197, 227, 89, 192, 22]);
+
+  const accounts = [
+    { pubkey: payer, isSigner: true, isWritable: true },                    // payer
+    { pubkey: priceUpdateAccount, isSigner: false, isWritable: true },      // price_update_account
+  ];
+
+  return new TransactionInstruction({
+    programId: PYTH_RECEIVER_PROGRAM_ID,
+    keys: accounts,
+    data: discriminator,
+  });
+}
+
+// Cache for Pyth price updates
+let cachedPythResult: PythPriceResult | null = null;
+
+// Fetch and prepare Pyth price update (production implementation)
+async function getPythPriceUpdate(
+  connection: Connection,
+  feedId: Uint8Array,
+  payer: Keypair
+): Promise<PythPriceResult> {
+  // Return cached result if available and valid
+  if (cachedPythResult) {
+    return cachedPythResult;
+  }
+
+  const feedIdHex = feedIdToHex(feedId);
+  console.log(`   Fetching Pyth price update for ${feedIdHex}...`);
+
+  // Fetch from Hermes API
+  const response = await fetch(
+    `https://hermes.pyth.network/v2/updates/price/latest?ids[]=${feedIdHex}&encoding=base64`
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Pyth price: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+
+  if (!data?.binary?.data?.length) {
+    throw new Error(`No price update available for feed ${feedIdHex}`);
+  }
+
+  // Parse the oracle price
+  const parsed = data.parsed[0].price;
+  const price = BigInt(parsed.price);
+  const expo = parsed.expo;
+  const expoAdjustment = 9 + expo;
+  const oraclePrice = expoAdjustment >= 0
+    ? price * BigInt(10 ** expoAdjustment)
+    : price / BigInt(10 ** (-expoAdjustment));
+
+  console.log(`   Oracle price: $${Number(oraclePrice) / 1e9}`);
+
+  // Parse the accumulator update data
+  const updateData = Buffer.from(data.binary.data[0], "base64");
+  const accumulatorUpdate = parseAccumulatorUpdateData(updateData);
+
+  // Get guardian set index and trim VAA for single transaction
+  const guardianSetIndex = getGuardianSetIndex(accumulatorUpdate.vaa);
+  const trimmedVaa = trimSignatures(accumulatorUpdate.vaa, DEFAULT_REDUCED_GUARDIAN_SET_SIZE);
+
+  console.log(`   Guardian set index: ${guardianSetIndex}, Updates: ${accumulatorUpdate.updates.length}`);
+
+  // Create ephemeral keypair for price update account
+  const priceUpdateKeypair = Keypair.generate();
+
+  // Build post instruction for first update (we only need one price)
+  const update = accumulatorUpdate.updates[0];
+  // Use random treasury ID like Pyth SDK does
+  const treasuryId = Math.floor(Math.random() * 256);
+  const postInstruction = buildPostUpdateAtomicInstruction(
+    payer.publicKey,
+    priceUpdateKeypair.publicKey,
+    guardianSetIndex,
+    trimmedVaa,
+    update,
+    treasuryId
+  );
+
+  // Debug: print accounts
+  console.log(`   Treasury ID: ${treasuryId}, Treasury PDA: ${getTreasuryPda(treasuryId).toBase58()}`);
+  console.log(`   Price update account: ${priceUpdateKeypair.publicKey.toBase58()}`);
+
+  // Build close instruction
+  const closeInstruction = buildClosePriceUpdateInstruction(
+    payer.publicKey,
+    priceUpdateKeypair.publicKey
+  );
+
+  const result: PythPriceResult = {
+    priceUpdate: priceUpdateKeypair.publicKey,
+    oraclePrice,
+    postInstructions: [postInstruction],
+    closeInstructions: [closeInstruction],
+    priceUpdateKeypair,
+  };
+
+  cachedPythResult = result;
+  return result;
+}
+
+// Reset cache (for tests that need fresh price)
+function resetPythCache(): void {
+  cachedPythResult = null;
+}
+
+// Helper to fetch just the price (without creating on-chain account)
+async function fetchPythPrice(feedId: Uint8Array): Promise<bigint> {
+  const feedIdHex = feedIdToHex(feedId);
+  const response = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?ids[]=${feedIdHex}`);
+  const data = await response.json();
+  if (!data?.parsed?.length) throw new Error(`No price for ${feedIdHex}`);
+  const parsed = data.parsed[0].price;
+  const price = BigInt(parsed.price);
+  const expo = parsed.expo;
+  const expoAdjustment = 9 + expo;
+  if (expoAdjustment >= 0) {
+    return price * BigInt(10 ** expoAdjustment);
+  } else {
+    return price / BigInt(10 ** (-expoAdjustment));
+  }
+}
+
+// Helper to prepare Pyth price update data for bundling with perps transactions
+// Returns instructions and keypair for SDK to bundle into Phase 3 (post) and Final (close)
+async function preparePythForBundling(
+  connection: Connection,
+  feedId: Uint8Array,
+  payer: Keypair
+): Promise<{
+  priceUpdate: PublicKey;
+  oraclePrice: bigint;
+  priceUpdateKeypair: Keypair;
+  pythPostInstructions: TransactionInstruction[];
+  pythCloseInstructions: TransactionInstruction[];
+}> {
+  // Reset cache to get fresh price update
+  resetPythCache();
+
+  const pythResult = await getPythPriceUpdate(connection, feedId, payer);
+
+  return {
+    priceUpdate: pythResult.priceUpdate,
+    oraclePrice: pythResult.oraclePrice,
+    priceUpdateKeypair: pythResult.priceUpdateKeypair,
+    pythPostInstructions: pythResult.postInstructions,
+    pythCloseInstructions: pythResult.closeInstructions,
+  };
+}
+
+// Helper for position operations where bundling makes transaction too large
+// Creates Pyth price account in a separate transaction first
+async function createPythPriceAccountSeparate(
+  connection: Connection,
+  feedId: Uint8Array,
+  payer: Keypair
+): Promise<{
+  priceUpdate: PublicKey;
+  oraclePrice: bigint;
+  priceUpdateKeypair: Keypair;
+  closeInstructions: TransactionInstruction[];
+}> {
+  // Reset cache to get fresh price update
+  resetPythCache();
+
+  const pythResult = await getPythPriceUpdate(connection, feedId, payer);
+
+  // Send the post instructions as a separate transaction
+  const { VersionedTransaction, TransactionMessage } = await import('@solana/web3.js');
+  const { blockhash } = await connection.getLatestBlockhash('confirmed');
+
+  const postTx = new VersionedTransaction(
+    new TransactionMessage({
+      payerKey: payer.publicKey,
+      recentBlockhash: blockhash,
+      instructions: pythResult.postInstructions,
+    }).compileToV0Message()
+  );
+  postTx.sign([payer, pythResult.priceUpdateKeypair]);
+
+  const sig = await connection.sendTransaction(postTx, { skipPreflight: false });
+  await connection.confirmTransaction(sig, 'confirmed');
+  console.log(`   Pyth price account created: ${sig.slice(0, 20)}...`);
+
+  return {
+    priceUpdate: pythResult.priceUpdate,
+    oraclePrice: pythResult.oraclePrice,
+    priceUpdateKeypair: pythResult.priceUpdateKeypair,
+    closeInstructions: pythResult.closeInstructions,
+  };
+}
+
+// Helper to close Pyth price account separately
+async function closePythPriceAccountSeparate(
+  connection: Connection,
+  closeInstructions: TransactionInstruction[],
+  payer: Keypair
+): Promise<void> {
+  const { VersionedTransaction, TransactionMessage } = await import('@solana/web3.js');
+  const { blockhash } = await connection.getLatestBlockhash('confirmed');
+
+  const closeTx = new VersionedTransaction(
+    new TransactionMessage({
+      payerKey: payer.publicKey,
+      recentBlockhash: blockhash,
+      instructions: closeInstructions,
+    }).compileToV0Message()
+  );
+  closeTx.sign([payer]);
+
+  const sig = await connection.sendTransaction(closeTx, { skipPreflight: false });
+  await connection.confirmTransaction(sig, 'confirmed');
+  console.log(`   Pyth price account closed: ${sig.slice(0, 20)}...`);
+}
 
 // Test results tracking
 interface TestResult {
@@ -1838,8 +2247,12 @@ async function main() {
     if (!existingPerpsPool) {
       // Check if initialize_perps_pool instruction exists
       if (program.methods.initializePerpsPool) {
-        // Create LP mint keypair (it's a signer)
-        const perpsLpMintKeypair = Keypair.generate();
+        // Derive LP mint PDA from perps pool
+        const PERPS_LP_MINT_SEED = Buffer.from("perps_lp_mint");
+        const [perpsLpMintPda] = PublicKey.findProgramAddressSync(
+          [PERPS_LP_MINT_SEED, perpsPoolPda.toBuffer()],
+          PROGRAM_ID
+        );
 
         // Initialize perps pool params
         const perpsPoolParams = {
@@ -1856,16 +2269,15 @@ async function main() {
           .initializePerpsPool(poolId, perpsPoolParams)
           .accounts({
             perpsPool: perpsPoolPda,
-            lpMint: perpsLpMintKeypair.publicKey,
+            lpMint: perpsLpMintPda,
             authority: payer.publicKey,
             payer: payer.publicKey,
             systemProgram: SystemProgram.programId,
             tokenProgram: TOKEN_PROGRAM_ID,
             rent: SYSVAR_RENT_PUBKEY,
           })
-          .signers([perpsLpMintKeypair])
           .rpc();
-        console.log("   Perps pool initialized");
+        console.log(`   Perps pool initialized with LP mint: ${perpsLpMintPda.toBase58()}`);
 
         // Add tokens to the pool BEFORE creating market
         if (program.methods.addTokenToPool) {
@@ -1996,6 +2408,9 @@ async function main() {
 
         console.log(`   Adding ${depositAmount} liquidity to perps pool...`);
 
+        // Create Pyth price account in separate transaction (bundling makes tx too large)
+        const pythData = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.BTC_USD, payer);
+
         const addPerpsLiqResult = await client.addPerpsLiquidity(
           {
             poolId: perpsPoolPda,
@@ -2003,7 +2418,8 @@ async function main() {
             depositAmount,
             tokenIndex: 0,
             lpAmount: depositAmount,
-            pythFeedId: PYTH_FEED_IDS.BTC_USD, // SDK auto-fetches price and posts/closes account
+            oraclePrice: pythData.oraclePrice,
+            priceUpdate: pythData.priceUpdate,
             lpRecipient: plpStealth.stealthAddress,
             changeRecipient: changeStealth.stealthAddress,
             merkleRoot: perpsLiqMerkleProof.root,
@@ -2013,6 +2429,9 @@ async function main() {
           },
           payer
         );
+
+        // Close Pyth price account separately
+        await closePythPriceAccountSeparate(connection, pythData.closeInstructions, payer);
 
         logTest("Perps Add Liquidity", "PASS", `Added ${depositAmount} liquidity`, performance.now() - startTime);
       } else {
@@ -2071,6 +2490,9 @@ async function main() {
 
         console.log(`   Opening ${leverage}x long position with ${marginAmount} margin...`);
 
+        // Create Pyth price account separately (bundling makes transaction too large)
+        const pythData = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.BTC_USD, payer);
+
         const openPosResult = await client.openPerpsPosition(
           {
             poolId: perpsPoolPda,
@@ -2079,7 +2501,8 @@ async function main() {
             direction: 'long',
             marginAmount,
             leverage,
-            pythFeedId: PYTH_FEED_IDS.BTC_USD, // SDK auto-fetches price and posts/closes account
+            oraclePrice: pythData.oraclePrice,
+            priceUpdate: pythData.priceUpdate,
             positionRecipient: positionStealth.stealthAddress,
             changeRecipient: changeStealth.stealthAddress,
             merkleRoot: marginMerkleProof.root,
@@ -2089,6 +2512,9 @@ async function main() {
           },
           payer
         );
+
+        // Close Pyth price account to reclaim rent
+        await closePythPriceAccountSeparate(connection, pythData.closeInstructions, payer);
 
         logTest("Perps Open Position (Long)", "PASS", `Opened 5x long position`, performance.now() - startTime);
         console.log(`   TX: https://explorer.solana.com/tx/${openPosResult.signature}?cluster=devnet`);
@@ -2152,12 +2578,16 @@ async function main() {
 
           console.log(`   Closing position...`);
 
+          // Create Pyth price account separately (bundling makes transaction too large)
+          const pythData = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.BTC_USD, payer);
+
           const closePosResult = await client.closePerpsPosition(
             {
               poolId: perpsPoolPda,
               marketId: perpsMarketId,
               positionInput,
-              pythFeedId: PYTH_FEED_IDS.BTC_USD, // SDK auto-fetches price and posts/closes account
+              oraclePrice: pythData.oraclePrice,
+              priceUpdate: pythData.priceUpdate,
               settlementRecipient: settlementStealth.stealthAddress,
               merkleRoot: posMerkleProof.root,
               merklePath: posMerkleProof.pathElements,
@@ -2166,6 +2596,9 @@ async function main() {
             },
             payer
           );
+
+          // Close Pyth price account to reclaim rent
+          await closePythPriceAccountSeparate(connection, pythData.closeInstructions, payer);
 
           if (closePosResult.signature === 'perps_circuit_required') {
             logTest("Perps Close Position", "SKIP", "Full execution pending circuit integration");
@@ -2236,6 +2669,9 @@ async function main() {
 
           console.log(`   Removing ${burnAmount} PLP tokens...`);
 
+          // Create Pyth price account in separate transaction (bundling makes tx too large)
+          const pythData = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.BTC_USD, payer);
+
           const removePerpsLiqResult = await client.removePerpsLiquidity(
             {
               poolId: perpsPoolPda,
@@ -2243,7 +2679,8 @@ async function main() {
               tokenIndex: 0,  // First token in pool
               lpAmount: burnAmount,
               withdrawAmount: burnAmount,  // Expect 1:1 for test
-              pythFeedId: PYTH_FEED_IDS.BTC_USD, // SDK auto-fetches price and posts/closes account
+              oraclePrice: pythData.oraclePrice,
+              priceUpdate: pythData.priceUpdate,
               withdrawRecipient: collateralStealth.stealthAddress,
               lpChangeRecipient: plpChangeStealth.stealthAddress,
               merkleRoot: plpMerkleProof.root,
@@ -2253,6 +2690,9 @@ async function main() {
             },
             payer
           );
+
+          // Close Pyth price account separately
+          await closePythPriceAccountSeparate(connection, pythData.closeInstructions, payer);
 
           logTest("Perps Remove Liquidity", "PASS", `Removed ${burnAmount} PLP`, performance.now() - startTime);
         } else {
@@ -2603,6 +3043,9 @@ async function main() {
 
         console.log(`   Opening 5x SHORT position with ${shortMargin} margin...`);
 
+        // Create Pyth price account separately (bundling makes transaction too large)
+        const pythData = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.BTC_USD, payer);
+
         const shortPosResult = await client.openPerpsPosition(
           {
             poolId: perpsPoolPda,
@@ -2611,7 +3054,8 @@ async function main() {
             direction: 'short', // SHORT instead of long
             marginAmount: shortMargin,
             leverage: 5,
-            pythFeedId: PYTH_FEED_IDS.BTC_USD, // SDK auto-fetches price and posts/closes account
+            oraclePrice: pythData.oraclePrice,
+            priceUpdate: pythData.priceUpdate,
             positionRecipient: shortPosStealth.stealthAddress,
             changeRecipient: shortChangeStealth.stealthAddress,
             merkleRoot: shortMerkleProof.root,
@@ -2621,6 +3065,9 @@ async function main() {
           },
           payer
         );
+
+        // Close Pyth price account to reclaim rent
+        await closePythPriceAccountSeparate(connection, pythData.closeInstructions, payer);
 
         logTest("Perps Short Position", "PASS", `Opened 5x short`, performance.now() - startTime);
       } else {
@@ -2664,6 +3111,9 @@ async function main() {
 
         console.log(`   Opening 2x long position...`);
 
+        // Create Pyth price account separately (bundling makes transaction too large)
+        const pythData2x = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.BTC_USD, payer);
+
         const lev2Result = await client.openPerpsPosition(
           {
             poolId: perpsPoolPda,
@@ -2672,7 +3122,8 @@ async function main() {
             direction: 'long',
             marginAmount: 5_000_000_000n,
             leverage: 2, // LOW leverage
-            pythFeedId: PYTH_FEED_IDS.BTC_USD, // SDK auto-fetches price and posts/closes account
+            oraclePrice: pythData2x.oraclePrice,
+            priceUpdate: pythData2x.priceUpdate,
             positionRecipient: lev2PosStealth.stealthAddress,
             changeRecipient: lev2ChangeStealth.stealthAddress,
             merkleRoot: lev2Merkle.root,
@@ -2682,6 +3133,9 @@ async function main() {
           },
           payer
         );
+
+        // Close Pyth price account to reclaim rent
+        await closePythPriceAccountSeparate(connection, pythData2x.closeInstructions, payer);
 
         logTest("Perps 2x Leverage", "PASS", `Opened 2x position`, performance.now() - startTime);
       } else {
@@ -2711,6 +3165,9 @@ async function main() {
 
         console.log(`   Opening 10x long position...`);
 
+        // Create Pyth price account separately (bundling makes transaction too large)
+        const pythData10x = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.BTC_USD, payer);
+
         const lev10Result = await client.openPerpsPosition(
           {
             poolId: perpsPoolPda,
@@ -2719,7 +3176,8 @@ async function main() {
             direction: 'long',
             marginAmount: 5_000_000_000n,
             leverage: 10, // HIGH leverage
-            pythFeedId: PYTH_FEED_IDS.BTC_USD, // SDK auto-fetches price and posts/closes account
+            oraclePrice: pythData10x.oraclePrice,
+            priceUpdate: pythData10x.priceUpdate,
             positionRecipient: lev10PosStealth.stealthAddress,
             changeRecipient: lev10ChangeStealth.stealthAddress,
             merkleRoot: lev10Merkle.root,
@@ -2729,6 +3187,9 @@ async function main() {
           },
           payer
         );
+
+        // Close Pyth price account to reclaim rent
+        await closePythPriceAccountSeparate(connection, pythData10x.closeInstructions, payer);
 
         logTest("Perps 10x Leverage", "PASS", `Opened 10x position`, performance.now() - startTime);
       } else {
@@ -2779,12 +3240,16 @@ async function main() {
 
         console.log(`   Closing position at LOSS (price dropped)...`);
 
+        // Create Pyth price account separately (bundling makes transaction too large)
+        const pythDataLoss = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.BTC_USD, payer);
+
         const lossResult = await client.closePerpsPosition(
           {
             poolId: perpsPoolPda,
             marketId: perpsMarketId,
             positionInput: lossInput,
-            pythFeedId: PYTH_FEED_IDS.BTC_USD, // SDK auto-fetches price and posts/closes account
+            oraclePrice: pythDataLoss.oraclePrice,
+            priceUpdate: pythDataLoss.priceUpdate,
             settlementRecipient: lossSettleStealth.stealthAddress,
             merkleRoot: lossMerkle.root,
             merklePath: lossMerkle.pathElements,
@@ -2793,6 +3258,9 @@ async function main() {
           },
           payer
         );
+
+        // Close Pyth price account to reclaim rent
+        await closePythPriceAccountSeparate(connection, pythDataLoss.closeInstructions, payer);
 
         if (lossResult.signature === 'perps_circuit_required') {
           logTest("Perps Loss Scenario", "SKIP", "Pending circuit integration");
