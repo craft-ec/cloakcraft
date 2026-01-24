@@ -13,9 +13,9 @@ use anchor_lang::prelude::*;
 use light_sdk::LightDiscriminator;
 
 /// Maximum encrypted note size (fixed to avoid heap allocation issues)
-/// Contains: ECIES ephemeral pubkey (64) + ciphertext (~100) + tag (16) = ~180 bytes
-/// Using 200 bytes for safety margin
-pub const MAX_ENCRYPTED_NOTE_SIZE: usize = 200;
+/// Contains: ECIES ephemeral pubkey (64) + ciphertext (~up to 140) + tag (16) = ~220 bytes
+/// Using 250 bytes to support position notes (126 bytes plaintext) and LP notes (108 bytes)
+pub const MAX_ENCRYPTED_NOTE_SIZE: usize = 250;
 
 /// Commitment compressed account data
 ///

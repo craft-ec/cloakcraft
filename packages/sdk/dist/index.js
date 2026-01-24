@@ -187,6 +187,240 @@ var init_babyjubjub = __esm({
   }
 });
 
+// src/crypto/commitment.ts
+function computeCommitment(note) {
+  const stealthPubX = note.stealthPubX;
+  const tokenMintBytes = note.tokenMint instanceof Uint8Array ? note.tokenMint : note.tokenMint.toBytes();
+  const amountBytes = fieldToBytes(note.amount);
+  const randomness = note.randomness;
+  if (typeof process !== "undefined" && process.env.DEBUG_COMMITMENT) {
+    console.log("[computeCommitment] Inputs:");
+    console.log("  stealthPubX:", Buffer.from(stealthPubX).toString("hex").slice(0, 32));
+    console.log("  tokenMint:", Buffer.from(tokenMintBytes).toString("hex").slice(0, 32));
+    console.log("  amount (bigint):", note.amount.toString());
+    console.log("  amount (bytes):", Buffer.from(amountBytes).toString("hex").slice(0, 32));
+    console.log("  randomness:", Buffer.from(randomness).toString("hex").slice(0, 32));
+  }
+  return poseidonHashDomain(
+    DOMAIN_COMMITMENT,
+    stealthPubX,
+    tokenMintBytes,
+    amountBytes,
+    randomness
+  );
+}
+function verifyCommitment(commitment, note) {
+  const computed = computeCommitment(note);
+  return bytesToField(computed) === bytesToField(commitment);
+}
+function generateRandomness() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const value = bytesToField(bytes);
+  return fieldToBytes(value);
+}
+function createNote(stealthPubX, tokenMint, amount, randomness) {
+  return {
+    stealthPubX,
+    tokenMint,
+    amount,
+    randomness: randomness ?? generateRandomness()
+  };
+}
+function computePositionCommitment(note) {
+  const stage1 = poseidonHashDomain(
+    POSITION_COMMITMENT_DOMAIN,
+    note.stealthPubX,
+    note.marketId,
+    fieldToBytes(BigInt(note.isLong ? 1 : 0)),
+    fieldToBytes(note.margin)
+  );
+  const commitment = poseidonHash([
+    stage1,
+    fieldToBytes(note.size),
+    fieldToBytes(BigInt(note.leverage)),
+    fieldToBytes(note.entryPrice),
+    note.randomness
+  ]);
+  return commitment;
+}
+function verifyPositionCommitment(commitment, note) {
+  const computed = computePositionCommitment(note);
+  return bytesToField(computed) === bytesToField(commitment);
+}
+function createPositionNote(stealthPubX, marketId, isLong, margin, size, leverage, entryPrice, randomness) {
+  return {
+    noteType: NOTE_TYPE_POSITION,
+    stealthPubX,
+    marketId,
+    isLong,
+    margin,
+    size,
+    leverage,
+    entryPrice,
+    randomness: randomness ?? generateRandomness()
+  };
+}
+function computeLpCommitment(note) {
+  return poseidonHashDomain(
+    LP_COMMITMENT_DOMAIN,
+    note.stealthPubX,
+    note.poolId,
+    fieldToBytes(note.lpAmount),
+    note.randomness
+  );
+}
+function verifyLpCommitment(commitment, note) {
+  const computed = computeLpCommitment(note);
+  return bytesToField(computed) === bytesToField(commitment);
+}
+function createLpNote(stealthPubX, poolId, lpAmount, randomness) {
+  return {
+    noteType: NOTE_TYPE_LP,
+    stealthPubX,
+    poolId,
+    lpAmount,
+    randomness: randomness ?? generateRandomness()
+  };
+}
+function serializePositionNote(note) {
+  const buffer = new Uint8Array(123);
+  let offset = 0;
+  buffer[offset] = NOTE_TYPE_POSITION;
+  offset += 1;
+  buffer.set(note.stealthPubX, offset);
+  offset += 32;
+  buffer.set(note.marketId, offset);
+  offset += 32;
+  buffer[offset] = note.isLong ? 1 : 0;
+  offset += 1;
+  let margin = note.margin;
+  for (let i = 0; i < 8; i++) {
+    buffer[offset + i] = Number(margin & 0xffn);
+    margin >>= 8n;
+  }
+  offset += 8;
+  let size = note.size;
+  for (let i = 0; i < 8; i++) {
+    buffer[offset + i] = Number(size & 0xffn);
+    size >>= 8n;
+  }
+  offset += 8;
+  buffer[offset] = note.leverage;
+  offset += 1;
+  let entryPrice = note.entryPrice;
+  for (let i = 0; i < 8; i++) {
+    buffer[offset + i] = Number(entryPrice & 0xffn);
+    entryPrice >>= 8n;
+  }
+  offset += 8;
+  buffer.set(note.randomness, offset);
+  return buffer;
+}
+function deserializePositionNote(data) {
+  if (data.length < 123) return null;
+  if (data[0] !== NOTE_TYPE_POSITION) return null;
+  let offset = 1;
+  const stealthPubX = new Uint8Array(data.slice(offset, offset + 32));
+  offset += 32;
+  const marketId = new Uint8Array(data.slice(offset, offset + 32));
+  offset += 32;
+  const isLong = data[offset] !== 0;
+  offset += 1;
+  let margin = 0n;
+  for (let i = 7; i >= 0; i--) {
+    margin = margin << 8n | BigInt(data[offset + i]);
+  }
+  offset += 8;
+  let size = 0n;
+  for (let i = 7; i >= 0; i--) {
+    size = size << 8n | BigInt(data[offset + i]);
+  }
+  offset += 8;
+  const leverage = data[offset];
+  offset += 1;
+  let entryPrice = 0n;
+  for (let i = 7; i >= 0; i--) {
+    entryPrice = entryPrice << 8n | BigInt(data[offset + i]);
+  }
+  offset += 8;
+  const randomness = new Uint8Array(data.slice(offset, offset + 32));
+  return {
+    noteType: NOTE_TYPE_POSITION,
+    stealthPubX,
+    marketId,
+    isLong,
+    margin,
+    size,
+    leverage,
+    entryPrice,
+    randomness
+  };
+}
+function serializeLpNote(note) {
+  const buffer = new Uint8Array(105);
+  let offset = 0;
+  buffer[offset] = NOTE_TYPE_LP;
+  offset += 1;
+  buffer.set(note.stealthPubX, offset);
+  offset += 32;
+  buffer.set(note.poolId, offset);
+  offset += 32;
+  let lpAmount = note.lpAmount;
+  for (let i = 0; i < 8; i++) {
+    buffer[offset + i] = Number(lpAmount & 0xffn);
+    lpAmount >>= 8n;
+  }
+  offset += 8;
+  buffer.set(note.randomness, offset);
+  return buffer;
+}
+function deserializeLpNote(data) {
+  if (data.length < 105) return null;
+  if (data[0] !== NOTE_TYPE_LP) return null;
+  let offset = 1;
+  const stealthPubX = new Uint8Array(data.slice(offset, offset + 32));
+  offset += 32;
+  const poolId = new Uint8Array(data.slice(offset, offset + 32));
+  offset += 32;
+  let lpAmount = 0n;
+  for (let i = 7; i >= 0; i--) {
+    lpAmount = lpAmount << 8n | BigInt(data[offset + i]);
+  }
+  offset += 8;
+  const randomness = new Uint8Array(data.slice(offset, offset + 32));
+  return {
+    noteType: NOTE_TYPE_LP,
+    stealthPubX,
+    poolId,
+    lpAmount,
+    randomness
+  };
+}
+function detectNoteType(data) {
+  if (data.length >= 1) {
+    if (data[0] === NOTE_TYPE_POSITION) {
+      return NOTE_TYPE_POSITION;
+    }
+    if (data[0] === NOTE_TYPE_LP) {
+      return NOTE_TYPE_LP;
+    }
+  }
+  return NOTE_TYPE_STANDARD;
+}
+var NOTE_TYPE_STANDARD, NOTE_TYPE_POSITION, NOTE_TYPE_LP, POSITION_COMMITMENT_DOMAIN, LP_COMMITMENT_DOMAIN;
+var init_commitment = __esm({
+  "src/crypto/commitment.ts"() {
+    "use strict";
+    init_poseidon();
+    NOTE_TYPE_STANDARD = 0;
+    NOTE_TYPE_POSITION = 128;
+    NOTE_TYPE_LP = 129;
+    POSITION_COMMITMENT_DOMAIN = 8n;
+    LP_COMMITMENT_DOMAIN = 9n;
+  }
+});
+
 // src/crypto/encryption.ts
 function encryptNote(note, recipientPubkey) {
   const ephemeralPrivate = generateRandomScalar();
@@ -211,6 +445,91 @@ function tryDecryptNote(encrypted, recipientPrivateKey) {
   try {
     return decryptNote(encrypted, recipientPrivateKey);
   } catch (err) {
+    return null;
+  }
+}
+function encryptPositionNote(note, recipientPubkey) {
+  const ephemeralPrivate = generateRandomScalar();
+  const ephemeralPubkey = derivePublicKey(ephemeralPrivate);
+  const sharedSecret = scalarMul(recipientPubkey, ephemeralPrivate);
+  const encKey = deriveEncryptionKey(sharedSecret.x);
+  const plaintext = serializePositionNote(note);
+  const { ciphertext, tag } = encryptAEAD(plaintext, encKey);
+  return {
+    ephemeralPubkey,
+    ciphertext,
+    tag
+  };
+}
+function decryptPositionNote(encrypted, recipientPrivateKey) {
+  try {
+    const sharedSecret = scalarMul(encrypted.ephemeralPubkey, recipientPrivateKey);
+    const decKey = deriveEncryptionKey(sharedSecret.x);
+    const plaintext = decryptAEAD(encrypted.ciphertext, encrypted.tag, decKey);
+    if (detectNoteType(plaintext) !== NOTE_TYPE_POSITION) {
+      return null;
+    }
+    return deserializePositionNote(plaintext);
+  } catch {
+    return null;
+  }
+}
+function tryDecryptPositionNote(encrypted, recipientPrivateKey) {
+  return decryptPositionNote(encrypted, recipientPrivateKey);
+}
+function encryptLpNote(note, recipientPubkey) {
+  const ephemeralPrivate = generateRandomScalar();
+  const ephemeralPubkey = derivePublicKey(ephemeralPrivate);
+  const sharedSecret = scalarMul(recipientPubkey, ephemeralPrivate);
+  const encKey = deriveEncryptionKey(sharedSecret.x);
+  const plaintext = serializeLpNote(note);
+  const { ciphertext, tag } = encryptAEAD(plaintext, encKey);
+  return {
+    ephemeralPubkey,
+    ciphertext,
+    tag
+  };
+}
+function decryptLpNote(encrypted, recipientPrivateKey) {
+  try {
+    const sharedSecret = scalarMul(encrypted.ephemeralPubkey, recipientPrivateKey);
+    const decKey = deriveEncryptionKey(sharedSecret.x);
+    const plaintext = decryptAEAD(encrypted.ciphertext, encrypted.tag, decKey);
+    if (detectNoteType(plaintext) !== NOTE_TYPE_LP) {
+      return null;
+    }
+    return deserializeLpNote(plaintext);
+  } catch {
+    return null;
+  }
+}
+function tryDecryptLpNote(encrypted, recipientPrivateKey) {
+  return decryptLpNote(encrypted, recipientPrivateKey);
+}
+function tryDecryptAnyNote(encrypted, recipientPrivateKey) {
+  try {
+    const sharedSecret = scalarMul(encrypted.ephemeralPubkey, recipientPrivateKey);
+    const decKey = deriveEncryptionKey(sharedSecret.x);
+    const plaintext = decryptAEAD(encrypted.ciphertext, encrypted.tag, decKey);
+    const noteType = detectNoteType(plaintext);
+    if (noteType === NOTE_TYPE_POSITION) {
+      const note = deserializePositionNote(plaintext);
+      if (note) {
+        return { type: "position", note };
+      }
+    } else if (noteType === NOTE_TYPE_LP) {
+      const note = deserializeLpNote(plaintext);
+      if (note) {
+        return { type: "lp", note };
+      }
+    } else {
+      const note = deserializeNote(plaintext);
+      if (note.amount >= 0n) {
+        return { type: "standard", note };
+      }
+    }
+    return null;
+  } catch {
     return null;
   }
 }
@@ -376,54 +695,8 @@ var init_encryption = __esm({
     import_web3 = require("@solana/web3.js");
     init_babyjubjub();
     init_poseidon();
+    init_commitment();
     SUBGROUP_ORDER3 = 2736030358979909402780800718157159386076813972158567259200215660948447373041n;
-  }
-});
-
-// src/crypto/commitment.ts
-function computeCommitment(note) {
-  const stealthPubX = note.stealthPubX;
-  const tokenMintBytes = note.tokenMint instanceof Uint8Array ? note.tokenMint : note.tokenMint.toBytes();
-  const amountBytes = fieldToBytes(note.amount);
-  const randomness = note.randomness;
-  if (typeof process !== "undefined" && process.env.DEBUG_COMMITMENT) {
-    console.log("[computeCommitment] Inputs:");
-    console.log("  stealthPubX:", Buffer.from(stealthPubX).toString("hex").slice(0, 32));
-    console.log("  tokenMint:", Buffer.from(tokenMintBytes).toString("hex").slice(0, 32));
-    console.log("  amount (bigint):", note.amount.toString());
-    console.log("  amount (bytes):", Buffer.from(amountBytes).toString("hex").slice(0, 32));
-    console.log("  randomness:", Buffer.from(randomness).toString("hex").slice(0, 32));
-  }
-  return poseidonHashDomain(
-    DOMAIN_COMMITMENT,
-    stealthPubX,
-    tokenMintBytes,
-    amountBytes,
-    randomness
-  );
-}
-function verifyCommitment(commitment, note) {
-  const computed = computeCommitment(note);
-  return bytesToField(computed) === bytesToField(commitment);
-}
-function generateRandomness() {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  const value = bytesToField(bytes);
-  return fieldToBytes(value);
-}
-function createNote(stealthPubX, tokenMint, amount, randomness) {
-  return {
-    stealthPubX,
-    tokenMint,
-    amount,
-    randomness: randomness ?? generateRandomness()
-  };
-}
-var init_commitment = __esm({
-  "src/crypto/commitment.ts"() {
-    "use strict";
-    init_poseidon();
   }
 });
 
@@ -497,7 +770,7 @@ var init_constants = __esm({
   "src/instructions/constants.ts"() {
     "use strict";
     import_web35 = require("@solana/web3.js");
-    PROGRAM_ID = new import_web35.PublicKey("FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a");
+    PROGRAM_ID = new import_web35.PublicKey("CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj");
     SEEDS = {
       POOL: Buffer.from("pool"),
       VAULT: Buffer.from("vault"),
@@ -1875,6 +2148,7 @@ __export(index_exports, {
   FIELD_MODULUS_FR: () => FIELD_MODULUS_FR,
   GENERATOR: () => GENERATOR,
   IDENTITY: () => IDENTITY,
+  LP_COMMITMENT_DOMAIN: () => LP_COMMITMENT_DOMAIN,
   LightClient: () => LightClient,
   LightCommitmentClient: () => LightCommitmentClient,
   LightProtocol: () => LightProtocol,
@@ -1882,13 +2156,19 @@ __export(index_exports, {
   MAX_FEE_BPS: () => MAX_FEE_BPS,
   MAX_PERPS_TOKENS: () => MAX_PERPS_TOKENS,
   MAX_TRANSACTION_SIZE: () => MAX_TRANSACTION_SIZE,
+  NOTE_TYPE_LP: () => NOTE_TYPE_LP,
+  NOTE_TYPE_POSITION: () => NOTE_TYPE_POSITION,
+  NOTE_TYPE_STANDARD: () => NOTE_TYPE_STANDARD,
   NoteManager: () => NoteManager,
   PERPS_CIRCUIT_IDS: () => PERPS_CIRCUIT_IDS,
   PERPS_SEEDS: () => PERPS_SEEDS,
+  POSITION_COMMITMENT_DOMAIN: () => POSITION_COMMITMENT_DOMAIN,
   PROGRAM_ID: () => PROGRAM_ID,
+  PYTH_FEED_IDS: () => PYTH_FEED_IDS,
   PoolAnalyticsCalculator: () => PoolAnalyticsCalculator,
   PoolType: () => import_types4.PoolType,
   ProofGenerator: () => ProofGenerator,
+  PythPriceService: () => PythPriceService,
   ResolutionMode: () => ResolutionMode,
   RevealMode: () => RevealMode,
   SEEDS: () => SEEDS,
@@ -1981,14 +2261,20 @@ __export(index_exports, {
   computeCircuitInputs: () => computeCircuitInputs,
   computeCommitment: () => computeCommitment,
   computeDecryptionShare: () => computeDecryptionShare,
+  computeLpCommitment: () => computeLpCommitment,
+  computePositionCommitment: () => computePositionCommitment,
   consolidationService: () => consolidationService,
   createAddressLookupTable: () => createAddressLookupTable,
   createCloakCraftALT: () => createCloakCraftALT,
+  createLpNote: () => createLpNote,
   createNote: () => createNote,
   createPendingTransaction: () => createPendingTransaction,
+  createPositionNote: () => createPositionNote,
   createWallet: () => createWallet,
   createWatchOnlyWallet: () => createWatchOnlyWallet,
+  decryptLpNote: () => decryptLpNote,
   decryptNote: () => decryptNote,
+  decryptPositionNote: () => decryptPositionNote,
   deriveActionNullifier: () => deriveActionNullifier,
   deriveAmmPoolPda: () => deriveAmmPoolPda,
   deriveBallotPda: () => deriveBallotPda,
@@ -2015,16 +2301,22 @@ __export(index_exports, {
   deriveWalletFromSignature: () => deriveWalletFromSignature,
   deserializeAmmPool: () => deserializeAmmPool,
   deserializeEncryptedNote: () => deserializeEncryptedNote,
+  deserializeLpNote: () => deserializeLpNote,
+  deserializePositionNote: () => deserializePositionNote,
+  detectNoteType: () => detectNoteType,
   disableAutoConsolidation: () => disableAutoConsolidation,
   elgamalEncrypt: () => elgamalEncrypt,
   enableAutoConsolidation: () => enableAutoConsolidation,
+  encryptLpNote: () => encryptLpNote,
   encryptNote: () => encryptNote,
+  encryptPositionNote: () => encryptPositionNote,
   encryptPreimage: () => encryptPreimage,
   encryptVote: () => encryptVote,
   estimateTotalCost: () => estimateTotalCost,
   estimateTransactionSize: () => estimateTransactionSize,
   executeVersionedTransaction: () => executeVersionedTransaction,
   extendAddressLookupTable: () => extendAddressLookupTable,
+  feedIdToHex: () => feedIdToHex,
   fetchAddressLookupTable: () => fetchAddressLookupTable,
   fetchAmmPool: () => fetchAmmPool,
   fetchProtocolFeeConfig: () => fetchProtocolFeeConfig,
@@ -2054,6 +2346,7 @@ __export(index_exports, {
   getFeeBps: () => getFeeBps,
   getInstructionFromAnchorMethod: () => getInstructionFromAnchorMethod,
   getLightProtocolCommonAccounts: () => getLightProtocolCommonAccounts,
+  getPythService: () => getPythService,
   getRandomStateTreeSet: () => getRandomStateTreeSet,
   getStateTreeSet: () => getStateTreeSet,
   initPoseidon: () => initPoseidon,
@@ -2084,8 +2377,13 @@ __export(index_exports, {
   serializeEncryptedNote: () => serializeEncryptedNote,
   serializeEncryptedVote: () => serializeEncryptedVote,
   serializeGroth16Proof: () => serializeGroth16Proof,
+  serializeLpNote: () => serializeLpNote,
+  serializePositionNote: () => serializePositionNote,
   storeCommitments: () => storeCommitments,
+  tryDecryptAnyNote: () => tryDecryptAnyNote,
+  tryDecryptLpNote: () => tryDecryptLpNote,
   tryDecryptNote: () => tryDecryptNote,
+  tryDecryptPositionNote: () => tryDecryptPositionNote,
   validateLiquidityAmounts: () => validateLiquidityAmounts,
   validateSwapAmount: () => validateSwapAmount,
   verifyAmmStateHash: () => verifyAmmStateHash,
@@ -2093,6 +2391,8 @@ __export(index_exports, {
   verifyDleqProof: () => verifyDleqProof,
   verifyFeeAmount: () => verifyFeeAmount,
   verifyInvariant: () => verifyInvariant,
+  verifyLpCommitment: () => verifyLpCommitment,
+  verifyPositionCommitment: () => verifyPositionCommitment,
   wouldExceedUtilization: () => wouldExceedUtilization
 });
 module.exports = __toCommonJS(index_exports);
@@ -3676,9 +3976,9 @@ var ProofGenerator = class {
     } else {
       changeCommitment = new Uint8Array(32);
     }
-    const POSITION_COMMITMENT_DOMAIN = 8n;
+    const POSITION_COMMITMENT_DOMAIN2 = 8n;
     const stage1 = poseidonHashDomain(
-      POSITION_COMMITMENT_DOMAIN,
+      POSITION_COMMITMENT_DOMAIN2,
       params.input.stealthPubX,
       fieldToBytes(params.marketId),
       fieldToBytes(BigInt(params.isLong ? 1 : 0)),
@@ -3764,9 +4064,9 @@ var ProofGenerator = class {
       throw new Error(`${circuitName} circuit not loaded. Circuits need to be compiled first.`);
     }
     const effectiveNullifierKey = deriveNullifierKey(params.position.spendingKey);
-    const POSITION_COMMITMENT_DOMAIN = 8n;
+    const POSITION_COMMITMENT_DOMAIN2 = 8n;
     const stage1 = poseidonHashDomain(
-      POSITION_COMMITMENT_DOMAIN,
+      POSITION_COMMITMENT_DOMAIN2,
       params.position.stealthPubX,
       fieldToBytes(params.position.marketId),
       fieldToBytes(BigInt(params.position.isLong ? 1 : 0)),
@@ -3876,9 +4176,9 @@ var ProofGenerator = class {
     const nullifier = deriveSpendingNullifier(effectiveNullifierKey, inputCommitment, params.input.leafIndex);
     const lpRandomness = generateRandomness();
     const tokenMint = params.input.tokenMint instanceof Uint8Array ? params.input.tokenMint : params.input.tokenMint.toBytes();
-    const LP_COMMITMENT_DOMAIN = 9n;
+    const LP_COMMITMENT_DOMAIN2 = 9n;
     const lpCommitment = poseidonHashDomain(
-      LP_COMMITMENT_DOMAIN,
+      LP_COMMITMENT_DOMAIN2,
       params.lpRecipient.stealthPubkey.x,
       params.perpsPoolId,
       fieldToBytes(params.lpAmountMinted),
@@ -3939,9 +4239,9 @@ var ProofGenerator = class {
       throw new Error(`${circuitName} circuit not loaded. Circuits need to be compiled first.`);
     }
     const effectiveNullifierKey = deriveNullifierKey(params.lpInput.spendingKey);
-    const LP_COMMITMENT_DOMAIN = 9n;
+    const LP_COMMITMENT_DOMAIN2 = 9n;
     const lpCommitment = poseidonHashDomain(
-      LP_COMMITMENT_DOMAIN,
+      LP_COMMITMENT_DOMAIN2,
       params.lpInput.stealthPubX,
       params.perpsPoolId,
       fieldToBytes(params.lpInput.lpAmount),
@@ -3961,7 +4261,7 @@ var ProofGenerator = class {
       randomness: outputRandomness
     });
     const changeLpCommitment = poseidonHashDomain(
-      LP_COMMITMENT_DOMAIN,
+      LP_COMMITMENT_DOMAIN2,
       params.lpInput.stealthPubX,
       // Same owner
       params.perpsPoolId,
@@ -4520,23 +4820,29 @@ var LightCommitmentClient = class extends LightClient {
         continue;
       }
       const disc = account.data.discriminator;
+      console.log(`[scanNotes] Account ${account.hash.slice(0, 8)}... discriminator: ${disc}`);
       if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1e3) {
+        console.log(`[scanNotes] SKIPPED: discriminator mismatch (expected ~${COMMITMENT_DISCRIMINATOR_APPROX})`);
         cache.set(account.hash, null);
         continue;
       }
       const dataLen = atob(account.data.data).length;
+      console.log(`[scanNotes] Data length: ${dataLen} (need >= 346)`);
       if (dataLen < 346) {
+        console.log(`[scanNotes] SKIPPED: data too short`);
         cache.set(account.hash, null);
         continue;
       }
       try {
         const parsed = this.parseCommitmentAccountData(account.data.data);
         if (!parsed) {
+          console.log(`[scanNotes] SKIPPED: failed to parse commitment account`);
           cache.set(account.hash, null);
           continue;
         }
         const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
         if (!encryptedNote) {
+          console.log(`[scanNotes] SKIPPED: failed to deserialize encrypted note`);
           cache.set(account.hash, null);
           continue;
         }
@@ -4546,23 +4852,47 @@ var LightCommitmentClient = class extends LightClient {
         } else {
           decryptionKey = viewingKey;
         }
-        const note = tryDecryptNote(encryptedNote, decryptionKey);
-        if (note) {
-          const recomputed = computeCommitment(note);
-          const matches = Buffer.from(recomputed).toString("hex") === Buffer.from(parsed.commitment).toString("hex");
-          if (!matches) {
-            cache.set(account.hash, null);
-            continue;
-          }
-        }
-        if (!note) {
+        const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
+        console.log(`[scanNotes] Decryption result: ${decryptResult ? `SUCCESS (${decryptResult.type})` : "failed"}`);
+        if (!decryptResult) {
           cache.set(account.hash, null);
           continue;
         }
-        if (note.amount === 0n) {
+        let recomputed;
+        let noteAmount;
+        if (decryptResult.type === "standard") {
+          recomputed = computeCommitment(decryptResult.note);
+          noteAmount = decryptResult.note.amount;
+        } else if (decryptResult.type === "position") {
+          recomputed = computePositionCommitment(decryptResult.note);
+          noteAmount = decryptResult.note.margin;
+        } else if (decryptResult.type === "lp") {
+          recomputed = computeLpCommitment(decryptResult.note);
+          noteAmount = decryptResult.note.lpAmount;
+        } else {
           cache.set(account.hash, null);
           continue;
         }
+        const matches = Buffer.from(recomputed).toString("hex") === Buffer.from(parsed.commitment).toString("hex");
+        console.log(`[scanNotes] Commitment verification: ${matches ? "MATCH" : "MISMATCH"}`);
+        if (!matches) {
+          console.log(`[scanNotes]   Expected: ${Buffer.from(parsed.commitment).toString("hex").slice(0, 16)}...`);
+          console.log(`[scanNotes]   Got: ${Buffer.from(recomputed).toString("hex").slice(0, 16)}...`);
+          cache.set(account.hash, null);
+          continue;
+        }
+        if (noteAmount === 0n) {
+          console.log(`[scanNotes] SKIPPED: zero amount`);
+          cache.set(account.hash, null);
+          continue;
+        }
+        console.log(`[scanNotes] FOUND valid note: type=${decryptResult.type}, amount=${noteAmount}`);
+        if (decryptResult.type !== "standard") {
+          console.log(`[scanNotes] SKIPPED: non-standard note type (use scanPositionNotes or scanLpNotes)`);
+          cache.set(account.hash, null);
+          continue;
+        }
+        const note = decryptResult.note;
         const decryptedNote = {
           ...note,
           commitment: parsed.commitment,
@@ -4589,6 +4919,7 @@ var LightCommitmentClient = class extends LightClient {
    * @param poolPda - Pool PDA to filter by (optional). Note: pass the pool PDA, not the token mint.
    */
   async getCommitmentAccounts(programId, poolPda) {
+    console.log(`[getCommitmentAccounts] Querying with pool filter: ${poolPda?.toBase58() ?? "none"}`);
     const response = await fetch(this["rpcUrl"], {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4609,7 +4940,41 @@ var LightCommitmentClient = class extends LightClient {
     if (result.error) {
       throw new Error(`Helius RPC error: ${result.error.message}`);
     }
-    return result.result?.value?.items ?? result.result?.items ?? [];
+    const items = result.result?.value?.items ?? result.result?.items ?? [];
+    console.log(`[getCommitmentAccounts] Helius returned ${items.length} accounts`);
+    if (poolPda && items.length === 0) {
+      const debugResponse = await fetch(this["rpcUrl"], {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "getCompressedAccountsByOwner",
+          params: { owner: programId.toBase58() }
+        })
+      });
+      const debugResult = await debugResponse.json();
+      const totalItems = debugResult.result?.value?.items ?? debugResult.result?.items ?? [];
+      console.log(`[getCommitmentAccounts] DEBUG: Total accounts without filter: ${totalItems.length}`);
+      if (totalItems.length > 0) {
+        console.log(`[getCommitmentAccounts] DEBUG: First 3 account pools:`);
+        for (let i = 0; i < Math.min(3, totalItems.length); i++) {
+          const item = totalItems[i];
+          if (item.data?.data) {
+            try {
+              const dataBytes = Uint8Array.from(atob(item.data.data), (c) => c.charCodeAt(0));
+              if (dataBytes.length >= 32) {
+                const storedPool = new import_web34.PublicKey(dataBytes.slice(0, 32));
+                console.log(`  [${i}] Pool: ${storedPool.toBase58()}`);
+              }
+            } catch (e) {
+              console.log(`  [${i}] Failed to parse pool`);
+            }
+          }
+        }
+      }
+    }
+    return items;
   }
   /**
    * Parse commitment account data from base64
@@ -4698,7 +5063,465 @@ var LightCommitmentClient = class extends LightClient {
       return null;
     }
   }
+  // =========================================================================
+  // Position Note Scanner (Perps)
+  // =========================================================================
+  /**
+   * Scan for position notes belonging to a user
+   *
+   * Similar to scanNotes but specifically for perps position commitments.
+   * Uses the position commitment formula for verification.
+   *
+   * @param viewingKey - User's viewing private key (for decryption)
+   * @param programId - CloakCraft program ID
+   * @param positionPool - Position pool to scan
+   * @returns Array of decrypted position notes owned by the user
+   */
+  async scanPositionNotes(viewingKey, programId, positionPool) {
+    await initPoseidon();
+    const accounts = await this.getCommitmentAccounts(programId, positionPool);
+    console.log(`[scanPositionNotes] Found ${accounts.length} accounts in position pool`);
+    const COMMITMENT_DISCRIMINATOR_APPROX = 15491678376909513e3;
+    const positionNotes = [];
+    for (const account of accounts) {
+      if (!account.data?.data) {
+        continue;
+      }
+      const disc = account.data.discriminator;
+      if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1e3) {
+        continue;
+      }
+      const dataLen = atob(account.data.data).length;
+      if (dataLen < 346) {
+        continue;
+      }
+      try {
+        const parsed = this.parseCommitmentAccountData(account.data.data);
+        if (!parsed) continue;
+        const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
+        if (!encryptedNote) continue;
+        let decryptionKey;
+        if (parsed.stealthEphemeralPubkey) {
+          decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
+        } else {
+          decryptionKey = viewingKey;
+        }
+        const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
+        if (!decryptResult || decryptResult.type !== "position") {
+          continue;
+        }
+        const recomputed = computePositionCommitment(decryptResult.note);
+        const matches = Buffer.from(recomputed).toString("hex") === Buffer.from(parsed.commitment).toString("hex");
+        if (!matches) {
+          console.log(`[scanPositionNotes] Commitment mismatch for account ${account.hash.slice(0, 8)}...`);
+          continue;
+        }
+        if (decryptResult.note.margin === 0n) {
+          continue;
+        }
+        console.log(`[scanPositionNotes] FOUND valid position: margin=${decryptResult.note.margin}, size=${decryptResult.note.size}`);
+        const scannedNote = {
+          ...decryptResult.note,
+          spent: false,
+          // Will be set by scanPositionNotesWithStatus
+          nullifier: new Uint8Array(32),
+          // Will be computed by scanPositionNotesWithStatus
+          commitment: parsed.commitment,
+          leafIndex: parsed.leafIndex,
+          pool: positionPool,
+          accountHash: account.hash,
+          stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? void 0
+        };
+        positionNotes.push(scannedNote);
+      } catch {
+        continue;
+      }
+    }
+    return positionNotes;
+  }
+  /**
+   * Scan for position notes with spent status
+   */
+  async scanPositionNotesWithStatus(viewingKey, nullifierKey, programId, positionPool) {
+    const notes = await this.scanPositionNotes(viewingKey, programId, positionPool);
+    if (notes.length === 0) {
+      return [];
+    }
+    const addressTree = DEVNET_LIGHT_TREES.addressTree;
+    const nullifierData = [];
+    for (const note of notes) {
+      let effectiveNullifierKey = nullifierKey;
+      if (note.stealthEphemeralPubkey) {
+        const stealthSpendingKey = deriveStealthPrivateKey(viewingKey, note.stealthEphemeralPubkey);
+        effectiveNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
+      }
+      const nullifier = deriveSpendingNullifier(
+        effectiveNullifierKey,
+        note.commitment,
+        note.leafIndex
+      );
+      const address = this.deriveNullifierAddress(nullifier, programId, addressTree, note.pool);
+      nullifierData.push({ note, nullifier, address });
+    }
+    const addresses = nullifierData.map((d) => new import_web34.PublicKey(d.address).toBase58());
+    const spentSet = await this.batchCheckNullifiers(addresses);
+    return nullifierData.map(({ note, nullifier, address }) => {
+      const addressStr = new import_web34.PublicKey(address).toBase58();
+      return {
+        ...note,
+        spent: spentSet.has(addressStr),
+        nullifier
+      };
+    });
+  }
+  /**
+   * Get unspent position notes
+   */
+  async getUnspentPositionNotes(viewingKey, nullifierKey, programId, positionPool) {
+    const notes = await this.scanPositionNotesWithStatus(viewingKey, nullifierKey, programId, positionPool);
+    return notes.filter((n) => !n.spent);
+  }
+  // =========================================================================
+  // LP Note Scanner (Perps)
+  // =========================================================================
+  /**
+   * Scan for LP notes belonging to a user
+   *
+   * Similar to scanNotes but specifically for perps LP commitments.
+   * Uses the LP commitment formula for verification.
+   *
+   * @param viewingKey - User's viewing private key (for decryption)
+   * @param programId - CloakCraft program ID
+   * @param lpPool - LP pool to scan
+   * @returns Array of decrypted LP notes owned by the user
+   */
+  async scanLpNotes(viewingKey, programId, lpPool) {
+    await initPoseidon();
+    const accounts = await this.getCommitmentAccounts(programId, lpPool);
+    console.log(`[scanLpNotes] Found ${accounts.length} accounts in LP pool`);
+    const COMMITMENT_DISCRIMINATOR_APPROX = 15491678376909513e3;
+    const lpNotes = [];
+    for (const account of accounts) {
+      if (!account.data?.data) {
+        continue;
+      }
+      const disc = account.data.discriminator;
+      if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1e3) {
+        continue;
+      }
+      const dataLen = atob(account.data.data).length;
+      if (dataLen < 346) {
+        continue;
+      }
+      try {
+        const parsed = this.parseCommitmentAccountData(account.data.data);
+        if (!parsed) continue;
+        const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
+        if (!encryptedNote) continue;
+        let decryptionKey;
+        if (parsed.stealthEphemeralPubkey) {
+          decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
+        } else {
+          decryptionKey = viewingKey;
+        }
+        const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
+        if (!decryptResult || decryptResult.type !== "lp") {
+          continue;
+        }
+        const recomputed = computeLpCommitment(decryptResult.note);
+        const matches = Buffer.from(recomputed).toString("hex") === Buffer.from(parsed.commitment).toString("hex");
+        if (!matches) {
+          console.log(`[scanLpNotes] Commitment mismatch for account ${account.hash.slice(0, 8)}...`);
+          continue;
+        }
+        if (decryptResult.note.lpAmount === 0n) {
+          continue;
+        }
+        console.log(`[scanLpNotes] FOUND valid LP note: lpAmount=${decryptResult.note.lpAmount}`);
+        const scannedNote = {
+          ...decryptResult.note,
+          spent: false,
+          nullifier: new Uint8Array(32),
+          commitment: parsed.commitment,
+          leafIndex: parsed.leafIndex,
+          pool: lpPool,
+          accountHash: account.hash,
+          stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? void 0
+        };
+        lpNotes.push(scannedNote);
+      } catch {
+        continue;
+      }
+    }
+    return lpNotes;
+  }
+  /**
+   * Scan for LP notes with spent status
+   */
+  async scanLpNotesWithStatus(viewingKey, nullifierKey, programId, lpPool) {
+    const notes = await this.scanLpNotes(viewingKey, programId, lpPool);
+    if (notes.length === 0) {
+      return [];
+    }
+    const addressTree = DEVNET_LIGHT_TREES.addressTree;
+    const nullifierData = [];
+    for (const note of notes) {
+      let effectiveNullifierKey = nullifierKey;
+      if (note.stealthEphemeralPubkey) {
+        const stealthSpendingKey = deriveStealthPrivateKey(viewingKey, note.stealthEphemeralPubkey);
+        effectiveNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
+      }
+      const nullifier = deriveSpendingNullifier(
+        effectiveNullifierKey,
+        note.commitment,
+        note.leafIndex
+      );
+      const address = this.deriveNullifierAddress(nullifier, programId, addressTree, note.pool);
+      nullifierData.push({ note, nullifier, address });
+    }
+    const addresses = nullifierData.map((d) => new import_web34.PublicKey(d.address).toBase58());
+    const spentSet = await this.batchCheckNullifiers(addresses);
+    return nullifierData.map(({ note, nullifier, address }) => {
+      const addressStr = new import_web34.PublicKey(address).toBase58();
+      return {
+        ...note,
+        spent: spentSet.has(addressStr),
+        nullifier
+      };
+    });
+  }
+  /**
+   * Get unspent LP notes
+   */
+  async getUnspentLpNotes(viewingKey, nullifierKey, programId, lpPool) {
+    const notes = await this.scanLpNotesWithStatus(viewingKey, nullifierKey, programId, lpPool);
+    return notes.filter((n) => !n.spent);
+  }
 };
+
+// src/pyth.ts
+var PYTH_FEED_IDS = {
+  /** SOL/USD price feed */
+  SOL_USD: new Uint8Array([
+    239,
+    13,
+    139,
+    111,
+    218,
+    44,
+    235,
+    164,
+    29,
+    161,
+    93,
+    64,
+    149,
+    209,
+    218,
+    57,
+    42,
+    13,
+    47,
+    142,
+    208,
+    198,
+    199,
+    188,
+    15,
+    76,
+    250,
+    200,
+    194,
+    128,
+    181,
+    109
+  ]),
+  /** BTC/USD price feed */
+  BTC_USD: new Uint8Array([
+    230,
+    45,
+    246,
+    200,
+    180,
+    168,
+    95,
+    225,
+    166,
+    125,
+    180,
+    77,
+    193,
+    45,
+    229,
+    219,
+    51,
+    15,
+    122,
+    198,
+    107,
+    114,
+    220,
+    101,
+    138,
+    254,
+    223,
+    15,
+    74,
+    65,
+    91,
+    67
+  ]),
+  /** ETH/USD price feed */
+  ETH_USD: new Uint8Array([
+    255,
+    97,
+    73,
+    26,
+    147,
+    17,
+    18,
+    221,
+    241,
+    189,
+    129,
+    71,
+    205,
+    27,
+    100,
+    19,
+    117,
+    247,
+    159,
+    88,
+    37,
+    18,
+    109,
+    102,
+    84,
+    128,
+    135,
+    70,
+    52,
+    253,
+    10,
+    206
+  ]),
+  /** USDC/USD price feed */
+  USDC_USD: new Uint8Array([
+    234,
+    160,
+    32,
+    198,
+    28,
+    196,
+    121,
+    113,
+    42,
+    53,
+    122,
+    181,
+    228,
+    199,
+    154,
+    152,
+    237,
+    151,
+    158,
+    212,
+    48,
+    36,
+    247,
+    80,
+    86,
+    190,
+    45,
+    184,
+    191,
+    106,
+    67,
+    88
+  ])
+};
+function feedIdToHex(feedId) {
+  return "0x" + Array.from(feedId).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+var PythPriceService = class {
+  constructor(_connection, hermesUrl = "https://hermes.pyth.network") {
+    this.hermesUrl = hermesUrl;
+  }
+  /**
+   * Get the current price from Hermes API
+   *
+   * @param feedId - The Pyth feed ID (e.g., PYTH_FEED_IDS.BTC_USD)
+   * @returns The current price with metadata
+   */
+  async getPrice(feedId) {
+    const feedIdHex = feedIdToHex(feedId);
+    const response = await fetch(
+      `${this.hermesUrl}/v2/updates/price/latest?ids[]=${feedIdHex}`
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to fetch price: ${response.statusText}`);
+    }
+    const data = await response.json();
+    if (!data?.parsed?.length) {
+      throw new Error(`No price available for feed ${feedIdHex}`);
+    }
+    const parsed = data.parsed[0].price;
+    return {
+      price: BigInt(parsed.price),
+      confidence: BigInt(parsed.conf),
+      expo: parsed.expo,
+      publishTime: parsed.publish_time
+    };
+  }
+  /**
+   * Get price in USD with decimals normalized
+   *
+   * @param feedId - The Pyth feed ID
+   * @param decimals - Desired decimal places (default 9 for Solana token standard)
+   * @returns Price in USD * 10^decimals
+   */
+  async getPriceUsd(feedId, decimals = 9) {
+    const { price, expo } = await this.getPrice(feedId);
+    const expoAdjustment = decimals + expo;
+    if (expoAdjustment >= 0) {
+      return price * BigInt(10 ** expoAdjustment);
+    } else {
+      return price / BigInt(10 ** -expoAdjustment);
+    }
+  }
+  /**
+   * Get the VAA (Verified Action Approval) data for posting on-chain
+   *
+   * Returns the raw binary data that can be used with Pyth Receiver program
+   * to post a price update on-chain.
+   *
+   * @param feedId - The Pyth feed ID
+   * @returns The VAA binary data as base64 string
+   */
+  async getVaaData(feedId) {
+    const feedIdHex = feedIdToHex(feedId);
+    const response = await fetch(
+      `${this.hermesUrl}/v2/updates/price/latest?ids[]=${feedIdHex}&encoding=base64`
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to fetch VAA: ${response.statusText}`);
+    }
+    const data = await response.json();
+    if (!data?.binary?.data?.length) {
+      throw new Error(`No VAA available for feed ${feedIdHex}`);
+    }
+    return data.binary.data;
+  }
+};
+var defaultPythService = null;
+function getPythService(connection) {
+  if (!defaultPythService) {
+    defaultPythService = new PythPriceService(connection);
+  }
+  return defaultPythService;
+}
 
 // src/instructions/index.ts
 init_constants();
@@ -5735,11 +6558,154 @@ var import_bn5 = __toESM(require("bn.js"));
 init_constants();
 init_swap();
 init_encryption();
+init_commitment();
+var PYTH_FEED_IDS2 = {
+  /** SOL/USD price feed */
+  SOL_USD: new Uint8Array([
+    239,
+    13,
+    139,
+    111,
+    218,
+    44,
+    235,
+    164,
+    29,
+    161,
+    93,
+    64,
+    149,
+    209,
+    218,
+    57,
+    42,
+    13,
+    47,
+    142,
+    208,
+    198,
+    199,
+    188,
+    15,
+    76,
+    250,
+    200,
+    194,
+    128,
+    181,
+    109
+  ]),
+  /** BTC/USD price feed */
+  BTC_USD: new Uint8Array([
+    230,
+    45,
+    246,
+    200,
+    180,
+    168,
+    95,
+    225,
+    166,
+    125,
+    180,
+    77,
+    193,
+    45,
+    229,
+    219,
+    51,
+    15,
+    122,
+    198,
+    107,
+    114,
+    220,
+    101,
+    138,
+    254,
+    223,
+    15,
+    74,
+    65,
+    91,
+    67
+  ]),
+  /** ETH/USD price feed */
+  ETH_USD: new Uint8Array([
+    255,
+    97,
+    73,
+    26,
+    147,
+    17,
+    18,
+    221,
+    241,
+    189,
+    129,
+    71,
+    205,
+    27,
+    100,
+    19,
+    117,
+    247,
+    159,
+    88,
+    37,
+    18,
+    109,
+    102,
+    84,
+    128,
+    135,
+    70,
+    52,
+    253,
+    10,
+    206
+  ]),
+  /** USDC/USD price feed (stablecoin) */
+  USDC_USD: new Uint8Array([
+    234,
+    160,
+    32,
+    198,
+    28,
+    196,
+    121,
+    113,
+    42,
+    53,
+    122,
+    181,
+    228,
+    199,
+    154,
+    152,
+    237,
+    151,
+    158,
+    212,
+    48,
+    36,
+    247,
+    80,
+    86,
+    190,
+    45,
+    184,
+    191,
+    106,
+    67,
+    88
+  ])
+};
 var PERPS_SEEDS = {
   PERPS_POOL: Buffer.from("perps_pool"),
   PERPS_MARKET: Buffer.from("perps_market"),
   PERPS_VAULT: Buffer.from("perps_vault"),
-  PERPS_LP_MINT: Buffer.from("perps_lp")
+  PERPS_LP_MINT: Buffer.from("perps_lp_mint")
 };
 var PERPS_CIRCUIT_IDS = {
   OPEN_POSITION: "perps_open_position",
@@ -5796,6 +6762,7 @@ async function buildOpenPositionWithProgram(program, params) {
     new import_bn5.default(params.changeAmount.toString())
   ).accountsStrict({
     marginPool: params.settlementPool,
+    positionPool: params.positionPool,
     perpsPool: params.perpsPool,
     perpsMarket: params.market,
     verificationKey: vkPda,
@@ -5837,21 +6804,27 @@ async function buildOpenPositionWithProgram(program, params) {
     perpsPool: params.perpsPool,
     perpsMarket: params.market,
     pendingOperation: pendingOpPda,
-    relayer: params.relayer
+    relayer: params.relayer,
+    priceUpdate: params.priceUpdate
   }).preInstructions([
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 })
   ]);
-  const positionNote = {
-    stealthPubX: params.positionRecipient.stealthPubkey.x,
-    tokenMint: params.tokenMint,
-    amount: params.marginAmount,
-    // Position stores margin as amount
-    randomness: params.positionRandomness
-  };
-  const positionEncrypted = encryptNote(positionNote, params.positionRecipient.stealthPubkey);
+  const positionNote = createPositionNote(
+    params.positionRecipient.stealthPubkey.x,
+    params.marketId,
+    // Full 32-byte marketId for commitment computation
+    params.isLong,
+    params.marginAmount,
+    params.positionSize,
+    params.leverage,
+    params.entryPrice,
+    params.positionRandomness
+  );
+  const positionEncrypted = encryptPositionNote(positionNote, params.positionRecipient.stealthPubkey);
   const pendingCommitments = [
     {
-      pool: params.settlementPool,
+      pool: params.positionPool,
+      // Position commitment goes to position pool
       commitment: params.positionCommitment,
       stealthEphemeralPubkey: new Uint8Array([
         ...params.positionRecipient.ephemeralPubkey.x,
@@ -5870,6 +6843,7 @@ async function buildOpenPositionWithProgram(program, params) {
     const changeEncrypted = encryptNote(changeNote, params.changeRecipient.stealthPubkey);
     pendingCommitments.push({
       pool: params.settlementPool,
+      // Change goes back to margin pool
       commitment: params.changeCommitment,
       // Use change commitment from params
       stealthEphemeralPubkey: new Uint8Array([
@@ -5910,6 +6884,7 @@ async function buildClosePositionWithProgram(program, params) {
     new import_bn5.default(params.pnlAmount.toString()),
     params.isProfit
   ).accountsStrict({
+    positionPool: params.positionPool,
     settlementPool: params.settlementPool,
     perpsPool: params.perpsPool,
     perpsMarket: params.market,
@@ -5921,14 +6896,16 @@ async function buildClosePositionWithProgram(program, params) {
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 8e5 })
   ]);
   const phase1Tx = await program.methods.verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams).accountsStrict({
-    pool: params.settlementPool,
+    pool: params.positionPool,
+    // Position is in position pool
     pendingOperation: pendingOpPda,
     relayer: params.relayer
   }).remainingAccounts(params.remainingAccounts).preInstructions([
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 })
   ]);
   const phase2Tx = await program.methods.createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams).accountsStrict({
-    pool: params.settlementPool,
+    pool: params.positionPool,
+    // Nullify position in position pool
     pendingOperation: pendingOpPda,
     relayer: params.relayer
   }).remainingAccounts(params.remainingAccounts).preInstructions([
@@ -5944,7 +6921,8 @@ async function buildClosePositionWithProgram(program, params) {
     perpsPool: params.perpsPool,
     perpsMarket: params.market,
     pendingOperation: pendingOpPda,
-    relayer: params.relayer
+    relayer: params.relayer,
+    priceUpdate: params.priceUpdate
   }).preInstructions([
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 })
   ]);
@@ -5978,6 +6956,7 @@ async function buildAddPerpsLiquidityWithProgram(program, params) {
   const operationId = generateOperationId(params.nullifier, params.lpCommitment, Date.now());
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(PERPS_CIRCUIT_IDS.ADD_LIQUIDITY, programId);
+  const [lpPoolPda] = derivePoolPda(params.lpMint, programId);
   const oraclePricesBN = [];
   for (let i = 0; i < 8; i++) {
     oraclePricesBN.push(new import_bn5.default((params.oraclePrices[i] ?? 0n).toString()));
@@ -5994,7 +6973,8 @@ async function buildAddPerpsLiquidityWithProgram(program, params) {
     new import_bn5.default(params.lpAmountMinted.toString()),
     new import_bn5.default(params.feeAmount.toString())
   ).accountsStrict({
-    settlementPool: params.settlementPool,
+    depositPool: params.depositPool,
+    lpPool: lpPoolPda,
     perpsPool: params.perpsPool,
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
@@ -6004,37 +6984,40 @@ async function buildAddPerpsLiquidityWithProgram(program, params) {
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 8e5 })
   ]);
   const phase1Tx = await program.methods.verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams).accountsStrict({
-    pool: params.settlementPool,
+    pool: params.depositPool,
     pendingOperation: pendingOpPda,
     relayer: params.relayer
   }).remainingAccounts(params.remainingAccounts).preInstructions([
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 })
   ]);
   const phase2Tx = await program.methods.createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams).accountsStrict({
-    pool: params.settlementPool,
+    pool: params.depositPool,
     pendingOperation: pendingOpPda,
     relayer: params.relayer
   }).remainingAccounts(params.remainingAccounts).preInstructions([
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 })
   ]);
   const phase3Tx = await program.methods.executeAddPerpsLiquidity(Array.from(operationId), oraclePricesBN).accountsStrict({
-    settlementPool: params.settlementPool,
+    depositPool: params.depositPool,
     perpsPool: params.perpsPool,
+    lpMint: params.lpMintAccount,
+    tokenVault: params.tokenVault,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
+    priceUpdate: params.priceUpdate,
     tokenProgram: import_spl_token5.TOKEN_PROGRAM_ID
   }).preInstructions([
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 })
   ]);
-  const lpNote = {
-    stealthPubX: params.lpRecipient.stealthPubkey.x,
-    tokenMint: params.lpMint,
-    amount: params.lpAmountMinted,
-    randomness: params.lpRandomness
-  };
-  const lpEncrypted = encryptNote(lpNote, params.lpRecipient.stealthPubkey);
+  const lpNote = createLpNote(
+    params.lpRecipient.stealthPubkey.x,
+    params.perpsPoolId,
+    params.lpAmountMinted,
+    params.lpRandomness
+  );
+  const lpEncrypted = encryptLpNote(lpNote, params.lpRecipient.stealthPubkey);
   const pendingCommitments = [{
-    pool: params.settlementPool,
+    pool: lpPoolPda,
     commitment: params.lpCommitment,
     stealthEphemeralPubkey: new Uint8Array([
       ...params.lpRecipient.ephemeralPubkey.x,
@@ -6056,6 +7039,7 @@ async function buildRemovePerpsLiquidityWithProgram(program, params) {
   const operationId = generateOperationId(params.lpNullifier, params.outputCommitment, Date.now());
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
   const [vkPda] = deriveVerificationKeyPda(PERPS_CIRCUIT_IDS.REMOVE_LIQUIDITY, programId);
+  const [lpPoolPda] = derivePoolPda(params.lpMint, programId);
   const oraclePricesBN = [];
   for (let i = 0; i < 8; i++) {
     oraclePricesBN.push(new import_bn5.default((params.oraclePrices[i] ?? 0n).toString()));
@@ -6073,7 +7057,8 @@ async function buildRemovePerpsLiquidityWithProgram(program, params) {
     new import_bn5.default(params.lpAmountBurned.toString()),
     new import_bn5.default(params.feeAmount.toString())
   ).accountsStrict({
-    settlementPool: params.settlementPool,
+    withdrawalPool: params.withdrawalPool,
+    lpPool: lpPoolPda,
     perpsPool: params.perpsPool,
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
@@ -6083,24 +7068,27 @@ async function buildRemovePerpsLiquidityWithProgram(program, params) {
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 8e5 })
   ]);
   const phase1Tx = await program.methods.verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams).accountsStrict({
-    pool: params.settlementPool,
+    pool: lpPoolPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer
   }).remainingAccounts(params.remainingAccounts).preInstructions([
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 })
   ]);
   const phase2Tx = await program.methods.createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams).accountsStrict({
-    pool: params.settlementPool,
+    pool: lpPoolPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer
   }).remainingAccounts(params.remainingAccounts).preInstructions([
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 })
   ]);
   const phase3Tx = await program.methods.executeRemovePerpsLiquidity(Array.from(operationId), oraclePricesBN).accountsStrict({
-    settlementPool: params.settlementPool,
+    withdrawalPool: params.withdrawalPool,
     perpsPool: params.perpsPool,
+    lpMint: params.lpMintAccount,
+    tokenVault: params.tokenVault,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
+    priceUpdate: params.priceUpdate,
     tokenProgram: import_spl_token5.TOKEN_PROGRAM_ID
   }).preInstructions([
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 })
@@ -6113,7 +7101,7 @@ async function buildRemovePerpsLiquidityWithProgram(program, params) {
   };
   const outputEncrypted = encryptNote(outputNote, params.outputRecipient.stealthPubkey);
   const pendingCommitments = [{
-    pool: params.settlementPool,
+    pool: params.withdrawalPool,
     commitment: params.outputCommitment,
     stealthEphemeralPubkey: new Uint8Array([
       ...params.outputRecipient.ephemeralPubkey.x,
@@ -6122,15 +7110,16 @@ async function buildRemovePerpsLiquidityWithProgram(program, params) {
     encryptedNote: serializeEncryptedNote(outputEncrypted)
   }];
   if (params.lpChangeAmount > 0n) {
-    const lpChangeNote = {
-      stealthPubX: params.lpChangeRecipient.stealthPubkey.x,
-      tokenMint: params.lpMint,
-      amount: params.lpChangeAmount,
-      randomness: params.lpChangeRandomness
-    };
-    const lpChangeEncrypted = encryptNote(lpChangeNote, params.lpChangeRecipient.stealthPubkey);
+    const lpChangeNote = createLpNote(
+      params.lpChangeRecipient.stealthPubkey.x,
+      params.perpsPoolId,
+      params.lpChangeAmount,
+      params.lpChangeRandomness
+    );
+    const lpChangeEncrypted = encryptLpNote(lpChangeNote, params.lpChangeRecipient.stealthPubkey);
     pendingCommitments.push({
-      pool: params.settlementPool,
+      pool: lpPoolPda,
+      // LP change goes back to LP pool
       commitment: params.changeLpCommitment,
       stealthEphemeralPubkey: new Uint8Array([
         ...params.lpChangeRecipient.ephemeralPubkey.x,
@@ -6172,16 +7161,17 @@ async function buildInitializePerpsPoolWithProgram(program, params) {
 }
 async function buildAddTokenToPoolWithProgram(program, params) {
   const programId = program.programId;
-  const [vaultPda] = derivePerpsVaultPda(params.perpsPool, params.tokenMint, programId);
-  const tx = await program.methods.addTokenToPool().accountsStrict({
+  const { getAssociatedTokenAddressSync: getAssociatedTokenAddressSync2 } = await import("@solana/spl-token");
+  const vaultPda = getAssociatedTokenAddressSync2(params.tokenMint, params.perpsPool, true);
+  const tx = await program.methods.addTokenToPool(Array.from(params.pythFeedId)).accountsStrict({
     perpsPool: params.perpsPool,
     tokenMint: params.tokenMint,
-    vault: vaultPda,
-    oracle: params.oracle,
+    tokenVault: vaultPda,
     authority: params.authority,
     payer: params.payer,
     systemProgram: import_web313.SystemProgram.programId,
-    tokenProgram: import_spl_token5.TOKEN_PROGRAM_ID
+    tokenProgram: import_spl_token5.TOKEN_PROGRAM_ID,
+    associatedTokenProgram: new import_web313.PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
   });
   return { tx };
 }
@@ -8762,6 +9752,16 @@ var CloakCraftClient = class {
     if (!accountHash) {
       throw new Error("Input note missing accountHash. Use scanNotes() to get notes with accountHash.");
     }
+    const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
+    let oraclePrice = params.oraclePrice;
+    const pythPriceUpdate = params.priceUpdate;
+    if (!oraclePrice) {
+      const pythService = new PythPriceService(this.connection);
+      oraclePrice = await pythService.getPriceUsd(feedId, 9);
+    }
+    if (!pythPriceUpdate) {
+      throw new Error("priceUpdate account is required. Use @pythnetwork/pyth-solana-receiver to create one.");
+    }
     params.onProgress?.("generating");
     const positionFee = positionSize * 6n / 10000n;
     const tokenMint = params.input.tokenMint instanceof Uint8Array ? params.input.tokenMint : params.input.tokenMint.toBytes();
@@ -8782,7 +9782,7 @@ var CloakCraftClient = class {
       marginAmount: params.marginAmount,
       leverage: params.leverage,
       positionSize,
-      entryPrice: params.oraclePrice,
+      entryPrice: oraclePrice,
       positionFee,
       merkleRoot: params.merkleRoot,
       merklePath: params.merklePath,
@@ -8797,6 +9797,10 @@ var CloakCraftClient = class {
     const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
     const inputPoolAccount = await this.program.account.pool.fetch(inputPoolPda);
     const inputVault = inputPoolAccount.tokenVault;
+    const positionMint = perpsPoolAccount.positionMint;
+    const [positionPoolPda] = derivePoolPda(positionMint, this.programId);
+    console.log(`[OpenPosition] Position mint from perps pool: ${positionMint.toBase58()}`);
+    console.log(`[OpenPosition] Position pool derived: ${positionPoolPda.toBase58()}`);
     const [protocolConfigPda] = deriveProtocolConfigPda(this.programId);
     const inputCommitment = computeCommitment(params.input);
     const heliusRpcUrl = this.getHeliusRpcUrl();
@@ -8812,8 +9816,12 @@ var CloakCraftClient = class {
     const instructionParams = {
       // Required fields matching OpenPositionInstructionParams
       settlementPool: inputPoolPda,
+      positionPool: positionPoolPda,
       perpsPool: params.poolId,
       market: perpsMarketPda,
+      marketId: params.marketId,
+      // 32 bytes for position note encryption
+      priceUpdate: pythPriceUpdate,
       proof,
       merkleRoot: params.merkleRoot,
       inputCommitment,
@@ -8822,9 +9830,11 @@ var CloakCraftClient = class {
       changeCommitment,
       isLong: params.direction === "long",
       marginAmount: params.marginAmount,
+      positionSize,
+      // margin * leverage for position note
       leverage: params.leverage,
       positionFee,
-      entryPrice: params.oraclePrice,
+      entryPrice: oraclePrice,
       relayer: relayerPubkey,
       positionRecipient: params.positionRecipient,
       changeRecipient: params.changeRecipient,
@@ -8883,7 +9893,17 @@ var CloakCraftClient = class {
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
-      const allInstructions = [...preIxs, mainIx];
+      let allInstructions = [...preIxs, mainIx];
+      let extraSigners = [];
+      if (name.includes("Phase 3") && params.pythPostInstructions?.length) {
+        allInstructions = [...params.pythPostInstructions, ...allInstructions];
+        if (params.priceUpdateKeypair) {
+          extraSigners.push(params.priceUpdateKeypair);
+        }
+      }
+      if (name.includes("Final") && params.pythCloseInstructions?.length) {
+        allInstructions = [...allInstructions, ...params.pythCloseInstructions];
+      }
       const tx = new VersionedTransaction2(
         new TransactionMessage2({
           payerKey: relayerPubkey,
@@ -8891,14 +9911,18 @@ var CloakCraftClient = class {
           instructions: allInstructions
         }).compileToV0Message(lookupTables)
       );
-      transactions.push({ name, tx });
+      transactions.push({ name, tx, extraSigners });
     }
     params.onProgress?.("executing");
     let finalSignature = "";
-    for (const { name, tx } of transactions) {
+    for (const { name, tx, extraSigners } of transactions) {
       console.log(`[OpenPosition] Executing ${name}...`);
-      if (relayer) {
-        tx.sign([relayer]);
+      const signers = relayer ? [relayer] : [];
+      if (extraSigners?.length) {
+        signers.push(...extraSigners);
+      }
+      if (signers.length > 0) {
+        tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
       await this.connection.confirmTransaction(sig, "confirmed");
@@ -8931,6 +9955,16 @@ var CloakCraftClient = class {
     if (!accountHash) {
       throw new Error("Position note missing accountHash. Use scanNotes() to get notes with accountHash.");
     }
+    const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
+    let oraclePrice = params.oraclePrice;
+    const pythPriceUpdate = params.priceUpdate;
+    if (!oraclePrice) {
+      const pythService = new PythPriceService(this.connection);
+      oraclePrice = await pythService.getPriceUsd(feedId, 9);
+    }
+    if (!pythPriceUpdate) {
+      throw new Error("priceUpdate account is required. Use @pythnetwork/pyth-solana-receiver to create one.");
+    }
     params.onProgress?.("generating");
     const closeFee = params.positionInput.amount * 6n / 10000n;
     const pnlAmount = 0n;
@@ -8949,14 +9983,15 @@ var CloakCraftClient = class {
         // TODO: Get actual size
         leverage: 1,
         // TODO: Get from position data
-        entryPrice: params.oraclePrice,
-        // TODO: Get from position data
+        entryPrice: oraclePrice,
+        // Use resolved oracle price
         randomness: params.positionInput.randomness,
         leafIndex: params.positionInput.leafIndex,
         spendingKey: this.wallet.keypair.spending.sk
       },
       perpsPoolId: actualPoolId.toBytes(),
-      exitPrice: params.oraclePrice,
+      exitPrice: oraclePrice,
+      // Use resolved oracle price
       pnlAmount,
       isProfit,
       closeFee,
@@ -8973,22 +10008,50 @@ var CloakCraftClient = class {
     params.onProgress?.("building");
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
-    const { proof, positionNullifier: nullifier, settlementCommitment, settlementRandomness } = proofResult;
+    const { proof, positionNullifier: nullifier, settlementCommitment, settlementRandomness, settlementAmount } = proofResult;
     const positionCommitment = computeCommitment(params.positionInput);
+    const settlementTokenMint = params.positionInput.tokenMint instanceof Uint8Array ? new import_web316.PublicKey(params.positionInput.tokenMint) : params.positionInput.tokenMint;
+    const [settlementPoolPda] = derivePoolPda(settlementTokenMint, this.programId);
+    const [perpsMarketPda] = derivePerpsMarketPda(params.poolId, params.marketId, this.programId);
+    const positionMint = perpsPoolAccount.positionMint;
+    const [positionPoolPda] = derivePoolPda(positionMint, this.programId);
+    const lightParams = await this.buildLightProtocolParams(
+      accountHash,
+      nullifier,
+      positionPoolPda,
+      // Position is in position pool
+      heliusRpcUrl
+    );
     const instructionParams = {
+      positionPool: positionPoolPda,
+      settlementPool: settlementPoolPda,
       perpsPool: params.poolId,
-      marketId: params.marketId,
-      relayer: relayerPubkey,
+      market: perpsMarketPda,
+      priceUpdate: pythPriceUpdate,
       proof,
       merkleRoot: params.merkleRoot,
-      nullifier,
       positionCommitment,
-      accountHash,
-      leafIndex: params.positionInput.leafIndex,
+      positionNullifier: nullifier,
       settlementCommitment,
-      oraclePrice: params.oraclePrice,
+      isLong: true,
+      // TODO: Get from position data
+      exitPrice: oraclePrice,
+      closeFee,
+      pnlAmount,
+      isProfit,
+      positionMargin: params.positionInput.amount,
+      positionSize: params.positionInput.amount,
+      // TODO: Get actual size
+      entryPrice: oraclePrice,
+      // TODO: Get from position data
+      relayer: relayerPubkey,
       settlementRecipient: params.settlementRecipient,
-      settlementRandomness
+      settlementRandomness,
+      settlementAmount: settlementAmount ?? params.positionInput.amount,
+      tokenMint: settlementTokenMint,
+      lightVerifyParams: lightParams.lightVerifyParams,
+      lightNullifierParams: lightParams.lightNullifierParams,
+      remainingAccounts: lightParams.remainingAccounts
     };
     console.log("[ClosePosition] === Starting Multi-Phase Close Position ===");
     const buildResult = await buildClosePositionWithProgram(
@@ -9034,7 +10097,17 @@ var CloakCraftClient = class {
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
-      const allInstructions = [...preIxs, mainIx];
+      let allInstructions = [...preIxs, mainIx];
+      let extraSigners = [];
+      if (name.includes("Phase 3") && params.pythPostInstructions?.length) {
+        allInstructions = [...params.pythPostInstructions, ...allInstructions];
+        if (params.priceUpdateKeypair) {
+          extraSigners.push(params.priceUpdateKeypair);
+        }
+      }
+      if (name.includes("Final") && params.pythCloseInstructions?.length) {
+        allInstructions = [...allInstructions, ...params.pythCloseInstructions];
+      }
       const tx = new VersionedTransaction2(
         new TransactionMessage2({
           payerKey: relayerPubkey,
@@ -9042,14 +10115,18 @@ var CloakCraftClient = class {
           instructions: allInstructions
         }).compileToV0Message(lookupTables)
       );
-      transactions.push({ name, tx });
+      transactions.push({ name, tx, extraSigners });
     }
     params.onProgress?.("executing");
     let finalSignature = "";
-    for (const { name, tx } of transactions) {
+    for (const { name, tx, extraSigners } of transactions) {
       console.log(`[ClosePosition] Executing ${name}...`);
-      if (relayer) {
-        tx.sign([relayer]);
+      const signers = relayer ? [relayer] : [];
+      if (extraSigners?.length) {
+        signers.push(...extraSigners);
+      }
+      if (signers.length > 0) {
+        tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
       await this.connection.confirmTransaction(sig, "confirmed");
@@ -9081,6 +10158,17 @@ var CloakCraftClient = class {
     const accountHash = params.input.accountHash;
     if (!accountHash) {
       throw new Error("Input note missing accountHash. Use scanNotes() to get notes with accountHash.");
+    }
+    const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
+    let oraclePrices = params.oraclePrices;
+    const pythPriceUpdate = params.priceUpdate;
+    if (!oraclePrices) {
+      const pythService = new PythPriceService(this.connection);
+      const price = await pythService.getPriceUsd(feedId, 9);
+      oraclePrices = [price];
+    }
+    if (!pythPriceUpdate) {
+      throw new Error("priceUpdate account is required. Use @pythnetwork/pyth-solana-receiver to create one.");
     }
     params.onProgress?.("generating");
     const feeAmount = 0n;
@@ -9114,39 +10202,46 @@ var CloakCraftClient = class {
     const changeCommitment = new Uint8Array(32);
     params.onProgress?.("building");
     const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new import_web316.PublicKey(params.input.tokenMint) : params.input.tokenMint;
-    const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
+    const [depositPoolPda] = derivePoolPda(inputTokenMint, this.programId);
+    const depositPoolAccount = await this.program.account.pool.fetch(depositPoolPda);
     const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, inputTokenMint, this.programId);
-    const [lpMintPda] = derivePerpsLpMintPda(params.poolId, this.programId);
+    const lpMint = perpsPoolAccount.lpMint;
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
     const { proof, nullifier, lpCommitment, lpRandomness } = proofResult;
     const inputCommitment = computeCommitment(params.input);
+    const lightParams = await this.buildLightProtocolParams(
+      accountHash,
+      nullifier,
+      depositPoolPda,
+      heliusRpcUrl
+    );
     const instructionParams = {
+      depositPool: depositPoolPda,
       perpsPool: params.poolId,
-      settlementPool: inputPoolPda,
-      perpsVault: perpsVaultPda,
-      lpMint: lpMintPda,
-      inputTokenMint,
-      tokenMint: inputTokenMint,
-      relayer: relayerPubkey,
+      perpsPoolId: actualPoolId.toBytes(),
+      // 32 bytes for LP note encryption
+      priceUpdate: pythPriceUpdate,
+      lpMintAccount: lpMint,
+      tokenVault: depositPoolAccount.tokenVault,
       proof,
       merkleRoot: params.merkleRoot,
-      nullifier,
       inputCommitment,
-      accountHash,
-      leafIndex: params.input.leafIndex,
+      nullifier,
       lpCommitment,
-      changeCommitment,
       tokenIndex: params.tokenIndex,
       depositAmount: params.depositAmount,
       lpAmountMinted: params.lpAmount,
       feeAmount: 0n,
-      oraclePrices: params.oraclePrices ?? [1000000000n],
-      // Default to $1 if not provided
+      oraclePrices,
+      relayer: relayerPubkey,
       lpRecipient: params.lpRecipient,
-      changeRecipient: params.changeRecipient,
       lpRandomness,
-      changeRandomness
+      tokenMint: inputTokenMint,
+      lpMint,
+      lightVerifyParams: lightParams.lightVerifyParams,
+      lightNullifierParams: lightParams.lightNullifierParams,
+      remainingAccounts: lightParams.remainingAccounts
     };
     console.log("[AddPerpsLiquidity] === Starting Multi-Phase Add Liquidity ===");
     console.log("[AddPerpsLiquidity] Token index:", params.tokenIndex);
@@ -9194,7 +10289,17 @@ var CloakCraftClient = class {
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
-      const allInstructions = [...preIxs, mainIx];
+      let allInstructions = [...preIxs, mainIx];
+      let extraSigners = [];
+      if (name.includes("Phase 3") && params.pythPostInstructions?.length) {
+        allInstructions = [...params.pythPostInstructions, ...allInstructions];
+        if (params.priceUpdateKeypair) {
+          extraSigners.push(params.priceUpdateKeypair);
+        }
+      }
+      if (name.includes("Final") && params.pythCloseInstructions?.length) {
+        allInstructions = [...allInstructions, ...params.pythCloseInstructions];
+      }
       const tx = new VersionedTransaction2(
         new TransactionMessage2({
           payerKey: relayerPubkey,
@@ -9202,14 +10307,18 @@ var CloakCraftClient = class {
           instructions: allInstructions
         }).compileToV0Message(lookupTables)
       );
-      transactions.push({ name, tx });
+      transactions.push({ name, tx, extraSigners });
     }
     params.onProgress?.("executing");
     let finalSignature = "";
-    for (const { name, tx } of transactions) {
+    for (const { name, tx, extraSigners } of transactions) {
       console.log(`[AddPerpsLiquidity] Executing ${name}...`);
-      if (relayer) {
-        tx.sign([relayer]);
+      const signers = relayer ? [relayer] : [];
+      if (extraSigners?.length) {
+        signers.push(...extraSigners);
+      }
+      if (signers.length > 0) {
+        tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
       await this.connection.confirmTransaction(sig, "confirmed");
@@ -9241,6 +10350,17 @@ var CloakCraftClient = class {
     const accountHash = params.lpInput.accountHash;
     if (!accountHash) {
       throw new Error("LP note missing accountHash. Use scanNotes() to get notes with accountHash.");
+    }
+    const feedId = params.pythFeedId || PYTH_FEED_IDS.BTC_USD;
+    let oraclePrices = params.oraclePrices;
+    const pythPriceUpdate = params.priceUpdate;
+    if (!oraclePrices) {
+      const pythService = new PythPriceService(this.connection);
+      const price = await pythService.getPriceUsd(feedId, 9);
+      oraclePrices = [price];
+    }
+    if (!pythPriceUpdate) {
+      throw new Error("priceUpdate account is required. Use @pythnetwork/pyth-solana-receiver to create one.");
     }
     params.onProgress?.("generating");
     const [perpsPoolAccount] = derivePerpsPoolPda(params.poolId, this.programId);
@@ -9275,9 +10395,10 @@ var CloakCraftClient = class {
       this.wallet.keypair
     );
     params.onProgress?.("building");
-    const [outputPoolPda] = derivePoolPda(tokenMint, this.programId);
+    const [withdrawalPoolPda] = derivePoolPda(tokenMint, this.programId);
+    const withdrawalPoolAccount = await this.program.account.pool.fetch(withdrawalPoolPda);
     const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, tokenMint, this.programId);
-    const [lpMintPda] = derivePerpsLpMintPda(params.poolId, this.programId);
+    const lpMint = poolData.lpMint;
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
     const {
@@ -9289,28 +10410,42 @@ var CloakCraftClient = class {
       changeLpRandomness: lpChangeRandomness
     } = proofResult;
     const lpCommitment = computeCommitment(params.lpInput);
+    const lightParams = await this.buildLightProtocolParams(
+      accountHash,
+      nullifier,
+      withdrawalPoolPda,
+      heliusRpcUrl
+    );
     const instructionParams = {
+      withdrawalPool: withdrawalPoolPda,
       perpsPool: params.poolId,
-      outputPool: outputPoolPda,
-      perpsVault: perpsVaultPda,
-      lpMint: lpMintPda,
-      outputTokenMint: tokenMint,
-      relayer: relayerPubkey,
+      perpsPoolId: actualPoolId.toBytes(),
+      // 32 bytes for LP note encryption
+      priceUpdate: pythPriceUpdate,
+      lpMintAccount: lpMint,
+      tokenVault: withdrawalPoolAccount.tokenVault,
       proof,
       merkleRoot: params.merkleRoot,
-      nullifier,
       lpCommitment,
-      accountHash,
-      leafIndex: params.lpInput.leafIndex,
-      withdrawCommitment,
-      lpChangeCommitment,
+      lpNullifier: nullifier,
+      outputCommitment: withdrawCommitment,
+      changeLpCommitment: lpChangeCommitment,
       tokenIndex: params.tokenIndex,
-      lpAmount: params.lpAmount,
       withdrawAmount: params.withdrawAmount,
-      withdrawRecipient: params.withdrawRecipient,
+      lpAmountBurned: params.lpAmount,
+      feeAmount: 0n,
+      oraclePrices,
+      relayer: relayerPubkey,
+      outputRecipient: params.withdrawRecipient,
       lpChangeRecipient: params.lpChangeRecipient,
-      withdrawRandomness,
-      lpChangeRandomness
+      outputRandomness: withdrawRandomness,
+      lpChangeRandomness,
+      tokenMint,
+      lpMint,
+      lpChangeAmount: changeLpAmount,
+      lightVerifyParams: lightParams.lightVerifyParams,
+      lightNullifierParams: lightParams.lightNullifierParams,
+      remainingAccounts: lightParams.remainingAccounts
     };
     console.log("[RemovePerpsLiquidity] === Starting Multi-Phase Remove Liquidity ===");
     console.log("[RemovePerpsLiquidity] Token index:", params.tokenIndex);
@@ -9358,7 +10493,17 @@ var CloakCraftClient = class {
     for (const { name, builder } of transactionBuilders) {
       const mainIx = await builder.instruction();
       const preIxs = builder._preInstructions || [];
-      const allInstructions = [...preIxs, mainIx];
+      let allInstructions = [...preIxs, mainIx];
+      let extraSigners = [];
+      if (name.includes("Phase 3") && params.pythPostInstructions?.length) {
+        allInstructions = [...params.pythPostInstructions, ...allInstructions];
+        if (params.priceUpdateKeypair) {
+          extraSigners.push(params.priceUpdateKeypair);
+        }
+      }
+      if (name.includes("Final") && params.pythCloseInstructions?.length) {
+        allInstructions = [...allInstructions, ...params.pythCloseInstructions];
+      }
       const tx = new VersionedTransaction2(
         new TransactionMessage2({
           payerKey: relayerPubkey,
@@ -9366,14 +10511,18 @@ var CloakCraftClient = class {
           instructions: allInstructions
         }).compileToV0Message(lookupTables)
       );
-      transactions.push({ name, tx });
+      transactions.push({ name, tx, extraSigners });
     }
     params.onProgress?.("executing");
     let finalSignature = "";
-    for (const { name, tx } of transactions) {
+    for (const { name, tx, extraSigners } of transactions) {
       console.log(`[RemovePerpsLiquidity] Executing ${name}...`);
-      if (relayer) {
-        tx.sign([relayer]);
+      const signers = relayer ? [relayer] : [];
+      if (extraSigners?.length) {
+        signers.push(...extraSigners);
+      }
+      if (signers.length > 0) {
+        tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
       await this.connection.confirmTransaction(sig, "confirmed");
@@ -11769,7 +12918,7 @@ async function generateVoteSpendInputs(params, revealMode, eligibilityRoot = Big
   );
   const pubkey = derivePublicKeyFromSpendingKey(params.stealthSpendingKey);
   const weight = params.noteAmount;
-  const positionCommitment = computePositionCommitment(
+  const positionCommitment = computePositionCommitment2(
     params.ballotId,
     pubkey,
     params.voteChoice,
@@ -11894,7 +13043,7 @@ function computeVoteCommitmentNullifier(nullifierKey, voteCommitment) {
   result.set(voteCommitment.slice(0, 16), 16);
   return result;
 }
-function computePositionCommitment(ballotId, pubkey, voteChoice, amount, weight, randomness) {
+function computePositionCommitment2(ballotId, pubkey, voteChoice, amount, weight, randomness) {
   const result = new Uint8Array(32);
   result.set(ballotId.slice(0, 8), 0);
   result.set(pubkey.slice(0, 8), 8);
@@ -12240,6 +13389,7 @@ function derivePublicKeyFromSecret(secretKey) {
   FIELD_MODULUS_FR,
   GENERATOR,
   IDENTITY,
+  LP_COMMITMENT_DOMAIN,
   LightClient,
   LightCommitmentClient,
   LightProtocol,
@@ -12247,13 +13397,19 @@ function derivePublicKeyFromSecret(secretKey) {
   MAX_FEE_BPS,
   MAX_PERPS_TOKENS,
   MAX_TRANSACTION_SIZE,
+  NOTE_TYPE_LP,
+  NOTE_TYPE_POSITION,
+  NOTE_TYPE_STANDARD,
   NoteManager,
   PERPS_CIRCUIT_IDS,
   PERPS_SEEDS,
+  POSITION_COMMITMENT_DOMAIN,
   PROGRAM_ID,
+  PYTH_FEED_IDS,
   PoolAnalyticsCalculator,
   PoolType,
   ProofGenerator,
+  PythPriceService,
   ResolutionMode,
   RevealMode,
   SEEDS,
@@ -12346,14 +13502,20 @@ function derivePublicKeyFromSecret(secretKey) {
   computeCircuitInputs,
   computeCommitment,
   computeDecryptionShare,
+  computeLpCommitment,
+  computePositionCommitment,
   consolidationService,
   createAddressLookupTable,
   createCloakCraftALT,
+  createLpNote,
   createNote,
   createPendingTransaction,
+  createPositionNote,
   createWallet,
   createWatchOnlyWallet,
+  decryptLpNote,
   decryptNote,
+  decryptPositionNote,
   deriveActionNullifier,
   deriveAmmPoolPda,
   deriveBallotPda,
@@ -12380,16 +13542,22 @@ function derivePublicKeyFromSecret(secretKey) {
   deriveWalletFromSignature,
   deserializeAmmPool,
   deserializeEncryptedNote,
+  deserializeLpNote,
+  deserializePositionNote,
+  detectNoteType,
   disableAutoConsolidation,
   elgamalEncrypt,
   enableAutoConsolidation,
+  encryptLpNote,
   encryptNote,
+  encryptPositionNote,
   encryptPreimage,
   encryptVote,
   estimateTotalCost,
   estimateTransactionSize,
   executeVersionedTransaction,
   extendAddressLookupTable,
+  feedIdToHex,
   fetchAddressLookupTable,
   fetchAmmPool,
   fetchProtocolFeeConfig,
@@ -12419,6 +13587,7 @@ function derivePublicKeyFromSecret(secretKey) {
   getFeeBps,
   getInstructionFromAnchorMethod,
   getLightProtocolCommonAccounts,
+  getPythService,
   getRandomStateTreeSet,
   getStateTreeSet,
   initPoseidon,
@@ -12449,8 +13618,13 @@ function derivePublicKeyFromSecret(secretKey) {
   serializeEncryptedNote,
   serializeEncryptedVote,
   serializeGroth16Proof,
+  serializeLpNote,
+  serializePositionNote,
   storeCommitments,
+  tryDecryptAnyNote,
+  tryDecryptLpNote,
   tryDecryptNote,
+  tryDecryptPositionNote,
   validateLiquidityAmounts,
   validateSwapAmount,
   verifyAmmStateHash,
@@ -12458,6 +13632,8 @@ function derivePublicKeyFromSecret(secretKey) {
   verifyDleqProof,
   verifyFeeAmount,
   verifyInvariant,
+  verifyLpCommitment,
+  verifyPositionCommitment,
   wouldExceedUtilization,
   ...require("@cloakcraft/types")
 });

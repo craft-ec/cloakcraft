@@ -27,6 +27,14 @@ use crate::helpers::field::pubkey_to_field;
 #[derive(Accounts)]
 #[instruction(operation_id: [u8; 32])]
 pub struct CreatePendingWithProofClosePosition<'info> {
+    /// Position pool (where position commitment is read from)
+    #[account(
+        seeds = [seeds::POOL, position_pool.token_mint.as_ref()],
+        bump = position_pool.bump,
+        constraint = position_pool.token_mint == perps_pool.position_mint @ CloakCraftError::InvalidTokenMint,
+    )]
+    pub position_pool: Box<Account<'info, Pool>>,
+
     /// Settlement token pool (where settlement commitment goes)
     #[account(
         seeds = [seeds::POOL, settlement_pool.token_mint.as_ref()],
@@ -90,6 +98,7 @@ pub fn create_pending_with_proof_close_position<'info>(
     pnl_amount: u64,
     is_profit: bool,
 ) -> Result<()> {
+    let position_pool = &ctx.accounts.position_pool;
     let settlement_pool = &ctx.accounts.settlement_pool;
     let perps_pool = &ctx.accounts.perps_pool;
     let pending_op = &mut ctx.accounts.pending_operation;
@@ -140,7 +149,7 @@ pub fn create_pending_with_proof_close_position<'info>(
     pending_op.num_inputs = 1;
     pending_op.input_commitments[0] = position_commitment;
     pending_op.expected_nullifiers[0] = position_nullifier;
-    pending_op.input_pools[0] = settlement_pool.key().to_bytes(); // Position pool
+    pending_op.input_pools[0] = position_pool.key().to_bytes(); // Position read from position pool
     pending_op.inputs_verified_mask = 0;
     pending_op.proof_verified = true;
 

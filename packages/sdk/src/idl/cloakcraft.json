@@ -1,5 +1,5 @@
 {
-  "address": "HWRkcHVYDnMYrvVY9oQXaXU9dnxHA3RnRJpbXHW1BouZ",
+  "address": "CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj",
   "metadata": {
     "name": "cloakcraft",
     "version": "0.1.0",
@@ -2081,6 +2081,30 @@
           }
         },
         {
+          "name": "lp_pool",
+          "docs": [
+            "LP token pool (where LP token commitment will be created)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
           "name": "perps_pool",
           "docs": [
             "Perps pool"
@@ -2741,6 +2765,30 @@
         21
       ],
       "accounts": [
+        {
+          "name": "position_pool",
+          "docs": [
+            "Position pool (where position commitment is read from)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "position_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
         {
           "name": "settlement_pool",
           "docs": [
@@ -3710,6 +3758,30 @@
           }
         },
         {
+          "name": "position_pool",
+          "docs": [
+            "Position pool (where position commitments are stored)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "position_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
           "name": "perps_pool",
           "docs": [
             "Perps pool"
@@ -4242,6 +4314,30 @@
               {
                 "kind": "account",
                 "path": "withdrawal_pool.token_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lp_pool",
+          "docs": [
+            "LP token pool (for LP input and change commitments)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp_pool.token_mint",
                 "account": "Pool"
               }
             ]
@@ -8252,10 +8348,69 @@
         {
           "name": "lp_mint",
           "docs": [
-            "LP token mint (created as regular mint with perps_pool as authority)"
+            "LP token mint (PDA derived from perps pool)"
           ],
           "writable": true,
-          "signer": true
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  108,
+                  112,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "perps_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position_mint",
+          "docs": [
+            "Position token mint (PDA derived from perps pool, for position commitments)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  115,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "perps_pool"
+              }
+            ]
+          }
         },
         {
           "name": "authority",
@@ -13625,6 +13780,13 @@
             "type": "pubkey"
           },
           {
+            "name": "position_mint",
+            "docs": [
+              "Position token mint (for position commitments)"
+            ],
+            "type": "pubkey"
+          },
+          {
             "name": "lp_supply",
             "docs": [
               "Total LP token supply"
@@ -13732,14 +13894,21 @@
             "type": "u8"
           },
           {
+            "name": "position_mint_bump",
+            "docs": [
+              "Position mint bump seed"
+            ],
+            "type": "u8"
+          },
+          {
             "name": "_reserved",
             "docs": [
-              "Reserved for future use"
+              "Reserved for future use (reduced from 32 to accommodate position_mint + bump)"
             ],
             "type": {
               "array": [
                 "u8",
-                32
+                31
               ]
             }
           }

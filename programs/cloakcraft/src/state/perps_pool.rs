@@ -97,6 +97,9 @@ pub struct PerpsPool {
     /// LP token mint (single token for entire pool)
     pub lp_mint: Pubkey,
 
+    /// Position token mint (for position commitments)
+    pub position_mint: Pubkey,
+
     /// Total LP token supply
     pub lp_supply: u64,
 
@@ -147,8 +150,11 @@ pub struct PerpsPool {
     /// LP mint bump seed
     pub lp_mint_bump: u8,
 
-    /// Reserved for future use
-    pub _reserved: [u8; 32],
+    /// Position mint bump seed
+    pub position_mint_bump: u8,
+
+    /// Reserved for future use (reduced from 32 to accommodate position_mint + bump)
+    pub _reserved: [u8; 31],
 }
 
 impl PerpsPool {
@@ -156,6 +162,7 @@ impl PerpsPool {
     pub const LEN: usize = 8 + // discriminator
         32 + // pool_id
         32 + // lp_mint
+        32 + // position_mint
         8 + // lp_supply
         32 + // authority
         1 + // num_tokens
@@ -170,6 +177,7 @@ impl PerpsPool {
         1 + // is_active
         1 + // bump
         1 + // lp_mint_bump
+        1 + // position_mint_bump
         32; // _reserved
 
     /// PDA seeds prefix

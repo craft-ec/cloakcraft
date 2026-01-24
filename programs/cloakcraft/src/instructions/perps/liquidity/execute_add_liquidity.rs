@@ -116,6 +116,15 @@ pub fn execute_add_perps_liquidity<'info>(
     // Verify the passed oracle_prices matches Pyth for deposit token (within 1% tolerance)
     let passed_price = oracle_prices[token_index as usize];
     let price_tolerance = token_price / 100; // 1% tolerance
+
+    msg!("=== Price Validation Debug ===");
+    msg!("Token index: {}", token_index);
+    msg!("Passed price (from proof): {}", passed_price);
+    msg!("Oracle price (from Pyth): {}", token_price);
+    msg!("Price tolerance (1%): {}", price_tolerance);
+    msg!("Price diff: {}", if passed_price > token_price { passed_price - token_price } else { token_price - passed_price });
+    msg!("Within tolerance: {}", passed_price <= token_price.saturating_add(price_tolerance) && passed_price >= token_price.saturating_sub(price_tolerance));
+
     require!(
         passed_price <= token_price.saturating_add(price_tolerance) &&
         passed_price >= token_price.saturating_sub(price_tolerance),

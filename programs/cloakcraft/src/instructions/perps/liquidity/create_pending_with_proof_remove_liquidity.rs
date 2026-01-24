@@ -31,6 +31,14 @@ pub struct CreatePendingWithProofRemovePerpsLiquidity<'info> {
     )]
     pub withdrawal_pool: Box<Account<'info, Pool>>,
 
+    /// LP token pool (for LP input and change commitments)
+    #[account(
+        seeds = [seeds::POOL, lp_pool.token_mint.as_ref()],
+        bump = lp_pool.bump,
+        constraint = lp_pool.token_mint == perps_pool.lp_mint @ CloakCraftError::InvalidTokenMint,
+    )]
+    pub lp_pool: Box<Account<'info, Pool>>,
+
     /// Perps pool
     #[account(
         seeds = [seeds::PERPS_POOL, perps_pool.pool_id.as_ref()],
@@ -131,16 +139,16 @@ pub fn create_pending_with_proof_remove_perps_liquidity<'info>(
     pending_op.num_inputs = 1;
     pending_op.input_commitments[0] = lp_commitment;
     pending_op.expected_nullifiers[0] = lp_nullifier;
-    pending_op.input_pools[0] = withdrawal_pool.key().to_bytes(); // LP stored in pool
+    pending_op.input_pools[0] = ctx.accounts.lp_pool.key().to_bytes(); // LP input from LP pool
     pending_op.inputs_verified_mask = 0;
     pending_op.proof_verified = true;
 
     // Store output commitments (withdrawn token + LP change)
     pending_op.num_commitments = 2;
-    pending_op.pools[0] = withdrawal_pool.key().to_bytes();
+    pending_op.pools[0] = withdrawal_pool.key().to_bytes(); // Withdrawn token to token pool
     pending_op.commitments[0] = out_commitment;
     pending_op.output_amounts[0] = withdraw_amount;
-    pending_op.pools[1] = withdrawal_pool.key().to_bytes();
+    pending_op.pools[1] = ctx.accounts.lp_pool.key().to_bytes(); // LP change to LP pool
     pending_op.commitments[1] = change_lp_commitment;
     pending_op.output_amounts[1] = 1; // LP change amount (non-zero if partial burn)
 

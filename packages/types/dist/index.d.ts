@@ -1,4 +1,4 @@
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, TransactionInstruction, Keypair as Keypair$1 } from '@solana/web3.js';
 
 /**
  * CloakCraft Type Definitions
@@ -656,8 +656,18 @@ interface OpenPerpsPositionParams {
     marginAmount: bigint;
     /** Leverage (1-100) */
     leverage: number;
-    /** Current oracle price */
-    oraclePrice: bigint;
+    /** Current oracle price (if not provided, will be fetched from Pyth) */
+    oraclePrice?: bigint;
+    /** Pyth price update account (if not provided, will be auto-posted and closed) */
+    priceUpdate?: PublicKey;
+    /** Pyth feed ID for auto-fetching price (default: BTC/USD) */
+    pythFeedId?: Uint8Array;
+    /** Pyth post instructions for Jupiter-style bundling */
+    pythPostInstructions?: TransactionInstruction[];
+    /** Pyth close instructions for Jupiter-style bundling */
+    pythCloseInstructions?: TransactionInstruction[];
+    /** Pyth price update keypair for signing */
+    priceUpdateKeypair?: Keypair$1;
     /** Stealth address for position commitment */
     positionRecipient: StealthAddress;
     /** Stealth address for change commitment */
@@ -679,8 +689,18 @@ interface ClosePerpsPositionParams {
     poolId: PublicKey;
     /** Market ID */
     marketId: Uint8Array;
-    /** Current oracle price */
-    oraclePrice: bigint;
+    /** Current oracle price (if not provided, will be fetched from Pyth) */
+    oraclePrice?: bigint;
+    /** Pyth price update account (if not provided, will be auto-posted and closed) */
+    priceUpdate?: PublicKey;
+    /** Pyth feed ID for auto-fetching price (default: BTC/USD) */
+    pythFeedId?: Uint8Array;
+    /** Pyth post instructions for Jupiter-style bundling */
+    pythPostInstructions?: TransactionInstruction[];
+    /** Pyth close instructions for Jupiter-style bundling */
+    pythCloseInstructions?: TransactionInstruction[];
+    /** Pyth price update keypair for signing */
+    priceUpdateKeypair?: Keypair$1;
     /** Stealth address for settlement output */
     settlementRecipient: StealthAddress;
     /** Merkle root for position proof */
@@ -704,8 +724,18 @@ interface PerpsAddLiquidityClientParams {
     depositAmount: bigint;
     /** Expected LP tokens to receive */
     lpAmount: bigint;
-    /** Current oracle prices for pool tokens */
-    oraclePrices: bigint[];
+    /** Current oracle prices for pool tokens (if not provided, will be fetched from Pyth) */
+    oraclePrices?: bigint[];
+    /** Pyth price update account (if not provided, will be auto-posted and closed) */
+    priceUpdate?: PublicKey;
+    /** Pyth feed ID for auto-fetching price */
+    pythFeedId?: Uint8Array;
+    /** Pyth post instructions for Jupiter-style bundling */
+    pythPostInstructions?: TransactionInstruction[];
+    /** Pyth close instructions for Jupiter-style bundling */
+    pythCloseInstructions?: TransactionInstruction[];
+    /** Pyth price update keypair for signing */
+    priceUpdateKeypair?: Keypair$1;
     /** Stealth address for LP commitment */
     lpRecipient: StealthAddress;
     /** Stealth address for change commitment */
@@ -731,8 +761,18 @@ interface PerpsRemoveLiquidityClientParams {
     lpAmount: bigint;
     /** Expected token amount to receive */
     withdrawAmount: bigint;
-    /** Current oracle prices for pool tokens */
-    oraclePrices: bigint[];
+    /** Current oracle prices for pool tokens (if not provided, will be fetched from Pyth) */
+    oraclePrices?: bigint[];
+    /** Pyth price update account (if not provided, will be auto-posted and closed) */
+    priceUpdate?: PublicKey;
+    /** Pyth feed ID for auto-fetching price */
+    pythFeedId?: Uint8Array;
+    /** Pyth post instructions for Jupiter-style bundling */
+    pythPostInstructions?: TransactionInstruction[];
+    /** Pyth close instructions for Jupiter-style bundling */
+    pythCloseInstructions?: TransactionInstruction[];
+    /** Pyth price update keypair for signing */
+    priceUpdateKeypair?: Keypair$1;
     /** Stealth address for withdrawal output */
     withdrawRecipient: StealthAddress;
     /** Stealth address for LP change (if any) */

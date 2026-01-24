@@ -5,7 +5,7 @@
 import { PublicKey } from '@solana/web3.js';
 
 // Default program ID (devnet deployment)
-export const PROGRAM_ID = new PublicKey('FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a');
+export const PROGRAM_ID = new PublicKey('CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj');
 
 // PDA seeds
 export const SEEDS = {

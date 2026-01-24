@@ -225,7 +225,8 @@ pub fn derive_action_nullifier_address(
 // =============================================================================
 
 /// Maximum encrypted note size matching CommitmentAccount
-pub const MAX_ENCRYPTED_NOTE_SIZE: usize = 200;
+/// Supports position notes (126 bytes) and LP notes (108 bytes) with ECIES overhead (~80 bytes)
+pub const MAX_ENCRYPTED_NOTE_SIZE: usize = 250;
 
 /// Helper to convert Vec<u8> to fixed array with length
 #[inline]

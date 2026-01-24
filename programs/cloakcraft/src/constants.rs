@@ -83,6 +83,7 @@ pub mod seeds {
     // Perpetual futures seeds
     pub const PERPS_POOL: &[u8] = b"perps_pool";
     pub const PERPS_LP_MINT: &[u8] = b"perps_lp_mint";
+    pub const PERPS_POSITION_MINT: &[u8] = b"perps_pos_mint";
     pub const PERPS_VAULT: &[u8] = b"perps_vault";
     pub const PERPS_MARKET: &[u8] = b"perps_market";
 

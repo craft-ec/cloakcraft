@@ -3413,6 +3413,12 @@ export class CloakCraftClient {
     const inputPoolAccount = await (this.program.account as any).pool.fetch(inputPoolPda);
     const inputVault = inputPoolAccount.tokenVault;
 
+    // Derive position pool from position mint stored in perps pool
+    const positionMint = perpsPoolAccount.positionMint as PublicKey;
+    const [positionPoolPda] = derivePoolPda(positionMint, this.programId);
+    console.log(`[OpenPosition] Position mint from perps pool: ${positionMint.toBase58()}`);
+    console.log(`[OpenPosition] Position pool derived: ${positionPoolPda.toBase58()}`);
+
     // Get protocol config
     const [protocolConfigPda] = deriveProtocolConfigPda(this.programId);
 
@@ -3438,8 +3444,10 @@ export class CloakCraftClient {
     const instructionParams = {
       // Required fields matching OpenPositionInstructionParams
       settlementPool: inputPoolPda,
+      positionPool: positionPoolPda,
       perpsPool: params.poolId,
       market: perpsMarketPda,
+      marketId: params.marketId, // 32 bytes for position note encryption
       priceUpdate: pythPriceUpdate!,
       proof,
       merkleRoot: params.merkleRoot,
@@ -3449,6 +3457,7 @@ export class CloakCraftClient {
       changeCommitment,
       isLong: params.direction === 'long',
       marginAmount: params.marginAmount,
+      positionSize, // margin * leverage for position note
       leverage: params.leverage,
       positionFee,
       entryPrice: oraclePrice,
@@ -3693,15 +3702,20 @@ export class CloakCraftClient {
     const [settlementPoolPda] = derivePoolPda(settlementTokenMint, this.programId);
     const [perpsMarketPda] = derivePerpsMarketPda(params.poolId, params.marketId, this.programId);
 
-    // Build Light Protocol params
+    // Derive position pool from position mint stored in perps pool
+    const positionMint = perpsPoolAccount.positionMint as PublicKey;
+    const [positionPoolPda] = derivePoolPda(positionMint, this.programId);
+
+    // Build Light Protocol params - use position pool since that's where position is stored
     const lightParams = await this.buildLightProtocolParams(
       accountHash,
       nullifier,
-      settlementPoolPda,
+      positionPoolPda, // Position is in position pool
       heliusRpcUrl
     );
 
     const instructionParams = {
+      positionPool: positionPoolPda,
       settlementPool: settlementPoolPda,
       perpsPool: params.poolId,
       market: perpsMarketPda,
@@ -3969,6 +3983,7 @@ export class CloakCraftClient {
     const instructionParams = {
       depositPool: depositPoolPda,
       perpsPool: params.poolId,
+      perpsPoolId: actualPoolId.toBytes(), // 32 bytes for LP note encryption
       priceUpdate: pythPriceUpdate!,
       lpMintAccount: lpMint,
       tokenVault: depositPoolAccount.tokenVault,
@@ -4233,6 +4248,7 @@ export class CloakCraftClient {
     const instructionParams = {
       withdrawalPool: withdrawalPoolPda,
       perpsPool: params.poolId,
+      perpsPoolId: actualPoolId.toBytes(), // 32 bytes for LP note encryption
       priceUpdate: pythPriceUpdate!,
       lpMintAccount: lpMint,
       tokenVault: withdrawalPoolAccount.tokenVault,

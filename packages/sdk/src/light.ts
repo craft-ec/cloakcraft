@@ -10,12 +10,21 @@ import { PublicKey, AccountMeta } from '@solana/web3.js';
 import { deriveAddressSeedV2, deriveAddressV2, createRpc, bn, Rpc } from '@lightprotocol/stateless.js';
 import { sha256 } from '@noble/hashes/sha256';
 import type { DecryptedNote, EncryptedNote, Point } from '@cloakcraft/types';
-import { tryDecryptNote } from './crypto/encryption';
+import { tryDecryptNote, tryDecryptAnyNote, DecryptedNoteResult } from './crypto/encryption';
 import { deriveSpendingNullifier, deriveNullifierKey } from './crypto/nullifier';
 import { initPoseidon, bytesToField, fieldToBytes } from './crypto/poseidon';
 import { deriveStealthPrivateKey } from './crypto/stealth';
 import { derivePublicKey } from './crypto/babyjubjub';
-import { computeCommitment } from './crypto/commitment';
+import {
+  computeCommitment,
+  computePositionCommitment,
+  computeLpCommitment,
+  NOTE_TYPE_STANDARD,
+  NOTE_TYPE_POSITION,
+  NOTE_TYPE_LP,
+  PositionNote,
+  LpNote,
+} from './crypto/commitment';
 
 /**
  * Helius RPC endpoint configuration
@@ -457,6 +466,46 @@ export interface ScannedNote extends DecryptedNote {
 }
 
 /**
+ * Scanned position note with spent status
+ */
+export interface ScannedPositionNote extends PositionNote {
+  /** Whether this position has been closed */
+  spent: boolean;
+  /** Nullifier for this position */
+  nullifier: Uint8Array;
+  /** Commitment hash */
+  commitment: Uint8Array;
+  /** Leaf index in merkle tree */
+  leafIndex: number;
+  /** Pool this position belongs to */
+  pool: PublicKey;
+  /** Account hash for merkle proof */
+  accountHash: string;
+  /** Stealth ephemeral pubkey for key derivation */
+  stealthEphemeralPubkey?: Point;
+}
+
+/**
+ * Scanned LP note with spent status
+ */
+export interface ScannedLpNote extends LpNote {
+  /** Whether this LP position has been spent */
+  spent: boolean;
+  /** Nullifier for this LP position */
+  nullifier: Uint8Array;
+  /** Commitment hash */
+  commitment: Uint8Array;
+  /** Leaf index in merkle tree */
+  leafIndex: number;
+  /** Pool this LP belongs to */
+  pool: PublicKey;
+  /** Account hash for merkle proof */
+  accountHash: string;
+  /** Stealth ephemeral pubkey for key derivation */
+  stealthEphemeralPubkey?: Point;
+}
+
+/**
  * Commitment merkle proof from Helius
  */
 export interface CommitmentMerkleProof {
@@ -810,7 +859,9 @@ export class LightCommitmentClient extends LightClient {
 
       // Filter by commitment discriminator (approximate match due to JS number precision)
       const disc = account.data.discriminator;
+      console.log(`[scanNotes] Account ${account.hash.slice(0, 8)}... discriminator: ${disc}`);
       if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1000) {
+        console.log(`[scanNotes] SKIPPED: discriminator mismatch (expected ~${COMMITMENT_DISCRIMINATOR_APPROX})`);
         cache.set(account.hash, null); // Cache as not-ours
         continue;
       }
@@ -819,7 +870,9 @@ export class LightCommitmentClient extends LightClient {
       // Use atob for browser compatibility (Buffer.from doesn't work in browsers)
       // Layout: pool(32) + commitment(32) + leaf_index(8) + stealth_ephemeral(64) + encrypted_note(200) + len(2) + created_at(8) = 346
       const dataLen = atob(account.data.data).length;
+      console.log(`[scanNotes] Data length: ${dataLen} (need >= 346)`);
       if (dataLen < 346) {
+        console.log(`[scanNotes] SKIPPED: data too short`);
         cache.set(account.hash, null); // Cache as not-ours
         continue;
       }
@@ -828,6 +881,7 @@ export class LightCommitmentClient extends LightClient {
         // Parse commitment account data (discriminator already filtered above)
         const parsed = this.parseCommitmentAccountData(account.data.data);
         if (!parsed) {
+          console.log(`[scanNotes] SKIPPED: failed to parse commitment account`);
           cache.set(account.hash, null);
           continue;
         }
@@ -835,6 +889,7 @@ export class LightCommitmentClient extends LightClient {
         // Deserialize encrypted note
         const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
         if (!encryptedNote) {
+          console.log(`[scanNotes] SKIPPED: failed to deserialize encrypted note`);
           cache.set(account.hash, null);
           continue;
         }
@@ -851,28 +906,61 @@ export class LightCommitmentClient extends LightClient {
           decryptionKey = viewingKey;
         }
 
-        // Try to decrypt with derived key
-        const note = tryDecryptNote(encryptedNote, decryptionKey);
-        if (note) {
-          // Verify decryption was correct by recomputing commitment
-          const recomputed = computeCommitment(note);
-          const matches = Buffer.from(recomputed).toString('hex') === Buffer.from(parsed.commitment).toString('hex');
-          if (!matches) {
-            // Invalid decryption - commitment mismatch
-            cache.set(account.hash, null);
-            continue;
-          }
-        }
-        if (!note) {
+        // Try to decrypt with universal decryption (handles all note types)
+        const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
+        console.log(`[scanNotes] Decryption result: ${decryptResult ? `SUCCESS (${decryptResult.type})` : 'failed'}`);
+
+        if (!decryptResult) {
           cache.set(account.hash, null); // Not our note
           continue;
         }
 
-        // Skip 0-amount notes (change outputs with no value)
-        if (note.amount === 0n) {
+        // Verify decryption was correct by recomputing commitment based on note type
+        let recomputed: Uint8Array;
+        let noteAmount: bigint;
+
+        if (decryptResult.type === 'standard') {
+          recomputed = computeCommitment(decryptResult.note);
+          noteAmount = decryptResult.note.amount;
+        } else if (decryptResult.type === 'position') {
+          recomputed = computePositionCommitment(decryptResult.note);
+          noteAmount = decryptResult.note.margin; // Use margin as the "amount" for positions
+        } else if (decryptResult.type === 'lp') {
+          recomputed = computeLpCommitment(decryptResult.note);
+          noteAmount = decryptResult.note.lpAmount;
+        } else {
           cache.set(account.hash, null);
           continue;
         }
+
+        const matches = Buffer.from(recomputed).toString('hex') === Buffer.from(parsed.commitment).toString('hex');
+        console.log(`[scanNotes] Commitment verification: ${matches ? 'MATCH' : 'MISMATCH'}`);
+        if (!matches) {
+          console.log(`[scanNotes]   Expected: ${Buffer.from(parsed.commitment).toString('hex').slice(0, 16)}...`);
+          console.log(`[scanNotes]   Got: ${Buffer.from(recomputed).toString('hex').slice(0, 16)}...`);
+          // Invalid decryption - commitment mismatch
+          cache.set(account.hash, null);
+          continue;
+        }
+
+        // Skip 0-amount notes (change outputs with no value)
+        if (noteAmount === 0n) {
+          console.log(`[scanNotes] SKIPPED: zero amount`);
+          cache.set(account.hash, null);
+          continue;
+        }
+        console.log(`[scanNotes] FOUND valid note: type=${decryptResult.type}, amount=${noteAmount}`);
+
+        // For non-standard note types, we skip them in this method
+        // (scanNotes only returns standard token notes for backwards compatibility)
+        // Use scanPositionNotes or scanLpNotes for perps notes
+        if (decryptResult.type !== 'standard') {
+          console.log(`[scanNotes] SKIPPED: non-standard note type (use scanPositionNotes or scanLpNotes)`);
+          cache.set(account.hash, null);
+          continue;
+        }
+
+        const note = decryptResult.note;
 
         // Successfully decrypted - this note belongs to user
         const decryptedNote: DecryptedNote = {
@@ -908,6 +996,8 @@ export class LightCommitmentClient extends LightClient {
   ): Promise<CompressedAccountInfo[]> {
     // Query all compressed accounts owned by the program
     // Note: Helius returns discriminator separately, so pool is at offset 0 in data
+    console.log(`[getCommitmentAccounts] Querying with pool filter: ${poolPda?.toBase58() ?? 'none'}`);
+
     const response = await fetch(this['rpcUrl'], {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -935,7 +1025,46 @@ export class LightCommitmentClient extends LightClient {
     }
 
     // Helius returns items in result.value.items or result.items depending on version
-    return result.result?.value?.items ?? result.result?.items ?? [];
+    const items = result.result?.value?.items ?? result.result?.items ?? [];
+    console.log(`[getCommitmentAccounts] Helius returned ${items.length} accounts`);
+
+    // Debug: If filtering by pool and no results, try without filter to see total accounts
+    if (poolPda && items.length === 0) {
+      const debugResponse = await fetch(this['rpcUrl'], {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getCompressedAccountsByOwner',
+          params: { owner: programId.toBase58() },
+        }),
+      });
+      const debugResult = await debugResponse.json() as any;
+      const totalItems = debugResult.result?.value?.items ?? debugResult.result?.items ?? [];
+      console.log(`[getCommitmentAccounts] DEBUG: Total accounts without filter: ${totalItems.length}`);
+
+      // Show first few pools to see what's stored
+      if (totalItems.length > 0) {
+        console.log(`[getCommitmentAccounts] DEBUG: First 3 account pools:`);
+        for (let i = 0; i < Math.min(3, totalItems.length); i++) {
+          const item = totalItems[i];
+          if (item.data?.data) {
+            try {
+              const dataBytes = Uint8Array.from(atob(item.data.data), c => c.charCodeAt(0));
+              if (dataBytes.length >= 32) {
+                const storedPool = new PublicKey(dataBytes.slice(0, 32));
+                console.log(`  [${i}] Pool: ${storedPool.toBase58()}`);
+              }
+            } catch (e) {
+              console.log(`  [${i}] Failed to parse pool`);
+            }
+          }
+        }
+      }
+    }
+
+    return items;
   }
 
   /**
@@ -1069,5 +1198,347 @@ export class LightCommitmentClient extends LightClient {
     } catch {
       return null;
     }
+  }
+
+  // =========================================================================
+  // Position Note Scanner (Perps)
+  // =========================================================================
+
+  /**
+   * Scan for position notes belonging to a user
+   *
+   * Similar to scanNotes but specifically for perps position commitments.
+   * Uses the position commitment formula for verification.
+   *
+   * @param viewingKey - User's viewing private key (for decryption)
+   * @param programId - CloakCraft program ID
+   * @param positionPool - Position pool to scan
+   * @returns Array of decrypted position notes owned by the user
+   */
+  async scanPositionNotes(
+    viewingKey: bigint,
+    programId: PublicKey,
+    positionPool: PublicKey
+  ): Promise<ScannedPositionNote[]> {
+    // Initialize Poseidon
+    await initPoseidon();
+
+    // Query commitment accounts from Helius
+    const accounts = await this.getCommitmentAccounts(programId, positionPool);
+    console.log(`[scanPositionNotes] Found ${accounts.length} accounts in position pool`);
+
+    const COMMITMENT_DISCRIMINATOR_APPROX = 15491678376909513000;
+    const positionNotes: ScannedPositionNote[] = [];
+
+    for (const account of accounts) {
+      if (!account.data?.data) {
+        continue;
+      }
+
+      // Filter by commitment discriminator
+      const disc = account.data.discriminator;
+      if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1000) {
+        continue;
+      }
+
+      // Check data length
+      const dataLen = atob(account.data.data).length;
+      if (dataLen < 346) {
+        continue;
+      }
+
+      try {
+        // Parse commitment account data
+        const parsed = this.parseCommitmentAccountData(account.data.data);
+        if (!parsed) continue;
+
+        // Deserialize encrypted note
+        const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
+        if (!encryptedNote) continue;
+
+        // Derive decryption key
+        let decryptionKey: bigint;
+        if (parsed.stealthEphemeralPubkey) {
+          decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
+        } else {
+          decryptionKey = viewingKey;
+        }
+
+        // Try to decrypt
+        const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
+        if (!decryptResult || decryptResult.type !== 'position') {
+          continue;
+        }
+
+        // Verify commitment
+        const recomputed = computePositionCommitment(decryptResult.note);
+        const matches = Buffer.from(recomputed).toString('hex') === Buffer.from(parsed.commitment).toString('hex');
+        if (!matches) {
+          console.log(`[scanPositionNotes] Commitment mismatch for account ${account.hash.slice(0, 8)}...`);
+          continue;
+        }
+
+        // Skip 0-margin positions
+        if (decryptResult.note.margin === 0n) {
+          continue;
+        }
+
+        console.log(`[scanPositionNotes] FOUND valid position: margin=${decryptResult.note.margin}, size=${decryptResult.note.size}`);
+
+        // Build scanned position note (without spent status - that requires nullifier check)
+        const scannedNote: ScannedPositionNote = {
+          ...decryptResult.note,
+          spent: false, // Will be set by scanPositionNotesWithStatus
+          nullifier: new Uint8Array(32), // Will be computed by scanPositionNotesWithStatus
+          commitment: parsed.commitment,
+          leafIndex: parsed.leafIndex,
+          pool: positionPool,
+          accountHash: account.hash,
+          stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? undefined,
+        };
+
+        positionNotes.push(scannedNote);
+      } catch {
+        continue;
+      }
+    }
+
+    return positionNotes;
+  }
+
+  /**
+   * Scan for position notes with spent status
+   */
+  async scanPositionNotesWithStatus(
+    viewingKey: bigint,
+    nullifierKey: Uint8Array,
+    programId: PublicKey,
+    positionPool: PublicKey
+  ): Promise<ScannedPositionNote[]> {
+    const notes = await this.scanPositionNotes(viewingKey, programId, positionPool);
+
+    if (notes.length === 0) {
+      return [];
+    }
+
+    // Derive nullifiers and check spent status
+    const addressTree = DEVNET_LIGHT_TREES.addressTree;
+    const nullifierData: Array<{ note: ScannedPositionNote; nullifier: Uint8Array; address: Uint8Array }> = [];
+
+    for (const note of notes) {
+      // Derive stealth spending key if ephemeral pubkey exists
+      let effectiveNullifierKey = nullifierKey;
+      if (note.stealthEphemeralPubkey) {
+        const stealthSpendingKey = deriveStealthPrivateKey(viewingKey, note.stealthEphemeralPubkey);
+        effectiveNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
+      }
+
+      const nullifier = deriveSpendingNullifier(
+        effectiveNullifierKey,
+        note.commitment,
+        note.leafIndex
+      );
+
+      const address = this.deriveNullifierAddress(nullifier, programId, addressTree, note.pool);
+      nullifierData.push({ note, nullifier, address });
+    }
+
+    // Batch check nullifiers
+    const addresses = nullifierData.map(d => new PublicKey(d.address).toBase58());
+    const spentSet = await this.batchCheckNullifiers(addresses);
+
+    // Build results with spent status
+    return nullifierData.map(({ note, nullifier, address }) => {
+      const addressStr = new PublicKey(address).toBase58();
+      return {
+        ...note,
+        spent: spentSet.has(addressStr),
+        nullifier,
+      };
+    });
+  }
+
+  /**
+   * Get unspent position notes
+   */
+  async getUnspentPositionNotes(
+    viewingKey: bigint,
+    nullifierKey: Uint8Array,
+    programId: PublicKey,
+    positionPool: PublicKey
+  ): Promise<ScannedPositionNote[]> {
+    const notes = await this.scanPositionNotesWithStatus(viewingKey, nullifierKey, programId, positionPool);
+    return notes.filter(n => !n.spent);
+  }
+
+  // =========================================================================
+  // LP Note Scanner (Perps)
+  // =========================================================================
+
+  /**
+   * Scan for LP notes belonging to a user
+   *
+   * Similar to scanNotes but specifically for perps LP commitments.
+   * Uses the LP commitment formula for verification.
+   *
+   * @param viewingKey - User's viewing private key (for decryption)
+   * @param programId - CloakCraft program ID
+   * @param lpPool - LP pool to scan
+   * @returns Array of decrypted LP notes owned by the user
+   */
+  async scanLpNotes(
+    viewingKey: bigint,
+    programId: PublicKey,
+    lpPool: PublicKey
+  ): Promise<ScannedLpNote[]> {
+    // Initialize Poseidon
+    await initPoseidon();
+
+    // Query commitment accounts from Helius
+    const accounts = await this.getCommitmentAccounts(programId, lpPool);
+    console.log(`[scanLpNotes] Found ${accounts.length} accounts in LP pool`);
+
+    const COMMITMENT_DISCRIMINATOR_APPROX = 15491678376909513000;
+    const lpNotes: ScannedLpNote[] = [];
+
+    for (const account of accounts) {
+      if (!account.data?.data) {
+        continue;
+      }
+
+      // Filter by commitment discriminator
+      const disc = account.data.discriminator;
+      if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1000) {
+        continue;
+      }
+
+      // Check data length
+      const dataLen = atob(account.data.data).length;
+      if (dataLen < 346) {
+        continue;
+      }
+
+      try {
+        // Parse commitment account data
+        const parsed = this.parseCommitmentAccountData(account.data.data);
+        if (!parsed) continue;
+
+        // Deserialize encrypted note
+        const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
+        if (!encryptedNote) continue;
+
+        // Derive decryption key
+        let decryptionKey: bigint;
+        if (parsed.stealthEphemeralPubkey) {
+          decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
+        } else {
+          decryptionKey = viewingKey;
+        }
+
+        // Try to decrypt
+        const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
+        if (!decryptResult || decryptResult.type !== 'lp') {
+          continue;
+        }
+
+        // Verify commitment
+        const recomputed = computeLpCommitment(decryptResult.note);
+        const matches = Buffer.from(recomputed).toString('hex') === Buffer.from(parsed.commitment).toString('hex');
+        if (!matches) {
+          console.log(`[scanLpNotes] Commitment mismatch for account ${account.hash.slice(0, 8)}...`);
+          continue;
+        }
+
+        // Skip 0-amount LP notes
+        if (decryptResult.note.lpAmount === 0n) {
+          continue;
+        }
+
+        console.log(`[scanLpNotes] FOUND valid LP note: lpAmount=${decryptResult.note.lpAmount}`);
+
+        // Build scanned LP note (without spent status)
+        const scannedNote: ScannedLpNote = {
+          ...decryptResult.note,
+          spent: false,
+          nullifier: new Uint8Array(32),
+          commitment: parsed.commitment,
+          leafIndex: parsed.leafIndex,
+          pool: lpPool,
+          accountHash: account.hash,
+          stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? undefined,
+        };
+
+        lpNotes.push(scannedNote);
+      } catch {
+        continue;
+      }
+    }
+
+    return lpNotes;
+  }
+
+  /**
+   * Scan for LP notes with spent status
+   */
+  async scanLpNotesWithStatus(
+    viewingKey: bigint,
+    nullifierKey: Uint8Array,
+    programId: PublicKey,
+    lpPool: PublicKey
+  ): Promise<ScannedLpNote[]> {
+    const notes = await this.scanLpNotes(viewingKey, programId, lpPool);
+
+    if (notes.length === 0) {
+      return [];
+    }
+
+    // Derive nullifiers and check spent status
+    const addressTree = DEVNET_LIGHT_TREES.addressTree;
+    const nullifierData: Array<{ note: ScannedLpNote; nullifier: Uint8Array; address: Uint8Array }> = [];
+
+    for (const note of notes) {
+      // Derive stealth spending key if ephemeral pubkey exists
+      let effectiveNullifierKey = nullifierKey;
+      if (note.stealthEphemeralPubkey) {
+        const stealthSpendingKey = deriveStealthPrivateKey(viewingKey, note.stealthEphemeralPubkey);
+        effectiveNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
+      }
+
+      const nullifier = deriveSpendingNullifier(
+        effectiveNullifierKey,
+        note.commitment,
+        note.leafIndex
+      );
+
+      const address = this.deriveNullifierAddress(nullifier, programId, addressTree, note.pool);
+      nullifierData.push({ note, nullifier, address });
+    }
+
+    // Batch check nullifiers
+    const addresses = nullifierData.map(d => new PublicKey(d.address).toBase58());
+    const spentSet = await this.batchCheckNullifiers(addresses);
+
+    // Build results with spent status
+    return nullifierData.map(({ note, nullifier, address }) => {
+      const addressStr = new PublicKey(address).toBase58();
+      return {
+        ...note,
+        spent: spentSet.has(addressStr),
+        nullifier,
+      };
+    });
+  }
+
+  /**
+   * Get unspent LP notes
+   */
+  async getUnspentLpNotes(
+    viewingKey: bigint,
+    nullifierKey: Uint8Array,
+    programId: PublicKey,
+    lpPool: PublicKey
+  ): Promise<ScannedLpNote[]> {
+    const notes = await this.scanLpNotesWithStatus(viewingKey, nullifierKey, programId, lpPool);
+    return notes.filter(n => !n.spent);
   }
 }

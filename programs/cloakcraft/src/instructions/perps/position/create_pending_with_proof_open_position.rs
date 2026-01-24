@@ -34,6 +34,14 @@ pub struct CreatePendingWithProofOpenPosition<'info> {
     )]
     pub margin_pool: Box<Account<'info, Pool>>,
 
+    /// Position pool (where position commitments are stored)
+    #[account(
+        seeds = [seeds::POOL, position_pool.token_mint.as_ref()],
+        bump = position_pool.bump,
+        constraint = position_pool.token_mint == perps_pool.position_mint @ CloakCraftError::InvalidTokenMint,
+    )]
+    pub position_pool: Box<Account<'info, Pool>>,
+
     /// Perps pool
     #[account(
         seeds = [seeds::PERPS_POOL, perps_pool.pool_id.as_ref()],
@@ -94,6 +102,7 @@ pub fn create_pending_with_proof_open_position<'info>(
     change_amount: u64,
 ) -> Result<()> {
     let margin_pool = &ctx.accounts.margin_pool;
+    let position_pool = &ctx.accounts.position_pool;
     let perps_pool = &ctx.accounts.perps_pool;
     let perps_market = &ctx.accounts.perps_market;
     let pending_op = &mut ctx.accounts.pending_operation;
@@ -161,14 +170,14 @@ pub fn create_pending_with_proof_open_position<'info>(
     pending_op.proof_verified = true;
 
     // Store output commitments (position + optional change)
-    pending_op.pools[0] = margin_pool.key().to_bytes(); // Position stored in margin pool
+    pending_op.pools[0] = position_pool.key().to_bytes(); // Position stored in position pool
     pending_op.commitments[0] = position_commitment;
     pending_op.output_amounts[0] = 1; // Non-zero to indicate valid output (position)
 
     // Store change commitment if change_amount > 0
     if change_amount > 0 {
         pending_op.num_commitments = 2;
-        pending_op.pools[1] = margin_pool.key().to_bytes(); // Change also in margin pool
+        pending_op.pools[1] = margin_pool.key().to_bytes(); // Change goes back to margin pool
         pending_op.commitments[1] = change_commitment;
         pending_op.output_amounts[1] = change_amount;
     } else {

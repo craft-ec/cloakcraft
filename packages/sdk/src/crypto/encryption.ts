@@ -1,5 +1,10 @@
 /**
  * Note encryption using ECIES (Elliptic Curve Integrated Encryption Scheme)
+ *
+ * Supports three note types:
+ * - Standard token notes (104 bytes plaintext)
+ * - Position notes (126 bytes with magic prefix)
+ * - LP notes (108 bytes with magic prefix)
  */
 
 import { sha256 } from '@noble/hashes/sha256';
@@ -7,6 +12,17 @@ import { PublicKey } from '@solana/web3.js';
 import type { EncryptedNote, Note, Point, FieldElement } from '@cloakcraft/types';
 import { scalarMul, derivePublicKey } from './babyjubjub';
 import { bytesToField } from './poseidon';
+import type { PositionNote, LpNote } from './commitment';
+import {
+  NOTE_TYPE_STANDARD,
+  NOTE_TYPE_POSITION,
+  NOTE_TYPE_LP,
+  detectNoteType,
+  serializePositionNote,
+  deserializePositionNote,
+  serializeLpNote,
+  deserializeLpNote,
+} from './commitment';
 
 // BabyJubJub subgroup order
 const SUBGROUP_ORDER = 2736030358979909402780800718157159386076813972158567259200215660948447373041n;
@@ -81,6 +97,203 @@ export function tryDecryptNote(
   try {
     return decryptNote(encrypted, recipientPrivateKey);
   } catch (err) {
+    return null;
+  }
+}
+
+// =============================================================================
+// Position Note Encryption
+// =============================================================================
+
+/**
+ * Encrypt a position note for a recipient
+ */
+export function encryptPositionNote(note: PositionNote, recipientPubkey: Point): EncryptedNote {
+  // Generate ephemeral keypair
+  const ephemeralPrivate = generateRandomScalar();
+  const ephemeralPubkey = derivePublicKey(ephemeralPrivate);
+
+  // ECDH: shared_secret = ephemeral_private * recipient_pubkey
+  const sharedSecret = scalarMul(recipientPubkey, ephemeralPrivate);
+
+  // Derive encryption key
+  const encKey = deriveEncryptionKey(sharedSecret.x);
+
+  // Serialize position note
+  const plaintext = serializePositionNote(note);
+
+  // Encrypt
+  const { ciphertext, tag } = encryptAEAD(plaintext, encKey);
+
+  return {
+    ephemeralPubkey,
+    ciphertext,
+    tag,
+  };
+}
+
+/**
+ * Decrypt a position note
+ */
+export function decryptPositionNote(
+  encrypted: EncryptedNote,
+  recipientPrivateKey: bigint
+): PositionNote | null {
+  try {
+    // ECDH: shared_secret = recipient_private * ephemeral_pubkey
+    const sharedSecret = scalarMul(encrypted.ephemeralPubkey, recipientPrivateKey);
+
+    // Derive decryption key
+    const decKey = deriveEncryptionKey(sharedSecret.x);
+
+    // Decrypt
+    const plaintext = decryptAEAD(encrypted.ciphertext, encrypted.tag, decKey);
+
+    // Check if it's a position note
+    if (detectNoteType(plaintext) !== NOTE_TYPE_POSITION) {
+      return null;
+    }
+
+    // Deserialize
+    return deserializePositionNote(plaintext);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Try to decrypt a position note (returns null if decryption fails or wrong type)
+ */
+export function tryDecryptPositionNote(
+  encrypted: EncryptedNote,
+  recipientPrivateKey: bigint
+): PositionNote | null {
+  return decryptPositionNote(encrypted, recipientPrivateKey);
+}
+
+// =============================================================================
+// LP Note Encryption
+// =============================================================================
+
+/**
+ * Encrypt an LP note for a recipient
+ */
+export function encryptLpNote(note: LpNote, recipientPubkey: Point): EncryptedNote {
+  // Generate ephemeral keypair
+  const ephemeralPrivate = generateRandomScalar();
+  const ephemeralPubkey = derivePublicKey(ephemeralPrivate);
+
+  // ECDH: shared_secret = ephemeral_private * recipient_pubkey
+  const sharedSecret = scalarMul(recipientPubkey, ephemeralPrivate);
+
+  // Derive encryption key
+  const encKey = deriveEncryptionKey(sharedSecret.x);
+
+  // Serialize LP note
+  const plaintext = serializeLpNote(note);
+
+  // Encrypt
+  const { ciphertext, tag } = encryptAEAD(plaintext, encKey);
+
+  return {
+    ephemeralPubkey,
+    ciphertext,
+    tag,
+  };
+}
+
+/**
+ * Decrypt an LP note
+ */
+export function decryptLpNote(
+  encrypted: EncryptedNote,
+  recipientPrivateKey: bigint
+): LpNote | null {
+  try {
+    // ECDH: shared_secret = recipient_private * ephemeral_pubkey
+    const sharedSecret = scalarMul(encrypted.ephemeralPubkey, recipientPrivateKey);
+
+    // Derive decryption key
+    const decKey = deriveEncryptionKey(sharedSecret.x);
+
+    // Decrypt
+    const plaintext = decryptAEAD(encrypted.ciphertext, encrypted.tag, decKey);
+
+    // Check if it's an LP note
+    if (detectNoteType(plaintext) !== NOTE_TYPE_LP) {
+      return null;
+    }
+
+    // Deserialize
+    return deserializeLpNote(plaintext);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Try to decrypt an LP note (returns null if decryption fails or wrong type)
+ */
+export function tryDecryptLpNote(
+  encrypted: EncryptedNote,
+  recipientPrivateKey: bigint
+): LpNote | null {
+  return decryptLpNote(encrypted, recipientPrivateKey);
+}
+
+// =============================================================================
+// Universal Decryption
+// =============================================================================
+
+/** Decrypted note result with type discriminator */
+export type DecryptedNoteResult =
+  | { type: 'standard'; note: Note }
+  | { type: 'position'; note: PositionNote }
+  | { type: 'lp'; note: LpNote };
+
+/**
+ * Try to decrypt any note type
+ *
+ * Attempts decryption and auto-detects the note type based on magic bytes.
+ * Returns the appropriate note type or null if decryption fails.
+ */
+export function tryDecryptAnyNote(
+  encrypted: EncryptedNote,
+  recipientPrivateKey: bigint
+): DecryptedNoteResult | null {
+  try {
+    // ECDH: shared_secret = recipient_private * ephemeral_pubkey
+    const sharedSecret = scalarMul(encrypted.ephemeralPubkey, recipientPrivateKey);
+
+    // Derive decryption key
+    const decKey = deriveEncryptionKey(sharedSecret.x);
+
+    // Decrypt
+    const plaintext = decryptAEAD(encrypted.ciphertext, encrypted.tag, decKey);
+
+    // Detect note type and deserialize
+    const noteType = detectNoteType(plaintext);
+
+    if (noteType === NOTE_TYPE_POSITION) {
+      const note = deserializePositionNote(plaintext);
+      if (note) {
+        return { type: 'position', note };
+      }
+    } else if (noteType === NOTE_TYPE_LP) {
+      const note = deserializeLpNote(plaintext);
+      if (note) {
+        return { type: 'lp', note };
+      }
+    } else {
+      // Standard note
+      const note = deserializeNote(plaintext);
+      if (note.amount >= 0n) {  // Basic validity check
+        return { type: 'standard', note };
+      }
+    }
+
+    return null;
+  } catch {
     return null;
   }
 }

@@ -4,7 +4,7 @@
  * Core types for the privacy protocol
  */
 
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, TransactionInstruction, Keypair as SolanaKeypair } from '@solana/web3.js';
 
 // =============================================================================
 // Cryptographic Types
@@ -780,6 +780,12 @@ export interface OpenPerpsPositionParams {
   priceUpdate?: PublicKey;
   /** Pyth feed ID for auto-fetching price (default: BTC/USD) */
   pythFeedId?: Uint8Array;
+  /** Pyth post instructions for Jupiter-style bundling */
+  pythPostInstructions?: TransactionInstruction[];
+  /** Pyth close instructions for Jupiter-style bundling */
+  pythCloseInstructions?: TransactionInstruction[];
+  /** Pyth price update keypair for signing */
+  priceUpdateKeypair?: SolanaKeypair;
   /** Stealth address for position commitment */
   positionRecipient: StealthAddress;
   /** Stealth address for change commitment */
@@ -808,6 +814,12 @@ export interface ClosePerpsPositionParams {
   priceUpdate?: PublicKey;
   /** Pyth feed ID for auto-fetching price (default: BTC/USD) */
   pythFeedId?: Uint8Array;
+  /** Pyth post instructions for Jupiter-style bundling */
+  pythPostInstructions?: TransactionInstruction[];
+  /** Pyth close instructions for Jupiter-style bundling */
+  pythCloseInstructions?: TransactionInstruction[];
+  /** Pyth price update keypair for signing */
+  priceUpdateKeypair?: SolanaKeypair;
   /** Stealth address for settlement output */
   settlementRecipient: StealthAddress;
   /** Merkle root for position proof */
@@ -838,6 +850,12 @@ export interface PerpsAddLiquidityClientParams {
   priceUpdate?: PublicKey;
   /** Pyth feed ID for auto-fetching price */
   pythFeedId?: Uint8Array;
+  /** Pyth post instructions for Jupiter-style bundling */
+  pythPostInstructions?: TransactionInstruction[];
+  /** Pyth close instructions for Jupiter-style bundling */
+  pythCloseInstructions?: TransactionInstruction[];
+  /** Pyth price update keypair for signing */
+  priceUpdateKeypair?: SolanaKeypair;
   /** Stealth address for LP commitment */
   lpRecipient: StealthAddress;
   /** Stealth address for change commitment */
@@ -870,6 +888,12 @@ export interface PerpsRemoveLiquidityClientParams {
   priceUpdate?: PublicKey;
   /** Pyth feed ID for auto-fetching price */
   pythFeedId?: Uint8Array;
+  /** Pyth post instructions for Jupiter-style bundling */
+  pythPostInstructions?: TransactionInstruction[];
+  /** Pyth close instructions for Jupiter-style bundling */
+  pythCloseInstructions?: TransactionInstruction[];
+  /** Pyth price update keypair for signing */
+  priceUpdateKeypair?: SolanaKeypair;
   /** Stealth address for withdrawal output */
   withdrawRecipient: StealthAddress;
   /** Stealth address for LP change (if any) */

@@ -21,7 +21,13 @@ import {
   PROGRAM_ID,
 } from '../instructions/constants';
 import { derivePendingOperationPda, generateOperationId, PendingCommitmentData } from '../instructions/swap';
-import { encryptNote, serializeEncryptedNote } from '../crypto/encryption';
+import { encryptNote, serializeEncryptedNote, encryptPositionNote, encryptLpNote } from '../crypto/encryption';
+import {
+  createPositionNote,
+  createLpNote,
+  NOTE_TYPE_POSITION,
+  NOTE_TYPE_LP,
+} from '../crypto/commitment';
 
 // =============================================================================
 // Pyth Price Feed IDs
@@ -186,12 +192,16 @@ export interface LightNullifierParams {
 // =============================================================================
 
 export interface OpenPositionInstructionParams {
-  /** Settlement pool (where margin comes from) */
+  /** Settlement pool (where margin comes from and change goes to) */
   settlementPool: PublicKey;
+  /** Position pool (where position commitments are stored) */
+  positionPool: PublicKey;
   /** Perps pool */
   perpsPool: PublicKey;
   /** Market */
   market: PublicKey;
+  /** Market ID (32 bytes, for position note encryption and commitment) */
+  marketId: Uint8Array;
   /** Pyth price update account for the base token */
   priceUpdate: PublicKey;
   /** ZK proof */
@@ -210,6 +220,8 @@ export interface OpenPositionInstructionParams {
   isLong: boolean;
   /** Margin amount */
   marginAmount: bigint;
+  /** Position size (margin * leverage) */
+  positionSize: bigint;
   /** Leverage */
   leverage: number;
   /** Position fee */
@@ -283,6 +295,7 @@ export async function buildOpenPositionWithProgram(
     )
     .accountsStrict({
       marginPool: params.settlementPool,
+      positionPool: params.positionPool,
       perpsPool: params.perpsPool,
       perpsMarket: params.market,
       verificationKey: vkPda,
@@ -346,19 +359,23 @@ export async function buildOpenPositionWithProgram(
       ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
     ]);
 
-  // Build encrypted notes for commitments
-  const positionNote = {
-    stealthPubX: params.positionRecipient.stealthPubkey.x,
-    tokenMint: params.tokenMint,
-    amount: params.marginAmount, // Position stores margin as amount
-    randomness: params.positionRandomness,
-  };
-  const positionEncrypted = encryptNote(positionNote as any, params.positionRecipient.stealthPubkey);
+  // Build encrypted position note (fits in 250-byte limit with full marketId)
+  const positionNote = createPositionNote(
+    params.positionRecipient.stealthPubkey.x,
+    params.marketId,  // Full 32-byte marketId for commitment computation
+    params.isLong,
+    params.marginAmount,
+    params.positionSize,
+    params.leverage,
+    params.entryPrice,
+    params.positionRandomness
+  );
+  const positionEncrypted = encryptPositionNote(positionNote, params.positionRecipient.stealthPubkey);
 
   // Prepare pending commitments for Phase 4+ (create_commitment calls)
   const pendingCommitments: PendingCommitmentData[] = [
     {
-      pool: params.settlementPool,
+      pool: params.positionPool, // Position commitment goes to position pool
       commitment: params.positionCommitment,
       stealthEphemeralPubkey: new Uint8Array([
         ...params.positionRecipient.ephemeralPubkey.x,
@@ -379,7 +396,7 @@ export async function buildOpenPositionWithProgram(
     const changeEncrypted = encryptNote(changeNote as any, params.changeRecipient.stealthPubkey);
 
     pendingCommitments.push({
-      pool: params.settlementPool,
+      pool: params.settlementPool, // Change goes back to margin pool
       commitment: params.changeCommitment, // Use change commitment from params
       stealthEphemeralPubkey: new Uint8Array([
         ...params.changeRecipient.ephemeralPubkey.x,
@@ -404,7 +421,9 @@ export async function buildOpenPositionWithProgram(
 // =============================================================================
 
 export interface ClosePositionInstructionParams {
-  /** Settlement pool */
+  /** Position pool (where position commitment is read from) */
+  positionPool: PublicKey;
+  /** Settlement pool (where settlement commitment goes) */
   settlementPool: PublicKey;
   /** Perps pool */
   perpsPool: PublicKey;
@@ -497,6 +516,7 @@ export async function buildClosePositionWithProgram(
       params.isProfit
     )
     .accountsStrict({
+      positionPool: params.positionPool,
       settlementPool: params.settlementPool,
       perpsPool: params.perpsPool,
       perpsMarket: params.market,
@@ -509,11 +529,11 @@ export async function buildClosePositionWithProgram(
       ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
     ]);
 
-  // Phase 1
+  // Phase 1 - verify position exists in position pool
   const phase1Tx = await program.methods
     .verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams)
     .accountsStrict({
-      pool: params.settlementPool,
+      pool: params.positionPool, // Position is in position pool
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
     })
@@ -522,11 +542,11 @@ export async function buildClosePositionWithProgram(
       ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
     ]);
 
-  // Phase 2
+  // Phase 2 - nullify position in position pool
   const phase2Tx = await program.methods
     .createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams)
     .accountsStrict({
-      pool: params.settlementPool,
+      pool: params.positionPool, // Nullify position in position pool
       pendingOperation: pendingOpPda,
       relayer: params.relayer,
     })
@@ -593,6 +613,8 @@ export interface AddPerpsLiquidityInstructionParams {
   depositPool: PublicKey;
   /** Perps pool */
   perpsPool: PublicKey;
+  /** Perps pool ID (32 bytes, for LP note encryption) */
+  perpsPoolId: Uint8Array;
   /** Pyth price update account for the deposit token */
   priceUpdate: PublicKey;
   /** LP mint for LP tokens */
@@ -682,6 +704,7 @@ export async function buildAddPerpsLiquidityWithProgram(
     )
     .accountsStrict({
       depositPool: params.depositPool,
+      lpPool: lpPoolPda,
       perpsPool: params.perpsPool,
       verificationKey: vkPda,
       pendingOperation: pendingOpPda,
@@ -735,14 +758,14 @@ export async function buildAddPerpsLiquidityWithProgram(
       ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
     ]);
 
-  // LP note
-  const lpNote = {
-    stealthPubX: params.lpRecipient.stealthPubkey.x,
-    tokenMint: params.lpMint,
-    amount: params.lpAmountMinted,
-    randomness: params.lpRandomness,
-  };
-  const lpEncrypted = encryptNote(lpNote as any, params.lpRecipient.stealthPubkey);
+  // LP note with all required fields for commitment verification
+  const lpNote = createLpNote(
+    params.lpRecipient.stealthPubkey.x,
+    params.perpsPoolId,
+    params.lpAmountMinted,
+    params.lpRandomness
+  );
+  const lpEncrypted = encryptLpNote(lpNote, params.lpRecipient.stealthPubkey);
 
   const pendingCommitments: PendingCommitmentData[] = [{
     pool: lpPoolPda,
@@ -773,6 +796,8 @@ export interface RemovePerpsLiquidityInstructionParams {
   withdrawalPool: PublicKey;
   /** Perps pool */
   perpsPool: PublicKey;
+  /** Perps pool ID (32 bytes, for LP note encryption) */
+  perpsPoolId: Uint8Array;
   /** Pyth price update account for the withdrawal token */
   priceUpdate: PublicKey;
   /** LP mint for LP tokens */
@@ -870,6 +895,7 @@ export async function buildRemovePerpsLiquidityWithProgram(
     )
     .accountsStrict({
       withdrawalPool: params.withdrawalPool,
+      lpPool: lpPoolPda,
       perpsPool: params.perpsPool,
       verificationKey: vkPda,
       pendingOperation: pendingOpPda,
@@ -944,13 +970,13 @@ export async function buildRemovePerpsLiquidityWithProgram(
 
   // LP change commitment if any
   if (params.lpChangeAmount > 0n) {
-    const lpChangeNote = {
-      stealthPubX: params.lpChangeRecipient.stealthPubkey.x,
-      tokenMint: params.lpMint,
-      amount: params.lpChangeAmount,
-      randomness: params.lpChangeRandomness,
-    };
-    const lpChangeEncrypted = encryptNote(lpChangeNote as any, params.lpChangeRecipient.stealthPubkey);
+    const lpChangeNote = createLpNote(
+      params.lpChangeRecipient.stealthPubkey.x,
+      params.perpsPoolId,
+      params.lpChangeAmount,
+      params.lpChangeRandomness
+    );
+    const lpChangeEncrypted = encryptLpNote(lpChangeNote, params.lpChangeRecipient.stealthPubkey);
 
     pendingCommitments.push({
       pool: lpPoolPda,  // LP change goes back to LP pool

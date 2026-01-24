@@ -3,18 +3,25 @@
 //! Provides helper functions for reading and validating Pyth price feeds.
 
 use anchor_lang::prelude::*;
-use pyth_solana_receiver_sdk::price_update::{PriceUpdateV2, Price};
+use pyth_solana_receiver_sdk::price_update::{PriceUpdateV2, Price, VerificationLevel};
 
 use crate::errors::CloakCraftError;
 
 /// Maximum age for price data in seconds
 /// - Mainnet: 30 seconds (prices update frequently)
-/// - Devnet: 120 seconds (keepers update less frequently)
+/// - Devnet: 120 seconds (updates less frequently)
 #[cfg(not(feature = "devnet"))]
 pub const MAXIMUM_PRICE_AGE: u64 = 30;
 
 #[cfg(feature = "devnet")]
 pub const MAXIMUM_PRICE_AGE: u64 = 120;
+
+/// Minimum verification level for Pyth prices
+///
+/// Pyth v2 pull oracle uses partial verification to fit in single transactions.
+/// 5 signatures is Pyth's recommended minimum (from SDK examples).
+/// Full verification (13+ sigs) doesn't fit in Solana's tx size limit.
+pub const MIN_VERIFICATION_LEVEL: VerificationLevel = VerificationLevel::Partial { num_signatures: 5 };
 
 /// Price precision (6 decimals for USD)
 pub const PRICE_PRECISION: u64 = 1_000_000;
@@ -39,10 +46,18 @@ pub fn get_price(
         CloakCraftError::InvalidPriceFeed
     );
 
-    // Get price with staleness check
+    // Get price with staleness check and verification level
     let price = price_update
-        .get_price_no_older_than(clock, MAXIMUM_PRICE_AGE, feed_id)
-        .map_err(|_| CloakCraftError::PriceStale)?;
+        .get_price_no_older_than_with_custom_verification_level(
+            clock,
+            MAXIMUM_PRICE_AGE,
+            feed_id,
+            MIN_VERIFICATION_LEVEL,
+        )
+        .map_err(|e| {
+            msg!("Pyth price error: {:?}", e);
+            CloakCraftError::PriceStale
+        })?;
 
     // Convert to our standard format (USD with 6 decimals)
     convert_price_to_u64(&price)
@@ -57,10 +72,18 @@ pub fn get_price_unchecked(
 ) -> Result<u64> {
     let feed_id = price_update.price_message.feed_id;
 
-    // Get price with staleness check
+    // Get price with staleness check and verification level
     let price = price_update
-        .get_price_no_older_than(clock, MAXIMUM_PRICE_AGE, &feed_id)
-        .map_err(|_| CloakCraftError::PriceStale)?;
+        .get_price_no_older_than_with_custom_verification_level(
+            clock,
+            MAXIMUM_PRICE_AGE,
+            &feed_id,
+            MIN_VERIFICATION_LEVEL,
+        )
+        .map_err(|e| {
+            msg!("Pyth price error: {:?}", e);
+            CloakCraftError::PriceStale
+        })?;
 
     convert_price_to_u64(&price)
 }

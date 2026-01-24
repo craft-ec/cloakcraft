@@ -85,7 +85,7 @@ export class PythPriceService {
       throw new Error(`Failed to fetch price: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!data?.parsed?.length) {
       throw new Error(`No price available for feed ${feedIdHex}`);
@@ -141,7 +141,7 @@ export class PythPriceService {
       throw new Error(`Failed to fetch VAA: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!data?.binary?.data?.length) {
       throw new Error(`No VAA available for feed ${feedIdHex}`);

@@ -349,7 +349,7 @@ function clearCache() {
 }
 
 // Program ID
-const PROGRAM_ID = new PublicKey("HWRkcHVYDnMYrvVY9oQXaXU9dnxHA3RnRJpbXHW1BouZ");
+const PROGRAM_ID = new PublicKey("CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj");
 
 // Seeds
 const POOL_SEED = Buffer.from("pool");
@@ -380,12 +380,12 @@ const PYTH_FEED_IDS = {
     0x75, 0xf7, 0x9f, 0x58, 0x25, 0x12, 0x6d, 0x66,
     0x54, 0x80, 0x87, 0x46, 0x34, 0xfd, 0x0a, 0xce,
   ]),
-  /** USDC/USD price feed (stablecoin) */
+  /** USDC/USD price feed (stablecoin) - correct feed ID from Pyth */
   USDC_USD: new Uint8Array([
     0xea, 0xa0, 0x20, 0xc6, 0x1c, 0xc4, 0x79, 0x71,
-    0x2a, 0x35, 0x7a, 0xb5, 0xe4, 0xc7, 0x9a, 0x98,
-    0xed, 0x97, 0x9e, 0xd4, 0x30, 0x24, 0xf7, 0x50,
-    0x56, 0xbe, 0x2d, 0xb8, 0xbf, 0x6a, 0x43, 0x58,
+    0x28, 0x13, 0x46, 0x1c, 0xe1, 0x53, 0x89, 0x4a,
+    0x96, 0xa6, 0xc0, 0x0b, 0x21, 0xed, 0x0c, 0xfc,
+    0x27, 0x98, 0xd1, 0xf9, 0xa9, 0xe9, 0xc9, 0x4a,
   ]),
 } as const;
 
@@ -404,7 +404,7 @@ const WORMHOLE_PROGRAM_ID = new PublicKey("HDwcJBJXjL9FpJ7UBsYBtaDjsBUhuLCUYoz3z
 
 // Constants for VAA manipulation
 const VAA_SIGNATURE_SIZE = 66;  // 1 byte guardian index + 65 bytes signature
-const DEFAULT_REDUCED_GUARDIAN_SET_SIZE = 4;  // Reduced to 4 signatures to fit in one tx (saves 66 bytes per sig removed)
+const DEFAULT_REDUCED_GUARDIAN_SET_SIZE = 5;  // 5 signatures per Pyth SDK recommendation (fits in single tx)
 const CONFIG_SEED = Buffer.from("config");
 const TREASURY_SEED = Buffer.from("treasury");
 const GUARDIAN_SET_SEED = Buffer.from("GuardianSet");
@@ -627,22 +627,23 @@ async function getPythPriceUpdate(
     throw new Error(`Failed to fetch Pyth price: ${response.statusText}`);
   }
 
-  const data = await response.json();
+  const data = await response.json() as any;
 
   if (!data?.binary?.data?.length) {
     throw new Error(`No price update available for feed ${feedIdHex}`);
   }
 
   // Parse the oracle price
+  // On-chain uses PRICE_PRECISION = 1_000_000 (6 decimals)
   const parsed = data.parsed[0].price;
   const price = BigInt(parsed.price);
   const expo = parsed.expo;
-  const expoAdjustment = 9 + expo;
+  const expoAdjustment = 6 + expo; // Match on-chain PRICE_PRECISION (6 decimals)
   const oraclePrice = expoAdjustment >= 0
     ? price * BigInt(10 ** expoAdjustment)
     : price / BigInt(10 ** (-expoAdjustment));
 
-  console.log(`   Oracle price: $${Number(oraclePrice) / 1e9}`);
+  console.log(`   Oracle price: $${Number(oraclePrice) / 1e6}`);
 
   // Parse the accumulator update data
   const updateData = Buffer.from(data.binary.data[0], "base64");
@@ -701,7 +702,7 @@ function resetPythCache(): void {
 async function fetchPythPrice(feedId: Uint8Array): Promise<bigint> {
   const feedIdHex = feedIdToHex(feedId);
   const response = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?ids[]=${feedIdHex}`);
-  const data = await response.json();
+  const data = await response.json() as any;
   if (!data?.parsed?.length) throw new Error(`No price for ${feedIdHex}`);
   const parsed = data.parsed[0].price;
   const price = BigInt(parsed.price);
@@ -2175,7 +2176,7 @@ async function main() {
 
         // Get merkle proof for LP input
         const lpMerkleProof = await lightClient.getMerkleProofByHash(lpInput.accountHash!);
-        console.log(`   Merkle proof root: ${lpMerkleProof.root.toString('hex').slice(0, 16)}...`);
+        console.log(`   Merkle proof root: ${Buffer.from(lpMerkleProof.root).toString('hex').slice(0, 16)}...`);
 
         console.log(`   Removing ${lpAmount} LP tokens...`);
 
@@ -2227,6 +2228,8 @@ async function main() {
 
   let perpsPoolPda: PublicKey | null = null;
   let perpsMarketId: Uint8Array | null = null;
+  let perpsQuoteTokenMint: PublicKey | null = null;
+  let perpsQuotePoolPda: PublicKey | null = null;
 
   startTime = performance.now();
   try {
@@ -2265,11 +2268,19 @@ async function main() {
           maxImbalanceFeeBps: 3,        // 0.03% max imbalance fee
         };
 
+        // Derive position mint PDA
+        const PERPS_POSITION_MINT_SEED = Buffer.from("perps_pos_mint");
+        const [perpsPositionMintPda] = PublicKey.findProgramAddressSync(
+          [PERPS_POSITION_MINT_SEED, perpsPoolPda.toBuffer()],
+          PROGRAM_ID
+        );
+
         await program.methods
           .initializePerpsPool(poolId, perpsPoolParams)
           .accounts({
             perpsPool: perpsPoolPda,
             lpMint: perpsLpMintPda,
+            positionMint: perpsPositionMintPda,
             authority: payer.publicKey,
             payer: payer.publicKey,
             systemProgram: SystemProgram.programId,
@@ -2278,6 +2289,93 @@ async function main() {
           })
           .rpc();
         console.log(`   Perps pool initialized with LP mint: ${perpsLpMintPda.toBase58()}`);
+        console.log(`   Position mint: ${perpsPositionMintPda.toBase58()}`);
+
+        // Initialize Pool and PoolCommitmentCounter for LP mint (required for LP token commitments)
+        const [lpPoolPda] = PublicKey.findProgramAddressSync(
+          [Buffer.from("pool"), perpsLpMintPda.toBuffer()],
+          PROGRAM_ID
+        );
+        const [lpCommitmentCounterPda] = PublicKey.findProgramAddressSync(
+          [Buffer.from("commitment_counter"), lpPoolPda.toBuffer()],
+          PROGRAM_ID
+        );
+
+        // Initialize LP pool if it doesn't exist
+        try {
+          await program.methods
+            .initializePool()
+            .accounts({
+              pool: lpPoolPda,
+              tokenMint: perpsLpMintPda,
+              payer: payer.publicKey,
+              systemProgram: SystemProgram.programId,
+              tokenProgram: TOKEN_PROGRAM_ID,
+            })
+            .rpc();
+          console.log(`   LP token pool initialized: ${lpPoolPda.toBase58()}`);
+
+          // Initialize commitment counter for LP pool
+          await program.methods
+            .initializeCommitmentCounter()
+            .accounts({
+              pool: lpPoolPda,
+              commitmentCounter: lpCommitmentCounterPda,
+              payer: payer.publicKey,
+              systemProgram: SystemProgram.programId,
+            })
+            .rpc();
+          console.log(`   LP token commitment counter initialized`);
+        } catch (lpErr: any) {
+          if (lpErr.message?.includes("already in use")) {
+            console.log(`   LP token pool already exists`);
+          } else {
+            console.warn(`   Warning: LP pool init failed: ${lpErr.message}`);
+          }
+        }
+
+        // Initialize Pool and PoolCommitmentCounter for position mint (required for position commitments)
+        const [positionPoolPda] = PublicKey.findProgramAddressSync(
+          [Buffer.from("pool"), perpsPositionMintPda.toBuffer()],
+          PROGRAM_ID
+        );
+        const [positionCommitmentCounterPda] = PublicKey.findProgramAddressSync(
+          [Buffer.from("commitment_counter"), positionPoolPda.toBuffer()],
+          PROGRAM_ID
+        );
+
+        // Initialize position pool if it doesn't exist
+        try {
+          await program.methods
+            .initializePool()
+            .accounts({
+              pool: positionPoolPda,
+              tokenMint: perpsPositionMintPda,
+              payer: payer.publicKey,
+              systemProgram: SystemProgram.programId,
+              tokenProgram: TOKEN_PROGRAM_ID,
+            })
+            .rpc();
+          console.log(`   Position pool initialized: ${positionPoolPda.toBase58()}`);
+
+          // Initialize commitment counter for position pool
+          await program.methods
+            .initializeCommitmentCounter()
+            .accounts({
+              pool: positionPoolPda,
+              commitmentCounter: positionCommitmentCounterPda,
+              payer: payer.publicKey,
+              systemProgram: SystemProgram.programId,
+            })
+            .rpc();
+          console.log(`   Position commitment counter initialized`);
+        } catch (posErr: any) {
+          if (posErr.message?.includes("already in use")) {
+            console.log(`   Position pool already exists`);
+          } else {
+            console.warn(`   Warning: Position pool init failed: ${posErr.message}`);
+          }
+        }
 
         // Add tokens to the pool BEFORE creating market
         if (program.methods.addTokenToPool) {
@@ -2299,13 +2397,13 @@ async function main() {
           console.log("   Added base token to perps pool (BTC/USD feed)");
 
           // Create and add quote token (USDC-like with 6 decimals) with USDC/USD Pyth feed
-          const quoteTokenMint = await createMint(connection, payer, payer.publicKey, null, 6);
-          const quoteVaultPda = getAssociatedTokenAddressSync(quoteTokenMint, perpsPoolPda, true);
+          perpsQuoteTokenMint = await createMint(connection, payer, payer.publicKey, null, 6);
+          const quoteVaultPda = getAssociatedTokenAddressSync(perpsQuoteTokenMint, perpsPoolPda, true);
           await program.methods
             .addTokenToPool(Array.from(PYTH_FEED_IDS.USDC_USD))
             .accounts({
               perpsPool: perpsPoolPda,
-              tokenMint: quoteTokenMint,
+              tokenMint: perpsQuoteTokenMint,
               tokenVault: quoteVaultPda,
               authority: payer.publicKey,
               payer: payer.publicKey,
@@ -2315,6 +2413,49 @@ async function main() {
             })
             .rpc();
           console.log("   Added quote token to perps pool (USDC/USD feed)");
+
+          // Initialize Pool and PoolCommitmentCounter for quote token (required for shielding/liquidity)
+          const [quotePoolPda] = PublicKey.findProgramAddressSync(
+            [Buffer.from("pool"), perpsQuoteTokenMint.toBuffer()],
+            PROGRAM_ID
+          );
+          perpsQuotePoolPda = quotePoolPda;
+
+          const [quoteCommitmentCounterPda] = PublicKey.findProgramAddressSync(
+            [Buffer.from("commitment_counter"), quotePoolPda.toBuffer()],
+            PROGRAM_ID
+          );
+
+          try {
+            await program.methods
+              .initializePool()
+              .accounts({
+                pool: quotePoolPda,
+                tokenMint: perpsQuoteTokenMint,
+                payer: payer.publicKey,
+                systemProgram: SystemProgram.programId,
+                tokenProgram: TOKEN_PROGRAM_ID,
+              })
+              .rpc();
+            console.log(`   Quote token pool initialized: ${quotePoolPda.toBase58()}`);
+
+            await program.methods
+              .initializeCommitmentCounter()
+              .accounts({
+                commitmentCounter: quoteCommitmentCounterPda,
+                pool: quotePoolPda,
+                payer: payer.publicKey,
+                systemProgram: SystemProgram.programId,
+              })
+              .rpc();
+            console.log(`   Quote token commitment counter initialized`);
+          } catch (quotePoolErr: any) {
+            if (quotePoolErr.message?.includes("already in use")) {
+              console.log(`   Quote token pool already exists`);
+            } else {
+              console.warn(`   Warning: Quote pool init failed: ${quotePoolErr.message}`);
+            }
+          }
         }
 
         // Create market ID (e.g., "BTC-USD")
@@ -2411,14 +2552,21 @@ async function main() {
         // Create Pyth price account in separate transaction (bundling makes tx too large)
         const pythData = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.BTC_USD, payer);
 
+        // Calculate expected LP amount: deposit_value = amount * price / 10^decimals
+        // For new pool: LP = deposit_value (USD value with 6 decimals)
+        const tokenDecimals = 9n; // BTC token has 9 decimals
+        const depositValueUsd = depositAmount * pythData.oraclePrice / (10n ** tokenDecimals);
+        const expectedLpAmount = depositValueUsd; // For new pool, LP tokens = USD value
+        console.log(`   Expected LP amount: ${expectedLpAmount} (deposit value: $${Number(depositValueUsd) / 1e6})`);
+
         const addPerpsLiqResult = await client.addPerpsLiquidity(
           {
             poolId: perpsPoolPda,
             input: liqInput,
             depositAmount,
             tokenIndex: 0,
-            lpAmount: depositAmount,
-            oraclePrice: pythData.oraclePrice,
+            lpAmount: expectedLpAmount,
+            oraclePrices: [pythData.oraclePrice],
             priceUpdate: pythData.priceUpdate,
             lpRecipient: plpStealth.stealthAddress,
             changeRecipient: changeStealth.stealthAddress,
@@ -2434,6 +2582,180 @@ async function main() {
         await closePythPriceAccountSeparate(connection, pythData.closeInstructions, payer);
 
         logTest("Perps Add Liquidity", "PASS", `Added ${depositAmount} liquidity`, performance.now() - startTime);
+
+        // Also add liquidity for quote token (index 1) - required for open position
+        // Get quote token info from perps pool if not already set
+        if (!perpsQuoteTokenMint || !perpsQuotePoolPda) {
+          try {
+            const perpsPoolAccount = await (program.account as any).perpsPool.fetch(perpsPoolPda);
+            if (perpsPoolAccount.numTokens >= 2) {
+              // Get the quote token mint from the pool's token list
+              const quoteTokenInfo = perpsPoolAccount.tokens[1];
+              if (quoteTokenInfo && quoteTokenInfo.mint) {
+                perpsQuoteTokenMint = new PublicKey(quoteTokenInfo.mint);
+                const [quotePda] = PublicKey.findProgramAddressSync(
+                  [Buffer.from("pool"), perpsQuoteTokenMint.toBuffer()],
+                  PROGRAM_ID
+                );
+                perpsQuotePoolPda = quotePda;
+                console.log(`   Quote token mint: ${perpsQuoteTokenMint.toBase58()}`);
+              }
+            }
+          } catch (fetchErr: any) {
+            console.warn(`   Could not fetch quote token info: ${fetchErr.message}`);
+          }
+        }
+
+        if (perpsQuoteTokenMint && perpsQuotePoolPda) {
+          console.log("   Adding liquidity for quote token (index 1)...");
+          try {
+            // Ensure quote token pool exists
+            try {
+              const quotePoolInfo = await connection.getAccountInfo(perpsQuotePoolPda);
+              if (!quotePoolInfo) {
+                console.log("   Initializing quote token pool...");
+                await program.methods
+                  .initializePool()
+                  .accounts({
+                    pool: perpsQuotePoolPda,
+                    tokenMint: perpsQuoteTokenMint,
+                    payer: payer.publicKey,
+                    systemProgram: SystemProgram.programId,
+                    tokenProgram: TOKEN_PROGRAM_ID,
+                  })
+                  .rpc();
+
+                const [quoteCounterPda] = PublicKey.findProgramAddressSync(
+                  [Buffer.from("commitment_counter"), perpsQuotePoolPda.toBuffer()],
+                  PROGRAM_ID
+                );
+                await program.methods
+                  .initializeCommitmentCounter()
+                  .accounts({
+                    commitmentCounter: quoteCounterPda,
+                    pool: perpsQuotePoolPda,
+                    payer: payer.publicKey,
+                    systemProgram: SystemProgram.programId,
+                  })
+                  .rpc();
+                console.log("   Quote token pool initialized");
+              }
+            } catch (poolCheckErr: any) {
+              if (!poolCheckErr.message?.includes("already in use")) {
+                console.warn(`   Quote pool check: ${poolCheckErr.message}`);
+              }
+            }
+
+            // Mint quote tokens to payer
+            const quoteAmount = 1_000_000_000_000n; // 1M USDC (6 decimals)
+            const payerQuoteAta = await getOrCreateAssociatedTokenAccount(
+              connection,
+              payer,
+              perpsQuoteTokenMint,
+              payer.publicKey
+            );
+
+            await mintTo(
+              connection,
+              payer,
+              perpsQuoteTokenMint,
+              payerQuoteAta.address,
+              payer,
+              quoteAmount
+            );
+            console.log(`   Minted ${quoteAmount} quote tokens`);
+
+            // Shield quote tokens
+            const quoteShieldAmount = 100_000_000_000n; // 100k USDC (6 decimals)
+            const quoteStealth = generateStealthAddress(wallet.keypair.publicKey);
+
+            const quoteShieldResult = await client.shield(
+              {
+                pool: perpsQuoteTokenMint,
+                amount: quoteShieldAmount,
+                recipient: {
+                  stealthPubkey: quoteStealth.stealthAddress.stealthPubkey,
+                  ephemeralPubkey: quoteStealth.stealthAddress.ephemeralPubkey,
+                },
+                userTokenAccount: payerQuoteAta.address,
+              },
+              payer
+            );
+            console.log(`   Shielded ${quoteShieldAmount} quote tokens`);
+
+            // Wait for indexer
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            // Scan for quote token notes
+            const quoteNotes = await lightClient.scanNotesWithStatus(
+              spendingKeyForScan,
+              deriveNullifierKey(wallet.keypair.spending.sk),
+              PROGRAM_ID,
+              perpsQuotePoolPda
+            );
+
+            const unspentQuoteNotes = quoteNotes.filter(n => !n.spent && n.amount > 0n);
+            console.log(`   Found ${unspentQuoteNotes.length} quote token notes`);
+
+            if (unspentQuoteNotes.length > 0) {
+              const quoteInput = unspentQuoteNotes[0];
+              const quoteDepositAmount = quoteInput.amount;
+
+              // Get merkle proof for quote note
+              const quoteMerkleProof = await lightClient.getMerkleProofByHash(quoteInput.accountHash!);
+
+              // Generate stealth addresses
+              const quoteLpStealth = generateStealthAddress(wallet.keypair.publicKey);
+              const quoteChangeStealth = generateStealthAddress(wallet.keypair.publicKey);
+
+              // Create Pyth price account for USDC
+              // Note: USDC feed may not be available on devnet, so we try with a fallback
+              let quotePythData;
+              try {
+                quotePythData = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.USDC_USD, payer);
+              } catch (usdcErr: any) {
+                console.log(`   USDC feed not available, using SOL/USD feed as fallback`);
+                // Use SOL/USD feed as fallback (will work for testing utilization, but price will differ)
+                quotePythData = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.SOL_USD, payer);
+              }
+
+              // Calculate expected LP amount for quote token
+              // USDC has 6 decimals, price is 1.0 (1_000_000 in 6 decimal format)
+              // If using fallback, the price will be different but that's OK for testing liquidity
+              const quoteTokenDecimals = 6n;
+              const quoteDepositValueUsd = quoteDepositAmount * quotePythData.oraclePrice / (10n ** quoteTokenDecimals);
+              const quoteExpectedLpAmount = quoteDepositValueUsd;
+              console.log(`   Adding ${quoteDepositAmount} quote liquidity (LP: ${quoteExpectedLpAmount})`);
+
+              // oraclePrices array: price at index 1 (quote token)
+              const quoteOraclePrices = [0n, quotePythData.oraclePrice];
+
+              await client.addPerpsLiquidity(
+                {
+                  poolId: perpsPoolPda!,
+                  input: { ...quoteInput, tokenMint: perpsQuoteTokenMint },
+                  depositAmount: quoteDepositAmount,
+                  tokenIndex: 1, // Quote token is at index 1
+                  lpAmount: quoteExpectedLpAmount,
+                  oraclePrices: quoteOraclePrices,
+                  priceUpdate: quotePythData.priceUpdate,
+                  lpRecipient: quoteLpStealth.stealthAddress,
+                  changeRecipient: quoteChangeStealth.stealthAddress,
+                  merkleRoot: quoteMerkleProof.root,
+                  merklePath: quoteMerkleProof.pathElements,
+                  merkleIndices: quoteMerkleProof.pathIndices,
+                  onProgress: (stage) => console.log(`   Quote liquidity progress: ${stage}`),
+                },
+                payer
+              );
+
+              await closePythPriceAccountSeparate(connection, quotePythData.closeInstructions, payer);
+              console.log("   Quote token liquidity added successfully!");
+            }
+          } catch (quoteErr: any) {
+            console.warn(`   Warning: Failed to add quote liquidity: ${quoteErr.message}`);
+          }
+        }
       } else {
         logTest("Perps Add Liquidity", "FAIL", "No suitable notes for liquidity");
       }
@@ -2545,27 +2867,46 @@ async function main() {
       // Initialize close position circuit
       await client.initializeProver(['perps/close_position']);
 
-      // For close position test, we would need an actual open position
-      // Since open position may have been skipped, we check if there are position notes
-
-      // Derive position pool PDA
-      const PERPS_POSITION_SEED = Buffer.from("perps_position_pool");
-      const [positionPoolPda] = PublicKey.findProgramAddressSync(
-        [PERPS_POSITION_SEED, perpsPoolPda.toBuffer()],
+      // Derive position pool PDA (position commitments are stored in a separate position pool)
+      const PERPS_POSITION_MINT_SEED = Buffer.from("perps_pos_mint");
+      const [positionMintPda] = PublicKey.findProgramAddressSync(
+        [PERPS_POSITION_MINT_SEED, perpsPoolPda.toBuffer()],
         PROGRAM_ID
       );
+      const [positionPoolPda] = derivePoolPda(positionMintPda);
 
-      // Try to scan for position notes
+      // Also fetch from perps pool account to compare
+      const perpsPoolAccount = await (program.account as any).perpsPool.fetch(perpsPoolPda);
+      const storedPositionMint = perpsPoolAccount.positionMint as PublicKey;
+      const [storedPositionPoolPda] = derivePoolPda(storedPositionMint);
+
+      console.log(`   Position mint (derived): ${positionMintPda.toBase58()}`);
+      console.log(`   Position mint (from account): ${storedPositionMint.toBase58()}`);
+      console.log(`   Position mints match: ${positionMintPda.equals(storedPositionMint)}`);
+      console.log(`   Position pool: ${positionPoolPda.toBase58()}`);
+
+      // Wait for indexer to sync position commitments
+      console.log(`   Waiting for indexer to sync position commitments...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+
+      // Scan for position notes in the position pool
       try {
         const positionNotes = await lightClient.scanNotesWithStatus(
           spendingKeyForScan,
           deriveNullifierKey(wallet.keypair.spending.sk),
           PROGRAM_ID,
-          positionPoolPda
+          positionPoolPda // Position commitments are in the position pool
         );
 
-        const openPositions = positionNotes.filter(n => !n.spent);
-        console.log(`   Found ${openPositions.length} open positions`);
+        console.log(`   Total notes in position pool: ${positionNotes.length}`);
+
+        const unspentNotes = positionNotes.filter(n => !n.spent);
+        console.log(`   Unspent position notes: ${unspentNotes.length}`);
+        unspentNotes.forEach((n, i) => console.log(`     Position ${i}: amount=${n.amount}`));
+
+        // All unspent notes in the position pool are open positions
+        const openPositions = unspentNotes.filter(n => n.amount > 0n);
+        console.log(`   Found ${openPositions.length} potential position notes`);
 
         if (openPositions.length > 0) {
           const positionInput = openPositions[0];
@@ -2636,13 +2977,27 @@ async function main() {
     try {
       await client.initializeProver(['perps/remove_liquidity']);
 
-      // Derive PLP pool PDA
-      const PLP_MINT_SEED = Buffer.from("plp_mint");
+      // Derive PLP pool PDA (must match the seed used in add liquidity)
+      const PERPS_LP_MINT_SEED = Buffer.from("perps_lp_mint");
       const [plpMintPda] = PublicKey.findProgramAddressSync(
-        [PLP_MINT_SEED, perpsPoolPda.toBuffer()],
+        [PERPS_LP_MINT_SEED, perpsPoolPda.toBuffer()],
         PROGRAM_ID
       );
       const [plpPoolPda] = derivePoolPda(plpMintPda);
+
+      // Debug: Print derived addresses
+      console.log(`   Derived PLP mint: ${plpMintPda.toBase58()}`);
+      console.log(`   Derived PLP pool: ${plpPoolPda.toBase58()}`);
+
+      // Debug: Fetch perps pool to compare with stored LP mint
+      const perpsPoolAccount = await (program.account as any).perpsPool.fetch(perpsPoolPda);
+      const storedLpMint = perpsPoolAccount.lpMint as PublicKey;
+      console.log(`   Stored LP mint in perps pool: ${storedLpMint.toBase58()}`);
+      console.log(`   LP mints match: ${plpMintPda.equals(storedLpMint)}`);
+
+      // Wait for indexer to sync LP commitments
+      console.log(`   Waiting for indexer to sync LP commitments...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
 
       // Scan for PLP tokens
       try {
@@ -2652,6 +3007,11 @@ async function main() {
           PROGRAM_ID,
           plpPoolPda
         );
+
+        console.log(`   Total notes returned from scan: ${plpNotes.length}`);
+        if (plpNotes.length > 0) {
+          console.log(`   First note: amount=${plpNotes[0].amount}, spent=${plpNotes[0].spent}`);
+        }
 
         const unspentPlpNotes = plpNotes.filter(n => !n.spent && n.amount > 0n);
         console.log(`   Found ${unspentPlpNotes.length} PLP token notes`);
@@ -2679,7 +3039,7 @@ async function main() {
               tokenIndex: 0,  // First token in pool
               lpAmount: burnAmount,
               withdrawAmount: burnAmount,  // Expect 1:1 for test
-              oraclePrice: pythData.oraclePrice,
+              oraclePrices: [pythData.oraclePrice],
               priceUpdate: pythData.priceUpdate,
               withdrawRecipient: collateralStealth.stealthAddress,
               lpChangeRecipient: plpChangeStealth.stealthAddress,

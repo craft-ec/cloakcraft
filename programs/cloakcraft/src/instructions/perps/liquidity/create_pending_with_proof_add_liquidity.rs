@@ -31,6 +31,14 @@ pub struct CreatePendingWithProofAddPerpsLiquidity<'info> {
     )]
     pub deposit_pool: Box<Account<'info, Pool>>,
 
+    /// LP token pool (where LP token commitment will be created)
+    #[account(
+        seeds = [seeds::POOL, lp_pool.token_mint.as_ref()],
+        bump = lp_pool.bump,
+        constraint = lp_pool.token_mint == perps_pool.lp_mint @ CloakCraftError::InvalidTokenMint,
+    )]
+    pub lp_pool: Box<Account<'info, Pool>>,
+
     /// Perps pool
     #[account(
         seeds = [seeds::PERPS_POOL, perps_pool.pool_id.as_ref()],
@@ -140,7 +148,7 @@ pub fn create_pending_with_proof_add_perps_liquidity<'info>(
 
     // Store output commitment (LP token)
     pending_op.num_commitments = 1;
-    pending_op.pools[0] = deposit_pool.key().to_bytes(); // LP token stored in same pool
+    pending_op.pools[0] = ctx.accounts.lp_pool.key().to_bytes(); // LP token stored in LP pool
     pending_op.commitments[0] = lp_commitment;
     pending_op.output_amounts[0] = lp_amount_minted;
 

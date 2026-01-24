@@ -32,6 +32,15 @@ pub struct InitializePerpsPool<'info> {
     )]
     pub lp_mint: AccountInfo<'info>,
 
+    /// Position token mint (PDA derived from perps pool, for position commitments)
+    /// CHECK: This account is initialized as a mint via CPI
+    #[account(
+        mut,
+        seeds = [seeds::PERPS_POSITION_MINT, perps_pool.key().as_ref()],
+        bump
+    )]
+    pub position_mint: AccountInfo<'info>,
+
     /// Pool authority (admin)
     pub authority: Signer<'info>,
 
@@ -89,6 +98,7 @@ pub fn initialize_perps_pool(
 ) -> Result<()> {
     let perps_pool = &mut ctx.accounts.perps_pool;
     let lp_mint_bump = ctx.bumps.lp_mint;
+    let position_mint_bump = ctx.bumps.position_mint;
     let perps_pool_key = perps_pool.key();
 
     // Create LP mint account as PDA using invoke_signed
@@ -97,11 +107,11 @@ pub fn initialize_perps_pool(
     let lamports = rent.minimum_balance(space);
 
     // LP mint PDA seeds: [PERPS_LP_MINT, perps_pool.key()]
-    let bump_bytes = [lp_mint_bump];
+    let lp_bump_bytes = [lp_mint_bump];
     let lp_mint_seeds: &[&[u8]] = &[
         seeds::PERPS_LP_MINT,
         perps_pool_key.as_ref(),
-        &bump_bytes,
+        &lp_bump_bytes,
     ];
 
     invoke_signed(
@@ -121,21 +131,57 @@ pub fn initialize_perps_pool(
     )?;
 
     // Initialize the LP mint via CPI with PDA signer
-    let cpi_accounts = anchor_spl::token::InitializeMint {
+    let lp_cpi_accounts = anchor_spl::token::InitializeMint {
         mint: ctx.accounts.lp_mint.to_account_info(),
         rent: ctx.accounts.rent.to_account_info(),
     };
     let cpi_program = ctx.accounts.token_program.to_account_info();
-    let signer_seeds: &[&[&[u8]]] = &[lp_mint_seeds];
-    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+    let lp_signer_seeds: &[&[&[u8]]] = &[lp_mint_seeds];
+    let lp_cpi_ctx = CpiContext::new_with_signer(cpi_program.clone(), lp_cpi_accounts, lp_signer_seeds);
 
     // Set perps_pool as mint authority, no freeze authority
     // Using 6 decimals for LP token (matches USD value precision)
-    anchor_spl::token::initialize_mint(cpi_ctx, 6, &perps_pool_key, None)?;
+    anchor_spl::token::initialize_mint(lp_cpi_ctx, 6, &perps_pool_key, None)?;
+
+    // Create Position mint account as PDA using invoke_signed
+    let pos_bump_bytes = [position_mint_bump];
+    let position_mint_seeds: &[&[u8]] = &[
+        seeds::PERPS_POSITION_MINT,
+        perps_pool_key.as_ref(),
+        &pos_bump_bytes,
+    ];
+
+    invoke_signed(
+        &anchor_lang::solana_program::system_instruction::create_account(
+            ctx.accounts.payer.key,
+            ctx.accounts.position_mint.key,
+            lamports,
+            space as u64,
+            &ctx.accounts.token_program.key(),
+        ),
+        &[
+            ctx.accounts.payer.to_account_info(),
+            ctx.accounts.position_mint.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+        &[position_mint_seeds],
+    )?;
+
+    // Initialize the Position mint via CPI with PDA signer
+    let pos_cpi_accounts = anchor_spl::token::InitializeMint {
+        mint: ctx.accounts.position_mint.to_account_info(),
+        rent: ctx.accounts.rent.to_account_info(),
+    };
+    let pos_signer_seeds: &[&[&[u8]]] = &[position_mint_seeds];
+    let pos_cpi_ctx = CpiContext::new_with_signer(cpi_program, pos_cpi_accounts, pos_signer_seeds);
+
+    // Position mint also uses 6 decimals
+    anchor_spl::token::initialize_mint(pos_cpi_ctx, 6, &perps_pool_key, None)?;
 
     // Initialize pool state
     perps_pool.pool_id = pool_id;
     perps_pool.lp_mint = ctx.accounts.lp_mint.key();
+    perps_pool.position_mint = ctx.accounts.position_mint.key();
     perps_pool.lp_supply = 0;
     perps_pool.authority = ctx.accounts.authority.key();
     perps_pool.num_tokens = 0;
@@ -154,11 +200,13 @@ pub fn initialize_perps_pool(
     perps_pool.is_active = true;
     perps_pool.bump = ctx.bumps.perps_pool;
     perps_pool.lp_mint_bump = lp_mint_bump;
+    perps_pool.position_mint_bump = position_mint_bump;
 
     msg!(
-        "Perps pool initialized: pool_id={}, lp_mint={}, max_leverage={}x",
+        "Perps pool initialized: pool_id={}, lp_mint={}, position_mint={}, max_leverage={}x",
         pool_id,
         ctx.accounts.lp_mint.key(),
+        ctx.accounts.position_mint.key(),
         params.max_leverage
     );
 

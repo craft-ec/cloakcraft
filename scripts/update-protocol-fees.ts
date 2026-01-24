@@ -27,7 +27,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
-const PROGRAM_ID = new PublicKey("FKaC6fnSJYBrssPCtwh94hwg3C38xKzUDAxaK8mfjX3a");
+const PROGRAM_ID = new PublicKey("CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj");
 const PROTOCOL_CONFIG_SEED = Buffer.from("protocol_config");
 
 interface ProtocolConfigData {
