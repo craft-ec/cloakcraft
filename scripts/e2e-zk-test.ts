@@ -3405,12 +3405,27 @@ async function main() {
         poolPda
       );
 
-      const unspentShortMargin = shortMarginNotes.filter(n => !n.spent && n.amount >= 5_000_000_000n);
-      console.log(`   Found ${unspentShortMargin.length} notes for short margin`);
+      // Calculate required amount including fees: margin + (margin * leverage * 6 / 10000)
+      const shortMargin = 5_000_000_000n;
+      const shortLeverage = 5n;
+      const shortPositionSize = shortMargin * shortLeverage;
+      const shortFee = (shortPositionSize * 6n) / 10000n;
+      const shortRequired = shortMargin + shortFee;
+      console.log(`   Required for short position: ${shortRequired.toString()} (margin: ${shortMargin.toString()}, fee: ${shortFee.toString()})`);
+
+      // Filter for notes with ENOUGH balance to cover margin + fee, sorted by amount desc
+      const unspentShortMargin = shortMarginNotes
+        .filter(n => !n.spent && n.amount >= shortRequired)
+        .sort((a, b) => Number(b.amount - a.amount)); // Sort by amount descending
+      console.log(`   Found ${unspentShortMargin.length} notes with sufficient balance for short margin`);
+      for (const n of unspentShortMargin) {
+        console.log(`   - Note amount: ${n.amount.toString()}, accountHash: ${n.accountHash?.substring(0, 16)}...`);
+      }
 
       if (unspentShortMargin.length > 0) {
-        const shortInput = unspentShortMargin[0];
-        const shortMargin = 5_000_000_000n;
+        const shortInput = unspentShortMargin[0]; // Use largest note
+        console.log(`   [DEBUG] Using note with amount: ${shortInput.amount.toString()}`);
+        console.log(`   [DEBUG] Expected changeAmount: ${(shortInput.amount - shortRequired).toString()}`);
 
         const shortMerkleProof = await lightClient.getMerkleProofByHash(shortInput.accountHash!);
         const shortPosStealth = generateStealthAddress(wallet.keypair.publicKey);
@@ -3476,10 +3491,21 @@ async function main() {
         poolPda
       );
 
-      const unspentLev2 = lev2Notes.filter(n => !n.spent && n.amount >= 5_000_000_000n);
+      // Calculate required amount for 2x leverage: margin + fee
+      const lev2Margin = 5_000_000_000n;
+      const lev2PositionSize = lev2Margin * 2n;
+      const lev2Fee = (lev2PositionSize * 6n) / 10000n;
+      const lev2Required = lev2Margin + lev2Fee;
+      console.log(`   Required for 2x position: ${lev2Required.toString()} (margin: ${lev2Margin.toString()}, fee: ${lev2Fee.toString()})`);
+
+      // Filter for notes with enough balance, sorted by amount desc
+      const unspentLev2 = lev2Notes
+        .filter(n => !n.spent && n.amount >= lev2Required)
+        .sort((a, b) => Number(b.amount - a.amount));
 
       if (unspentLev2.length > 0) {
-        const lev2Input = unspentLev2[0];
+        const lev2Input = unspentLev2[0]; // Use largest note
+        console.log(`   Using note with amount: ${lev2Input.amount.toString()}, expected change: ${(lev2Input.amount - lev2Required).toString()}`);
         const lev2Merkle = await lightClient.getMerkleProofByHash(lev2Input.accountHash!);
         const lev2PosStealth = generateStealthAddress(wallet.keypair.publicKey);
         const lev2ChangeStealth = generateStealthAddress(wallet.keypair.publicKey);
@@ -3530,10 +3556,21 @@ async function main() {
         poolPda
       );
 
-      const unspentLev10 = lev10Notes.filter(n => !n.spent && n.amount >= 5_000_000_000n);
+      // Calculate required amount for 10x leverage: margin + fee
+      const lev10Margin = 5_000_000_000n;
+      const lev10PositionSize = lev10Margin * 10n;
+      const lev10Fee = (lev10PositionSize * 6n) / 10000n;
+      const lev10Required = lev10Margin + lev10Fee;
+      console.log(`   Required for 10x position: ${lev10Required.toString()} (margin: ${lev10Margin.toString()}, fee: ${lev10Fee.toString()})`);
+
+      // Filter for notes with enough balance, sorted by amount desc
+      const unspentLev10 = lev10Notes
+        .filter(n => !n.spent && n.amount >= lev10Required)
+        .sort((a, b) => Number(b.amount - a.amount));
 
       if (unspentLev10.length > 0) {
-        const lev10Input = unspentLev10[0];
+        const lev10Input = unspentLev10[0]; // Use largest note
+        console.log(`   Using note with amount: ${lev10Input.amount.toString()}, expected change: ${(lev10Input.amount - lev10Required).toString()}`);
         const lev10Merkle = await lightClient.getMerkleProofByHash(lev10Input.accountHash!);
         const lev10PosStealth = generateStealthAddress(wallet.keypair.publicKey);
         const lev10ChangeStealth = generateStealthAddress(wallet.keypair.publicKey);

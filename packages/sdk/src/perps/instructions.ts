@@ -395,8 +395,10 @@ export async function buildOpenPositionWithProgram(
 
   // Only add change commitment if change amount > 0
   if (params.changeAmount > 0n) {
+    // IMPORTANT: Circuit uses INPUT note's stealthPubX for change commitment (open_position.circom line 202)
+    // The encrypted note must use the same stealthPubX so scanning computes the matching commitment
     const changeNote = {
-      stealthPubX: params.changeRecipient.stealthPubkey.x,
+      stealthPubX: params.inputStealthPubX,  // Use input's stealthPubX to match circuit
       tokenMint: params.tokenMint,
       amount: params.changeAmount,
       randomness: params.changeRandomness,

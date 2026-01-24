@@ -4827,8 +4827,8 @@ var LightCommitmentClient = class extends LightClient {
         continue;
       }
       const dataLen = atob(account.data.data).length;
-      console.log(`[scanNotes] Data length: ${dataLen} (need >= 346)`);
-      if (dataLen < 346) {
+      console.log(`[scanNotes] Data length: ${dataLen} (need >= 396)`);
+      if (dataLen < 396) {
         console.log(`[scanNotes] SKIPPED: data too short`);
         cache.set(account.hash, null);
         continue;
@@ -4998,7 +4998,10 @@ var LightCommitmentClient = class extends LightClient {
       for (let i = 0; i < binaryString.length; i++) {
         data[i] = binaryString.charCodeAt(i);
       }
-      if (data.length < 346) {
+      const MIN_SIZE = 396;
+      const MAX_NOTE_SIZE = 250;
+      if (data.length < MIN_SIZE) {
+        console.log(`[parseCommitmentAccountData] Data too short: ${data.length} < ${MIN_SIZE}`);
         return null;
       }
       const pool = data.slice(0, 32);
@@ -5009,8 +5012,9 @@ var LightCommitmentClient = class extends LightClient {
       const ephemeralY = data.slice(104, 136);
       const isNonZero = ephemeralX.some((b) => b !== 0) || ephemeralY.some((b) => b !== 0);
       const stealthEphemeralPubkey = isNonZero ? { x: new Uint8Array(ephemeralX), y: new Uint8Array(ephemeralY) } : null;
-      const encryptedNoteLen = view.getUint16(336, true);
-      if (encryptedNoteLen > 200) {
+      const encryptedNoteLen = view.getUint16(386, true);
+      if (encryptedNoteLen > MAX_NOTE_SIZE) {
+        console.log(`[parseCommitmentAccountData] Invalid note length: ${encryptedNoteLen} > ${MAX_NOTE_SIZE}`);
         return null;
       }
       const encryptedNote = data.slice(136, 136 + encryptedNoteLen);
@@ -5114,6 +5118,17 @@ var LightCommitmentClient = class extends LightClient {
         const matches = Buffer.from(recomputed).toString("hex") === Buffer.from(parsed.commitment).toString("hex");
         if (!matches) {
           console.log(`[scanPositionNotes] Commitment mismatch for account ${account.hash.slice(0, 8)}...`);
+          console.log(`  Stored commitment:    ${Buffer.from(parsed.commitment).toString("hex")}`);
+          console.log(`  Recomputed commitment: ${Buffer.from(recomputed).toString("hex")}`);
+          console.log(`  Note fields:`);
+          console.log(`    stealthPubX: ${Buffer.from(decryptResult.note.stealthPubX).toString("hex").slice(0, 16)}...`);
+          console.log(`    marketId: ${Buffer.from(decryptResult.note.marketId).toString("hex")}`);
+          console.log(`    isLong: ${decryptResult.note.isLong}`);
+          console.log(`    margin: ${decryptResult.note.margin}`);
+          console.log(`    size: ${decryptResult.note.size}`);
+          console.log(`    leverage: ${decryptResult.note.leverage}`);
+          console.log(`    entryPrice: ${decryptResult.note.entryPrice}`);
+          console.log(`    randomness: ${Buffer.from(decryptResult.note.randomness).toString("hex").slice(0, 16)}...`);
           continue;
         }
         if (decryptResult.note.margin === 0n) {
@@ -6559,6 +6574,7 @@ init_constants();
 init_swap();
 init_encryption();
 init_commitment();
+init_poseidon();
 var PYTH_FEED_IDS2 = {
   /** SOL/USD price feed */
   SOL_USD: new Uint8Array([
@@ -6809,10 +6825,12 @@ async function buildOpenPositionWithProgram(program, params) {
   }).preInstructions([
     import_web313.ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 })
   ]);
+  const fieldReducedMarketId = fieldToBytes(bytesToField(params.marketId));
   const positionNote = createPositionNote(
-    params.positionRecipient.stealthPubkey.x,
-    params.marketId,
-    // Full 32-byte marketId for commitment computation
+    params.inputStealthPubX,
+    // Use input's stealthPubX to match circuit
+    fieldReducedMarketId,
+    // Field-reduced marketId for commitment computation match
     params.isLong,
     params.marginAmount,
     params.positionSize,
@@ -9842,6 +9860,8 @@ var CloakCraftClient = class {
       changeRandomness,
       changeAmount,
       tokenMint: inputTokenMint,
+      // IMPORTANT: Circuit uses input note's stealthPubX for position commitment
+      inputStealthPubX: params.input.stealthPubX,
       lightVerifyParams: lightParams.lightVerifyParams,
       lightNullifierParams: lightParams.lightNullifierParams,
       remainingAccounts: lightParams.remainingAccounts
@@ -9966,25 +9986,25 @@ var CloakCraftClient = class {
       throw new Error("priceUpdate account is required. Use @pythnetwork/pyth-solana-receiver to create one.");
     }
     params.onProgress?.("generating");
-    const closeFee = params.positionInput.amount * 6n / 10000n;
-    const pnlAmount = 0n;
-    const isProfit = false;
-    const tokenMint = params.positionInput.tokenMint instanceof Uint8Array ? params.positionInput.tokenMint : params.positionInput.tokenMint.toBytes();
+    const closeFee = params.positionInput.margin * 6n / 10000n;
+    const entryPrice = params.positionInput.entryPrice;
+    const exitPrice = oraclePrice;
+    const isLong = params.positionInput.isLong;
+    const isProfit = isLong ? exitPrice > entryPrice : exitPrice < entryPrice;
+    const priceDiff = isProfit ? isLong ? exitPrice - entryPrice : entryPrice - exitPrice : isLong ? entryPrice - exitPrice : exitPrice - entryPrice;
+    const pnlAmount = priceDiff * params.positionInput.size / entryPrice;
+    const tokenMint = params.settlementTokenMint.toBytes();
     const perpsPoolAccount = await this.program.account.perpsPool.fetch(params.poolId);
     const actualPoolId = perpsPoolAccount.poolId;
     const proofParams = {
       position: {
         stealthPubX: params.positionInput.stealthPubX,
-        marketId: bytesToField(params.marketId),
-        isLong: true,
-        // TODO: Get from position data
-        margin: params.positionInput.amount,
-        size: params.positionInput.amount,
-        // TODO: Get actual size
-        leverage: 1,
-        // TODO: Get from position data
-        entryPrice: oraclePrice,
-        // Use resolved oracle price
+        marketId: bytesToField(params.positionInput.marketId),
+        isLong: params.positionInput.isLong,
+        margin: params.positionInput.margin,
+        size: params.positionInput.size,
+        leverage: params.positionInput.leverage,
+        entryPrice: params.positionInput.entryPrice,
         randomness: params.positionInput.randomness,
         leafIndex: params.positionInput.leafIndex,
         spendingKey: this.wallet.keypair.spending.sk
@@ -10009,8 +10029,8 @@ var CloakCraftClient = class {
     const heliusRpcUrl = this.getHeliusRpcUrl();
     const relayerPubkey = relayer?.publicKey ?? await this.getRelayerPubkey();
     const { proof, positionNullifier: nullifier, settlementCommitment, settlementRandomness, settlementAmount } = proofResult;
-    const positionCommitment = computeCommitment(params.positionInput);
-    const settlementTokenMint = params.positionInput.tokenMint instanceof Uint8Array ? new import_web316.PublicKey(params.positionInput.tokenMint) : params.positionInput.tokenMint;
+    const positionCommitment = computePositionCommitment(params.positionInput);
+    const settlementTokenMint = params.settlementTokenMint;
     const [settlementPoolPda] = derivePoolPda(settlementTokenMint, this.programId);
     const [perpsMarketPda] = derivePerpsMarketPda(params.poolId, params.marketId, this.programId);
     const positionMint = perpsPoolAccount.positionMint;
@@ -10033,21 +10053,18 @@ var CloakCraftClient = class {
       positionCommitment,
       positionNullifier: nullifier,
       settlementCommitment,
-      isLong: true,
-      // TODO: Get from position data
+      isLong: params.positionInput.isLong,
       exitPrice: oraclePrice,
       closeFee,
       pnlAmount,
       isProfit,
-      positionMargin: params.positionInput.amount,
-      positionSize: params.positionInput.amount,
-      // TODO: Get actual size
-      entryPrice: oraclePrice,
-      // TODO: Get from position data
+      positionMargin: params.positionInput.margin,
+      positionSize: params.positionInput.size,
+      entryPrice: params.positionInput.entryPrice,
       relayer: relayerPubkey,
       settlementRecipient: params.settlementRecipient,
       settlementRandomness,
-      settlementAmount: settlementAmount ?? params.positionInput.amount,
+      settlementAmount: settlementAmount ?? params.positionInput.margin,
       tokenMint: settlementTokenMint,
       lightVerifyParams: lightParams.lightVerifyParams,
       lightNullifierParams: lightParams.lightNullifierParams,
@@ -10369,11 +10386,11 @@ var CloakCraftClient = class {
     const tokenMint = poolData.tokens[params.tokenIndex].mint;
     const tokenMintBytes = tokenMint.toBytes();
     const feeAmount = 0n;
-    const changeLpAmount = params.lpInput.amount - params.lpAmount;
+    const changeLpAmount = params.lpInput.lpAmount - params.lpAmount;
     const proofParams = {
       lpInput: {
         stealthPubX: params.lpInput.stealthPubX,
-        lpAmount: params.lpInput.amount,
+        lpAmount: params.lpInput.lpAmount,
         randomness: params.lpInput.randomness,
         leafIndex: params.lpInput.leafIndex,
         spendingKey: this.wallet.keypair.spending.sk
@@ -10409,11 +10426,13 @@ var CloakCraftClient = class {
       outputRandomness: withdrawRandomness,
       changeLpRandomness: lpChangeRandomness
     } = proofResult;
-    const lpCommitment = computeCommitment(params.lpInput);
+    const lpCommitment = computeLpCommitment(params.lpInput);
+    const [lpPoolPda] = derivePoolPda(lpMint, this.programId);
     const lightParams = await this.buildLightProtocolParams(
       accountHash,
       nullifier,
-      withdrawalPoolPda,
+      lpPoolPda,
+      // LP commitment is in LP pool
       heliusRpcUrl
     );
     const instructionParams = {

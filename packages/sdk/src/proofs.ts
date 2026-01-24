@@ -1549,6 +1549,22 @@ export class ProofGenerator {
     const totalRequired = params.marginAmount + params.positionFee;
     const changeAmount = params.input.amount - totalRequired;
 
+    console.log('[OpenPosition] Change amount debug:');
+    console.log('  input.amount:', params.input.amount.toString());
+    console.log('  marginAmount:', params.marginAmount.toString());
+    console.log('  positionFee:', params.positionFee.toString());
+    console.log('  totalRequired:', totalRequired.toString());
+    console.log('  changeAmount:', changeAmount.toString());
+    console.log('  changeAmount > 0n:', changeAmount > 0n);
+
+    // Validate input covers required amount
+    if (changeAmount < 0n) {
+      throw new Error(
+        `Insufficient input amount: input (${params.input.amount}) < required (${totalRequired}). ` +
+        `Need at least ${totalRequired} to cover margin (${params.marginAmount}) + fee (${params.positionFee}).`
+      );
+    }
+
     // Generate change randomness and compute change commitment
     const changeRandomness = generateRandomness();
     let changeCommitment: Uint8Array;
@@ -1556,6 +1572,12 @@ export class ProofGenerator {
       // Compute change commitment using the standard commitment formula
       // commitment = poseidon(DOMAIN_COMMITMENT, stealth_pub_x, token_mint, amount, randomness)
       const COMMITMENT_DOMAIN = 1n;
+      console.log('[OpenPosition] Computing change commitment:');
+      console.log('  stealthPubX:', Buffer.from(params.input.stealthPubX).toString('hex').slice(0, 16) + '...');
+      console.log('  tokenMint:', Buffer.from(tokenMint).toString('hex').slice(0, 16) + '...');
+      console.log('  changeAmount (bigint):', changeAmount.toString());
+      console.log('  changeAmount (bytes):', Buffer.from(fieldToBytes(changeAmount)).toString('hex').slice(0, 16) + '...');
+      console.log('  changeRandomness:', Buffer.from(changeRandomness).toString('hex').slice(0, 16) + '...');
       changeCommitment = poseidonHashDomain(
         COMMITMENT_DOMAIN,
         params.input.stealthPubX,
@@ -1563,9 +1585,11 @@ export class ProofGenerator {
         fieldToBytes(changeAmount),
         changeRandomness
       );
+      console.log('  computed changeCommitment:', Buffer.from(changeCommitment).toString('hex'));
     } else {
       // No change - commitment is zero
       changeCommitment = new Uint8Array(32);
+      console.log('[OpenPosition] No change (changeAmount <= 0), using zero commitment');
     }
 
     // Compute position commitment using Poseidon hash (matches circuit)

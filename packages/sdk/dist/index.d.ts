@@ -109,8 +109,10 @@ declare function createPositionNote(stealthPubX: FieldElement, marketId: Uint8Ar
  * Compute LP commitment
  *
  * Poseidon(LP_DOMAIN, stealthPubX, poolId, lpAmount, randomness)
+ *
+ * Note: Accepts any object with the required fields (doesn't require noteType)
  */
-declare function computeLpCommitment(note: LpNote): Commitment;
+declare function computeLpCommitment(note: Pick<LpNote, 'stealthPubX' | 'poolId' | 'lpAmount' | 'randomness'>): Commitment;
 /**
  * Verify an LP commitment matches the note
  */
@@ -5140,6 +5142,8 @@ interface OpenPositionInstructionParams {
     changeAmount: bigint;
     /** Token mint for margin */
     tokenMint: PublicKey;
+    /** Input note's stealthPubX (circuit uses this for position commitment) */
+    inputStealthPubX: Uint8Array;
     /** Light params for verify commitment */
     lightVerifyParams: LightVerifyParams;
     /** Light params for create nullifier */

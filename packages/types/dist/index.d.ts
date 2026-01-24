@@ -61,6 +61,62 @@ interface DecryptedNote extends Note {
     /** Stealth ephemeral pubkey (needed to derive stealth private key for spending) */
     stealthEphemeralPubkey?: Point;
 }
+/** Position note data for perps positions */
+interface PositionNoteData {
+    /** Stealth public key x-coordinate */
+    stealthPubX: FieldElement;
+    /** Market ID (32 bytes, field-reduced) */
+    marketId: Uint8Array;
+    /** Is long position */
+    isLong: boolean;
+    /** Margin amount */
+    margin: bigint;
+    /** Position size */
+    size: bigint;
+    /** Leverage (1-255) */
+    leverage: number;
+    /** Entry price */
+    entryPrice: bigint;
+    /** Randomness for commitment */
+    randomness: FieldElement;
+}
+/** Decrypted position note with metadata for closing */
+interface DecryptedPositionNote extends PositionNoteData {
+    /** Position commitment */
+    commitment: Commitment;
+    /** Leaf index in merkle tree */
+    leafIndex: number;
+    /** Position pool the note belongs to */
+    pool: PublicKey;
+    /** Compressed account hash (for merkle proof fetching) */
+    accountHash?: string;
+    /** Stealth ephemeral pubkey (needed to derive stealth private key for spending) */
+    stealthEphemeralPubkey?: Point;
+}
+/** LP note data for perps liquidity positions */
+interface LpNoteData {
+    /** Stealth public key x-coordinate */
+    stealthPubX: FieldElement;
+    /** Pool ID (32 bytes) */
+    poolId: Uint8Array;
+    /** LP token amount */
+    lpAmount: bigint;
+    /** Randomness for commitment */
+    randomness: FieldElement;
+}
+/** Decrypted LP note with metadata for removing liquidity */
+interface DecryptedLpNote extends LpNoteData {
+    /** LP commitment */
+    commitment: Commitment;
+    /** Leaf index in merkle tree */
+    leafIndex: number;
+    /** LP pool the note belongs to */
+    pool: PublicKey;
+    /** Compressed account hash (for merkle proof fetching) */
+    accountHash?: string;
+    /** Stealth ephemeral pubkey (needed to derive stealth private key for spending) */
+    stealthEphemeralPubkey?: Point;
+}
 /** Spending key (master secret) */
 interface SpendingKey {
     sk: FieldElement;
@@ -684,11 +740,13 @@ interface OpenPerpsPositionParams {
 /** Close position parameters for client */
 interface ClosePerpsPositionParams {
     /** Position note to close */
-    positionInput: DecryptedNote;
+    positionInput: DecryptedPositionNote;
     /** Perps pool address */
     poolId: PublicKey;
     /** Market ID */
     marketId: Uint8Array;
+    /** Settlement token mint (the token to receive profit/loss in) */
+    settlementTokenMint: PublicKey;
     /** Current oracle price (if not provided, will be fetched from Pyth) */
     oraclePrice?: bigint;
     /** Pyth price update account (if not provided, will be auto-posted and closed) */
@@ -752,7 +810,7 @@ interface PerpsAddLiquidityClientParams {
 /** Remove perps liquidity client parameters */
 interface PerpsRemoveLiquidityClientParams {
     /** LP token note to burn */
-    lpInput: DecryptedNote;
+    lpInput: DecryptedLpNote;
     /** Perps pool address */
     poolId: PublicKey;
     /** Token index to withdraw */
@@ -787,4 +845,4 @@ interface PerpsRemoveLiquidityClientParams {
     onProgress?: (stage: PerpsProgressStage) => void;
 }
 
-export { type AdapterProofInputs, type AdapterSwapParams, type AddLiquidityParams, type AggregationState, AggregationStatus, type AmmPoolState, type AmmSwapParams, type CancelOrderParams, type ClosePerpsPositionParams, type Commitment, type ConsolidationParams, type CreateAggregationParams, type DecryptedNote, type DecryptionShare, type ElGamalCiphertext, type EncryptedNote, type EncryptedVote, type FieldElement, type FillOrderParams, type FinalizeVotingParams, type Groth16Proof, type Keypair, type MerkleProof, type MerkleRoot, type Note, type NoteCreatedEvent, type NoteSpentEvent, type Nullifier, type OpenPerpsPositionParams, type OrderCreatedEvent, type OrderFilledEvent, type OrderParams, type OrderState, OrderStatus, type OrderTerms, type PerpsAddLiquidityClientParams, type PerpsProgressStage, type PerpsRemoveLiquidityClientParams, type Point, type PoolState, PoolType, type PoseidonHash, type PreparedInput, type RemoveLiquidityParams, type ShieldParams, type SpendingKey, type StealthAddress, type SubmitDecryptionShareParams, type SubmitVoteParams, type SyncStatus, type TransactionResult, type TransferOutput, type TransferParams, type TransferProgressStage, type TransferProofInputs, type ViewingKey, type VoteParams, type VoteProofInputs, type VoteSubmittedEvent };
+export { type AdapterProofInputs, type AdapterSwapParams, type AddLiquidityParams, type AggregationState, AggregationStatus, type AmmPoolState, type AmmSwapParams, type CancelOrderParams, type ClosePerpsPositionParams, type Commitment, type ConsolidationParams, type CreateAggregationParams, type DecryptedLpNote, type DecryptedNote, type DecryptedPositionNote, type DecryptionShare, type ElGamalCiphertext, type EncryptedNote, type EncryptedVote, type FieldElement, type FillOrderParams, type FinalizeVotingParams, type Groth16Proof, type Keypair, type LpNoteData, type MerkleProof, type MerkleRoot, type Note, type NoteCreatedEvent, type NoteSpentEvent, type Nullifier, type OpenPerpsPositionParams, type OrderCreatedEvent, type OrderFilledEvent, type OrderParams, type OrderState, OrderStatus, type OrderTerms, type PerpsAddLiquidityClientParams, type PerpsProgressStage, type PerpsRemoveLiquidityClientParams, type Point, type PoolState, PoolType, type PoseidonHash, type PositionNoteData, type PreparedInput, type RemoveLiquidityParams, type ShieldParams, type SpendingKey, type StealthAddress, type SubmitDecryptionShareParams, type SubmitVoteParams, type SyncStatus, type TransactionResult, type TransferOutput, type TransferParams, type TransferProgressStage, type TransferProofInputs, type ViewingKey, type VoteParams, type VoteProofInputs, type VoteSubmittedEvent };
