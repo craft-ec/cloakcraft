@@ -79,6 +79,40 @@ export interface DecryptedNote extends Note {
   stealthEphemeralPubkey?: Point;
 }
 
+/** Position note data for perps positions */
+export interface PositionNoteData {
+  /** Stealth public key x-coordinate */
+  stealthPubX: FieldElement;
+  /** Market ID (32 bytes, field-reduced) */
+  marketId: Uint8Array;
+  /** Is long position */
+  isLong: boolean;
+  /** Margin amount */
+  margin: bigint;
+  /** Position size */
+  size: bigint;
+  /** Leverage (1-255) */
+  leverage: number;
+  /** Entry price */
+  entryPrice: bigint;
+  /** Randomness for commitment */
+  randomness: FieldElement;
+}
+
+/** Decrypted position note with metadata for closing */
+export interface DecryptedPositionNote extends PositionNoteData {
+  /** Position commitment */
+  commitment: Commitment;
+  /** Leaf index in merkle tree */
+  leafIndex: number;
+  /** Position pool the note belongs to */
+  pool: PublicKey;
+  /** Compressed account hash (for merkle proof fetching) */
+  accountHash?: string;
+  /** Stealth ephemeral pubkey (needed to derive stealth private key for spending) */
+  stealthEphemeralPubkey?: Point;
+}
+
 // =============================================================================
 // Key Types
 // =============================================================================
@@ -803,11 +837,13 @@ export interface OpenPerpsPositionParams {
 /** Close position parameters for client */
 export interface ClosePerpsPositionParams {
   /** Position note to close */
-  positionInput: DecryptedNote;
+  positionInput: DecryptedPositionNote;
   /** Perps pool address */
   poolId: PublicKey;
   /** Market ID */
   marketId: Uint8Array;
+  /** Settlement token mint (the token to receive profit/loss in) */
+  settlementTokenMint: PublicKey;
   /** Current oracle price (if not provided, will be fetched from Pyth) */
   oraclePrice?: bigint;
   /** Pyth price update account (if not provided, will be auto-posted and closed) */

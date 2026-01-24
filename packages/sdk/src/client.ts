@@ -41,7 +41,7 @@ import type {
 import { Wallet, createWallet, loadWallet } from './wallet';
 import { NoteManager } from './notes';
 import { ProofGenerator } from './proofs';
-import { computeCommitment, generateRandomness, createNote } from './crypto/commitment';
+import { computeCommitment, computePositionCommitment, generateRandomness, createNote } from './crypto/commitment';
 import { derivePublicKey } from './crypto/babyjubjub';
 import { poseidonHash, fieldToBytes, bytesToField, initPoseidon } from './crypto/poseidon';
 import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier';
@@ -3641,14 +3641,12 @@ export class CloakCraftClient {
 
     // Calculate PnL and fees (simplified - actual calculation uses oracle prices)
     // Note: Full PnL calculation would happen on-chain with oracle verification
-    const closeFee = (params.positionInput.amount * 6n) / 10000n; // 0.06%
+    const closeFee = (params.positionInput.margin * 6n) / 10000n; // 0.06%
     const pnlAmount = 0n; // Placeholder - calculated on-chain
     const isProfit = false;
 
-    // Transform client params to proof generator format
-    const tokenMint = params.positionInput.tokenMint instanceof Uint8Array
-      ? params.positionInput.tokenMint
-      : params.positionInput.tokenMint.toBytes();
+    // Use settlement token mint from params
+    const tokenMint = params.settlementTokenMint.toBytes();
 
     // Fetch the PerpsPool account to get the actual pool_id used in proofs
     // IMPORTANT: The on-chain verification uses perps_pool.pool_id, not the PDA address
@@ -3658,12 +3656,12 @@ export class CloakCraftClient {
     const proofParams = {
       position: {
         stealthPubX: params.positionInput.stealthPubX,
-        marketId: bytesToField(params.marketId),
-        isLong: true, // TODO: Get from position data
-        margin: params.positionInput.amount,
-        size: params.positionInput.amount, // TODO: Get actual size
-        leverage: 1, // TODO: Get from position data
-        entryPrice: oraclePrice, // Use resolved oracle price
+        marketId: bytesToField(params.positionInput.marketId),
+        isLong: params.positionInput.isLong,
+        margin: params.positionInput.margin,
+        size: params.positionInput.size,
+        leverage: params.positionInput.leverage,
+        entryPrice: params.positionInput.entryPrice,
         randomness: params.positionInput.randomness,
         leafIndex: params.positionInput.leafIndex,
         spendingKey: this.wallet.keypair.spending.sk,
@@ -3692,13 +3690,12 @@ export class CloakCraftClient {
 
     const { proof, positionNullifier: nullifier, settlementCommitment, settlementRandomness, settlementAmount } = proofResult;
 
-    // Compute position commitment
-    const positionCommitment = computeCommitment(params.positionInput);
+    // Compute position commitment using position-specific formula
+    // Cast to SDK's PositionNote type (noteType is only needed for serialization, not commitment)
+    const positionCommitment = computePositionCommitment(params.positionInput as any);
 
     // Derive PDAs
-    const settlementTokenMint = params.positionInput.tokenMint instanceof Uint8Array
-      ? new PublicKey(params.positionInput.tokenMint)
-      : params.positionInput.tokenMint;
+    const settlementTokenMint = params.settlementTokenMint;
     const [settlementPoolPda] = derivePoolPda(settlementTokenMint, this.programId);
     const [perpsMarketPda] = derivePerpsMarketPda(params.poolId, params.marketId, this.programId);
 
@@ -3725,18 +3722,18 @@ export class CloakCraftClient {
       positionCommitment,
       positionNullifier: nullifier,
       settlementCommitment,
-      isLong: true, // TODO: Get from position data
+      isLong: params.positionInput.isLong,
       exitPrice: oraclePrice,
       closeFee,
       pnlAmount,
       isProfit,
-      positionMargin: params.positionInput.amount,
-      positionSize: params.positionInput.amount, // TODO: Get actual size
-      entryPrice: oraclePrice, // TODO: Get from position data
+      positionMargin: params.positionInput.margin,
+      positionSize: params.positionInput.size,
+      entryPrice: params.positionInput.entryPrice,
       relayer: relayerPubkey,
       settlementRecipient: params.settlementRecipient,
       settlementRandomness,
-      settlementAmount: settlementAmount ?? params.positionInput.amount,
+      settlementAmount: settlementAmount ?? params.positionInput.margin,
       tokenMint: settlementTokenMint,
       lightVerifyParams: lightParams.lightVerifyParams,
       lightNullifierParams: lightParams.lightNullifierParams,
