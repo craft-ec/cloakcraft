@@ -28,6 +28,7 @@ import {
   NOTE_TYPE_POSITION,
   NOTE_TYPE_LP,
 } from '../crypto/commitment';
+import { bytesToField, fieldToBytes } from '../crypto/poseidon';
 
 // =============================================================================
 // Pyth Price Feed IDs
@@ -360,9 +361,12 @@ export async function buildOpenPositionWithProgram(
     ]);
 
   // Build encrypted position note (fits in 250-byte limit with full marketId)
+  // IMPORTANT: Use field-reduced marketId to match commitment computation in proofs.ts
+  // The proof generator uses bytesToField(raw_marketId) which may reduce large values
+  const fieldReducedMarketId = fieldToBytes(bytesToField(params.marketId));
   const positionNote = createPositionNote(
     params.positionRecipient.stealthPubkey.x,
-    params.marketId,  // Full 32-byte marketId for commitment computation
+    fieldReducedMarketId,  // Field-reduced marketId for commitment computation match
     params.isLong,
     params.marginAmount,
     params.positionSize,
