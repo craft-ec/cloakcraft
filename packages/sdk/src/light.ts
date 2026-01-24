@@ -868,10 +868,10 @@ export class LightCommitmentClient extends LightClient {
 
       // Skip accounts with truncated data (must be full CommitmentAccount struct)
       // Use atob for browser compatibility (Buffer.from doesn't work in browsers)
-      // Layout: pool(32) + commitment(32) + leaf_index(8) + stealth_ephemeral(64) + encrypted_note(200) + len(2) + created_at(8) = 346
+      // Layout: pool(32) + commitment(32) + leaf_index(8) + stealth_ephemeral(64) + encrypted_note(250) + len(2) + created_at(8) = 396
       const dataLen = atob(account.data.data).length;
-      console.log(`[scanNotes] Data length: ${dataLen} (need >= 346)`);
-      if (dataLen < 346) {
+      console.log(`[scanNotes] Data length: ${dataLen} (need >= 396)`);
+      if (dataLen < 396) {
         console.log(`[scanNotes] SKIPPED: data too short`);
         cache.set(account.hash, null); // Cache as not-ours
         continue;
@@ -1098,8 +1098,12 @@ export class LightCommitmentClient extends LightClient {
       }
 
       // Helius provides discriminator separately, so data starts directly with pool
-      // Total size: 32 + 32 + 8 + 64 + 200 + 2 + 8 = 346 bytes
-      if (data.length < 346) {
+      // Account size: 32 + 32 + 8 + 64 + 250 + 2 + 8 = 396 bytes
+      const MIN_SIZE = 396;
+      const MAX_NOTE_SIZE = 250;
+
+      if (data.length < MIN_SIZE) {
+        console.log(`[parseCommitmentAccountData] Data too short: ${data.length} < ${MIN_SIZE}`);
         return null;
       }
 
@@ -1125,15 +1129,16 @@ export class LightCommitmentClient extends LightClient {
         ? { x: new Uint8Array(ephemeralX), y: new Uint8Array(ephemeralY) }
         : null;
 
-      // encrypted_note: 200 bytes FIXED - offset 136
-      // encrypted_note_len: 2 bytes (u16 LE) - offset 336
-      const encryptedNoteLen = view.getUint16(336, true);
+      // encrypted_note: 250 bytes FIXED - offset 136
+      // encrypted_note_len: 2 bytes (u16 LE) - offset 386
+      const encryptedNoteLen = view.getUint16(386, true);
 
-      if (encryptedNoteLen > 200) {
-        return null; // Invalid length
+      if (encryptedNoteLen > MAX_NOTE_SIZE) {
+        console.log(`[parseCommitmentAccountData] Invalid note length: ${encryptedNoteLen} > ${MAX_NOTE_SIZE}`);
+        return null;
       }
 
-      // Get the actual encrypted note data (first encryptedNoteLen bytes of the 200-byte array)
+      // Get the actual encrypted note data
       const encryptedNote = data.slice(136, 136 + encryptedNoteLen);
 
       return {
