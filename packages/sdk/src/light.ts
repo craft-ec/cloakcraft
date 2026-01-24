@@ -1280,6 +1280,17 @@ export class LightCommitmentClient extends LightClient {
         const matches = Buffer.from(recomputed).toString('hex') === Buffer.from(parsed.commitment).toString('hex');
         if (!matches) {
           console.log(`[scanPositionNotes] Commitment mismatch for account ${account.hash.slice(0, 8)}...`);
+          console.log(`  Stored commitment:    ${Buffer.from(parsed.commitment).toString('hex')}`);
+          console.log(`  Recomputed commitment: ${Buffer.from(recomputed).toString('hex')}`);
+          console.log(`  Note fields:`);
+          console.log(`    stealthPubX: ${Buffer.from(decryptResult.note.stealthPubX).toString('hex').slice(0, 16)}...`);
+          console.log(`    marketId: ${Buffer.from(decryptResult.note.marketId).toString('hex')}`);
+          console.log(`    isLong: ${decryptResult.note.isLong}`);
+          console.log(`    margin: ${decryptResult.note.margin}`);
+          console.log(`    size: ${decryptResult.note.size}`);
+          console.log(`    leverage: ${decryptResult.note.leverage}`);
+          console.log(`    entryPrice: ${decryptResult.note.entryPrice}`);
+          console.log(`    randomness: ${Buffer.from(decryptResult.note.randomness).toString('hex').slice(0, 16)}...`);
           continue;
         }
 

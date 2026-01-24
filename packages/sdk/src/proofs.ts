@@ -1572,6 +1572,7 @@ export class ProofGenerator {
     // PositionCommitment: two-stage hash
     // Stage 1: H(POSITION_COMMITMENT_DOMAIN, stealth_pub_x, market_id, is_long, margin)
     // Stage 2: H(stage1_out, size, leverage, entry_price, randomness)
+    // NOTE: Circuit uses INPUT note's stealthPubX - position owner = margin owner
     const POSITION_COMMITMENT_DOMAIN = 8n;
     const stage1 = poseidonHashDomain(
       POSITION_COMMITMENT_DOMAIN,

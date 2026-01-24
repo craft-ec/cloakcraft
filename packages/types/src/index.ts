@@ -113,6 +113,32 @@ export interface DecryptedPositionNote extends PositionNoteData {
   stealthEphemeralPubkey?: Point;
 }
 
+/** LP note data for perps liquidity positions */
+export interface LpNoteData {
+  /** Stealth public key x-coordinate */
+  stealthPubX: FieldElement;
+  /** Pool ID (32 bytes) */
+  poolId: Uint8Array;
+  /** LP token amount */
+  lpAmount: bigint;
+  /** Randomness for commitment */
+  randomness: FieldElement;
+}
+
+/** Decrypted LP note with metadata for removing liquidity */
+export interface DecryptedLpNote extends LpNoteData {
+  /** LP commitment */
+  commitment: Commitment;
+  /** Leaf index in merkle tree */
+  leafIndex: number;
+  /** LP pool the note belongs to */
+  pool: PublicKey;
+  /** Compressed account hash (for merkle proof fetching) */
+  accountHash?: string;
+  /** Stealth ephemeral pubkey (needed to derive stealth private key for spending) */
+  stealthEphemeralPubkey?: Point;
+}
+
 // =============================================================================
 // Key Types
 // =============================================================================
@@ -909,7 +935,7 @@ export interface PerpsAddLiquidityClientParams {
 /** Remove perps liquidity client parameters */
 export interface PerpsRemoveLiquidityClientParams {
   /** LP token note to burn */
-  lpInput: DecryptedNote;
+  lpInput: DecryptedLpNote;
   /** Perps pool address */
   poolId: PublicKey;
   /** Token index to withdraw */

@@ -243,6 +243,8 @@ export interface OpenPositionInstructionParams {
   changeAmount: bigint;
   /** Token mint for margin */
   tokenMint: PublicKey;
+  /** Input note's stealthPubX (circuit uses this for position commitment) */
+  inputStealthPubX: Uint8Array;
   /** Light params for verify commitment */
   lightVerifyParams: LightVerifyParams;
   /** Light params for create nullifier */
@@ -364,8 +366,10 @@ export async function buildOpenPositionWithProgram(
   // IMPORTANT: Use field-reduced marketId to match commitment computation in proofs.ts
   // The proof generator uses bytesToField(raw_marketId) which may reduce large values
   const fieldReducedMarketId = fieldToBytes(bytesToField(params.marketId));
+  // IMPORTANT: Circuit uses INPUT note's stealthPubX for position commitment (open_position.circom line 177)
+  // We must use inputStealthPubX here to match the circuit's commitment computation
   const positionNote = createPositionNote(
-    params.positionRecipient.stealthPubkey.x,
+    params.inputStealthPubX,  // Use input's stealthPubX to match circuit
     fieldReducedMarketId,  // Field-reduced marketId for commitment computation match
     params.isLong,
     params.marginAmount,

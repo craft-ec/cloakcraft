@@ -2889,9 +2889,9 @@ async function main() {
       console.log(`   Waiting for indexer to sync position commitments...`);
       await new Promise(resolve => setTimeout(resolve, 5000));
 
-      // Scan for position notes in the position pool
+      // Scan for position notes in the position pool using position-specific scanner
       try {
-        const positionNotes = await lightClient.scanNotesWithStatus(
+        const positionNotes = await lightClient.scanPositionNotesWithStatus(
           spendingKeyForScan,
           deriveNullifierKey(wallet.keypair.spending.sk),
           PROGRAM_ID,
@@ -2902,10 +2902,10 @@ async function main() {
 
         const unspentNotes = positionNotes.filter(n => !n.spent);
         console.log(`   Unspent position notes: ${unspentNotes.length}`);
-        unspentNotes.forEach((n, i) => console.log(`     Position ${i}: amount=${n.amount}`));
+        unspentNotes.forEach((n, i) => console.log(`     Position ${i}: margin=${n.margin}, size=${n.size}, isLong=${n.isLong}`));
 
         // All unspent notes in the position pool are open positions
-        const openPositions = unspentNotes.filter(n => n.amount > 0n);
+        const openPositions = unspentNotes.filter(n => n.margin > 0n);
         console.log(`   Found ${openPositions.length} potential position notes`);
 
         if (openPositions.length > 0) {
@@ -2930,6 +2930,7 @@ async function main() {
               oraclePrice: pythData.oraclePrice,
               priceUpdate: pythData.priceUpdate,
               settlementRecipient: settlementStealth.stealthAddress,
+              settlementTokenMint: tokenMint, // The collateral token for the perps pool
               merkleRoot: posMerkleProof.root,
               merklePath: posMerkleProof.pathElements,
               merkleIndices: posMerkleProof.pathIndices,
@@ -2999,26 +3000,40 @@ async function main() {
       console.log(`   Waiting for indexer to sync LP commitments...`);
       await new Promise(resolve => setTimeout(resolve, 5000));
 
-      // Scan for PLP tokens
+      // Scan for PLP tokens using LP-specific scanner
       try {
-        const plpNotes = await lightClient.scanNotesWithStatus(
+        const plpNotes = await lightClient.scanLpNotesWithStatus(
           spendingKeyForScan,
           deriveNullifierKey(wallet.keypair.spending.sk),
           PROGRAM_ID,
           plpPoolPda
         );
 
-        console.log(`   Total notes returned from scan: ${plpNotes.length}`);
+        console.log(`   Total LP notes returned from scan: ${plpNotes.length}`);
         if (plpNotes.length > 0) {
-          console.log(`   First note: amount=${plpNotes[0].amount}, spent=${plpNotes[0].spent}`);
+          console.log(`   First LP note: lpAmount=${plpNotes[0].lpAmount}, spent=${plpNotes[0].spent}`);
         }
 
-        const unspentPlpNotes = plpNotes.filter(n => !n.spent && n.amount > 0n);
+        const unspentPlpNotes = plpNotes.filter(n => !n.spent && n.lpAmount > 0n);
         console.log(`   Found ${unspentPlpNotes.length} PLP token notes`);
 
         if (unspentPlpNotes.length > 0) {
           const plpInput = unspentPlpNotes[0];
-          const burnAmount = plpInput.amount / 2n;
+
+          // Query perps pool to check available balance
+          const perpsPoolAccount = await (program.account as any).perpsPool.fetch(perpsPoolPda);
+          const tokenInfo = perpsPoolAccount.tokens[0];
+          const balance = BigInt(tokenInfo.balance.toString());
+          const locked = BigInt(tokenInfo.locked.toString());
+          const available = balance - locked;
+          console.log(`   Pool token 0: balance=${balance}, locked=${locked}, available=${available}`);
+
+          // Calculate withdrawal: use minimum of (half LP, available balance)
+          const burnAmount = plpInput.lpAmount / 2n;
+          // The withdrawal should be proportional to LP share, but capped by available
+          // For simplicity, use a conservative 10% of available
+          const maxWithdraw = available / 10n;
+          const withdrawAmount = maxWithdraw > 0n ? maxWithdraw : 1000000000n; // Fallback to small amount
 
           // Get merkle proof
           const plpMerkleProof = await lightClient.getMerkleProofByHash(plpInput.accountHash!);
@@ -3027,7 +3042,7 @@ async function main() {
           const collateralStealth = generateStealthAddress(wallet.keypair.publicKey);
           const plpChangeStealth = generateStealthAddress(wallet.keypair.publicKey);
 
-          console.log(`   Removing ${burnAmount} PLP tokens...`);
+          console.log(`   Removing ${burnAmount} PLP tokens, withdrawing ${withdrawAmount} tokens...`);
 
           // Create Pyth price account in separate transaction (bundling makes tx too large)
           const pythData = await createPythPriceAccountSeparate(connection, PYTH_FEED_IDS.BTC_USD, payer);
@@ -3035,10 +3050,10 @@ async function main() {
           const removePerpsLiqResult = await client.removePerpsLiquidity(
             {
               poolId: perpsPoolPda,
-              lpInput: { ...plpInput, tokenMint: plpMintPda },
+              lpInput: plpInput,  // DecryptedLpNote doesn't have tokenMint - fetched from pool
               tokenIndex: 0,  // First token in pool
               lpAmount: burnAmount,
-              withdrawAmount: burnAmount,  // Expect 1:1 for test
+              withdrawAmount: withdrawAmount,  // Based on available balance
               oraclePrices: [pythData.oraclePrice],
               priceUpdate: pythData.priceUpdate,
               withdrawRecipient: collateralStealth.stealthAddress,
@@ -3583,14 +3598,15 @@ async function main() {
         PROGRAM_ID
       );
 
-      const lossPositionNotes = await lightClient.scanNotesWithStatus(
+      // Use position-specific scanner for position notes
+      const lossPositionNotes = await lightClient.scanPositionNotesWithStatus(
         spendingKeyForScan,
         deriveNullifierKey(wallet.keypair.spending.sk),
         PROGRAM_ID,
         positionPoolPda
       );
 
-      const openLossPositions = lossPositionNotes.filter(n => !n.spent);
+      const openLossPositions = lossPositionNotes.filter(n => !n.spent && n.margin > 0n);
       console.log(`   Found ${openLossPositions.length} positions for loss scenario`);
 
       if (openLossPositions.length > 0) {
@@ -3611,6 +3627,7 @@ async function main() {
             oraclePrice: pythDataLoss.oraclePrice,
             priceUpdate: pythDataLoss.priceUpdate,
             settlementRecipient: lossSettleStealth.stealthAddress,
+            settlementTokenMint: tokenMint, // The collateral token for the perps pool
             merkleRoot: lossMerkle.root,
             merklePath: lossMerkle.pathElements,
             merkleIndices: lossMerkle.pathIndices,

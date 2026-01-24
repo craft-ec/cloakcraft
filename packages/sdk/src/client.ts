@@ -41,7 +41,7 @@ import type {
 import { Wallet, createWallet, loadWallet } from './wallet';
 import { NoteManager } from './notes';
 import { ProofGenerator } from './proofs';
-import { computeCommitment, computePositionCommitment, generateRandomness, createNote } from './crypto/commitment';
+import { computeCommitment, computePositionCommitment, computeLpCommitment, generateRandomness, createNote } from './crypto/commitment';
 import { derivePublicKey } from './crypto/babyjubjub';
 import { poseidonHash, fieldToBytes, bytesToField, initPoseidon } from './crypto/poseidon';
 import { deriveNullifierKey, deriveSpendingNullifier } from './crypto/nullifier';
@@ -3468,6 +3468,8 @@ export class CloakCraftClient {
       changeRandomness,
       changeAmount,
       tokenMint: inputTokenMint,
+      // IMPORTANT: Circuit uses input note's stealthPubX for position commitment
+      inputStealthPubX: params.input.stealthPubX,
       lightVerifyParams: lightParams.lightVerifyParams,
       lightNullifierParams: lightParams.lightNullifierParams,
       remainingAccounts: lightParams.remainingAccounts,
@@ -3639,11 +3641,22 @@ export class CloakCraftClient {
 
     params.onProgress?.('generating');
 
-    // Calculate PnL and fees (simplified - actual calculation uses oracle prices)
-    // Note: Full PnL calculation would happen on-chain with oracle verification
+    // Calculate PnL and fees based on entry/exit prices
     const closeFee = (params.positionInput.margin * 6n) / 10000n; // 0.06%
-    const pnlAmount = 0n; // Placeholder - calculated on-chain
-    const isProfit = false;
+
+    // Determine profit/loss based on position direction and price movement
+    const entryPrice = params.positionInput.entryPrice;
+    const exitPrice = oraclePrice;
+    const isLong = params.positionInput.isLong;
+
+    // For long: profit if exit > entry. For short: profit if exit < entry
+    const isProfit = isLong ? exitPrice > entryPrice : exitPrice < entryPrice;
+
+    // Calculate PnL amount: |price_diff| * size / entry_price
+    const priceDiff = isProfit
+      ? (isLong ? exitPrice - entryPrice : entryPrice - exitPrice)
+      : (isLong ? entryPrice - exitPrice : exitPrice - entryPrice);
+    const pnlAmount = (priceDiff * params.positionInput.size) / entryPrice;
 
     // Use settlement token mint from params
     const tokenMint = params.settlementTokenMint.toBytes();
@@ -4181,13 +4194,13 @@ export class CloakCraftClient {
 
     // Calculate fee (if any)
     const feeAmount = 0n; // No withdrawal fee currently
-    const changeLpAmount = params.lpInput.amount - params.lpAmount; // LP tokens remaining after burn
+    const changeLpAmount = params.lpInput.lpAmount - params.lpAmount; // LP tokens remaining after burn
 
     // Transform client params to proof generator format
     const proofParams = {
       lpInput: {
         stealthPubX: params.lpInput.stealthPubX,
-        lpAmount: params.lpInput.amount,
+        lpAmount: params.lpInput.lpAmount,
         randomness: params.lpInput.randomness,
         leafIndex: params.lpInput.leafIndex,
         spendingKey: this.wallet.keypair.spending.sk,
@@ -4231,14 +4244,18 @@ export class CloakCraftClient {
       changeLpRandomness: lpChangeRandomness
     } = proofResult;
 
-    // Compute LP commitment
-    const lpCommitment = computeCommitment(params.lpInput);
+    // Compute LP commitment using LP-specific formula
+    const lpCommitment = computeLpCommitment(params.lpInput);
 
-    // Build Light Protocol params
+    // Derive LP pool - this is where the LP commitment is stored
+    const [lpPoolPda] = derivePoolPda(lpMint, this.programId);
+
+    // Build Light Protocol params using LP pool (not withdrawal pool!)
+    // The LP commitment is in the LP pool, not the withdrawal token pool
     const lightParams = await this.buildLightProtocolParams(
       accountHash,
       nullifier,
-      withdrawalPoolPda,
+      lpPoolPda,  // LP commitment is in LP pool
       heliusRpcUrl
     );
 

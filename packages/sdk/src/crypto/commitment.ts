@@ -218,8 +218,10 @@ export function createPositionNote(
  * Compute LP commitment
  *
  * Poseidon(LP_DOMAIN, stealthPubX, poolId, lpAmount, randomness)
+ *
+ * Note: Accepts any object with the required fields (doesn't require noteType)
  */
-export function computeLpCommitment(note: LpNote): Commitment {
+export function computeLpCommitment(note: Pick<LpNote, 'stealthPubX' | 'poolId' | 'lpAmount' | 'randomness'>): Commitment {
   return poseidonHashDomain(
     LP_COMMITMENT_DOMAIN,
     note.stealthPubX,
