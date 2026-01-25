@@ -358,6 +358,12 @@ export async function generateClaimInputs(
 
 // ============ Helper Functions ============
 
+import { poseidonHashDomain, fieldToBytes, bytesToField, initPoseidon } from '../crypto/poseidon';
+import { derivePublicKey } from '../crypto/babyjubjub';
+
+// BN254 scalar field modulus
+const FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
 function bytesToBigInt(bytes: Uint8Array): bigint {
   let result = BigInt(0);
   for (let i = 0; i < bytes.length; i++) {
@@ -376,15 +382,18 @@ function bigIntToBytes(value: bigint, length: number): Uint8Array {
   return bytes;
 }
 
+/**
+ * Compute vote nullifier using Poseidon hash
+ * vote_nullifier = hash(VOTE_NULLIFIER_DOMAIN, nullifier_key, ballot_id)
+ */
 function computeVoteNullifier(nullifierKey: Uint8Array, ballotId: Uint8Array): Uint8Array {
-  // hash(VOTE_NULLIFIER_DOMAIN, nullifier_key, ballot_id)
-  // Placeholder - would use Poseidon hash
-  const result = new Uint8Array(32);
-  result.set(nullifierKey.slice(0, 16), 0);
-  result.set(ballotId.slice(0, 16), 16);
-  return result;
+  return poseidonHashDomain(VOTE_NULLIFIER_DOMAIN, nullifierKey, ballotId);
 }
 
+/**
+ * Compute vote commitment using Poseidon hash
+ * vote_commitment = hash(VOTE_COMMITMENT_DOMAIN, ballot_id, vote_nullifier, pubkey, vote_choice, weight, randomness)
+ */
 function computeVoteCommitment(
   ballotId: Uint8Array,
   voteNullifier: Uint8Array,
@@ -393,26 +402,32 @@ function computeVoteCommitment(
   weight: bigint,
   randomness: Uint8Array
 ): Uint8Array {
-  // hash(VOTE_COMMITMENT_DOMAIN, ballot_id, vote_nullifier, pubkey, vote_choice, weight, randomness)
-  // Placeholder - would use Poseidon hash
-  const result = new Uint8Array(32);
-  result.set(ballotId.slice(0, 8), 0);
-  result.set(voteNullifier.slice(0, 8), 8);
-  result.set(randomness.slice(0, 16), 16);
-  return result;
+  return poseidonHashDomain(
+    VOTE_COMMITMENT_DOMAIN,
+    ballotId,
+    voteNullifier,
+    pubkey,
+    fieldToBytes(BigInt(voteChoice)),
+    fieldToBytes(weight),
+    randomness
+  );
 }
 
+/**
+ * Compute vote commitment nullifier using Poseidon hash
+ * vote_commitment_nullifier = hash(VOTE_COMMITMENT_DOMAIN, nullifier_key, vote_commitment)
+ */
 function computeVoteCommitmentNullifier(
   nullifierKey: Uint8Array,
   voteCommitment: Uint8Array
 ): Uint8Array {
-  // hash(VOTE_COMMITMENT_DOMAIN, nullifier_key, vote_commitment)
-  const result = new Uint8Array(32);
-  result.set(nullifierKey.slice(0, 16), 0);
-  result.set(voteCommitment.slice(0, 16), 16);
-  return result;
+  return poseidonHashDomain(VOTE_COMMITMENT_DOMAIN, nullifierKey, voteCommitment);
 }
 
+/**
+ * Compute position commitment using Poseidon hash
+ * position_commitment = hash(POSITION_DOMAIN, ballot_id, pubkey, vote_choice, amount, weight, randomness)
+ */
 function computePositionCommitment(
   ballotId: Uint8Array,
   pubkey: Uint8Array,
@@ -421,65 +436,104 @@ function computePositionCommitment(
   weight: bigint,
   randomness: Uint8Array
 ): Uint8Array {
-  // hash(POSITION_DOMAIN, ballot_id, pubkey, vote_choice, amount, weight, randomness)
-  const result = new Uint8Array(32);
-  result.set(ballotId.slice(0, 8), 0);
-  result.set(pubkey.slice(0, 8), 8);
-  result.set(randomness.slice(0, 16), 16);
-  return result;
+  return poseidonHashDomain(
+    POSITION_DOMAIN,
+    ballotId,
+    pubkey,
+    fieldToBytes(BigInt(voteChoice)),
+    fieldToBytes(amount),
+    fieldToBytes(weight),
+    randomness
+  );
 }
 
+/**
+ * Compute position nullifier using Poseidon hash
+ * position_nullifier = hash(POSITION_DOMAIN, nullifier_key, position_commitment)
+ */
 function computePositionNullifier(
   nullifierKey: Uint8Array,
   positionCommitment: Uint8Array
 ): Uint8Array {
-  // hash(POSITION_DOMAIN, nullifier_key, position_commitment)
-  const result = new Uint8Array(32);
-  result.set(nullifierKey.slice(0, 16), 0);
-  result.set(positionCommitment.slice(0, 16), 16);
-  return result;
+  return poseidonHashDomain(POSITION_DOMAIN, nullifierKey, positionCommitment);
 }
 
+/**
+ * Compute token commitment using Poseidon hash
+ * token_commitment = hash(COMMITMENT_DOMAIN, pubkey, token_mint, amount, randomness)
+ */
 function computeTokenCommitment(
   pubkey: Uint8Array,
   tokenMint: Uint8Array,
   amount: bigint,
   randomness: Uint8Array
 ): Uint8Array {
-  // hash(COMMITMENT_DOMAIN, pubkey, token_mint, amount, randomness)
-  const result = new Uint8Array(32);
-  result.set(pubkey.slice(0, 8), 0);
-  result.set(tokenMint.slice(0, 8), 8);
-  result.set(randomness.slice(0, 16), 16);
-  return result;
+  const COMMITMENT_DOMAIN = 0x01n;
+  return poseidonHashDomain(
+    COMMITMENT_DOMAIN,
+    pubkey,
+    tokenMint,
+    fieldToBytes(amount),
+    randomness
+  );
 }
 
+/**
+ * Derive public key from spending key using BabyJubJub curve
+ */
 function derivePublicKeyFromSpendingKey(spendingKey: Uint8Array): Uint8Array {
-  // In production, would derive on BabyJubJub curve
-  // pubkey = spendingKey * G
-  return new Uint8Array(32); // Placeholder
+  // Convert spending key to bigint
+  const sk = bytesToField(spendingKey);
+  // Derive public key on BabyJubJub curve
+  const pk = derivePublicKey(sk);
+  // Return x-coordinate as bytes (32 bytes) - pk.x is already Uint8Array
+  return pk.x;
 }
 
+/**
+ * Parse EdDSA signature from hex string
+ * Format: R8x (32) + R8y (32) + S (32) = 96 bytes total
+ */
 function parseEdDSASignature(sigHex: string): { r8x: bigint; r8y: bigint; s: bigint } {
-  // Parse EdDSA signature components
-  // Placeholder
+  // Remove 0x prefix if present
+  const hex = sigHex.startsWith('0x') ? sigHex.slice(2) : sigHex;
+
+  if (hex.length !== 192) {
+    // Return zeros for invalid signature (circuit will reject)
+    return { r8x: 0n, r8y: 0n, s: 0n };
+  }
+
+  const r8xHex = hex.slice(0, 64);
+  const r8yHex = hex.slice(64, 128);
+  const sHex = hex.slice(128, 192);
+
   return {
-    r8x: BigInt(0),
-    r8y: BigInt(0),
-    s: BigInt(0),
+    r8x: BigInt('0x' + r8xHex),
+    r8y: BigInt('0x' + r8yHex),
+    s: BigInt('0x' + sHex),
   };
 }
 
+/**
+ * Check if a vote choice won based on vote type
+ */
 function checkIsWinner(voteChoice: number, outcome: number, voteType: number): boolean {
   switch (voteType) {
     case 0: // Single
     case 3: // Weighted
       return voteChoice === outcome;
     case 1: // Approval
+      // vote_choice is a bitmap, check if outcome bit is set
       return (voteChoice & (1 << outcome)) !== 0;
-    case 2: // Ranked
-      // Check if outcome appears in ranking
-      return true; // Simplified
+    case 2: // Ranked (Borda count)
+      // Check if outcome appears in the ranking (4 bits per rank position)
+      for (let rank = 0; rank < 16; rank++) {
+        const rankedOption = (voteChoice >> (rank * 4)) & 0xF;
+        if (rankedOption === outcome) {
+          return true;
+        }
+      }
+      return false;
     default:
       return false;
   }

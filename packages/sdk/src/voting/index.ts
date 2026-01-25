@@ -39,35 +39,61 @@ export {
 
 // Export instruction builders with voting prefix where needed
 export {
+  // Seeds and circuit IDs
+  VOTING_SEEDS,
+  CIRCUIT_IDS as VOTING_CIRCUIT_IDS,
+
   // PDA derivation - voting specific
   deriveBallotPda,
   deriveBallotVaultPda,
   derivePendingOperationPda as deriveVotingPendingOperationPda,
   deriveVerificationKeyPda as deriveVotingVerificationKeyPda,
+  generateOperationId as generateVotingOperationId,
 
-  // Ballot management
+  // Ballot management instruction builders
   buildCreateBallotInstruction,
   buildResolveBallotInstruction,
   buildFinalizeBallotInstruction,
   buildDecryptTallyInstruction,
 
-  // Snapshot mode voting
+  // Vote snapshot instruction builders
+  buildVoteSnapshotPhase0Instruction,
+  buildVoteSnapshotExecuteInstruction,
+
+  // Change vote snapshot instruction builders
+  buildChangeVoteSnapshotPhase0Instruction,
+  buildChangeVoteSnapshotExecuteInstruction,
+
+  // Vote spend instruction builders
+  buildVoteSpendPhase0Instruction,
+  buildVoteSpendExecuteInstruction,
+
+  // Close vote position instruction builders
+  buildCloseVotePositionPhase0Instruction,
+  buildCloseVotePositionExecuteInstruction,
+
+  // Claim instruction builders
+  buildClaimPhase0Instruction,
+  buildClaimExecuteInstruction,
+
+  // High-level multi-phase builders
   buildVoteSnapshotInstructions,
   buildChangeVoteSnapshotInstructions,
-
-  // SpendToVote mode
   buildVoteSpendInstructions,
   buildClosePositionInstructions as buildCloseVotingPositionInstructions,
-
-  // Claims
   buildClaimInstructions as buildVotingClaimInstructions,
 
   // Encrypted contributions
   generateEncryptedContributions,
   generateNegatedEncryptedContributions,
 
-  // Circuit IDs - with voting prefix
-  CIRCUIT_IDS as VOTING_CIRCUIT_IDS,
+  // Param types
+  type CreateBallotInstructionParams,
+  type VoteSnapshotInstructionParams,
+  type ChangeVoteSnapshotInstructionParams,
+  type VoteSpendInstructionParams,
+  type CloseVotePositionInstructionParams,
+  type ClaimInstructionParams,
 } from './instructions';
 
 // Export proof generation
