@@ -4465,6 +4465,7 @@ async function main() {
 
     const PERPS_POOL_SEED = Buffer.from("perps_pool");
     const PERPS_LP_MINT_SEED = Buffer.from("perps_lp_mint");
+    const PERPS_POSITION_MINT_SEED = Buffer.from("perps_pos_mint");
 
     // Generate unique pool ID
     const testPoolId = Keypair.generate().publicKey;
@@ -4475,8 +4476,17 @@ async function main() {
     );
     testPerpsPoolPda = perpsPoolPdaTest;
 
-    // Create LP mint keypair (it's a signer, not a PDA)
-    const testPerpsLpMintKeypair = Keypair.generate();
+    // Derive LP mint PDA (derived from perps pool)
+    const [testPerpsLpMintPda] = PublicKey.findProgramAddressSync(
+      [PERPS_LP_MINT_SEED, perpsPoolPdaTest.toBuffer()],
+      PROGRAM_ID
+    );
+
+    // Derive position mint PDA (derived from perps pool)
+    const [testPerpsPositionMintPda] = PublicKey.findProgramAddressSync(
+      [PERPS_POSITION_MINT_SEED, perpsPoolPdaTest.toBuffer()],
+      PROGRAM_ID
+    );
 
     if (program.methods.initializePerpsPool) {
       // Full InitializePerpsPoolParams with all parameters
@@ -4494,14 +4504,14 @@ async function main() {
         .initializePerpsPool(testPoolId, perpsPoolParams)
         .accounts({
           perpsPool: perpsPoolPdaTest,
-          lpMint: testPerpsLpMintKeypair.publicKey,
+          lpMint: testPerpsLpMintPda,
+          positionMint: testPerpsPositionMintPda,
           authority: payer.publicKey,
           payer: payer.publicKey,
           systemProgram: SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           rent: SYSVAR_RENT_PUBKEY,
         })
-        .signers([testPerpsLpMintKeypair])
         .rpc();
 
       // Verify pool was created with correct parameters
