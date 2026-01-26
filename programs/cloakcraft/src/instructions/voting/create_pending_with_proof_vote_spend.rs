@@ -172,9 +172,9 @@ pub fn create_pending_with_proof_vote_spend<'info>(
     pending_op.inputs_verified_mask = 0;
     pending_op.nullifier_completed_mask = 0;
 
-    // Store pool id for input verification (token pool, not ballot)
-    // Use token_mint as the pool identifier
-    pending_op.input_pools[0] = pool.token_mint.to_bytes();
+    // Store pool PDA for input verification (token pool, not ballot)
+    // verify_commitment_exists checks pool.key() against this value
+    pending_op.input_pools[0] = pool.key().to_bytes();
 
     // Store position_commitment as output
     pending_op.commitments[0] = position_commitment;
@@ -204,6 +204,18 @@ pub fn create_pending_with_proof_vote_spend<'info>(
 }
 
 /// Build public inputs array for ZK proof verification
+/// Must match the circuit's public inputs exactly in order:
+/// 1. ballot_id
+/// 2. merkle_root
+/// 3. spending_nullifier
+/// 4. position_commitment
+/// 5. amount
+/// 6. weight
+/// 7. token_mint
+/// 8. eligibility_root
+/// 9. has_eligibility
+/// 10. vote_choice
+/// 11. is_public_mode
 fn build_public_inputs(
     ballot: &Ballot,
     ballot_id: &[u8; 32],
@@ -213,54 +225,46 @@ fn build_public_inputs(
     vote_choice: u64,
     amount: u64,
     weight: u64,
-    encrypted_contributions: Option<&EncryptedContributions>,
+    _encrypted_contributions: Option<&EncryptedContributions>,
 ) -> Result<Vec<[u8; 32]>> {
+    use crate::helpers::field::{bytes_to_field, pubkey_to_field, u64_to_field};
+
     let mut inputs = Vec::new();
 
-    // Core public inputs
-    inputs.push(*ballot_id);
-    inputs.push(*spending_nullifier);
-    inputs.push(*position_commitment);
-    inputs.push(*merkle_root);
+    // 1. ballot_id
+    inputs.push(bytes_to_field(ballot_id));
 
-    // For public mode, vote_choice is public
-    if ballot.reveal_mode == RevealMode::Public {
-        let mut choice_bytes = [0u8; 32];
-        choice_bytes[24..32].copy_from_slice(&vote_choice.to_be_bytes());
-        inputs.push(choice_bytes);
-    }
+    // 2. merkle_root
+    inputs.push(bytes_to_field(merkle_root));
 
-    // Amount and weight
-    let mut amount_bytes = [0u8; 32];
-    amount_bytes[24..32].copy_from_slice(&amount.to_be_bytes());
-    inputs.push(amount_bytes);
+    // 3. spending_nullifier
+    inputs.push(bytes_to_field(spending_nullifier));
 
-    let mut weight_bytes = [0u8; 32];
-    weight_bytes[24..32].copy_from_slice(&weight.to_be_bytes());
-    inputs.push(weight_bytes);
+    // 4. position_commitment
+    inputs.push(bytes_to_field(position_commitment));
 
-    // Token mint
-    inputs.push(ballot.token_mint.to_bytes());
+    // 5. amount
+    inputs.push(u64_to_field(amount));
 
-    // Eligibility root (if set)
-    if ballot.has_eligibility_root {
-        inputs.push(ballot.eligibility_root);
-    }
+    // 6. weight
+    inputs.push(u64_to_field(weight));
 
-    // Encrypted contributions (for encrypted modes)
-    if let Some(contributions) = encrypted_contributions {
-        for ciphertext in &contributions.ciphertexts {
-            let mut ct_part1 = [0u8; 32];
-            let mut ct_part2 = [0u8; 32];
-            ct_part1.copy_from_slice(&ciphertext[0..32]);
-            ct_part2.copy_from_slice(&ciphertext[32..64]);
-            inputs.push(ct_part1);
-            inputs.push(ct_part2);
-        }
+    // 7. token_mint
+    inputs.push(pubkey_to_field(&ballot.token_mint));
 
-        // Time lock pubkey
-        inputs.push(ballot.time_lock_pubkey);
-    }
+    // 8. eligibility_root (always included, 0 if no eligibility)
+    inputs.push(bytes_to_field(&ballot.eligibility_root));
+
+    // 9. has_eligibility (1 if eligibility check required, 0 otherwise)
+    let has_elig = if ballot.has_eligibility_root { 1u64 } else { 0u64 };
+    inputs.push(u64_to_field(has_elig));
+
+    // 10. vote_choice (always included)
+    inputs.push(u64_to_field(vote_choice));
+
+    // 11. is_public_mode (1 if public, 0 if encrypted)
+    let is_public = if ballot.reveal_mode == RevealMode::Public { 1u64 } else { 0u64 };
+    inputs.push(u64_to_field(is_public));
 
     Ok(inputs)
 }

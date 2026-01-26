@@ -76,6 +76,7 @@ import {
 } from "../packages/sdk/src/voting";
 import { generateVoteSnapshotInputs } from "../packages/sdk/src/voting/proofs";
 import { RevealMode } from "../packages/sdk/src/voting/types";
+import { buildChangeVoteSnapshotExecuteInstruction } from "../packages/sdk/src/voting/instructions";
 import { initPoseidon, bytesToField, fieldToBytes, poseidonHashDomain } from "../packages/sdk/src/crypto/poseidon";
 import { derivePublicKey } from "../packages/sdk/src/crypto/babyjubjub";
 import { deriveNullifierKey } from "../packages/sdk/src/crypto/nullifier";
@@ -85,10 +86,12 @@ import { loadCircomArtifacts, generateSnarkjsProof } from "../packages/sdk/src/s
 import { buildPoseidon } from "circomlibjs";
 
 // Program ID
-const PROGRAM_ID = new PublicKey("CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj");
+const PROGRAM_ID = new PublicKey("2VWF9TxMFgzHwbd5WPpYKoqHvtzk3fN66Ka3tVV82nZG");
 
 // Light Protocol V2 accounts (Devnet)
+const V2_STATE_TREE = new PublicKey("bmt1LryLZUMmF7ZtqESaw7wifBXLfXHQYoE4GAmrahU");
 const V2_OUTPUT_QUEUE = new PublicKey("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto");
+const V2_ADDRESS_TREE = new PublicKey("amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx");
 const V2_CPI_CONTEXT = new PublicKey("cpi15BoVPKgEPw5o8wc2T816GE7b378nMXnhH3Xbq4y");
 
 // CPI Signer PDA
@@ -283,6 +286,38 @@ async function main() {
     randomnessBigInt: bigint;
     ballotIdBigInt: bigint;
     voteCommitmentBytes: Uint8Array;
+  } | null = null;
+
+  // Store vote_spend position data from Test 4c for change_vote_spend and close_position tests
+  let test4cVoteSpendData: {
+    ballotId: Uint8Array;
+    ballotPda: PublicKey;
+    vaultPda: PublicKey;
+    stealthSpendingKey: bigint;
+    stealthPubXBigInt: bigint;
+    positionCommitmentBigInt: bigint;
+    positionCommitmentBytes: Uint8Array;
+    positionRandomnessBigInt: bigint;
+    voteChoice: number;
+    amount: bigint;
+    weight: bigint;
+    tokenMintBigInt: bigint;
+  } | null = null;
+
+  // Store change_vote_spend new position data from Test 4d for close_position test
+  let test4dChangeVoteSpendData: {
+    ballotId: Uint8Array;
+    ballotPda: PublicKey;
+    vaultPda: PublicKey;
+    stealthSpendingKey: bigint;
+    stealthPubXBigInt: bigint;
+    positionCommitmentBigInt: bigint;
+    positionCommitmentBytes: Uint8Array;
+    positionRandomnessBigInt: bigint;
+    voteChoice: number;
+    amount: bigint;
+    weight: bigint;
+    tokenMintBigInt: bigint;
   } | null = null;
 
   // =========================================================================
@@ -1213,12 +1248,30 @@ async function main() {
             // Note: verifyCommitmentExists typically uses non-inclusion proof with address check
             // The on-chain instruction handles the merkle verification via Light Protocol CPI
 
-            // Skip Phase 1 for now - the on-chain program handles commitment verification
-            // via Light Protocol CPI. The change vote demonstration is complete with Phase 0.
-            logInfo("Phase 1+ requires Light Protocol V2 inclusion proof infrastructure");
-            logInfo("Change vote Phase 0 complete - proof verified, tally update ready");
+            // ============================================
+            // PHASE 1+: Full change vote flow
+            // ============================================
+            // NOTE: The change_vote_snapshot flow requires a voting-specific
+            // verify_vote_commitment_exists instruction. The generic
+            // verify_commitment_exists requires a Pool account, but voting
+            // uses Ballot accounts. This is a known limitation.
+            //
+            // Phase 0 (proof verification) is complete and demonstrates:
+            // - ZK proof generation for vote change
+            // - On-chain proof verification
+            // - PendingOperation creation
+            //
+            // Full flow would require:
+            // - Phase 1: verify_vote_commitment_exists (voting-specific - not yet implemented)
+            // - Phase 2: create_vote_commitment_nullifier
+            // - Phase 3: execute_change_vote_snapshot
+            // - Phase 4: create_vote_commitment (new)
+            // - Phase 5: close_pending_operation
 
-            // Clean up
+            logInfo("Change vote Phase 0 complete - ZK proof verified on-chain");
+            logInfo("Note: Full 6-phase flow requires verify_vote_commitment_exists instruction");
+
+            // Clean up pending operation
             try {
               await program.methods
                 .closePendingOperation(Array.from(changeOperationId))
@@ -1231,67 +1284,7 @@ async function main() {
               logInfo("Cleaned up pending operation");
             } catch (_) {}
 
-            logPass("Change vote flow demonstrated", "Phase 0 proof verified on-chain");
-            passCount++;
-
-            // Skip remaining phases - they require Light Protocol V2 account lookup
-            /*
-
-            const systemConfig = SystemAccountMetaConfig.new(PROGRAM_ID);
-            const verifyPackedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
-            const verifyStateTreeIndex = verifyPackedAccounts.insertOrGet(addressTreeInfo.tree);
-
-            const verifyLightParams = {
-              validityProof: {
-                a: Array.from(oldCommitmentProof.compressedProof.a),
-                b: Array.from(oldCommitmentProof.compressedProof.b),
-                c: Array.from(oldCommitmentProof.compressedProof.c),
-              },
-              stateTreeInfo: {
-                stateMerkleTreePubkeyIndex: verifyStateTreeIndex,
-                nullifierQueuePubkeyIndex: verifyStateTreeIndex,
-                rootIndex: oldCommitmentProof.rootIndices?.[0] ?? 0,
-              },
-            };
-
-            const { remainingAccounts: verifyRawAccounts } = verifyPackedAccounts.toAccountMetas();
-            const verifyRemainingAccounts = verifyRawAccounts.map((acc: any) => ({
-              pubkey: acc.pubkey,
-              isWritable: Boolean(acc.isWritable),
-              isSigner: Boolean(acc.isSigner),
-            }));
-
-            const phase1Tx = await program.methods
-              .verifyCommitmentExists(
-                Array.from(changeOperationId),
-                0, // commitment_index
-                verifyLightParams
-              )
-              .accounts({
-                pool: ballotPda1, // Using ballot as the "pool" for vote commitments
-                pendingOperation: changeVotePendingOpPda,
-                relayer: wallet.publicKey,
-              })
-              .remainingAccounts(verifyRemainingAccounts)
-              .preInstructions([
-                ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
-                ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
-              ])
-              .rpc();
-
-            logPass("Change vote Phase 1 (commitment verified)", phase1Tx.slice(0, 16) + "...");
-            passCount++;
-
-            // Note: Continuing with remaining phases would require:
-            // Phase 2: create_nullifier_and_pending for old commitment
-            // Phase 3: execute_change_vote_snapshot
-            // Phase 4: create_vote_commitment (new)
-            // Phase 5: close_pending_operation
-            // For brevity, we stop here with proof verified + commitment verified
-
-            logInfo("Change vote flow demonstrated (Phase 0-1 completed on-chain)");
-
-            */
+            logPass("Change vote ZK proof verified", "Phase 0 complete on-chain")
 
           } catch (changeErr: any) {
             const errMsg = changeErr.logs?.slice(-5).join('\n      ') || changeErr.message || "";
@@ -1472,7 +1465,47 @@ async function main() {
       logInfo(`Found shielded note: amount=${shieldedNote.amount}`);
 
       // ================================================
-      // STEP 2: Generate vote_spend proof using REAL shielded data
+      // STEP 2: Get REAL merkle proof from Light Protocol
+      // ================================================
+      if (!shieldedNote.accountHash) {
+        throw new Error("Shielded note missing accountHash - cannot get merkle proof");
+      }
+
+      logInfo("Getting REAL merkle proof from Light Protocol...");
+      const { LightProtocol: LightProtocolSpend } = await import("../packages/sdk/src/instructions/light-helpers");
+      const lightProtocolSpend = new LightProtocolSpend(RPC_URL, PROGRAM_ID);
+      const spendMerkleProofResult = await lightProtocolSpend.rpc.getCompressedAccountProof(bn(new PublicKey(shieldedNote.accountHash).toBytes()));
+
+      logInfo(`Light Protocol merkle proof: leafIndex=${spendMerkleProofResult.leafIndex}, pathLength=${spendMerkleProofResult.merkleProof.length}`);
+      if (spendMerkleProofResult.treeInfo) {
+        logInfo(`  Tree from proof: ${spendMerkleProofResult.treeInfo.tree}`);
+        logInfo(`  Queue from proof: ${spendMerkleProofResult.treeInfo.queue}`);
+      } else {
+        logInfo(`  treeInfo not available in proof result`);
+      }
+
+      // Convert Light Protocol merkle proof to circuit format (pad to 32 levels)
+      const SPEND_MERKLE_LEVELS = 32;
+      const spendLightMerklePath = spendMerkleProofResult.merkleProof.map((p: any) => p.toString());
+      const spendMerklePath: bigint[] = [];
+      const spendMerklePathIndices: number[] = [];
+
+      for (let i = 0; i < SPEND_MERKLE_LEVELS; i++) {
+        if (i < spendLightMerklePath.length) {
+          spendMerklePath.push(BigInt(spendLightMerklePath[i]));
+          spendMerklePathIndices.push((spendMerkleProofResult.leafIndex >> i) & 1);
+        } else {
+          spendMerklePath.push(0n);
+          spendMerklePathIndices.push(0);
+        }
+      }
+
+      const spendMerkleRoot = BigInt(spendMerkleProofResult.root.toString());
+      const spendLeafIndex = BigInt(spendMerkleProofResult.leafIndex);
+      logInfo(`REAL merkle root: ${spendMerkleRoot.toString().slice(0, 20)}...`);
+
+      // ================================================
+      // STEP 3: Generate vote_spend proof using REAL shielded data
       // ================================================
       logInfo("Generating vote_spend proof with real shielded note...");
 
@@ -1512,12 +1545,11 @@ async function main() {
       logInfo(`Using real note commitment: ${noteCommitmentBigInt.toString(16).slice(0, 16)}...`);
 
       // Compute spending nullifier: Poseidon(SPENDING_NULLIFIER_DOMAIN, nullifier_key, commitment, leaf_index)
-      const leafIndex = BigInt(0);
       const spendingNullifier = poseidon([
         poseidon.F.e(BigInt(2)), // SPENDING_NULLIFIER_DOMAIN
         poseidon.F.e(nkBigInt),
         poseidon.F.e(noteCommitmentBigInt),
-        poseidon.F.e(leafIndex),
+        poseidon.F.e(spendLeafIndex),
       ]);
       const spendingNullifierBigInt = poseidon.F.toObject(spendingNullifier);
 
@@ -1544,11 +1576,11 @@ async function main() {
 
       logInfo(`Note amount: ${noteAmount}, Vote choice: ${voteChoice}`);
 
-      // Build circuit inputs
+      // Build circuit inputs with REAL merkle data
       const voteSpendInputs: Record<string, string | string[]> = {
         // Public inputs
         ballot_id: bytesToField(ballotIdSpend).toString(),
-        merkle_root: "0", // Mock - would be real merkle root
+        merkle_root: spendMerkleRoot.toString(), // REAL merkle root from Light Protocol
         spending_nullifier: spendingNullifierBigInt.toString(),
         position_commitment: positionCommitmentBigInt.toString(),
         amount: noteAmount.toString(),
@@ -1559,14 +1591,14 @@ async function main() {
         vote_choice: voteChoice.toString(),
         is_public_mode: "1",
 
-        // Private inputs - use STEALTH keys from note
+        // Private inputs - use STEALTH keys from note and REAL merkle path
         in_stealth_pub_x: stealthPubXBigInt.toString(),
         in_amount: noteAmount.toString(),
         in_randomness: noteRandomnessBigInt.toString(),
         in_stealth_spending_key: stealthSpendingKey.toString(),
-        merkle_path: Array(32).fill("0"),
-        merkle_path_indices: Array(32).fill("0"),
-        leaf_index: leafIndex.toString(),
+        merkle_path: spendMerklePath.map(p => p.toString()), // REAL merkle path
+        merkle_path_indices: spendMerklePathIndices.map(i => i.toString()), // REAL path indices
+        leaf_index: spendLeafIndex.toString(),
         position_randomness: positionRandomnessBigInt.toString(),
         private_vote_choice: voteChoice.toString(),
         eligibility_path: Array(20).fill("0"),
@@ -1607,12 +1639,15 @@ async function main() {
             PROGRAM_ID
           );
 
+          // Use REAL merkle root bytes
+          const spendMerkleRootBytes = fieldToBytes(spendMerkleRoot);
+
           const phase0SpendTx = await program.methods
             .createPendingWithProofVoteSpend(
               Array.from(operationIdSpend),
               Array.from(ballotIdSpend),
-              Buffer.from(voteSpendProofBytes), // Use Buffer for proof
-              Array.from(new Uint8Array(32)), // merkle_root (mock)
+              Buffer.from(voteSpendProofBytes),
+              Array.from(spendMerkleRootBytes), // REAL merkle root
               Array.from(noteCommitmentBytes),
               Array.from(spendingNullifierBytes),
               Array.from(positionCommitmentBytes),
@@ -1647,40 +1682,321 @@ async function main() {
           logInfo(`Operation type: vote_spend`);
 
           // ============================================
-          // PHASE 1-4: Light Protocol Integration
+          // PHASE 1: Verify note commitment exists via Light Protocol
           // ============================================
-          logInfo("Continuing with full vote_spend flow...");
-          logInfo("Note: Full flow requires shielded note on-chain.");
-          logInfo("Run 'npx tsx scripts/sdk-shield.ts' first to shield tokens.");
+          logInfo("Phase 1: Verifying note commitment exists...");
 
-          // For now, Phase 1+ requires:
-          // 1. A real shielded note commitment in Light Protocol tree
-          // 2. Merkle proof proving the note exists
-          // 3. The vote_spend circuit verifies the merkle proof
+          // The note commitment should already exist from shielding
+          // For vote_spend, we use verify_commitment_exists which checks the pool's merkle tree
+          // This is different from vote_snapshot which uses vote-specific verification
 
-          // The current test uses merkle_root: "0" which is a mock value.
-          // Full integration requires:
-          // - Shield tokens using client.shield()
-          // - Get the commitment from Light Protocol
-          // - Generate merkle proof for the commitment
-          // - Use real values in the circuit
+          // Use tree information from the merkle proof
+          const commitmentTreePubkey = spendMerkleProofResult.treeInfo?.tree
+            ? new PublicKey(spendMerkleProofResult.treeInfo.tree)
+            : V2_STATE_TREE;
+          const commitmentQueuePubkey = spendMerkleProofResult.treeInfo?.queue
+            ? new PublicKey(spendMerkleProofResult.treeInfo.queue)
+            : V2_OUTPUT_QUEUE;
 
-          logInfo("Phase 0 complete. Phase 1+ requires shielded note integration.");
+          logInfo(`Using tree: ${commitmentTreePubkey.toBase58()}`);
+          logInfo(`Using queue: ${commitmentQueuePubkey.toBase58()}`);
+          logInfo(`Leaf index: ${spendMerkleProofResult.leafIndex}`);
+          logInfo(`Root index: ${spendMerkleProofResult.rootIndex ?? 0}`);
 
-          // Clean up - close the pending operation
-          try {
-            await program.methods
-              .closePendingOperation(Array.from(operationIdSpend))
-              .accounts({
-                pendingOperation: pendingOpPdaSpend,
-                relayer: wallet.publicKey,
-                payer: wallet.publicKey,
-              })
-              .rpc();
-            logInfo("Cleaned up pending operation");
-          } catch (cleanupErr) {
-            // Ignore cleanup errors
+          // Build Light Protocol accounts for verification
+          const spendSystemConfig = SystemAccountMetaConfig.new(PROGRAM_ID);
+          const spendPackedAccounts = PackedAccounts.newWithSystemAccountsV2(spendSystemConfig);
+
+          // Get indices for trees
+          const commitmentTreeIndex = spendPackedAccounts.insertOrGet(commitmentTreePubkey);
+          const commitmentQueueIndex = spendPackedAccounts.insertOrGet(commitmentQueuePubkey);
+
+          // Get account hash bytes
+          const accountHashBytes = new PublicKey(shieldedNote.accountHash).toBytes();
+
+          // Build light params with correct structure
+          // On-chain verification uses merkle context, not a ZK validity proof
+          const phase1SpendLightParams = {
+            commitmentAccountHash: Array.from(accountHashBytes),
+            commitmentMerkleContext: {
+              merkleTreePubkeyIndex: commitmentTreeIndex,
+              queuePubkeyIndex: commitmentQueueIndex,
+              leafIndex: spendMerkleProofResult.leafIndex,
+              rootIndex: spendMerkleProofResult.rootIndex ?? 0,
+            },
+            // Note: On-chain code sets proof: None, so these values aren't used
+            // but we still need to pass the struct
+            commitmentInclusionProof: {
+              a: Array(32).fill(0),
+              b: Array(64).fill(0),
+              c: Array(32).fill(0),
+            },
+            commitmentAddressTreeInfo: {
+              addressMerkleTreePubkeyIndex: commitmentTreeIndex,
+              addressQueuePubkeyIndex: commitmentQueueIndex,
+              rootIndex: spendMerkleProofResult.rootIndex ?? 0,
+            },
+          };
+
+          const { remainingAccounts: spendPhase1Accounts } = spendPackedAccounts.toAccountMetas();
+          const spendPhase1RemainingAccounts = spendPhase1Accounts.map((acc: any) => ({
+            pubkey: acc.pubkey,
+            isWritable: Boolean(acc.isWritable),
+            isSigner: Boolean(acc.isSigner),
+          }));
+
+          const phase1SpendTx = await program.methods
+            .verifyCommitmentExists(
+              Array.from(operationIdSpend),
+              0, // input_index
+              phase1SpendLightParams
+            )
+            .accounts({
+              pool: poolPda,
+              pendingOperation: pendingOpPdaSpend,
+              relayer: wallet.publicKey,
+            })
+            .remainingAccounts(spendPhase1RemainingAccounts)
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+            ])
+            .rpc();
+
+          logPass("Verified note commitment exists (Phase 1)", phase1SpendTx.slice(0, 16) + "...");
+          passCount++;
+
+          // ============================================
+          // PHASE 2: Create spending nullifier via Light Protocol
+          // ============================================
+          logInfo("Phase 2: Creating spending nullifier...");
+
+          // Derive nullifier address
+          // Seeds must match on-chain: ["spend_nullifier", pool, nullifier]
+          const spendNullifierSeeds = [
+            Buffer.from("spend_nullifier"),
+            poolPda.toBuffer(),
+            Buffer.from(spendingNullifierBytes),
+          ];
+          const spendNullifierAddressSeed = deriveAddressSeedV2(spendNullifierSeeds);
+          const spendNullifierAddress = deriveAddressV2(spendNullifierAddressSeed, addressTreeInfo.tree, PROGRAM_ID);
+          logInfo(`Spending nullifier address: ${spendNullifierAddress.toBase58().slice(0, 16)}...`);
+
+          // Get validity proof for non-inclusion
+          const spendNullifierProof = await lightRpc.getValidityProofV0(
+            [],
+            [{
+              address: bn(spendNullifierAddress.toBytes()),
+              tree: addressTreeInfo.tree,
+              queue: addressTreeInfo.queue,
+            }]
+          );
+
+          // Build accounts
+          const phase2SpendPackedAccounts = PackedAccounts.newWithSystemAccountsV2(spendSystemConfig);
+          const phase2SpendOutputTreeIndex = phase2SpendPackedAccounts.insertOrGet(V2_OUTPUT_QUEUE);
+          const phase2SpendAddressTreeIndex = phase2SpendPackedAccounts.insertOrGet(addressTreeInfo.tree);
+
+          if (!spendNullifierProof.compressedProof) {
+            throw new Error("No validity proof for spending nullifier");
           }
+
+          const phase2SpendLightParams = {
+            proof: {
+              a: Array.from(spendNullifierProof.compressedProof.a),
+              b: Array.from(spendNullifierProof.compressedProof.b),
+              c: Array.from(spendNullifierProof.compressedProof.c),
+            },
+            addressTreeInfo: {
+              addressMerkleTreePubkeyIndex: phase2SpendAddressTreeIndex,
+              addressQueuePubkeyIndex: phase2SpendAddressTreeIndex,
+              rootIndex: spendNullifierProof.rootIndices[0] ?? 0,
+            },
+            outputTreeIndex: phase2SpendOutputTreeIndex,
+          };
+
+          const { remainingAccounts: phase2SpendRawAccounts } = phase2SpendPackedAccounts.toAccountMetas();
+          const phase2SpendRemainingAccounts = phase2SpendRawAccounts.map((acc: any) => ({
+            pubkey: acc.pubkey,
+            isWritable: Boolean(acc.isWritable),
+            isSigner: Boolean(acc.isSigner),
+          }));
+
+          const phase2SpendTx = await program.methods
+            .createNullifierAndPending(
+              Array.from(operationIdSpend),
+              0, // nullifier_index
+              phase2SpendLightParams
+            )
+            .accounts({
+              pool: poolPda,
+              pendingOperation: pendingOpPdaSpend,
+              relayer: wallet.publicKey,
+            })
+            .remainingAccounts(phase2SpendRemainingAccounts)
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+            ])
+            .rpc();
+
+          logPass("Created spending nullifier (Phase 2)", phase2SpendTx.slice(0, 16) + "...");
+          passCount++;
+
+          // ============================================
+          // PHASE 3: Execute vote_spend (update ballot tally)
+          // ============================================
+          logInfo("Phase 3: Executing vote_spend...");
+
+          const phase3SpendTx = await program.methods
+            .executeVoteSpend(
+              Array.from(operationIdSpend),
+              Array.from(ballotIdSpend),
+              null // encrypted_contributions (public mode)
+            )
+            .accounts({
+              ballot: ballotPdaSpend,
+              ballotVault: vaultPdaSpend,
+              pendingOperation: pendingOpPdaSpend,
+              relayer: wallet.publicKey,
+            })
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+            ])
+            .rpc();
+
+          logPass("Executed vote_spend (Phase 3)", phase3SpendTx.slice(0, 16) + "...");
+          passCount++;
+
+          // Verify tally updated
+          const spendUpdatedBallot = await (program.account as any).ballot.fetch(ballotPdaSpend);
+          logInfo(`Vote count: ${spendUpdatedBallot.voteCount.toString()}`);
+          logInfo(`Total weight: ${spendUpdatedBallot.totalWeight.toString()}`);
+          logInfo(`Option 0 weight: ${spendUpdatedBallot.optionWeights[0].toString()}`);
+
+          // ============================================
+          // PHASE 4: Create position commitment via Light Protocol
+          // ============================================
+          logInfo("Phase 4: Creating position commitment...");
+
+          // Derive position commitment address (same seeds as vote_commitment)
+          // Seeds: ["vote_commitment", ballot_id, commitment]
+          const positionSeeds = [
+            Buffer.from("vote_commitment"),
+            Buffer.from(ballotIdSpend),
+            positionCommitmentBytes,
+          ];
+          const positionAddressSeed = deriveAddressSeedV2(positionSeeds);
+          const positionAddress = deriveAddressV2(positionAddressSeed, addressTreeInfo.tree, PROGRAM_ID);
+          logInfo(`Position commitment address: ${positionAddress.toBase58().slice(0, 16)}...`);
+
+          // Get validity proof for position commitment
+          const positionProof = await lightRpc.getValidityProofV0(
+            [],
+            [{
+              address: bn(positionAddress.toBytes()),
+              tree: addressTreeInfo.tree,
+              queue: addressTreeInfo.queue,
+            }]
+          );
+
+          // Build accounts
+          const phase4SpendPackedAccounts = PackedAccounts.newWithSystemAccountsV2(spendSystemConfig);
+          const phase4SpendOutputTreeIndex = phase4SpendPackedAccounts.insertOrGet(V2_OUTPUT_QUEUE);
+          const phase4SpendAddressTreeIndex = phase4SpendPackedAccounts.insertOrGet(addressTreeInfo.tree);
+
+          if (!positionProof.compressedProof) {
+            throw new Error("No validity proof for position commitment");
+          }
+
+          const phase4SpendLightParams = {
+            validityProof: {
+              a: Array.from(positionProof.compressedProof.a),
+              b: Array.from(positionProof.compressedProof.b),
+              c: Array.from(positionProof.compressedProof.c),
+            },
+            addressTreeInfo: {
+              addressMerkleTreePubkeyIndex: phase4SpendAddressTreeIndex,
+              addressQueuePubkeyIndex: phase4SpendAddressTreeIndex,
+              rootIndex: positionProof.rootIndices[0] ?? 0,
+            },
+            outputTreeIndex: phase4SpendOutputTreeIndex,
+          };
+
+          const { remainingAccounts: phase4SpendRawAccounts } = phase4SpendPackedAccounts.toAccountMetas();
+          const phase4SpendRemainingAccounts = phase4SpendRawAccounts.map((acc: any) => ({
+            pubkey: acc.pubkey,
+            isWritable: Boolean(acc.isWritable),
+            isSigner: Boolean(acc.isSigner),
+          }));
+
+          // Create encrypted preimage for claim recovery (128 bytes)
+          const spendEncryptedPreimage = new Array(128).fill(0);
+          const spendEncryptionType = 0; // 0 = user_key
+
+          const phase4SpendTx = await program.methods
+            .createVoteCommitment(
+              Array.from(operationIdSpend),
+              Array.from(ballotIdSpend),
+              0, // commitment_index
+              spendEncryptedPreimage,
+              spendEncryptionType,
+              phase4SpendLightParams
+            )
+            .accounts({
+              ballot: ballotPdaSpend,
+              pendingOperation: pendingOpPdaSpend,
+              relayer: wallet.publicKey,
+            })
+            .remainingAccounts(phase4SpendRemainingAccounts)
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+            ])
+            .rpc();
+
+          logPass("Created position commitment (Phase 4)", phase4SpendTx.slice(0, 16) + "...");
+          passCount++;
+
+          // ============================================
+          // PHASE 5: Close pending operation
+          // ============================================
+          logInfo("Phase 5: Closing pending operation...");
+
+          const phase5SpendTx = await program.methods
+            .closePendingOperation(Array.from(operationIdSpend))
+            .accounts({
+              pendingOperation: pendingOpPdaSpend,
+              relayer: wallet.publicKey,
+              payer: wallet.publicKey,
+            })
+            .rpc();
+
+          logPass("Closed pending operation (Phase 5)", phase5SpendTx.slice(0, 16) + "...");
+          passCount++;
+
+          logPass("FULL VOTE_SPEND FLOW COMPLETE", "All 6 phases executed successfully!");
+
+          // Save position data for change_vote_spend and close_position tests
+          test4cVoteSpendData = {
+            ballotId: ballotIdSpend,
+            ballotPda: ballotPdaSpend,
+            vaultPda: vaultPdaSpend,
+            stealthSpendingKey: stealthSpendingKey,
+            stealthPubXBigInt: stealthPubXBigInt,
+            positionCommitmentBigInt: positionCommitmentBigInt,
+            positionCommitmentBytes: positionCommitmentBytes,
+            positionRandomnessBigInt: positionRandomnessBigInt,
+            voteChoice: voteChoice,
+            amount: noteAmount,
+            weight: weight,
+            tokenMintBigInt: tokenMintBigInt,
+          };
+          logInfo("Saved position data for change_vote_spend and close_position tests");
+
+          // Wait for Light Protocol indexer to index the new position commitment
+          logInfo("Waiting 10 seconds for Light Protocol indexer to catch up...");
+          await sleep(10000);
 
         } catch (spendErr: any) {
           const errMsg = spendErr.logs?.slice(-5).join('\n      ') || spendErr.message || "";
@@ -1699,226 +2015,153 @@ async function main() {
   }
 
   // =========================================================================
-  // TEST 4d: CHANGE VOTE (SpendToVote Mode)
+  // TEST 4d: CHANGE VOTE (SpendToVote Mode) - Uses REAL position from vote_spend
   // =========================================================================
   logSection("TEST 4d: CHANGE VOTE (SPENDTOVOTE)");
 
-  const changeVoteSpendVkCircuitId = Buffer.from('change_vote_spend_______________'); // 32 bytes
-  const [changeVoteSpendVkPda] = PublicKey.findProgramAddressSync([Buffer.from("vk"), changeVoteSpendVkCircuitId], PROGRAM_ID);
-  const changeVoteSpendVkAccount = await connection.getAccountInfo(changeVoteSpendVkPda);
-
-  if (!changeVoteSpendVkAccount) {
-    logSkip("Change Vote SpendToVote", "change_vote_spend VK not registered");
+  // Check if we have real position data from vote_spend (Test 4c)
+  if (!test4cVoteSpendData) {
+    logSkip("Change Vote SpendToVote", "No position data from vote_spend - run Test 4c first");
     skipCount++;
   } else {
-    try {
-      logInfo("Generating change_vote_spend proof...");
+    const changeVoteSpendVkCircuitId = Buffer.from('change_vote_spend_______________'); // 32 bytes
+    const [changeVoteSpendVkPda] = PublicKey.findProgramAddressSync([Buffer.from("vk"), changeVoteSpendVkCircuitId], PROGRAM_ID);
+    const changeVoteSpendVkAccount = await connection.getAccountInfo(changeVoteSpendVkPda);
 
-      const poseidon = await buildPoseidon();
+    if (!changeVoteSpendVkAccount) {
+      logSkip("Change Vote SpendToVote", "change_vote_spend VK not registered");
+      skipCount++;
+    } else {
+      try {
+        logInfo("Using REAL position data from vote_spend test...");
 
-      // Create a dedicated SpendToVote ballot with longer voting period for this test
-      const ballotIdChangeSpend = generateBallotId();
-      const [ballotPdaChangeSpend] = deriveBallotPda(ballotIdChangeSpend, PROGRAM_ID);
-      const [vaultPdaChangeSpend] = deriveBallotVaultPda(ballotIdChangeSpend, PROGRAM_ID);
+        const poseidon = await buildPoseidon();
 
-      const nowChangeSpend = Math.floor(Date.now() / 1000);
-      const currentSlotChangeSpend = await connection.getSlot();
+        // Extract data from the REAL position created in vote_spend
+        const {
+          ballotId: ballotIdChangeSpend,
+          ballotPda: ballotPdaChangeSpend,
+          vaultPda: vaultPdaChangeSpend,
+          stealthSpendingKey,
+          stealthPubXBigInt: changePubkeyBigInt,
+          positionCommitmentBigInt: oldPositionCommitmentBigInt,
+          positionCommitmentBytes: oldPositionCommitmentBytes,
+          positionRandomnessBigInt: oldPositionRandomnessBigInt,
+          voteChoice: oldVoteChoice,
+          amount: positionAmount,
+          weight: positionWeight,
+          tokenMintBigInt,
+        } = test4cVoteSpendData;
 
-      logInfo("Creating SpendToVote ballot for change_vote_spend test...");
+        logInfo(`Using position from ballot: ${ballotPdaChangeSpend.toBase58().slice(0, 16)}...`);
+        logInfo(`Old position commitment: ${oldPositionCommitmentBigInt.toString().slice(0, 20)}...`);
 
-      const configChangeSpend = {
-        bindingMode: { spendToVote: {} },
-        revealMode: { public: {} },
-        voteType: { weighted: {} },
-        resolutionMode: { oracle: {} },
-        numOptions: 3,
-        quorumThreshold: new BN(0),
-        protocolFeeBps: 100,
-        protocolTreasury: wallet.publicKey,
-        startTime: new BN(nowChangeSpend - 5),
-        endTime: new BN(nowChangeSpend + 180), // 3 minute voting period
-        snapshotSlot: new BN(currentSlotChangeSpend),
-        indexerPubkey: wallet.publicKey,
-        eligibilityRoot: null,
-        weightFormula: Buffer.from([0]),
-        weightParams: [],
-        timeLockPubkey: Array.from(new Uint8Array(32)),
-        unlockSlot: new BN(0),
-        resolver: null,
-        oracle: wallet.publicKey,
-        claimDeadline: new BN(nowChangeSpend + 3600),
-      };
+        // Derive nullifier key from the REAL stealth spending key
+        const changeSpendingKeyBytes = fieldToBytes(stealthSpendingKey);
+        const changeNk = deriveNullifierKey(changeSpendingKeyBytes);
+        const changeNkBigInt = bytesToField(changeNk);
 
-      const createChangeSpendTx = new Transaction().add(
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
-      );
+        // Compute old position nullifier using REAL data
+        const oldPositionNullifier = poseidon([
+          poseidon.F.e(BigInt(0x13)), // POSITION_DOMAIN
+          poseidon.F.e(changeNkBigInt),
+          poseidon.F.e(oldPositionCommitmentBigInt),
+        ]);
+        const oldPositionNullifierBigInt = poseidon.F.toObject(oldPositionNullifier);
 
-      const vaultAtaChangeSpend = getAssociatedTokenAddressSync(tokenMint, vaultPdaChangeSpend, true);
-      const vaultAtaInfoChangeSpend = await connection.getAccountInfo(vaultAtaChangeSpend);
-      if (!vaultAtaInfoChangeSpend) {
-        createChangeSpendTx.add(
-          createAssociatedTokenAccountInstruction(
-            wallet.publicKey,
-            vaultAtaChangeSpend,
-            vaultPdaChangeSpend,
-            tokenMint
-          )
-        );
-      }
+        // New vote (change from original vote to option 1)
+        const newVoteChoice = 1;
+        const newPositionRandomness = generateRandomness();
+        const newPositionRandomnessBigInt = bytesToField(newPositionRandomness);
 
-      createChangeSpendTx.add(
-        await program.methods
-          .createBallot(Array.from(ballotIdChangeSpend), configChangeSpend)
-          .accounts({
-            ballot: ballotPdaChangeSpend,
-            ballotVault: vaultPdaChangeSpend,
-            tokenMint,
-            authority: wallet.publicKey,
-            payer: wallet.publicKey,
-            systemProgram: SystemProgram.programId,
-            tokenProgram: TOKEN_PROGRAM_ID,
-          })
-          .instruction()
-      );
+        // Compute new position commitment
+        const newPosHash1 = poseidon([
+          poseidon.F.e(BigInt(0x13)), // POSITION_DOMAIN
+          poseidon.F.e(bytesToField(ballotIdChangeSpend)),
+          poseidon.F.e(changePubkeyBigInt),
+          poseidon.F.e(BigInt(newVoteChoice)),
+        ]);
+        const newPositionCommitment = poseidon([
+          newPosHash1,
+          poseidon.F.e(positionAmount),
+          poseidon.F.e(positionWeight),
+          poseidon.F.e(newPositionRandomnessBigInt),
+        ]);
+        const newPositionCommitmentBigInt = poseidon.F.toObject(newPositionCommitment);
 
-      await sendAndConfirmTransaction(connection, createChangeSpendTx, [wallet]);
-      logInfo(`Created SpendToVote ballot: ${ballotPdaChangeSpend.toBase58().slice(0, 16)}...`);
+        logInfo(`Changing vote: option ${oldVoteChoice} -> option ${newVoteChoice}`);
 
-      // Generate voter keys
-      const changeSpendKey = crypto.randomBytes(32);
-      const changeSpendKeyBigInt = bytesToField(changeSpendKey);
-      const changeVoterPub = derivePublicKey(changeSpendKeyBigInt);
-      const changeVoterPubX = changeVoterPub.x;
-      const changePubkeyBigInt = bytesToField(changeVoterPubX);
+        // Build circuit inputs for change_vote_spend
+        const changeVoteSpendInputs: Record<string, string> = {
+          // Public inputs
+          ballot_id: bytesToField(ballotIdChangeSpend).toString(),
+          old_position_commitment: oldPositionCommitmentBigInt.toString(),
+          old_position_nullifier: oldPositionNullifierBigInt.toString(),
+          new_position_commitment: newPositionCommitmentBigInt.toString(),
+          amount: positionAmount.toString(),
+          weight: positionWeight.toString(),
+          token_mint: tokenMintBigInt.toString(),
+          old_vote_choice: oldVoteChoice.toString(),
+          new_vote_choice: newVoteChoice.toString(),
+          is_public_mode: "1",
 
-      // Derive nullifier key
-      const changeNk = deriveNullifierKey(changeSpendKey);
-      const changeNkBigInt = bytesToField(changeNk);
+          // Private inputs
+          spending_key: stealthSpendingKey.toString(),
+          pubkey: changePubkeyBigInt.toString(),
+          old_position_randomness: oldPositionRandomnessBigInt.toString(),
+          private_old_vote_choice: oldVoteChoice.toString(),
+          new_position_randomness: newPositionRandomnessBigInt.toString(),
+          private_new_vote_choice: newVoteChoice.toString(),
+        };
 
-      // Simulate an existing position
-      const tokenMintBigInt = bytesToField(tokenMint.toBytes());
-      const positionAmount = BigInt(150_000_000); // 150 tokens
-      const positionWeight = positionAmount;
-      const oldVoteChoice = 0; // Initially voted for option 0
-      const oldPositionRandomness = generateRandomness();
-      const oldPositionRandomnessBigInt = bytesToField(oldPositionRandomness);
+        // Load circuit artifacts
+        const changeVoteSpendCircuitDir = path.join(__dirname, "..", "circom-circuits", "build", "voting");
+        const changeVoteSpendWasmPath = path.join(changeVoteSpendCircuitDir, "change_vote_spend_js", "change_vote_spend.wasm");
+        const changeVoteSpendZkeyPath = path.join(changeVoteSpendCircuitDir, "change_vote_spend_final.zkey");
 
-      // Compute old position commitment
-      const oldPosHash1 = poseidon([
-        poseidon.F.e(BigInt(0x13)), // POSITION_DOMAIN
-        poseidon.F.e(bytesToField(ballotIdChangeSpend)),
-        poseidon.F.e(changePubkeyBigInt),
-        poseidon.F.e(BigInt(oldVoteChoice)),
-      ]);
-      const oldPositionCommitment = poseidon([
-        oldPosHash1,
-        poseidon.F.e(positionAmount),
-        poseidon.F.e(positionWeight),
-        poseidon.F.e(oldPositionRandomnessBigInt),
-      ]);
-      const oldPositionCommitmentBigInt = poseidon.F.toObject(oldPositionCommitment);
+        if (!fs.existsSync(changeVoteSpendWasmPath) || !fs.existsSync(changeVoteSpendZkeyPath)) {
+          logSkip("Change Vote SpendToVote", "Circuit artifacts not found");
+          skipCount++;
+        } else {
+          const changeVoteSpendArtifacts = await loadCircomArtifacts("change_vote_spend", changeVoteSpendWasmPath, changeVoteSpendZkeyPath);
+          const changeVoteSpendProofBytes = await generateSnarkjsProof(changeVoteSpendArtifacts, changeVoteSpendInputs);
 
-      // Compute old position nullifier
-      const oldPositionNullifier = poseidon([
-        poseidon.F.e(BigInt(0x13)), // POSITION_DOMAIN
-        poseidon.F.e(changeNkBigInt),
-        poseidon.F.e(oldPositionCommitmentBigInt),
-      ]);
-      const oldPositionNullifierBigInt = poseidon.F.toObject(oldPositionNullifier);
+          logPass("Generated change_vote_spend proof", `${changeVoteSpendProofBytes.length} bytes`);
+          passCount++;
 
-      // New vote (change from option 0 to option 2)
-      const newVoteChoice = 2;
-      const newPositionRandomness = generateRandomness();
-      const newPositionRandomnessBigInt = bytesToField(newPositionRandomness);
+          // Submit change_vote_spend Phase 0 on-chain
+          logInfo("Submitting change_vote_spend on-chain...");
 
-      // Compute new position commitment
-      const newPosHash1 = poseidon([
-        poseidon.F.e(BigInt(0x13)), // POSITION_DOMAIN
-        poseidon.F.e(bytesToField(ballotIdChangeSpend)),
-        poseidon.F.e(changePubkeyBigInt),
-        poseidon.F.e(BigInt(newVoteChoice)),
-      ]);
-      const newPositionCommitment = poseidon([
-        newPosHash1,
-        poseidon.F.e(positionAmount),
-        poseidon.F.e(positionWeight),
-        poseidon.F.e(newPositionRandomnessBigInt),
-      ]);
-      const newPositionCommitmentBigInt = poseidon.F.toObject(newPositionCommitment);
+          const operationIdChangeSpend = generateVotingOperationId();
+          const oldPositionCommitmentBytes = fieldToBytes(oldPositionCommitmentBigInt);
+          const oldPositionNullifierBytes = fieldToBytes(oldPositionNullifierBigInt);
+          const newPositionCommitmentBytes = fieldToBytes(newPositionCommitmentBigInt);
+          const outputRandomnessChangeSpend = generateRandomness();
 
-      logInfo(`Changing vote: option ${oldVoteChoice} -> option ${newVoteChoice}`);
+          // Get pool PDA
+          const [poolPdaChangeSpend] = PublicKey.findProgramAddressSync(
+            [Buffer.from("pool"), tokenMint.toBytes()],
+            PROGRAM_ID
+          );
 
-      // Build circuit inputs for change_vote_spend
-      const changeVoteSpendInputs: Record<string, string> = {
-        // Public inputs
-        ballot_id: bytesToField(ballotIdChangeSpend).toString(),
-        old_position_commitment: oldPositionCommitmentBigInt.toString(),
-        old_position_nullifier: oldPositionNullifierBigInt.toString(),
-        new_position_commitment: newPositionCommitmentBigInt.toString(),
-        amount: positionAmount.toString(),
-        weight: positionWeight.toString(),
-        token_mint: tokenMintBigInt.toString(),
-        old_vote_choice: oldVoteChoice.toString(),
-        new_vote_choice: newVoteChoice.toString(),
-        is_public_mode: "1",
+          try {
+            const [pendingOpPdaChangeSpend] = deriveVotingPendingOperationPda(operationIdChangeSpend, PROGRAM_ID);
 
-        // Private inputs
-        spending_key: changeSpendKeyBigInt.toString(),
-        pubkey: changePubkeyBigInt.toString(),
-        old_position_randomness: oldPositionRandomnessBigInt.toString(),
-        private_old_vote_choice: oldVoteChoice.toString(),
-        new_position_randomness: newPositionRandomnessBigInt.toString(),
-        private_new_vote_choice: newVoteChoice.toString(),
-      };
-
-      // Load circuit artifacts
-      const changeVoteSpendCircuitDir = path.join(__dirname, "..", "circom-circuits", "build", "voting");
-      const changeVoteSpendWasmPath = path.join(changeVoteSpendCircuitDir, "change_vote_spend_js", "change_vote_spend.wasm");
-      const changeVoteSpendZkeyPath = path.join(changeVoteSpendCircuitDir, "change_vote_spend_final.zkey");
-
-      if (!fs.existsSync(changeVoteSpendWasmPath) || !fs.existsSync(changeVoteSpendZkeyPath)) {
-        logSkip("Change Vote SpendToVote", "Circuit artifacts not found");
-        skipCount++;
-      } else {
-        const changeVoteSpendArtifacts = await loadCircomArtifacts("change_vote_spend", changeVoteSpendWasmPath, changeVoteSpendZkeyPath);
-        const changeVoteSpendProofBytes = await generateSnarkjsProof(changeVoteSpendArtifacts, changeVoteSpendInputs);
-
-        logPass("Generated change_vote_spend proof", `${changeVoteSpendProofBytes.length} bytes`);
-        passCount++;
-
-        // Submit change_vote_spend Phase 0 on-chain
-        logInfo("Submitting change_vote_spend on-chain...");
-
-        const operationIdChangeSpend = generateVotingOperationId();
-        const oldPositionCommitmentBytes = fieldToBytes(oldPositionCommitmentBigInt);
-        const oldPositionNullifierBytes = fieldToBytes(oldPositionNullifierBigInt);
-        const newPositionCommitmentBytes = fieldToBytes(newPositionCommitmentBigInt);
-        const outputRandomnessChangeSpend = generateRandomness();
-
-        // Get pool PDA
-        const [poolPdaChangeSpend] = PublicKey.findProgramAddressSync(
-          [Buffer.from("pool"), tokenMint.toBytes()],
-          PROGRAM_ID
-        );
-
-        try {
-          const [pendingOpPdaChangeSpend] = deriveVotingPendingOperationPda(operationIdChangeSpend, PROGRAM_ID);
-
-          const phase0ChangeSpendTx = await program.methods
-            .createPendingWithProofChangeVoteSpend(
-              Array.from(operationIdChangeSpend),
-              Array.from(ballotIdChangeSpend),
-              Buffer.from(changeVoteSpendProofBytes),
-              Array.from(oldPositionCommitmentBytes),
-              Array.from(oldPositionNullifierBytes),
-              Array.from(newPositionCommitmentBytes),
-              new BN(oldVoteChoice),
-              new BN(newVoteChoice),
-              new BN(positionAmount.toString()),
-              new BN(positionWeight.toString()),
-              null, // old_encrypted_contributions (public mode)
-              null, // new_encrypted_contributions
-              Array.from(outputRandomnessChangeSpend)
+            const phase0ChangeSpendTx = await program.methods
+              .createPendingWithProofChangeVoteSpend(
+                Array.from(operationIdChangeSpend),
+                Array.from(ballotIdChangeSpend),
+                Buffer.from(changeVoteSpendProofBytes),
+                Array.from(oldPositionCommitmentBytes),
+                Array.from(oldPositionNullifierBytes),
+                Array.from(newPositionCommitmentBytes),
+                new BN(oldVoteChoice),
+                new BN(newVoteChoice),
+                new BN(positionAmount.toString()),
+                new BN(positionWeight.toString()),
+                null, // old_encrypted_contributions (public mode)
+                null, // new_encrypted_contributions
+                Array.from(outputRandomnessChangeSpend)
             )
             .accounts({
               ballot: ballotPdaChangeSpend,
@@ -1943,27 +2186,210 @@ async function main() {
           logInfo(`PendingOp proof_verified: ${pendingOpChangeSpend.proofVerified}`);
           logInfo(`Operation type: change_vote_spend`);
 
-          // Note: Full change_vote_spend flow would continue with:
-          // Phase 1: verify_commitment_exists (needs real position on-chain)
-          // Phase 2: create_nullifier_and_pending (old position nullifier)
-          // Phase 3: execute_change_vote_spend
-          // Phase 4: create_commitment (new position)
-          // Phase 5: close_pending_operation
+          // ============================================
+          // PHASE 1: Verify old position commitment exists
+          // ============================================
+          logInfo("Phase 1: Verifying old position commitment exists in Light Protocol...");
 
-          logInfo("Change vote spend Phase 0 complete (Phase 1+ requires position on-chain)");
+          // Get merkle proof for the old position commitment from Light Protocol
+          const { LightProtocol: LightProtocolChangeSpend } = await import("../packages/sdk/src/instructions/light-helpers");
+          const lightProtocolChangeSpend = new LightProtocolChangeSpend(RPC_URL, PROGRAM_ID);
 
-          // Clean up
-          try {
-            await program.methods
-              .closePendingOperation(Array.from(operationIdChangeSpend))
-              .accounts({
-                pendingOperation: pendingOpPdaChangeSpend,
-                relayer: wallet.publicKey,
-                payer: wallet.publicKey,
-              })
-              .rpc();
-            logInfo("Cleaned up pending operation");
-          } catch (_) {}
+          // Look up the old position commitment in Light Protocol
+          const oldPositionCommitmentBn = bn(oldPositionCommitmentBytes);
+          const oldPositionProofResult = await lightProtocolChangeSpend.rpc.getCompressedAccountProof(oldPositionCommitmentBn);
+
+          if (!oldPositionProofResult || !oldPositionProofResult.proof) {
+            throw new Error("Old position commitment not found in Light Protocol - vote_spend may have failed");
+          }
+
+          const oldPositionMerkleRoot = BigInt(oldPositionProofResult.proof.root);
+          const oldPositionMerklePath = oldPositionProofResult.proof.merklePath.map((p: string) => BigInt(p));
+          const oldPositionMerklePathIndices = oldPositionProofResult.proof.merklePathIndices;
+
+          logInfo(`Old position merkle root: ${oldPositionMerkleRoot.toString().slice(0, 20)}...`);
+
+          // Build Light Protocol accounts for Phase 1 (verify exists)
+          const phase1ChangeSpendLightParams = buildLightProtocolParams(
+            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
+            true, // use state tree
+            true, // use nullifier queue
+            true, // use output queue
+            true  // use address tree
+          );
+
+          const phase1ChangeSpendRemainingAccounts = buildLightRemainingAccounts(
+            phase1ChangeSpendLightParams,
+            PROGRAM_ID,
+            DEVNET_V2_TREES.STATE_TREE,
+            DEVNET_V2_TREES.OUTPUT_QUEUE,
+            DEVNET_V2_TREES.ADDRESS_TREE
+          );
+
+          const phase1ChangeSpendTx = await program.methods
+            .verifyVoteCommitmentExists(
+              Array.from(operationIdChangeSpend),
+              Array.from(oldPositionCommitmentBytes),
+              oldPositionMerkleRoot.toString(),
+              oldPositionMerklePath.map(p => p.toString()),
+              oldPositionMerklePathIndices,
+              phase1ChangeSpendLightParams
+            )
+            .accounts({
+              pendingOperation: pendingOpPdaChangeSpend,
+              relayer: wallet.publicKey,
+            })
+            .remainingAccounts(phase1ChangeSpendRemainingAccounts)
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+            ])
+            .rpc();
+
+          logPass("Verified old position exists (Phase 1)", phase1ChangeSpendTx.slice(0, 16) + "...");
+          passCount++;
+
+          // ============================================
+          // PHASE 2: Create old position nullifier
+          // ============================================
+          logInfo("Phase 2: Creating old position nullifier...");
+
+          const phase2ChangeSpendLightParams = buildLightProtocolParams(
+            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
+            true,
+            true,
+            true,
+            true
+          );
+
+          const phase2ChangeSpendRemainingAccounts = buildLightRemainingAccounts(
+            phase2ChangeSpendLightParams,
+            PROGRAM_ID,
+            DEVNET_V2_TREES.STATE_TREE,
+            DEVNET_V2_TREES.OUTPUT_QUEUE,
+            DEVNET_V2_TREES.ADDRESS_TREE
+          );
+
+          const phase2ChangeSpendTx = await program.methods
+            .createNullifierAndPending(
+              Array.from(operationIdChangeSpend),
+              Array.from(oldPositionNullifierBytes),
+              phase2ChangeSpendLightParams
+            )
+            .accounts({
+              pendingOperation: pendingOpPdaChangeSpend,
+              relayer: wallet.publicKey,
+              payer: wallet.publicKey,
+              systemProgram: SystemProgram.programId,
+            })
+            .remainingAccounts(phase2ChangeSpendRemainingAccounts)
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+            ])
+            .rpc();
+
+          logPass("Created old position nullifier (Phase 2)", phase2ChangeSpendTx.slice(0, 16) + "...");
+          passCount++;
+
+          // ============================================
+          // PHASE 3: Execute change_vote_spend (update tally)
+          // ============================================
+          logInfo("Phase 3: Executing change_vote_spend (updating tally)...");
+
+          const phase3ChangeSpendTx = await program.methods
+            .executeChangeVoteSpend(Array.from(operationIdChangeSpend))
+            .accounts({
+              ballot: ballotPdaChangeSpend,
+              pendingOperation: pendingOpPdaChangeSpend,
+              relayer: wallet.publicKey,
+            })
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+            ])
+            .rpc();
+
+          logPass("Executed change_vote_spend (Phase 3)", phase3ChangeSpendTx.slice(0, 16) + "...");
+          passCount++;
+
+          // ============================================
+          // PHASE 4: Create new position commitment
+          // ============================================
+          logInfo("Phase 4: Creating new position commitment...");
+
+          const phase4ChangeSpendLightParams = buildLightProtocolParams(
+            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
+            true,
+            true,
+            true,
+            true
+          );
+
+          const phase4ChangeSpendRemainingAccounts = buildLightRemainingAccounts(
+            phase4ChangeSpendLightParams,
+            PROGRAM_ID,
+            DEVNET_V2_TREES.STATE_TREE,
+            DEVNET_V2_TREES.OUTPUT_QUEUE,
+            DEVNET_V2_TREES.ADDRESS_TREE
+          );
+
+          const phase4ChangeSpendTx = await program.methods
+            .createVoteCommitment(
+              Array.from(operationIdChangeSpend),
+              Array.from(newPositionCommitmentBytes),
+              phase4ChangeSpendLightParams
+            )
+            .accounts({
+              ballot: ballotPdaChangeSpend,
+              pendingOperation: pendingOpPdaChangeSpend,
+              relayer: wallet.publicKey,
+            })
+            .remainingAccounts(phase4ChangeSpendRemainingAccounts)
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+            ])
+            .rpc();
+
+          logPass("Created new position commitment (Phase 4)", phase4ChangeSpendTx.slice(0, 16) + "...");
+          passCount++;
+
+          // ============================================
+          // PHASE 5: Close pending operation
+          // ============================================
+          logInfo("Phase 5: Closing pending operation...");
+
+          const phase5ChangeSpendTx = await program.methods
+            .closePendingOperation(Array.from(operationIdChangeSpend))
+            .accounts({
+              pendingOperation: pendingOpPdaChangeSpend,
+              relayer: wallet.publicKey,
+              payer: wallet.publicKey,
+            })
+            .rpc();
+
+          logPass("Closed pending operation (Phase 5)", phase5ChangeSpendTx.slice(0, 16) + "...");
+          passCount++;
+
+          logPass("FULL CHANGE_VOTE_SPEND FLOW COMPLETE", "All 6 phases executed successfully!");
+
+          // Save new position data for close_position test
+          test4dChangeVoteSpendData = {
+            ballotId: ballotIdChangeSpend,
+            ballotPda: ballotPdaChangeSpend,
+            vaultPda: vaultPdaChangeSpend,
+            stealthSpendingKey: stealthSpendingKey,
+            stealthPubXBigInt: changePubkeyBigInt,
+            positionCommitmentBigInt: newPositionCommitmentBigInt,
+            positionCommitmentBytes: newPositionCommitmentBytes,
+            positionRandomnessBigInt: newPositionRandomnessBigInt,
+            voteChoice: newVoteChoice,
+            amount: positionAmount,
+            weight: positionWeight,
+            tokenMintBigInt,
+          };
+          logInfo("Saved new position data for close_position test");
 
         } catch (changeSpendErr: any) {
           const errMsg = changeSpendErr.logs?.slice(-5).join('\n      ') || changeSpendErr.message || "";
@@ -1979,10 +2405,11 @@ async function main() {
       logFail("Change Vote SpendToVote", err.message?.slice(0, 100) || "Error");
       failCount++;
     }
+    }
   }
 
   // =========================================================================
-  // TEST 4e: CLOSE VOTE POSITION (Cancel Vote / Exit Early)
+  // TEST 4e: CLOSE VOTE POSITION (Cancel Vote / Exit Early) - Uses REAL position
   // =========================================================================
   logSection("TEST 4e: CLOSE VOTE POSITION");
 
@@ -1993,115 +2420,40 @@ async function main() {
   if (!closePositionVkAccount) {
     logSkip("Close Vote Position", "close_position VK not registered");
     skipCount++;
+  } else if (!test4dChangeVoteSpendData) {
+    logSkip("Close Vote Position", "No position data from change_vote_spend - run Test 4d first");
+    skipCount++;
   } else {
     try {
-      logInfo("Generating close_position proof...");
+      logInfo("Using REAL position data from change_vote_spend test...");
 
       const poseidon = await buildPoseidon();
 
-      // Create a dedicated SpendToVote ballot for this test
-      const ballotIdClose = generateBallotId();
-      const [ballotPdaClose] = deriveBallotPda(ballotIdClose, PROGRAM_ID);
-      const [vaultPdaClose] = deriveBallotVaultPda(ballotIdClose, PROGRAM_ID);
+      // Extract data from the REAL position created in change_vote_spend
+      const {
+        ballotId: ballotIdClose,
+        ballotPda: ballotPdaClose,
+        vaultPda: vaultPdaClose,
+        stealthSpendingKey: closeStealthSpendingKey,
+        stealthPubXBigInt: closePubkeyBigInt,
+        positionCommitmentBigInt: closePositionCommitmentBigInt,
+        positionCommitmentBytes: closePositionCommitmentBytesRaw,
+        positionRandomnessBigInt: closePositionRandomnessBigInt,
+        voteChoice: closeVoteChoice,
+        amount: closeAmount,
+        weight: closeWeight,
+        tokenMintBigInt: closeTokenMintBigInt,
+      } = test4dChangeVoteSpendData;
 
-      const nowClose = Math.floor(Date.now() / 1000);
-      const currentSlotClose = await connection.getSlot();
+      logInfo(`Using position from ballot: ${ballotPdaClose.toBase58().slice(0, 16)}...`);
+      logInfo(`Position commitment: ${closePositionCommitmentBigInt.toString().slice(0, 20)}...`);
 
-      logInfo("Creating SpendToVote ballot for close_position test...");
-
-      const configClose = {
-        bindingMode: { spendToVote: {} },
-        revealMode: { public: {} },
-        voteType: { weighted: {} },
-        resolutionMode: { oracle: {} },
-        numOptions: 2,
-        quorumThreshold: new BN(0),
-        protocolFeeBps: 100,
-        protocolTreasury: wallet.publicKey,
-        startTime: new BN(nowClose - 5),
-        endTime: new BN(nowClose + 180), // 3 minute voting period
-        snapshotSlot: new BN(currentSlotClose),
-        indexerPubkey: wallet.publicKey,
-        eligibilityRoot: null,
-        weightFormula: Buffer.from([0]),
-        weightParams: [],
-        timeLockPubkey: Array.from(new Uint8Array(32)),
-        unlockSlot: new BN(0),
-        resolver: null,
-        oracle: wallet.publicKey,
-        claimDeadline: new BN(nowClose + 3600),
-      };
-
-      const createCloseTx = new Transaction().add(
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
-      );
-
-      const vaultAtaClose = getAssociatedTokenAddressSync(tokenMint, vaultPdaClose, true);
-      const vaultAtaInfoClose = await connection.getAccountInfo(vaultAtaClose);
-      if (!vaultAtaInfoClose) {
-        createCloseTx.add(
-          createAssociatedTokenAccountInstruction(
-            wallet.publicKey,
-            vaultAtaClose,
-            vaultPdaClose,
-            tokenMint
-          )
-        );
-      }
-
-      createCloseTx.add(
-        await program.methods
-          .createBallot(Array.from(ballotIdClose), configClose)
-          .accounts({
-            ballot: ballotPdaClose,
-            ballotVault: vaultPdaClose,
-            tokenMint,
-            authority: wallet.publicKey,
-            payer: wallet.publicKey,
-            systemProgram: SystemProgram.programId,
-            tokenProgram: TOKEN_PROGRAM_ID,
-          })
-          .instruction()
-      );
-
-      await sendAndConfirmTransaction(connection, createCloseTx, [wallet]);
-      logInfo(`Created SpendToVote ballot: ${ballotPdaClose.toBase58().slice(0, 16)}...`);
-
-      // Generate voter keys
-      const closeSpendKey = crypto.randomBytes(32);
-      const closeSpendKeyBigInt = bytesToField(closeSpendKey);
-      const closeVoterPub = derivePublicKey(closeSpendKeyBigInt);
-      const closeVoterPubX = closeVoterPub.x;
-      const closePubkeyBigInt = bytesToField(closeVoterPubX);
-
-      // Derive nullifier key
-      const closeNk = deriveNullifierKey(closeSpendKey);
+      // Derive nullifier key from the REAL stealth spending key
+      const closeSpendingKeyBytes = fieldToBytes(closeStealthSpendingKey);
+      const closeNk = deriveNullifierKey(closeSpendingKeyBytes);
       const closeNkBigInt = bytesToField(closeNk);
 
-      // Simulate an existing position
-      const tokenMintBigIntClose = bytesToField(tokenMint.toBytes());
-      const closeAmount = BigInt(250_000_000); // 250 tokens
-      const closeWeight = closeAmount;
-      const closeVoteChoice = 1; // Voted for option 1
-      const closePositionRandomness = generateRandomness();
-      const closePositionRandomnessBigInt = bytesToField(closePositionRandomness);
-
-      // Compute position commitment
-      const closePosHash1 = poseidon([
-        poseidon.F.e(BigInt(0x13)), // POSITION_DOMAIN
-        poseidon.F.e(bytesToField(ballotIdClose)),
-        poseidon.F.e(closePubkeyBigInt),
-        poseidon.F.e(BigInt(closeVoteChoice)),
-      ]);
-      const closePositionCommitment = poseidon([
-        closePosHash1,
-        poseidon.F.e(closeAmount),
-        poseidon.F.e(closeWeight),
-        poseidon.F.e(closePositionRandomnessBigInt),
-      ]);
-      const closePositionCommitmentBigInt = poseidon.F.toObject(closePositionCommitment);
-
-      // Compute position nullifier
+      // Compute position nullifier using REAL data
       const closePositionNullifier = poseidon([
         poseidon.F.e(BigInt(0x13)), // POSITION_DOMAIN
         poseidon.F.e(closeNkBigInt),
@@ -2116,7 +2468,7 @@ async function main() {
       const newTokenCommitment = poseidon([
         poseidon.F.e(BigInt(1)), // COMMITMENT_DOMAIN
         poseidon.F.e(closePubkeyBigInt),
-        poseidon.F.e(tokenMintBigIntClose),
+        poseidon.F.e(closeTokenMintBigInt),
         poseidon.F.e(closeAmount), // Same amount
         poseidon.F.e(newTokenRandomnessBigInt),
       ]);
@@ -2133,12 +2485,12 @@ async function main() {
         token_commitment: newTokenCommitmentBigInt.toString(),
         amount: closeAmount.toString(),
         weight: closeWeight.toString(),
-        token_mint: tokenMintBigIntClose.toString(),
+        token_mint: closeTokenMintBigInt.toString(),
         vote_choice: closeVoteChoice.toString(),
         is_public_mode: "1",
 
         // Private inputs
-        spending_key: closeSpendKeyBigInt.toString(),
+        spending_key: closeStealthSpendingKey.toString(),
         pubkey: closePubkeyBigInt.toString(),
         position_randomness: closePositionRandomnessBigInt.toString(),
         private_vote_choice: closeVoteChoice.toString(),
@@ -2168,6 +2520,12 @@ async function main() {
         const closePositionNullifierBytes = fieldToBytes(closePositionNullifierBigInt);
         const newTokenCommitmentBytes = fieldToBytes(newTokenCommitmentBigInt);
         const outputRandomnessClose = generateRandomness();
+
+        // Get pool PDA
+        const [poolPdaClose] = PublicKey.findProgramAddressSync(
+          [Buffer.from("pool"), tokenMint.toBytes()],
+          PROGRAM_ID
+        );
 
         try {
           const [pendingOpPdaClose] = deriveVotingPendingOperationPda(operationIdClose, PROGRAM_ID);
@@ -2208,27 +2566,193 @@ async function main() {
           logInfo(`PendingOp proof_verified: ${pendingOpClose.proofVerified}`);
           logInfo(`Operation type: close_vote_position`);
 
-          // Note: Full close_position flow would continue with:
-          // Phase 1: verify_commitment_exists (needs real position on-chain)
-          // Phase 2: create_nullifier_and_pending (position nullifier)
-          // Phase 3: execute_close_vote_position
-          // Phase 4: create_commitment (NEW token commitment)
-          // Phase 5: close_pending_operation
+          // ============================================
+          // PHASE 1: Verify position commitment exists
+          // ============================================
+          logInfo("Phase 1: Verifying position commitment exists in Light Protocol...");
 
-          logInfo("Close position Phase 0 complete (Phase 1+ requires position on-chain)");
+          // Get merkle proof for the position commitment from Light Protocol
+          const { LightProtocol: LightProtocolClose } = await import("../packages/sdk/src/instructions/light-helpers");
+          const lightProtocolClose = new LightProtocolClose(RPC_URL, PROGRAM_ID);
 
-          // Clean up
-          try {
-            await program.methods
-              .closePendingOperation(Array.from(operationIdClose))
-              .accounts({
-                pendingOperation: pendingOpPdaClose,
-                relayer: wallet.publicKey,
-                payer: wallet.publicKey,
-              })
-              .rpc();
-            logInfo("Cleaned up pending operation");
-          } catch (_) {}
+          // Look up the position commitment in Light Protocol
+          const positionCommitmentBn = bn(closePositionCommitmentBytes);
+          const positionProofResult = await lightProtocolClose.rpc.getCompressedAccountProof(positionCommitmentBn);
+
+          if (!positionProofResult || !positionProofResult.proof) {
+            throw new Error("Position commitment not found in Light Protocol - change_vote_spend may have failed");
+          }
+
+          const positionMerkleRoot = BigInt(positionProofResult.proof.root);
+          const positionMerklePath = positionProofResult.proof.merklePath.map((p: string) => BigInt(p));
+          const positionMerklePathIndices = positionProofResult.proof.merklePathIndices;
+
+          logInfo(`Position merkle root: ${positionMerkleRoot.toString().slice(0, 20)}...`);
+
+          // Build Light Protocol accounts for Phase 1 (verify exists)
+          const phase1CloseLightParams = buildLightProtocolParams(
+            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
+            true,
+            true,
+            true,
+            true
+          );
+
+          const phase1CloseRemainingAccounts = buildLightRemainingAccounts(
+            phase1CloseLightParams,
+            PROGRAM_ID,
+            DEVNET_V2_TREES.STATE_TREE,
+            DEVNET_V2_TREES.OUTPUT_QUEUE,
+            DEVNET_V2_TREES.ADDRESS_TREE
+          );
+
+          const phase1CloseTx = await program.methods
+            .verifyVoteCommitmentExists(
+              Array.from(operationIdClose),
+              Array.from(closePositionCommitmentBytes),
+              positionMerkleRoot.toString(),
+              positionMerklePath.map(p => p.toString()),
+              positionMerklePathIndices,
+              phase1CloseLightParams
+            )
+            .accounts({
+              pendingOperation: pendingOpPdaClose,
+              relayer: wallet.publicKey,
+            })
+            .remainingAccounts(phase1CloseRemainingAccounts)
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+            ])
+            .rpc();
+
+          logPass("Verified position exists (Phase 1)", phase1CloseTx.slice(0, 16) + "...");
+          passCount++;
+
+          // ============================================
+          // PHASE 2: Create position nullifier
+          // ============================================
+          logInfo("Phase 2: Creating position nullifier...");
+
+          const phase2CloseLightParams = buildLightProtocolParams(
+            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
+            true,
+            true,
+            true,
+            true
+          );
+
+          const phase2CloseRemainingAccounts = buildLightRemainingAccounts(
+            phase2CloseLightParams,
+            PROGRAM_ID,
+            DEVNET_V2_TREES.STATE_TREE,
+            DEVNET_V2_TREES.OUTPUT_QUEUE,
+            DEVNET_V2_TREES.ADDRESS_TREE
+          );
+
+          const phase2CloseTx = await program.methods
+            .createNullifierAndPending(
+              Array.from(operationIdClose),
+              Array.from(closePositionNullifierBytes),
+              phase2CloseLightParams
+            )
+            .accounts({
+              pendingOperation: pendingOpPdaClose,
+              relayer: wallet.publicKey,
+              payer: wallet.publicKey,
+              systemProgram: SystemProgram.programId,
+            })
+            .remainingAccounts(phase2CloseRemainingAccounts)
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+            ])
+            .rpc();
+
+          logPass("Created position nullifier (Phase 2)", phase2CloseTx.slice(0, 16) + "...");
+          passCount++;
+
+          // ============================================
+          // PHASE 3: Execute close_vote_position (update tally)
+          // ============================================
+          logInfo("Phase 3: Executing close_vote_position (decrementing tally)...");
+
+          const phase3CloseTx = await program.methods
+            .executeCloseVotePosition(Array.from(operationIdClose))
+            .accounts({
+              ballot: ballotPdaClose,
+              pendingOperation: pendingOpPdaClose,
+              relayer: wallet.publicKey,
+            })
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+            ])
+            .rpc();
+
+          logPass("Executed close_vote_position (Phase 3)", phase3CloseTx.slice(0, 16) + "...");
+          passCount++;
+
+          // ============================================
+          // PHASE 4: Create NEW token commitment
+          // ============================================
+          logInfo("Phase 4: Creating NEW token commitment...");
+
+          const phase4CloseLightParams = buildLightProtocolParams(
+            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
+            true,
+            true,
+            true,
+            true
+          );
+
+          const phase4CloseRemainingAccounts = buildLightRemainingAccounts(
+            phase4CloseLightParams,
+            PROGRAM_ID,
+            DEVNET_V2_TREES.STATE_TREE,
+            DEVNET_V2_TREES.OUTPUT_QUEUE,
+            DEVNET_V2_TREES.ADDRESS_TREE
+          );
+
+          const phase4CloseTx = await program.methods
+            .createVoteCommitment(
+              Array.from(operationIdClose),
+              Array.from(newTokenCommitmentBytes),
+              phase4CloseLightParams
+            )
+            .accounts({
+              ballot: ballotPdaClose,
+              pendingOperation: pendingOpPdaClose,
+              relayer: wallet.publicKey,
+            })
+            .remainingAccounts(phase4CloseRemainingAccounts)
+            .preInstructions([
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+            ])
+            .rpc();
+
+          logPass("Created NEW token commitment (Phase 4)", phase4CloseTx.slice(0, 16) + "...");
+          passCount++;
+
+          // ============================================
+          // PHASE 5: Close pending operation
+          // ============================================
+          logInfo("Phase 5: Closing pending operation...");
+
+          const phase5CloseTx = await program.methods
+            .closePendingOperation(Array.from(operationIdClose))
+            .accounts({
+              pendingOperation: pendingOpPdaClose,
+              relayer: wallet.publicKey,
+              payer: wallet.publicKey,
+            })
+            .rpc();
+
+          logPass("Closed pending operation (Phase 5)", phase5CloseTx.slice(0, 16) + "...");
+          passCount++;
+
+          logPass("FULL CLOSE_POSITION FLOW COMPLETE", "All 6 phases executed successfully!");
 
         } catch (closeErr: any) {
           const errMsg = closeErr.logs?.slice(-5).join('\n      ') || closeErr.message || "";
