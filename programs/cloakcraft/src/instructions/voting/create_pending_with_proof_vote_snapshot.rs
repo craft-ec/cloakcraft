@@ -1,7 +1,7 @@
 //! Create Pending with Proof - Vote Snapshot (Phase 0)
 //!
 //! Verifies ZK proof for snapshot voting and creates PendingOperation.
-//! Uses indexer attestation for balance verification.
+//! User proves ownership of a shielded note WITHOUT spending it.
 //!
 //! Flow:
 //! Phase 0 (this): Verify ZK proof + Create PendingOperation
@@ -14,18 +14,12 @@ use anchor_lang::prelude::*;
 
 use crate::constants::{operation_types, seeds, GROTH16_PROOF_SIZE};
 use crate::errors::CloakCraftError;
+use crate::helpers::field::{bytes_to_field, pubkey_to_field, u64_to_field};
 use crate::helpers::proof::verify_groth16_proof;
 use crate::state::{
     Ballot, BallotStatus, PendingOperation, RevealMode, VoteBindingMode, VerificationKey,
     MAX_PENDING_COMMITMENTS, PENDING_OPERATION_EXPIRY_SECONDS,
 };
-
-/// Light Protocol parameters for vote snapshot operation
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct LightVoteSnapshotParams {
-    /// Merkle root for commitment verification (if checking existing vote)
-    pub merkle_root: [u8; 32],
-}
 
 /// Encrypted contributions for tally update (encrypted modes only)
 /// One ciphertext per option - program adds all to tally without knowing which is non-zero
@@ -81,14 +75,14 @@ pub fn create_pending_with_proof_vote_snapshot<'info>(
     operation_id: [u8; 32],
     ballot_id: [u8; 32],
     proof: Vec<u8>,
-    // Public inputs from ZK proof
+    // Public inputs from ZK proof (note-based ownership proof)
+    snapshot_merkle_root: [u8; 32],  // Merkle root at snapshot slot
+    note_commitment: [u8; 32],       // The shielded note being used
     vote_nullifier: [u8; 32],
     vote_commitment: [u8; 32],
-    vote_choice: u64,           // For public mode, actual choice; for encrypted, ignored
-    total_amount: u64,
+    vote_choice: u64,                // For public mode, actual choice; for encrypted, 0
+    amount: u64,                     // Note amount
     weight: u64,
-    // Attestation data (verified in circuit)
-    attestation_signature: [u8; 64],
     // Encrypted contributions (for TimeLocked/PermanentPrivate modes)
     encrypted_contributions: Option<EncryptedContributions>,
     // Encrypted preimage for claim recovery (encrypted modes only)
@@ -133,7 +127,7 @@ pub fn create_pending_with_proof_vote_snapshot<'info>(
     }
 
     // Verify amount is non-zero
-    if total_amount == 0 {
+    if amount == 0 {
         return Err(CloakCraftError::ZeroAmount.into());
     }
 
@@ -141,13 +135,13 @@ pub fn create_pending_with_proof_vote_snapshot<'info>(
     let public_inputs = build_public_inputs(
         ballot,
         &ballot_id,
+        &snapshot_merkle_root,
+        &note_commitment,
         &vote_nullifier,
         &vote_commitment,
         vote_choice,
-        total_amount,
+        amount,
         weight,
-        &attestation_signature,
-        encrypted_contributions.as_ref(),
     )?;
 
     // Verify ZK proof
@@ -166,13 +160,16 @@ pub fn create_pending_with_proof_vote_snapshot<'info>(
     pending_op.operation_type = operation_types::VOTE_SNAPSHOT;
     pending_op.proof_verified = true;
 
-    // Store vote_nullifier as expected nullifier (created in Phase 1)
-    pending_op.expected_nullifiers[0] = vote_nullifier;
+    // Store note_commitment as input commitment (verified in Phase 1 via Light Protocol)
+    pending_op.input_commitments[0] = note_commitment;
     pending_op.num_inputs = 1;
     pending_op.inputs_verified_mask = 0;
+
+    // Store vote_nullifier as expected nullifier (created in Phase 2)
+    pending_op.expected_nullifiers[0] = vote_nullifier;
     pending_op.nullifier_completed_mask = 0;
 
-    // Store input pool as ballot_id (for verification)
+    // Store input pool as ballot_id (for nullifier verification)
     pending_op.input_pools[0] = ballot_id;
 
     // Store vote_commitment as output commitment
@@ -180,23 +177,30 @@ pub fn create_pending_with_proof_vote_snapshot<'info>(
     pending_op.num_commitments = 1;
     pending_op.completed_mask = 0;
 
+    // Store ballot_id in pools array (for commitment verification)
+    pending_op.pools[0] = ballot_id;
+
     // Store output data for commitment creation
     pending_op.output_randomness[0] = output_randomness;
     pending_op.output_amounts[0] = weight;
 
     // Store vote-specific data in operation fields
-    // Using swap_amount for vote_choice, output_amount for weight, extra_amount for total_amount
+    // Using swap_amount for vote_choice, output_amount for weight, extra_amount for amount
     pending_op.swap_amount = vote_choice;
     pending_op.output_amount = weight;
-    pending_op.extra_amount = total_amount;
+    pending_op.extra_amount = amount;
+
+    // Note: snapshot_merkle_root is verified in the ZK circuit, not stored on-chain
+    // The circuit proves the note exists in the merkle tree at snapshot slot
 
     // Set expiry
     pending_op.created_at = current_time;
     pending_op.expires_at = current_time + PENDING_OPERATION_EXPIRY_SECONDS;
 
-    msg!("Vote snapshot pending operation created");
+    msg!("Vote snapshot pending operation created (note-based)");
     msg!("  Operation ID: {:?}", operation_id);
     msg!("  Ballot ID: {:?}", ballot_id);
+    msg!("  Note commitment: {:?}", note_commitment);
     msg!("  Vote nullifier: {:?}", vote_nullifier);
     msg!("  Weight: {}", weight);
 
@@ -204,79 +208,71 @@ pub fn create_pending_with_proof_vote_snapshot<'info>(
 }
 
 /// Build public inputs array for ZK proof verification
+/// Must match the circuit's public inputs exactly in order:
+/// 1. ballot_id
+/// 2. snapshot_merkle_root
+/// 3. note_commitment
+/// 4. vote_nullifier
+/// 5. vote_commitment
+/// 6. amount
+/// 7. weight
+/// 8. token_mint
+/// 9. eligibility_root
+/// 10. has_eligibility
+/// 11. vote_choice
+/// 12. is_public_mode
+///
+/// All 32-byte inputs are reduced modulo BN254 scalar field to match circuit field elements.
 fn build_public_inputs(
     ballot: &Ballot,
     ballot_id: &[u8; 32],
+    snapshot_merkle_root: &[u8; 32],
+    note_commitment: &[u8; 32],
     vote_nullifier: &[u8; 32],
     vote_commitment: &[u8; 32],
     vote_choice: u64,
-    total_amount: u64,
+    amount: u64,
     weight: u64,
-    attestation_signature: &[u8; 64],
-    encrypted_contributions: Option<&EncryptedContributions>,
 ) -> Result<Vec<[u8; 32]>> {
     let mut inputs = Vec::new();
 
-    // Core public inputs
-    inputs.push(*ballot_id);
-    inputs.push(*vote_nullifier);
-    inputs.push(*vote_commitment);
+    // 1. ballot_id - reduce to field element
+    inputs.push(bytes_to_field(ballot_id));
 
-    // For public mode, vote_choice is public
-    if ballot.reveal_mode == RevealMode::Public {
-        let mut choice_bytes = [0u8; 32];
-        choice_bytes[24..32].copy_from_slice(&vote_choice.to_be_bytes());
-        inputs.push(choice_bytes);
-    }
+    // 2. snapshot_merkle_root - merkle root at snapshot slot
+    inputs.push(bytes_to_field(snapshot_merkle_root));
 
-    // Amount and weight
-    let mut amount_bytes = [0u8; 32];
-    amount_bytes[24..32].copy_from_slice(&total_amount.to_be_bytes());
-    inputs.push(amount_bytes);
+    // 3. note_commitment - the shielded note being used for voting
+    inputs.push(bytes_to_field(note_commitment));
 
-    let mut weight_bytes = [0u8; 32];
-    weight_bytes[24..32].copy_from_slice(&weight.to_be_bytes());
-    inputs.push(weight_bytes);
+    // 4. vote_nullifier - already a Poseidon hash (valid field element)
+    inputs.push(bytes_to_field(vote_nullifier));
 
-    // Token mint
-    inputs.push(ballot.token_mint.to_bytes());
+    // 5. vote_commitment - already a Poseidon hash (valid field element)
+    inputs.push(bytes_to_field(vote_commitment));
 
-    // Snapshot slot
-    let mut slot_bytes = [0u8; 32];
-    slot_bytes[24..32].copy_from_slice(&ballot.snapshot_slot.to_be_bytes());
-    inputs.push(slot_bytes);
+    // 6. amount - u64 is always < field modulus
+    inputs.push(u64_to_field(amount));
 
-    // Indexer pubkey
-    inputs.push(ballot.indexer_pubkey.to_bytes());
+    // 7. weight - u64 is always < field modulus
+    inputs.push(u64_to_field(weight));
 
-    // Attestation signature (split into two 32-byte chunks)
-    let mut sig_part1 = [0u8; 32];
-    let mut sig_part2 = [0u8; 32];
-    sig_part1.copy_from_slice(&attestation_signature[0..32]);
-    sig_part2.copy_from_slice(&attestation_signature[32..64]);
-    inputs.push(sig_part1);
-    inputs.push(sig_part2);
+    // 8. token_mint - Solana pubkey, reduce to field element
+    inputs.push(pubkey_to_field(&ballot.token_mint));
 
-    // Eligibility root (if set)
-    if ballot.has_eligibility_root {
-        inputs.push(ballot.eligibility_root);
-    }
+    // 9. eligibility_root (always included, 0 if no eligibility)
+    inputs.push(bytes_to_field(&ballot.eligibility_root));
 
-    // Encrypted contributions (for encrypted modes)
-    if let Some(contributions) = encrypted_contributions {
-        for ciphertext in &contributions.ciphertexts {
-            // Split 64-byte ciphertext into two 32-byte inputs
-            let mut ct_part1 = [0u8; 32];
-            let mut ct_part2 = [0u8; 32];
-            ct_part1.copy_from_slice(&ciphertext[0..32]);
-            ct_part2.copy_from_slice(&ciphertext[32..64]);
-            inputs.push(ct_part1);
-            inputs.push(ct_part2);
-        }
+    // 10. has_eligibility (1 if eligibility check required, 0 otherwise)
+    let has_elig = if ballot.has_eligibility_root { 1u64 } else { 0u64 };
+    inputs.push(u64_to_field(has_elig));
 
-        // Time lock pubkey
-        inputs.push(ballot.time_lock_pubkey);
-    }
+    // 11. vote_choice (always included)
+    inputs.push(u64_to_field(vote_choice));
+
+    // 12. is_public_mode (1 if public, 0 if encrypted)
+    let is_public = if ballot.reveal_mode == RevealMode::Public { 1u64 } else { 0u64 };
+    inputs.push(u64_to_field(is_public));
 
     Ok(inputs)
 }

@@ -142,10 +142,15 @@ export interface Ballot {
 
 export interface VoteSnapshotParams {
   ballotId: Uint8Array;
-  pubkey: PublicKey;
-  stealthSpendingKey: Uint8Array;
+  noteCommitment: Uint8Array;         // The shielded note being used for voting
+  noteAmount: bigint;                 // Amount in the note
+  noteRandomness: Uint8Array;         // Note randomness
+  stealthPubX: Uint8Array;            // User's stealth pubkey (x-coordinate)
+  stealthSpendingKey: Uint8Array;     // Spending key (proves ownership)
   voteChoice: number;
-  attestation: BalanceAttestation;
+  snapshotMerkleRoot: Uint8Array;     // Merkle root at snapshot slot
+  merklePath: Uint8Array[];           // Merkle proof path (32 levels)
+  merklePathIndices: number[];        // Merkle proof indices (32 levels)
   eligibilityProof?: MerkleProof;
 }
 
@@ -259,31 +264,30 @@ export interface DecryptedVotePreimage {
 // ============ Proof Inputs ============
 
 export interface VoteSnapshotProofInputs {
-  // Public inputs
-  ballotId: bigint;
-  voteNullifier: bigint;
-  voteCommitment: bigint;
-  totalAmount: bigint;
-  weight: bigint;
-  tokenMint: bigint;
-  snapshotSlot: bigint;
-  indexerPubkeyX: bigint;
-  indexerPubkeyY: bigint;
-  eligibilityRoot: bigint;
-  hasEligibility: bigint;
-  voteChoice: bigint;
-  isPublicMode: bigint;
+  // Public inputs (must match circuit order)
+  ballot_id: bigint;
+  snapshot_merkle_root: bigint;       // Merkle root at snapshot slot
+  note_commitment: bigint;            // The shielded note being used
+  vote_nullifier: bigint;
+  vote_commitment: bigint;
+  amount: bigint;                     // Note amount (voting weight base)
+  weight: bigint;                     // Calculated voting weight
+  token_mint: bigint;
+  eligibility_root: bigint;
+  has_eligibility: bigint;
+  vote_choice: bigint;                // For public mode, actual choice; for encrypted, 0
+  is_public_mode: bigint;
 
   // Private inputs
-  spendingKey: bigint;
-  pubkey: bigint;
-  attestationSignatureR8x: bigint;
-  attestationSignatureR8y: bigint;
-  attestationSignatureS: bigint;
-  randomness: bigint;
-  eligibilityPath: bigint[];
-  eligibilityPathIndices: bigint[];
-  privateVoteChoice: bigint;
+  in_stealth_pub_x: bigint;           // User's stealth pubkey in note
+  in_randomness: bigint;              // Note randomness
+  in_stealth_spending_key: bigint;    // Spending key (proves ownership)
+  merkle_path: bigint[];              // 32 levels
+  merkle_path_indices: bigint[];      // 32 levels
+  vote_randomness: bigint;            // Vote commitment randomness
+  eligibility_path: bigint[];         // 20 levels
+  eligibility_path_indices: bigint[]; // 20 levels
+  private_vote_choice: bigint;        // For encrypted modes
 }
 
 export interface ClaimProofInputs {

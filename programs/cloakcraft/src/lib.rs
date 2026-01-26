@@ -943,27 +943,27 @@ pub mod cloakcraft {
     /// Create Pending with Proof - Vote Snapshot (Phase 0)
     ///
     /// Verifies ZK proof for snapshot voting and creates PendingOperation.
-    /// Uses indexer attestation for balance verification.
+    /// User proves ownership of shielded note WITHOUT spending it.
     #[allow(clippy::too_many_arguments)]
     pub fn create_pending_with_proof_vote_snapshot<'info>(
         ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofVoteSnapshot<'info>>,
         operation_id: [u8; 32],
         ballot_id: [u8; 32],
         proof: Vec<u8>,
+        snapshot_merkle_root: [u8; 32],
+        note_commitment: [u8; 32],
         vote_nullifier: [u8; 32],
         vote_commitment: [u8; 32],
         vote_choice: u64,
-        total_amount: u64,
+        amount: u64,
         weight: u64,
-        indexer_pubkey_x: [u8; 32],
-        indexer_pubkey_y: [u8; 32],
         encrypted_contributions: Option<voting::EncryptedContributions>,
         encrypted_preimage: Option<Vec<u8>>,
         output_randomness: [u8; 32],
     ) -> Result<()> {
         voting::create_pending_with_proof_vote_snapshot(
-            ctx, operation_id, ballot_id, proof, vote_nullifier, vote_commitment,
-            vote_choice, total_amount, weight, indexer_pubkey_x, indexer_pubkey_y,
+            ctx, operation_id, ballot_id, proof, snapshot_merkle_root, note_commitment,
+            vote_nullifier, vote_commitment, vote_choice, amount, weight,
             encrypted_contributions, encrypted_preimage, output_randomness
         )
     }

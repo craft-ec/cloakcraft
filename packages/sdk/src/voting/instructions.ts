@@ -39,28 +39,16 @@ export const VOTING_SEEDS = {
 } as const;
 
 // ============ Circuit IDs ============
+// Must match on-chain constants in constants.rs with underscore padding
 
 export const CIRCUIT_IDS = {
-  VOTE_SNAPSHOT: Buffer.alloc(32).fill(0),
-  CHANGE_VOTE_SNAPSHOT: Buffer.alloc(32).fill(0),
-  VOTE_SPEND: Buffer.alloc(32).fill(0),
-  CLOSE_POSITION: Buffer.alloc(32).fill(0),
-  CLAIM: Buffer.alloc(32).fill(0),
+  // Voting circuits - 32 bytes, underscore-padded (must match constants.rs)
+  VOTE_SNAPSHOT: Buffer.from('vote_snapshot___________________'), // 32 chars
+  CHANGE_VOTE_SNAPSHOT: Buffer.from('change_vote_snapshot____________'), // 32 chars
+  VOTE_SPEND: Buffer.from('vote_spend______________________'), // 32 chars
+  CLOSE_POSITION: Buffer.from('close_position__________________'), // 32 chars - shared with perps
+  CLAIM: Buffer.from('claim___________________________'), // 32 chars
 };
-
-// Initialize circuit ID strings
-(() => {
-  CIRCUIT_IDS.VOTE_SNAPSHOT = Buffer.alloc(32);
-  CIRCUIT_IDS.VOTE_SNAPSHOT.write('vote_snapshot');
-  CIRCUIT_IDS.CHANGE_VOTE_SNAPSHOT = Buffer.alloc(32);
-  CIRCUIT_IDS.CHANGE_VOTE_SNAPSHOT.write('change_vote_snapshot');
-  CIRCUIT_IDS.VOTE_SPEND = Buffer.alloc(32);
-  CIRCUIT_IDS.VOTE_SPEND.write('vote_spend');
-  CIRCUIT_IDS.CLOSE_POSITION = Buffer.alloc(32);
-  CIRCUIT_IDS.CLOSE_POSITION.write('voting_close_position');
-  CIRCUIT_IDS.CLAIM = Buffer.alloc(32);
-  CIRCUIT_IDS.CLAIM.write('voting_claim');
-})();
 
 // ============ PDA Derivation ============
 
@@ -282,18 +270,39 @@ export async function buildDecryptTallyInstruction(
 
 export interface VoteSnapshotInstructionParams {
   ballotId: Uint8Array;
+  snapshotMerkleRoot: Uint8Array; // 32-byte merkle root at snapshot slot
+  noteCommitment: Uint8Array; // 32-byte commitment of the shielded note being used
   voteNullifier: Uint8Array;
   voteCommitment: Uint8Array;
   voteChoice: number;
+  amount: bigint; // Note amount (voting weight base)
   weight: bigint;
-  totalAmount: bigint;
   proof: Uint8Array;
+  outputRandomness: Uint8Array; // 32-byte randomness for output commitment
   encryptedContributions?: Uint8Array[]; // For encrypted modes
   encryptedPreimage?: Uint8Array; // For claim recovery
 }
 
 /**
  * Build vote_snapshot Phase 0 instruction (create pending with proof)
+ *
+ * Note-based ownership proof: User proves they own a shielded note WITHOUT spending it.
+ * The note stays intact - user just proves ownership for voting weight via merkle proof.
+ *
+ * On-chain expects:
+ * - operation_id: [u8; 32]
+ * - ballot_id: [u8; 32]
+ * - proof: Vec<u8>
+ * - snapshot_merkle_root: [u8; 32]
+ * - note_commitment: [u8; 32]
+ * - vote_nullifier: [u8; 32]
+ * - vote_commitment: [u8; 32]
+ * - vote_choice: u64
+ * - amount: u64
+ * - weight: u64
+ * - encrypted_contributions: Option<EncryptedContributions>
+ * - encrypted_preimage: Option<Vec<u8>>
+ * - output_randomness: [u8; 32]
  */
 export async function buildVoteSnapshotPhase0Instruction(
   program: Program,
@@ -310,14 +319,18 @@ export async function buildVoteSnapshotPhase0Instruction(
   return program.methods
     .createPendingWithProofVoteSnapshot(
       Array.from(operationId),
+      Array.from(params.ballotId),
+      Buffer.from(params.proof), // bytes type needs Buffer
+      Array.from(params.snapshotMerkleRoot),
+      Array.from(params.noteCommitment),
       Array.from(params.voteNullifier),
       Array.from(params.voteCommitment),
-      params.voteChoice,
+      new BN(params.voteChoice),
+      new BN(params.amount.toString()),
       new BN(params.weight.toString()),
-      new BN(params.totalAmount.toString()),
-      Array.from(params.proof),
-      params.encryptedContributions?.map(c => Array.from(c)) || null,
-      params.encryptedPreimage ? Array.from(params.encryptedPreimage) : null
+      params.encryptedContributions ? { ciphertexts: params.encryptedContributions.map(c => Array.from(c)) } : null,
+      params.encryptedPreimage ? Buffer.from(params.encryptedPreimage) : null, // bytes type needs Buffer
+      Array.from(params.outputRandomness)
     )
     .accounts({
       ballot: ballotPda,
@@ -338,13 +351,18 @@ export async function buildVoteSnapshotExecuteInstruction(
   operationId: Uint8Array,
   ballotId: Uint8Array,
   relayer: PublicKey,
+  encryptedContributions: Uint8Array[] | null = null,
   programId: PublicKey = PROGRAM_ID
 ): Promise<TransactionInstruction> {
   const [ballotPda] = deriveBallotPda(ballotId, programId);
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
 
   return program.methods
-    .executeVoteSnapshot()
+    .executeVoteSnapshot(
+      Array.from(operationId),
+      Array.from(ballotId),
+      encryptedContributions ? { ciphertexts: encryptedContributions.map(c => Array.from(c)) } : null
+    )
     .accounts({
       ballot: ballotPda,
       pendingOperation: pendingOpPda,
@@ -796,7 +814,7 @@ export async function buildVoteSnapshotInstructions(
 
   // Phase 2: Execute vote
   const phase2 = [
-    await buildVoteSnapshotExecuteInstruction(program, operationId, params.ballotId, relayer, programId),
+    await buildVoteSnapshotExecuteInstruction(program, operationId, params.ballotId, relayer, params.encryptedContributions || null, programId),
   ];
 
   // Phase 3-4 would include Light Protocol CPI for commitment creation

@@ -1,4 +1,7 @@
 import {
+  cloakcraft_default
+} from "./chunk-HPPIUFGZ.mjs";
+import {
   buildShieldInstructions,
   buildShieldInstructionsForVersionedTx,
   buildShieldWithProgram
@@ -14,7 +17,7 @@ import {
   canonicalTokenOrder,
   derivePendingOperationPda,
   generateOperationId
-} from "./chunk-YOYZGW4A.mjs";
+} from "./chunk-FQDVSGRA.mjs";
 import {
   DOMAIN_ACTION_NULLIFIER,
   DOMAIN_COMMITMENT,
@@ -116,10 +119,11 @@ export * from "@cloakcraft/types";
 // src/client.ts
 import {
   Connection as Connection2,
-  PublicKey as PublicKey10,
+  PublicKey as PublicKey9,
   Transaction as Transaction2
 } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { Program, AnchorProvider, BN as BN4 } from "@coral-xyz/anchor";
 
 // src/crypto/nullifier.ts
 function deriveNullifierKey(spendingKey) {
@@ -1667,10 +1671,28 @@ var ProofGenerator = class {
     const tokenMint = params.input.tokenMint instanceof Uint8Array ? params.input.tokenMint : params.input.tokenMint.toBytes();
     const totalRequired = params.marginAmount + params.positionFee;
     const changeAmount = params.input.amount - totalRequired;
+    console.log("[OpenPosition] Change amount debug:");
+    console.log("  input.amount:", params.input.amount.toString());
+    console.log("  marginAmount:", params.marginAmount.toString());
+    console.log("  positionFee:", params.positionFee.toString());
+    console.log("  totalRequired:", totalRequired.toString());
+    console.log("  changeAmount:", changeAmount.toString());
+    console.log("  changeAmount > 0n:", changeAmount > 0n);
+    if (changeAmount < 0n) {
+      throw new Error(
+        `Insufficient input amount: input (${params.input.amount}) < required (${totalRequired}). Need at least ${totalRequired} to cover margin (${params.marginAmount}) + fee (${params.positionFee}).`
+      );
+    }
     const changeRandomness = generateRandomness();
     let changeCommitment;
     if (changeAmount > 0n) {
       const COMMITMENT_DOMAIN = 1n;
+      console.log("[OpenPosition] Computing change commitment:");
+      console.log("  stealthPubX:", Buffer.from(params.input.stealthPubX).toString("hex").slice(0, 16) + "...");
+      console.log("  tokenMint:", Buffer.from(tokenMint).toString("hex").slice(0, 16) + "...");
+      console.log("  changeAmount (bigint):", changeAmount.toString());
+      console.log("  changeAmount (bytes):", Buffer.from(fieldToBytes(changeAmount)).toString("hex").slice(0, 16) + "...");
+      console.log("  changeRandomness:", Buffer.from(changeRandomness).toString("hex").slice(0, 16) + "...");
       changeCommitment = poseidonHashDomain(
         COMMITMENT_DOMAIN,
         params.input.stealthPubX,
@@ -1678,8 +1700,10 @@ var ProofGenerator = class {
         fieldToBytes(changeAmount),
         changeRandomness
       );
+      console.log("  computed changeCommitment:", Buffer.from(changeCommitment).toString("hex"));
     } else {
       changeCommitment = new Uint8Array(32);
+      console.log("[OpenPosition] No change (changeAmount <= 0), using zero commitment");
     }
     const POSITION_COMMITMENT_DOMAIN2 = 8n;
     const stage1 = poseidonHashDomain(
@@ -3318,7 +3342,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     encryptedNotes.push(Buffer.alloc(0));
     outputAmounts.push(0n);
   }
-  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-CG25XKZS.mjs");
+  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-CZJGDH63.mjs");
   const operationId = generateOperationId3(
     nullifier,
     outputCommitments[0],
@@ -3597,7 +3621,7 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
   }
   const [poolPda] = derivePoolPda(params.tokenMint, programId);
   const [vkPda] = deriveVerificationKeyPda(circuitId, programId);
-  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-CG25XKZS.mjs");
+  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-CZJGDH63.mjs");
   const operationId = generateOperationId3(
     params.nullifiers[0],
     params.outputCommitment,
@@ -3819,22 +3843,16 @@ async function storeCommitments(program, tokenMint, commitments, relayer, rpcUrl
 }
 
 // src/instructions/initialize.ts
-import {
-  SystemProgram as SystemProgram2
-} from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID as TOKEN_PROGRAM_ID2 } from "@solana/spl-token";
 async function buildInitializePoolWithProgram(program, params) {
   const programId = program.programId;
   const [poolPda] = derivePoolPda(params.tokenMint, programId);
   const [vaultPda] = deriveVaultPda(params.tokenMint, programId);
-  const tx = await program.methods.initializePool().accounts({
+  const tx = await program.methods.initializePool().accountsPartial({
     pool: poolPda,
     tokenVault: vaultPda,
     tokenMint: params.tokenMint,
     authority: params.authority,
-    payer: params.payer,
-    tokenProgram: TOKEN_PROGRAM_ID2,
-    systemProgram: SystemProgram2.programId
+    payer: params.payer
   });
   return tx;
 }
@@ -3842,12 +3860,11 @@ async function buildInitializeCommitmentCounterWithProgram(program, params) {
   const programId = program.programId;
   const [poolPda] = derivePoolPda(params.tokenMint, programId);
   const [counterPda] = deriveCommitmentCounterPda(poolPda, programId);
-  const tx = await program.methods.initializeCommitmentCounter().accounts({
+  const tx = await program.methods.initializeCommitmentCounter().accountsPartial({
     pool: poolPda,
     commitmentCounter: counterPda,
     authority: params.authority,
-    payer: params.payer,
-    systemProgram: SystemProgram2.programId
+    payer: params.payer
   });
   return tx;
 }
@@ -3887,11 +3904,11 @@ async function initializePool(program, tokenMint, authority, payer) {
 
 // src/instructions/market.ts
 import {
-  PublicKey as PublicKey7,
+  PublicKey as PublicKey6,
   ComputeBudgetProgram as ComputeBudgetProgram3
 } from "@solana/web3.js";
 function deriveOrderPda(orderId, programId) {
-  return PublicKey7.findProgramAddressSync(
+  return PublicKey6.findProgramAddressSync(
     [Buffer.from("order"), Buffer.from(orderId)],
     programId
   );
@@ -4261,11 +4278,11 @@ function isValidPositionSize(positionSize, market) {
 
 // src/perps/instructions.ts
 import {
-  PublicKey as PublicKey8,
+  PublicKey as PublicKey7,
   ComputeBudgetProgram as ComputeBudgetProgram4,
-  SystemProgram as SystemProgram3
+  SystemProgram as SystemProgram2
 } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID as TOKEN_PROGRAM_ID3 } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID as TOKEN_PROGRAM_ID2 } from "@solana/spl-token";
 import BN3 from "bn.js";
 var PYTH_FEED_IDS2 = {
   /** SOL/USD price feed */
@@ -4423,25 +4440,25 @@ var PERPS_CIRCUIT_IDS = {
   LIQUIDATE: "perps_liquidate"
 };
 function derivePerpsPoolPda(poolId, programId = PROGRAM_ID) {
-  return PublicKey8.findProgramAddressSync(
+  return PublicKey7.findProgramAddressSync(
     [PERPS_SEEDS.PERPS_POOL, poolId.toBuffer()],
     programId
   );
 }
 function derivePerpsMarketPda(perpsPool, marketId, programId = PROGRAM_ID) {
-  return PublicKey8.findProgramAddressSync(
+  return PublicKey7.findProgramAddressSync(
     [PERPS_SEEDS.PERPS_MARKET, perpsPool.toBuffer(), Buffer.from(marketId)],
     programId
   );
 }
 function derivePerpsVaultPda(perpsPool, tokenMint, programId = PROGRAM_ID) {
-  return PublicKey8.findProgramAddressSync(
+  return PublicKey7.findProgramAddressSync(
     [PERPS_SEEDS.PERPS_VAULT, perpsPool.toBuffer(), tokenMint.toBuffer()],
     programId
   );
 }
 function derivePerpsLpMintPda(perpsPool, programId = PROGRAM_ID) {
-  return PublicKey8.findProgramAddressSync(
+  return PublicKey7.findProgramAddressSync(
     [PERPS_SEEDS.PERPS_LP_MINT, perpsPool.toBuffer()],
     programId
   );
@@ -4476,7 +4493,7 @@ async function buildOpenPositionWithProgram(program, params) {
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: SystemProgram3.programId
+    systemProgram: SystemProgram2.programId
   }).preInstructions([
     ComputeBudgetProgram4.setComputeUnitLimit({ units: 8e5 })
   ]);
@@ -4545,7 +4562,8 @@ async function buildOpenPositionWithProgram(program, params) {
   ];
   if (params.changeAmount > 0n) {
     const changeNote = {
-      stealthPubX: params.changeRecipient.stealthPubkey.x,
+      stealthPubX: params.inputStealthPubX,
+      // Use input's stealthPubX to match circuit
       tokenMint: params.tokenMint,
       amount: params.changeAmount,
       randomness: params.changeRandomness
@@ -4601,7 +4619,7 @@ async function buildClosePositionWithProgram(program, params) {
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: SystemProgram3.programId
+    systemProgram: SystemProgram2.programId
   }).preInstructions([
     ComputeBudgetProgram4.setComputeUnitLimit({ units: 8e5 })
   ]);
@@ -4689,7 +4707,7 @@ async function buildAddPerpsLiquidityWithProgram(program, params) {
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: SystemProgram3.programId
+    systemProgram: SystemProgram2.programId
   }).preInstructions([
     ComputeBudgetProgram4.setComputeUnitLimit({ units: 8e5 })
   ]);
@@ -4715,7 +4733,7 @@ async function buildAddPerpsLiquidityWithProgram(program, params) {
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
     priceUpdate: params.priceUpdate,
-    tokenProgram: TOKEN_PROGRAM_ID3
+    tokenProgram: TOKEN_PROGRAM_ID2
   }).preInstructions([
     ComputeBudgetProgram4.setComputeUnitLimit({ units: 3e5 })
   ]);
@@ -4773,7 +4791,7 @@ async function buildRemovePerpsLiquidityWithProgram(program, params) {
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: SystemProgram3.programId
+    systemProgram: SystemProgram2.programId
   }).preInstructions([
     ComputeBudgetProgram4.setComputeUnitLimit({ units: 8e5 })
   ]);
@@ -4799,7 +4817,7 @@ async function buildRemovePerpsLiquidityWithProgram(program, params) {
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
     priceUpdate: params.priceUpdate,
-    tokenProgram: TOKEN_PROGRAM_ID3
+    tokenProgram: TOKEN_PROGRAM_ID2
   }).preInstructions([
     ComputeBudgetProgram4.setComputeUnitLimit({ units: 3e5 })
   ]);
@@ -4864,24 +4882,24 @@ async function buildInitializePerpsPoolWithProgram(program, params) {
     lpMint: lpMintPda,
     authority: params.authority,
     payer: params.payer,
-    systemProgram: SystemProgram3.programId,
-    tokenProgram: TOKEN_PROGRAM_ID3
+    systemProgram: SystemProgram2.programId,
+    tokenProgram: TOKEN_PROGRAM_ID2
   });
   return { tx };
 }
 async function buildAddTokenToPoolWithProgram(program, params) {
   const programId = program.programId;
-  const { getAssociatedTokenAddressSync: getAssociatedTokenAddressSync2 } = await import("@solana/spl-token");
-  const vaultPda = getAssociatedTokenAddressSync2(params.tokenMint, params.perpsPool, true);
+  const { getAssociatedTokenAddressSync: getAssociatedTokenAddressSync3 } = await import("@solana/spl-token");
+  const vaultPda = getAssociatedTokenAddressSync3(params.tokenMint, params.perpsPool, true);
   const tx = await program.methods.addTokenToPool(Array.from(params.pythFeedId)).accountsStrict({
     perpsPool: params.perpsPool,
     tokenMint: params.tokenMint,
     tokenVault: vaultPda,
     authority: params.authority,
     payer: params.payer,
-    systemProgram: SystemProgram3.programId,
-    tokenProgram: TOKEN_PROGRAM_ID3,
-    associatedTokenProgram: new PublicKey8("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+    systemProgram: SystemProgram2.programId,
+    tokenProgram: TOKEN_PROGRAM_ID2,
+    associatedTokenProgram: new PublicKey7("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
   });
   return { tx };
 }
@@ -4898,7 +4916,7 @@ async function buildAddMarketWithProgram(program, params) {
     perpsMarket: marketPda,
     authority: params.authority,
     payer: params.payer,
-    systemProgram: SystemProgram3.programId
+    systemProgram: SystemProgram2.programId
   });
   return { tx };
 }
@@ -4912,7 +4930,7 @@ async function buildUpdateBorrowFeesWithProgram(program, perpsPool, keeper) {
 
 // src/address-lookup-table.ts
 import {
-  PublicKey as PublicKey9,
+  PublicKey as PublicKey8,
   AddressLookupTableProgram,
   Transaction,
   sendAndConfirmTransaction
@@ -4987,50 +5005,50 @@ function getLightProtocolCommonAccounts(network) {
   if (network === "devnet") {
     return {
       stateTrees: [
-        new PublicKey9("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
+        new PublicKey8("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
         // State tree 0
       ],
       addressTrees: [
-        new PublicKey9("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
+        new PublicKey8("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
         // Address tree 0
       ],
       nullifierQueues: [
-        new PublicKey9("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
+        new PublicKey8("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
         // Nullifier queue 0
       ],
       // Additional Light Protocol system accounts (from PackedAccounts)
       systemAccounts: [
-        new PublicKey9("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
-        new PublicKey9("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
-        new PublicKey9("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
-        new PublicKey9("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
-        new PublicKey9("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
+        new PublicKey8("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
+        new PublicKey8("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
+        new PublicKey8("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
+        new PublicKey8("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
+        new PublicKey8("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
       ]
     };
   } else {
     return {
       stateTrees: [
-        new PublicKey9("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
+        new PublicKey8("BUta4jaruGP4PUGMEHtRgRwTXAc2VUEHd4Q1wjcBxmPW")
         // Placeholder
       ],
       addressTrees: [
-        new PublicKey9("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
+        new PublicKey8("F4D5pWMHU1xWiLkhtQQ4YPF8vbL5zYMqxU6LkU5cKA4A")
         // Placeholder
       ],
       nullifierQueues: [
-        new PublicKey9("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
+        new PublicKey8("8ahYLkPTy4BKgm8kKMPiPDEi4XLBxMHBKfHBgZH5yD6Z")
         // Placeholder
       ],
       systemAccounts: [
-        new PublicKey9("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
+        new PublicKey8("94bRd3oaTpx8FzBJHu4EmwW18wkVN14DibDeLJqLkwD3"),
         // Placeholder
-        new PublicKey9("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
+        new PublicKey8("35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh"),
         // Placeholder
-        new PublicKey9("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
+        new PublicKey8("HwXnGK3tPkkVY6P439H2p68AxpeuWXd5PcrAxFpbmfbA"),
         // Placeholder
-        new PublicKey9("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
+        new PublicKey8("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq"),
         // Placeholder
-        new PublicKey9("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
+        new PublicKey8("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto")
         // Placeholder
       ]
     };
@@ -5070,15 +5088,31 @@ var ALTManager = class {
 };
 
 // src/client.ts
+async function verifyTransactionSuccess(connection, signature, operationName) {
+  const status = await connection.getSignatureStatus(signature, {
+    searchTransactionHistory: true
+  });
+  if (status.value?.err) {
+    throw new Error(`[${operationName}] Transaction reverted: ${JSON.stringify(status.value.err)}`);
+  }
+}
 var CloakCraftClient = class {
   constructor(config) {
     this.wallet = null;
+    this.anchorWallet = null;
     this.lightClient = null;
     this.program = null;
     this.heliusRpcUrl = null;
-    this.connection = new Connection2(config.rpcUrl, config.commitment ?? "confirmed");
+    if (config.connection) {
+      this.connection = config.connection;
+      this.rpcUrl = "";
+    } else if (config.rpcUrl) {
+      this.connection = new Connection2(config.rpcUrl, config.commitment ?? "confirmed");
+      this.rpcUrl = config.rpcUrl;
+    } else {
+      throw new Error("Either connection or rpcUrl must be provided");
+    }
     this.programId = config.programId;
-    this.rpcUrl = config.rpcUrl;
     this.indexerUrl = config.indexerUrl;
     this.network = config.network ?? "devnet";
     this.noteManager = new NoteManager(config.indexerUrl);
@@ -5140,8 +5174,8 @@ var CloakCraftClient = class {
     console.log("[buildLightProtocolParams] Fetching nullifier non-inclusion proof...");
     const nullifierAddress = lightProtocol.deriveNullifierAddress(pool, nullifier);
     const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-    const commitmentTree = new PublicKey10(commitmentProof.treeInfo.tree);
-    const commitmentQueue = new PublicKey10(commitmentProof.treeInfo.queue);
+    const commitmentTree = new PublicKey9(commitmentProof.treeInfo.tree);
+    const commitmentQueue = new PublicKey9(commitmentProof.treeInfo.queue);
     const systemConfig = SystemAccountMetaConfig.new(this.programId);
     const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
     const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES2.OUTPUT_QUEUE);
@@ -5149,7 +5183,7 @@ var CloakCraftClient = class {
     const addressTreeIndex = packedAccounts.insertOrGet(addressTree);
     const commitmentStateTreeIndex = packedAccounts.insertOrGet(commitmentTree);
     const commitmentQueueIndex = packedAccounts.insertOrGet(commitmentQueue);
-    const commitmentCpiContext = commitmentProof.treeInfo.cpiContext ? new PublicKey10(commitmentProof.treeInfo.cpiContext) : null;
+    const commitmentCpiContext = commitmentProof.treeInfo.cpiContext ? new PublicKey9(commitmentProof.treeInfo.cpiContext) : null;
     if (commitmentCpiContext) {
       packedAccounts.insertOrGet(commitmentCpiContext);
     }
@@ -5160,7 +5194,7 @@ var CloakCraftClient = class {
       isSigner: Boolean(acc.isSigner)
     }));
     const lightVerifyParams = {
-      commitmentAccountHash: Array.from(new PublicKey10(accountHash).toBytes()),
+      commitmentAccountHash: Array.from(new PublicKey9(accountHash).toBytes()),
       commitmentMerkleContext: {
         merkleTreePubkeyIndex: commitmentStateTreeIndex,
         queuePubkeyIndex: commitmentQueueIndex,
@@ -5226,9 +5260,30 @@ var CloakCraftClient = class {
   /**
    * Set the Anchor program instance
    * Required for transaction building
+   * @deprecated Use setWallet() instead for proper wallet integration
    */
   setProgram(program) {
     this.program = program;
+  }
+  /**
+   * Set the wallet and create AnchorProvider/Program internally
+   * This matches scalecraft's pattern where the SDK owns the program creation
+   * @param wallet - Wallet adapter wallet with signTransaction/signAllTransactions
+   */
+  setWallet(wallet) {
+    this.anchorWallet = wallet;
+    this.initProgram();
+  }
+  /**
+   * Initialize the Anchor program with the current wallet
+   * Called internally by setWallet (matches scalecraft pattern exactly)
+   */
+  initProgram() {
+    if (!this.anchorWallet) return;
+    const provider = new AnchorProvider(this.connection, this.anchorWallet, {
+      commitment: "confirmed"
+    });
+    this.program = new Program(cloakcraft_default, provider);
   }
   /**
    * Get the Anchor program instance
@@ -5338,11 +5393,11 @@ var CloakCraftClient = class {
    * Get pool state
    */
   async getPool(tokenMint) {
-    const [poolPda] = PublicKey10.findProgramAddressSync(
+    const [poolPda] = PublicKey9.findProgramAddressSync(
       [Buffer.from("pool"), tokenMint.toBuffer()],
       this.programId
     );
-    const [counterPda] = PublicKey10.findProgramAddressSync(
+    const [counterPda] = PublicKey9.findProgramAddressSync(
       [Buffer.from("commitment_counter"), poolPda.toBuffer()],
       this.programId
     );
@@ -5384,10 +5439,10 @@ var CloakCraftClient = class {
       commitmentCounter = counterInfo.data.readBigUInt64LE(8);
     }
     return {
-      tokenMint: new PublicKey10(data.subarray(8, 40)),
-      tokenVault: new PublicKey10(data.subarray(40, 72)),
+      tokenMint: new PublicKey9(data.subarray(8, 40)),
+      tokenVault: new PublicKey9(data.subarray(40, 72)),
       totalShielded: data.readBigUInt64LE(72),
-      authority: new PublicKey10(data.subarray(80, 112)),
+      authority: new PublicKey9(data.subarray(80, 112)),
       bump: data[112],
       vaultBump: data[113],
       commitmentCounter
@@ -5593,12 +5648,12 @@ var CloakCraftClient = class {
     if (!this.proofGenerator.hasCircuit(circuitName)) {
       throw new Error(`Prover not initialized. Call initializeProver(['${circuitName}']) first.`);
     }
-    const tokenMint = params.inputs[0].tokenMint instanceof Uint8Array ? new PublicKey10(params.inputs[0].tokenMint) : params.inputs[0].tokenMint;
-    const [poolPda] = PublicKey10.findProgramAddressSync(
+    const tokenMint = params.inputs[0].tokenMint instanceof Uint8Array ? new PublicKey9(params.inputs[0].tokenMint) : params.inputs[0].tokenMint;
+    const [poolPda] = PublicKey9.findProgramAddressSync(
       [Buffer.from("pool"), tokenMint.toBuffer()],
       this.programId
     );
-    const [counterPda] = PublicKey10.findProgramAddressSync(
+    const [counterPda] = PublicKey9.findProgramAddressSync(
       [Buffer.from("commitment_counter"), poolPda.toBuffer()],
       this.programId
     );
@@ -5735,7 +5790,7 @@ var CloakCraftClient = class {
       console.error("[Transfer] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CG25XKZS.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
     console.log("[Transfer] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -5778,7 +5833,7 @@ var CloakCraftClient = class {
         console.log(`[Transfer] ALT ${i}: ${alt.state.addresses.length} addresses`);
       });
     }
-    const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ name, builder }) => {
@@ -5787,7 +5842,7 @@ var CloakCraftClient = class {
           const preIxs = builder._preInstructions || [];
           const allInstructions = [...preIxs, mainIx];
           console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
-          return new VersionedTransaction2(
+          return new VersionedTransaction3(
             new TransactionMessage2({
               payerKey: relayerPubkey,
               recentBlockhash: blockhash,
@@ -5832,7 +5887,10 @@ var CloakCraftClient = class {
         skipPreflight: false,
         preflightCommitment: "confirmed"
       });
-      await this.connection.confirmTransaction(signature, "confirmed");
+      const confirmation = await this.connection.confirmTransaction(signature, "confirmed");
+      if (confirmation.value.err) {
+        throw new Error(`[Transfer] ${name} reverted: ${JSON.stringify(confirmation.value.err)}`);
+      }
       console.log(`[Transfer] ${name} confirmed: ${signature}`);
       if (i === 0) {
         phase1Signature = signature;
@@ -6173,7 +6231,7 @@ var CloakCraftClient = class {
       console.error("[Consolidation] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CG25XKZS.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
     for (let i = 0; i < phase1Txs.length; i++) {
@@ -6207,14 +6265,14 @@ var CloakCraftClient = class {
     transactionBuilders.push({ name: "Final (Close Pending)", builder: closeTx });
     console.log(`[Consolidation] Built ${transactionBuilders.length} transactions total`);
     const lookupTables = await this.getAddressLookupTables();
-    const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ name, builder }) => {
         const mainIx = await builder.instruction();
         const preIxs = builder._preInstructions || [];
         const allInstructions = [...preIxs, mainIx];
-        return new VersionedTransaction2(
+        return new VersionedTransaction3(
           new TransactionMessage2({
             payerKey: relayerPubkey,
             recentBlockhash: blockhash,
@@ -6247,7 +6305,10 @@ var CloakCraftClient = class {
         skipPreflight: false,
         preflightCommitment: "confirmed"
       });
-      await this.connection.confirmTransaction(signature, "confirmed");
+      const confirmation = await this.connection.confirmTransaction(signature, "confirmed");
+      if (confirmation.value.err) {
+        throw new Error(`[Consolidation] ${name} reverted: ${JSON.stringify(confirmation.value.err)}`);
+      }
       console.log(`[Consolidation] ${name} confirmed: ${signature}`);
       finalSignature = signature;
     }
@@ -6276,6 +6337,9 @@ var CloakCraftClient = class {
     tx.sign(payer);
     const signature = await this.connection.sendRawTransaction(tx.serialize());
     const confirmation = await this.connection.confirmTransaction(signature);
+    if (confirmation.value.err) {
+      throw new Error(`[AdapterSwap] Transaction reverted: ${JSON.stringify(confirmation.value.err)}`);
+    }
     return {
       signature,
       slot: confirmation.context.slot
@@ -6299,6 +6363,9 @@ var CloakCraftClient = class {
     tx.sign(payer);
     const signature = await this.connection.sendRawTransaction(tx.serialize());
     const confirmation = await this.connection.confirmTransaction(signature);
+    if (confirmation.value.err) {
+      throw new Error(`[CreateOrder] Transaction reverted: ${JSON.stringify(confirmation.value.err)}`);
+    }
     return {
       signature,
       slot: confirmation.context.slot
@@ -6384,58 +6451,73 @@ var CloakCraftClient = class {
    * @returns Transaction signature
    */
   async initializeAmmPool(tokenAMint, tokenBMint, feeBps, poolType = "constantProduct", amplification = 200, payer) {
+    console.log("[initializeAmmPool] ======== START ========");
+    console.log("[initializeAmmPool] tokenAMint:", tokenAMint.toBase58());
+    console.log("[initializeAmmPool] tokenBMint:", tokenBMint.toBase58());
+    console.log("[initializeAmmPool] feeBps:", feeBps);
+    console.log("[initializeAmmPool] poolType:", poolType);
+    console.log("[initializeAmmPool] amplification:", amplification);
     if (!this.program) {
+      console.log("[initializeAmmPool] ERROR: No program set");
       throw new Error("No program set. Call setProgram() first.");
     }
+    console.log("[initializeAmmPool] Program exists:", !!this.program);
+    console.log("[initializeAmmPool] Program.programId:", this.program.programId.toBase58());
+    console.log("[initializeAmmPool] Provider exists:", !!this.program.provider);
+    console.log("[initializeAmmPool] Provider.publicKey:", this.program.provider.publicKey?.toBase58());
+    console.log("[initializeAmmPool] Connection RPC:", this.program.provider.connection.rpcEndpoint);
+    const [canonicalA, canonicalB] = tokenAMint.toBuffer().compare(tokenBMint.toBuffer()) < 0 ? [tokenAMint, tokenBMint] : [tokenBMint, tokenAMint];
+    console.log("[initializeAmmPool] Canonical order:");
+    console.log("[initializeAmmPool]   canonicalA:", canonicalA.toBase58());
+    console.log("[initializeAmmPool]   canonicalB:", canonicalB.toBase58());
+    const poolTypeEnum = poolType === "stableSwap" ? { stableSwap: {} } : { constantProduct: {} };
+    const amp = poolType === "stableSwap" ? amplification : 0;
+    const [lpMintPda] = PublicKey9.findProgramAddressSync(
+      [Buffer.from("lp_mint"), canonicalA.toBuffer(), canonicalB.toBuffer()],
+      this.programId
+    );
+    console.log("[initializeAmmPool] Derived lpMintPda:", lpMintPda.toBase58());
+    console.log("[initializeAmmPool] Building MethodsBuilder...");
+    const methodsBuilder = this.program.methods.initializeAmmPool(
+      canonicalA,
+      canonicalB,
+      feeBps,
+      poolTypeEnum,
+      new BN4(amp)
+    ).accountsPartial({
+      tokenAMintAccount: canonicalA,
+      tokenBMintAccount: canonicalB
+    });
+    console.log("[initializeAmmPool] MethodsBuilder created");
+    console.log("[initializeAmmPool] CALLING .rpc() - This will trigger wallet.signTransaction()");
+    console.log("[initializeAmmPool] ======== BEFORE .rpc() ========");
+    let signature;
     try {
-      let payerPublicKey;
-      let payerKeypair = null;
-      if (payer && payer.secretKey && payer.secretKey.length > 0) {
-        payerPublicKey = payer.publicKey;
-        payerKeypair = payer;
-      } else if (payer) {
-        payerPublicKey = payer.publicKey;
-      } else {
-        const wallet = this.program.provider.publicKey;
-        if (!wallet) {
-          throw new Error("No wallet connected. Please connect your wallet first.");
-        }
-        payerPublicKey = wallet;
-      }
-      const { tx, lpMint } = await buildInitializeAmmPoolWithProgram(this.program, {
-        tokenAMint,
-        tokenBMint,
-        feeBps,
-        authority: payerPublicKey,
-        payer: payerPublicKey,
-        poolType,
-        amplification
-      });
-      let ammSignature;
-      if (payerKeypair) {
-        ammSignature = await tx.signers([payerKeypair]).rpc();
-        console.log(`[AMM] Pool initialized (CLI): ${ammSignature}`);
-      } else {
-        ammSignature = await tx.rpc();
-        console.log(`[AMM] Pool initialized (wallet): ${ammSignature}`);
-      }
-      console.log(`[AMM] Initializing LP token pool: ${lpMint.toBase58()}`);
+      signature = await methodsBuilder.rpc({ skipPreflight: true });
+      console.log("[initializeAmmPool] ======== AFTER .rpc() SUCCESS ========");
+      console.log("[initializeAmmPool] Signature:", signature);
+    } catch (rpcError) {
+      console.log("[initializeAmmPool] ======== AFTER .rpc() ERROR ========");
+      console.log("[initializeAmmPool] Error name:", rpcError?.name);
+      console.log("[initializeAmmPool] Error message:", rpcError?.message);
+      console.log("[initializeAmmPool] Error logs:", rpcError?.logs);
+      console.log("[initializeAmmPool] Full error:", JSON.stringify(rpcError, Object.getOwnPropertyNames(rpcError || {}), 2));
+      throw rpcError;
+    }
+    console.log(`[AMM] Pool initialized: ${signature}`);
+    const payerPubkey = payer?.publicKey ?? this.program.provider.publicKey;
+    if (payerPubkey) {
       try {
-        const lpPoolInit = await initializePool(this.program, lpMint, payerPublicKey, payerPublicKey);
-        console.log(`[AMM] LP pool initialized: pool=${lpPoolInit.poolTx}, counter=${lpPoolInit.counterTx}`);
+        await initializePool(this.program, lpMintPda, payerPubkey, payerPubkey);
+        console.log(`[AMM] LP pool initialized`);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         if (!errMsg.includes("already in use") && !errMsg.includes("already_exists")) {
-          console.error(`[AMM] LP pool initialization failed: ${errMsg}`);
-          throw new Error(`AMM pool created but LP pool initialization failed: ${errMsg}. LP tokens will not be scannable.`);
+          console.warn(`[AMM] LP pool init failed: ${errMsg}`);
         }
-        console.log(`[AMM] LP pool already exists`);
       }
-      return ammSignature;
-    } catch (err) {
-      console.error("[AMM] Failed to initialize pool:", err);
-      throw err;
     }
+    return signature;
   }
   /**
    * Initialize LP pool for an existing AMM pool
@@ -6506,7 +6588,7 @@ var CloakCraftClient = class {
       this.wallet.keypair
     );
     params.onProgress?.("building");
-    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey10(params.input.tokenMint) : params.input.tokenMint;
+    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey9(params.input.tokenMint) : params.input.tokenMint;
     const ammPoolAccount = await this.program.account.ammPool.fetch(params.poolId);
     const outputTokenMint = params.swapDirection === "aToB" ? ammPoolAccount.tokenBMint : ammPoolAccount.tokenAMint;
     const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
@@ -6586,7 +6668,7 @@ var CloakCraftClient = class {
       console.error("[Swap] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CG25XKZS.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
     console.log("[Swap] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -6628,7 +6710,7 @@ var CloakCraftClient = class {
         console.log(`[Swap] ALT ${i}: ${alt.state.addresses.length} addresses`);
       });
     }
-    const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ name, builder }) => {
@@ -6637,7 +6719,7 @@ var CloakCraftClient = class {
           const preIxs = builder._preInstructions || [];
           const allInstructions = [...preIxs, mainIx];
           console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
-          return new VersionedTransaction2(
+          return new VersionedTransaction3(
             new TransactionMessage2({
               payerKey: relayerPubkey,
               recentBlockhash: blockhash,
@@ -6680,7 +6762,10 @@ var CloakCraftClient = class {
         skipPreflight: false,
         preflightCommitment: "confirmed"
       });
-      await this.connection.confirmTransaction(signature, "confirmed");
+      const confirmation = await this.connection.confirmTransaction(signature, "confirmed");
+      if (confirmation.value.err) {
+        throw new Error(`[Swap] ${name} reverted: ${JSON.stringify(confirmation.value.err)}`);
+      }
       console.log(`[Swap] ${name} confirmed: ${signature}`);
       if (i === 0) {
         phase0Signature = signature;
@@ -6714,8 +6799,8 @@ var CloakCraftClient = class {
       this.wallet.keypair
     );
     params.onProgress?.("building");
-    const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new PublicKey10(params.inputA.tokenMint) : params.inputA.tokenMint;
-    const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new PublicKey10(params.inputB.tokenMint) : params.inputB.tokenMint;
+    const tokenAMint = params.inputA.tokenMint instanceof Uint8Array ? new PublicKey9(params.inputA.tokenMint) : params.inputA.tokenMint;
+    const tokenBMint = params.inputB.tokenMint instanceof Uint8Array ? new PublicKey9(params.inputB.tokenMint) : params.inputB.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
     const [lpPool] = derivePoolPda(params.lpMint, this.programId);
@@ -6798,7 +6883,7 @@ var CloakCraftClient = class {
       console.error("[Add Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CG25XKZS.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
     console.log("[Add Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -6842,7 +6927,7 @@ var CloakCraftClient = class {
         console.log(`[Add Liquidity] ALT ${i}: ${alt.state.addresses.length} addresses`);
       });
     }
-    const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ name, builder }) => {
@@ -6851,7 +6936,7 @@ var CloakCraftClient = class {
           const preIxs = builder._preInstructions || [];
           const allInstructions = [...preIxs, mainIx];
           console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
-          return new VersionedTransaction2(
+          return new VersionedTransaction3(
             new TransactionMessage2({
               payerKey: relayerPubkey,
               recentBlockhash: blockhash,
@@ -6894,7 +6979,10 @@ var CloakCraftClient = class {
         skipPreflight: false,
         preflightCommitment: "confirmed"
       });
-      await this.connection.confirmTransaction(signature, "confirmed");
+      const confirmation = await this.connection.confirmTransaction(signature, "confirmed");
+      if (confirmation.value.err) {
+        throw new Error(`[Add Liquidity] ${name} reverted: ${JSON.stringify(confirmation.value.err)}`);
+      }
       console.log(`[Add Liquidity] ${name} confirmed: ${signature}`);
       if (i === 0) {
         phase0Signature = signature;
@@ -6925,7 +7013,7 @@ var CloakCraftClient = class {
     params.onProgress?.("generating");
     const tokenAMint = params.tokenAMint;
     const tokenBMint = params.tokenBMint;
-    const lpMint = params.lpInput.tokenMint instanceof Uint8Array ? new PublicKey10(params.lpInput.tokenMint) : params.lpInput.tokenMint;
+    const lpMint = params.lpInput.tokenMint instanceof Uint8Array ? new PublicKey9(params.lpInput.tokenMint) : params.lpInput.tokenMint;
     const [poolA] = derivePoolPda(tokenAMint, this.programId);
     const [poolB] = derivePoolPda(tokenBMint, this.programId);
     const [lpPool] = derivePoolPda(lpMint, this.programId);
@@ -6944,7 +7032,7 @@ var CloakCraftClient = class {
       const configAccount = await this.connection.getAccountInfo(protocolConfigPda);
       if (configAccount) {
         const data = configAccount.data;
-        const treasury = new PublicKey10(data.subarray(40, 72));
+        const treasury = new PublicKey9(data.subarray(40, 72));
         const feesEnabled = data[80] === 1;
         if (feesEnabled) {
           const { getAssociatedTokenAddress } = await import("@solana/spl-token");
@@ -7023,7 +7111,7 @@ var CloakCraftClient = class {
       console.error("[Remove Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CG25XKZS.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
     console.log("[Remove Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -7065,7 +7153,7 @@ var CloakCraftClient = class {
         console.log(`[Remove Liquidity] ALT ${i}: ${alt.state.addresses.length} addresses`);
       });
     }
-    const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ name, builder }) => {
@@ -7074,7 +7162,7 @@ var CloakCraftClient = class {
           const preIxs = builder._preInstructions || [];
           const allInstructions = [...preIxs, mainIx];
           console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
-          return new VersionedTransaction2(
+          return new VersionedTransaction3(
             new TransactionMessage2({
               payerKey: relayerPubkey,
               recentBlockhash: blockhash,
@@ -7117,7 +7205,10 @@ var CloakCraftClient = class {
         skipPreflight: false,
         preflightCommitment: "confirmed"
       });
-      await this.connection.confirmTransaction(signature, "confirmed");
+      const confirmation = await this.connection.confirmTransaction(signature, "confirmed");
+      if (confirmation.value.err) {
+        throw new Error(`[Remove Liquidity] ${name} reverted: ${JSON.stringify(confirmation.value.err)}`);
+      }
       console.log(`[Remove Liquidity] ${name} confirmed: ${signature}`);
       if (i === 0) {
         phase0Signature = signature;
@@ -7157,8 +7248,8 @@ var CloakCraftClient = class {
     );
     const [orderPda] = deriveOrderPda(params.orderId, this.programId);
     const orderAccount = await this.program.account.order.fetch(orderPda);
-    const makerPool = new PublicKey10(orderAccount.makerPool || params.order.escrowCommitment);
-    const takerInputMint = params.takerInput.tokenMint instanceof Uint8Array ? new PublicKey10(params.takerInput.tokenMint) : params.takerInput.tokenMint;
+    const makerPool = new PublicKey9(orderAccount.makerPool || params.order.escrowCommitment);
+    const takerInputMint = params.takerInput.tokenMint instanceof Uint8Array ? new PublicKey9(params.takerInput.tokenMint) : params.takerInput.tokenMint;
     const [takerPool] = derivePoolPda(takerInputMint, this.programId);
     const escrowNullifier = new Uint8Array(32);
     const takerNullifier = this.computeInputNullifier(params.takerInput);
@@ -7213,6 +7304,7 @@ var CloakCraftClient = class {
       heliusRpcUrl
     );
     const signature = await tx.rpc();
+    await verifyTransactionSuccess(this.connection, signature, "FillOrder");
     return {
       signature,
       slot: 0
@@ -7242,7 +7334,7 @@ var CloakCraftClient = class {
     );
     const [orderPda] = deriveOrderPda(params.orderId, this.programId);
     const orderAccount = await this.program.account.order.fetch(orderPda);
-    const pool = new PublicKey10(orderAccount.pool || orderAccount.makerPool);
+    const pool = new PublicKey9(orderAccount.pool || orderAccount.makerPool);
     const escrowNullifier = new Uint8Array(32);
     const refundCommitment = computeCommitment({
       stealthPubX: params.refundRecipient.stealthPubkey.x,
@@ -7268,6 +7360,7 @@ var CloakCraftClient = class {
       heliusRpcUrl
     );
     const signature = await tx.rpc();
+    await verifyTransactionSuccess(this.connection, signature, "CancelOrder");
     return {
       signature,
       slot: 0
@@ -7310,7 +7403,7 @@ var CloakCraftClient = class {
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     let poolPda;
     if (tokenMint) {
-      [poolPda] = PublicKey10.findProgramAddressSync(
+      [poolPda] = PublicKey9.findProgramAddressSync(
         [Buffer.from("pool"), tokenMint.toBuffer()],
         this.programId
       );
@@ -7335,7 +7428,7 @@ var CloakCraftClient = class {
     const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
     let poolPda;
     if (tokenMint) {
-      [poolPda] = PublicKey10.findProgramAddressSync(
+      [poolPda] = PublicKey9.findProgramAddressSync(
         [Buffer.from("pool"), tokenMint.toBuffer()],
         this.programId
       );
@@ -7508,7 +7601,7 @@ var CloakCraftClient = class {
       this.wallet.keypair
     );
     params.onProgress?.("building");
-    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey10(params.input.tokenMint) : params.input.tokenMint;
+    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey9(params.input.tokenMint) : params.input.tokenMint;
     const [inputPoolPda] = derivePoolPda(inputTokenMint, this.programId);
     const inputPoolAccount = await this.program.account.pool.fetch(inputPoolPda);
     const inputVault = inputPoolAccount.tokenVault;
@@ -7572,8 +7665,8 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CG25XKZS.mjs");
-    const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
+    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();
     const transactionBuilders = [];
@@ -7621,7 +7714,7 @@ var CloakCraftClient = class {
       if (name.includes("Final") && params.pythCloseInstructions?.length) {
         allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
-      const tx = new VersionedTransaction2(
+      const tx = new VersionedTransaction3(
         new TransactionMessage2({
           payerKey: relayerPubkey,
           recentBlockhash: blockhash,
@@ -7642,7 +7735,10 @@ var CloakCraftClient = class {
         tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
-      await this.connection.confirmTransaction(sig, "confirmed");
+      const confirmation = await this.connection.confirmTransaction(sig, "confirmed");
+      if (confirmation.value.err) {
+        throw new Error(`[OpenPosition] ${name} reverted: ${JSON.stringify(confirmation.value.err)}`);
+      }
       console.log(`[OpenPosition] ${name} confirmed: ${sig}`);
       finalSignature = sig;
     }
@@ -7773,8 +7869,8 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CG25XKZS.mjs");
-    const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
+    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();
     const transactionBuilders = [];
@@ -7822,7 +7918,7 @@ var CloakCraftClient = class {
       if (name.includes("Final") && params.pythCloseInstructions?.length) {
         allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
-      const tx = new VersionedTransaction2(
+      const tx = new VersionedTransaction3(
         new TransactionMessage2({
           payerKey: relayerPubkey,
           recentBlockhash: blockhash,
@@ -7843,7 +7939,10 @@ var CloakCraftClient = class {
         tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
-      await this.connection.confirmTransaction(sig, "confirmed");
+      const confirmation = await this.connection.confirmTransaction(sig, "confirmed");
+      if (confirmation.value.err) {
+        throw new Error(`[ClosePosition] ${name} reverted: ${JSON.stringify(confirmation.value.err)}`);
+      }
       console.log(`[ClosePosition] ${name} confirmed: ${sig}`);
       finalSignature = sig;
     }
@@ -7915,7 +8014,7 @@ var CloakCraftClient = class {
     const changeRandomness = generateRandomness();
     const changeCommitment = new Uint8Array(32);
     params.onProgress?.("building");
-    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey10(params.input.tokenMint) : params.input.tokenMint;
+    const inputTokenMint = params.input.tokenMint instanceof Uint8Array ? new PublicKey9(params.input.tokenMint) : params.input.tokenMint;
     const [depositPoolPda] = derivePoolPda(inputTokenMint, this.programId);
     const depositPoolAccount = await this.program.account.pool.fetch(depositPoolPda);
     const [perpsVaultPda] = derivePerpsVaultPda(params.poolId, inputTokenMint, this.programId);
@@ -7965,8 +8064,8 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CG25XKZS.mjs");
-    const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
+    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();
     const transactionBuilders = [];
@@ -8014,7 +8113,7 @@ var CloakCraftClient = class {
       if (name.includes("Final") && params.pythCloseInstructions?.length) {
         allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
-      const tx = new VersionedTransaction2(
+      const tx = new VersionedTransaction3(
         new TransactionMessage2({
           payerKey: relayerPubkey,
           recentBlockhash: blockhash,
@@ -8035,7 +8134,10 @@ var CloakCraftClient = class {
         tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
-      await this.connection.confirmTransaction(sig, "confirmed");
+      const confirmation = await this.connection.confirmTransaction(sig, "confirmed");
+      if (confirmation.value.err) {
+        throw new Error(`[AddPerpsLiquidity] ${name} reverted: ${JSON.stringify(confirmation.value.err)}`);
+      }
       console.log(`[AddPerpsLiquidity] ${name} confirmed: ${sig}`);
       finalSignature = sig;
     }
@@ -8171,8 +8273,8 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CG25XKZS.mjs");
-    const { VersionedTransaction: VersionedTransaction2, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
+    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();
     const transactionBuilders = [];
@@ -8220,7 +8322,7 @@ var CloakCraftClient = class {
       if (name.includes("Final") && params.pythCloseInstructions?.length) {
         allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
-      const tx = new VersionedTransaction2(
+      const tx = new VersionedTransaction3(
         new TransactionMessage2({
           payerKey: relayerPubkey,
           recentBlockhash: blockhash,
@@ -8241,7 +8343,10 @@ var CloakCraftClient = class {
         tx.sign(signers);
       }
       const sig = await this.connection.sendTransaction(tx, { skipPreflight: false });
-      await this.connection.confirmTransaction(sig, "confirmed");
+      const confirmation = await this.connection.confirmTransaction(sig, "confirmed");
+      if (confirmation.value.err) {
+        throw new Error(`[RemovePerpsLiquidity] ${name} reverted: ${JSON.stringify(confirmation.value.err)}`);
+      }
       console.log(`[RemovePerpsLiquidity] ${name} confirmed: ${sig}`);
       finalSignature = sig;
     }
@@ -8474,7 +8579,7 @@ function generateRandomScalar2() {
 }
 
 // src/amm/pool.ts
-import { PublicKey as PublicKey11 } from "@solana/web3.js";
+import { PublicKey as PublicKey10 } from "@solana/web3.js";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { PoolType } from "@cloakcraft/types";
 async function fetchAmmPool(connection, ammPoolPda) {
@@ -8487,13 +8592,13 @@ async function fetchAmmPool(connection, ammPoolPda) {
 }
 function deserializeAmmPool(data) {
   let offset = 8;
-  const poolId = new PublicKey11(data.slice(offset, offset + 32));
+  const poolId = new PublicKey10(data.slice(offset, offset + 32));
   offset += 32;
-  const tokenAMint = new PublicKey11(data.slice(offset, offset + 32));
+  const tokenAMint = new PublicKey10(data.slice(offset, offset + 32));
   offset += 32;
-  const tokenBMint = new PublicKey11(data.slice(offset, offset + 32));
+  const tokenBMint = new PublicKey10(data.slice(offset, offset + 32));
   offset += 32;
-  const lpMint = new PublicKey11(data.slice(offset, offset + 32));
+  const lpMint = new PublicKey10(data.slice(offset, offset + 32));
   offset += 32;
   const stateHash = new Uint8Array(data.slice(offset, offset + 32));
   offset += 32;
@@ -8503,7 +8608,7 @@ function deserializeAmmPool(data) {
   const lpSupply = view.getBigUint64(16, true);
   const feeBps = view.getUint16(24, true);
   offset += 26;
-  const authority = new PublicKey11(data.slice(offset, offset + 32));
+  const authority = new PublicKey10(data.slice(offset, offset + 32));
   offset += 32;
   const isActive = data[offset] === 1;
   offset += 1;
@@ -8812,7 +8917,7 @@ function validateLiquidityAmounts(amountA, amountB, balanceA, balanceB) {
 // src/versioned-transaction.ts
 import {
   TransactionMessage,
-  VersionedTransaction,
+  VersionedTransaction as VersionedTransaction2,
   ComputeBudgetProgram as ComputeBudgetProgram5
 } from "@solana/web3.js";
 var MAX_TRANSACTION_SIZE = 1232;
@@ -8834,7 +8939,7 @@ async function buildVersionedTransaction(connection, instructions, payer, config
     recentBlockhash: blockhash,
     instructions: allInstructions
   }).compileToV0Message(config.lookupTables);
-  const versionedTx = new VersionedTransaction(messageV0);
+  const versionedTx = new VersionedTransaction2(messageV0);
   return versionedTx;
 }
 function estimateTransactionSize(tx) {
@@ -10389,94 +10494,318 @@ var WeightOp = /* @__PURE__ */ ((WeightOp2) => {
 
 // src/voting/instructions.ts
 import {
-  PublicKey as PublicKey13
+  PublicKey as PublicKey12,
+  SystemProgram as SystemProgram3,
+  ComputeBudgetProgram as ComputeBudgetProgram6
 } from "@solana/web3.js";
+import { TOKEN_PROGRAM_ID as TOKEN_PROGRAM_ID3, getAssociatedTokenAddressSync as getAssociatedTokenAddressSync2 } from "@solana/spl-token";
+import { BN as BN5 } from "@coral-xyz/anchor";
+var VOTING_SEEDS = {
+  BALLOT: Buffer.from("ballot"),
+  BALLOT_VAULT: Buffer.from("ballot_vault"),
+  PENDING_OP: Buffer.from("pending_op"),
+  VK: Buffer.from("vk")
+};
+var CIRCUIT_IDS3 = {
+  // Voting circuits - 32 bytes, underscore-padded (must match constants.rs)
+  VOTE_SNAPSHOT: Buffer.from("vote_snapshot___________________"),
+  // 32 chars
+  CHANGE_VOTE_SNAPSHOT: Buffer.from("change_vote_snapshot____________"),
+  // 32 chars
+  VOTE_SPEND: Buffer.from("vote_spend______________________"),
+  // 32 chars
+  CLOSE_POSITION: Buffer.from("close_position__________________"),
+  // 32 chars - shared with perps
+  CLAIM: Buffer.from("claim___________________________")
+  // 32 chars
+};
 function deriveBallotPda(ballotId, programId = PROGRAM_ID) {
-  return PublicKey13.findProgramAddressSync(
-    [Buffer.from("ballot"), Buffer.from(ballotId)],
+  return PublicKey12.findProgramAddressSync(
+    [VOTING_SEEDS.BALLOT, Buffer.from(ballotId)],
     programId
   );
 }
 function deriveBallotVaultPda(ballotId, programId = PROGRAM_ID) {
-  return PublicKey13.findProgramAddressSync(
-    [Buffer.from("ballot_vault"), Buffer.from(ballotId)],
+  return PublicKey12.findProgramAddressSync(
+    [VOTING_SEEDS.BALLOT_VAULT, Buffer.from(ballotId)],
     programId
   );
 }
 function derivePendingOperationPda2(operationId, programId = PROGRAM_ID) {
-  return PublicKey13.findProgramAddressSync(
-    [Buffer.from("pending_op"), Buffer.from(operationId)],
+  return PublicKey12.findProgramAddressSync(
+    [VOTING_SEEDS.PENDING_OP, Buffer.from(operationId)],
     programId
   );
 }
 function deriveVerificationKeyPda2(circuitId, programId = PROGRAM_ID) {
-  return PublicKey13.findProgramAddressSync(
-    [Buffer.from("vk"), Buffer.from(circuitId)],
+  return PublicKey12.findProgramAddressSync(
+    [VOTING_SEEDS.VK, Buffer.from(circuitId)],
     programId
   );
 }
-async function buildCreateBallotInstruction(config, payer, programId = PROGRAM_ID) {
-  const [ballotPda] = deriveBallotPda(config.ballotId, programId);
-  const instructions = [];
-  if (config.bindingMode === 1) {
-    const [vaultPda] = deriveBallotVaultPda(config.ballotId, programId);
+function generateOperationId2() {
+  return crypto.getRandomValues(new Uint8Array(32));
+}
+async function buildCreateBallotInstruction(program, params, tokenMint, authority, payer, programId = PROGRAM_ID) {
+  const [ballotPda] = deriveBallotPda(params.ballotId, programId);
+  const [vaultPda] = deriveBallotVaultPda(params.ballotId, programId);
+  const isSpendToVote = "spendToVote" in params.bindingMode;
+  const accounts = {
+    ballot: ballotPda,
+    tokenMint,
+    authority,
+    payer,
+    systemProgram: SystemProgram3.programId,
+    tokenProgram: TOKEN_PROGRAM_ID3
+  };
+  if (isSpendToVote) {
+    accounts.ballotVault = vaultPda;
   }
-  return instructions;
+  return program.methods.createBallot(
+    Array.from(params.ballotId),
+    {
+      bindingMode: params.bindingMode,
+      revealMode: params.revealMode,
+      voteType: params.voteType,
+      resolutionMode: params.resolutionMode,
+      numOptions: params.numOptions,
+      quorumThreshold: new BN5(params.quorumThreshold.toString()),
+      protocolFeeBps: params.protocolFeeBps,
+      protocolTreasury: params.protocolTreasury,
+      startTime: new BN5(params.startTime),
+      endTime: new BN5(params.endTime),
+      snapshotSlot: new BN5(params.snapshotSlot),
+      indexerPubkey: params.indexerPubkey,
+      eligibilityRoot: params.eligibilityRoot ? Array.from(params.eligibilityRoot) : null,
+      weightFormula: Buffer.from(params.weightFormula),
+      weightParams: params.weightParams.map((p) => new BN5(p.toString())),
+      timeLockPubkey: Array.from(params.timeLockPubkey),
+      unlockSlot: new BN5(params.unlockSlot),
+      resolver: params.resolver,
+      oracle: params.oracle,
+      claimDeadline: new BN5(params.claimDeadline)
+    }
+  ).accounts(accounts).instruction();
 }
-function buildResolveBallotInstruction(ballotId, outcome, resolver, programId = PROGRAM_ID) {
+async function buildResolveBallotInstruction(program, ballotId, outcome, authority, resolver, programId = PROGRAM_ID) {
   const [ballotPda] = deriveBallotPda(ballotId, programId);
-  return {};
+  const accounts = {
+    ballot: ballotPda,
+    authority
+  };
+  if (resolver) {
+    accounts.resolver = resolver;
+  }
+  return program.methods.resolveBallot(Array.from(ballotId), outcome !== null ? outcome : null).accounts(accounts).instruction();
 }
-function buildFinalizeBallotInstruction(ballotId, authority, programId = PROGRAM_ID) {
+async function buildFinalizeBallotInstruction(program, ballotId, tokenMint, protocolTreasury, authority, programId = PROGRAM_ID) {
   const [ballotPda] = deriveBallotPda(ballotId, programId);
-  return {};
+  const [vaultPda] = deriveBallotVaultPda(ballotId, programId);
+  const treasuryAta = getAssociatedTokenAddressSync2(tokenMint, protocolTreasury);
+  return program.methods.finalizeBallot().accounts({
+    ballot: ballotPda,
+    ballotVault: vaultPda,
+    treasury: treasuryAta,
+    authority,
+    tokenProgram: TOKEN_PROGRAM_ID3
+  }).instruction();
 }
-function buildDecryptTallyInstruction(ballotId, decryptionKey, authority, programId = PROGRAM_ID) {
+async function buildDecryptTallyInstruction(program, ballotId, decryptionKey, authority, programId = PROGRAM_ID) {
   const [ballotPda] = deriveBallotPda(ballotId, programId);
-  return {};
+  return program.methods.decryptTally(Array.from(decryptionKey)).accounts({
+    ballot: ballotPda,
+    authority
+  }).instruction();
 }
-async function buildVoteSnapshotInstructions(params, proof, rpcUrl, relayer, payer, programId = PROGRAM_ID) {
-  const operationId = generateOperationId2();
-  const lightProtocol = new LightProtocol(rpcUrl, programId);
+async function buildVoteSnapshotPhase0Instruction(program, params, operationId, payer, relayer, programId = PROGRAM_ID) {
   const [ballotPda] = deriveBallotPda(params.ballotId, programId);
   const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
-  const phase0Instructions = [];
-  const phase1Instructions = [];
-  const phase2Instructions = [];
-  const phase3Instructions = [];
-  const phase4Instructions = [];
-  return [
-    phase0Instructions,
-    phase1Instructions,
-    phase2Instructions,
-    phase3Instructions,
-    phase4Instructions
-  ];
+  const [vkPda] = deriveVerificationKeyPda2(CIRCUIT_IDS3.VOTE_SNAPSHOT, programId);
+  return program.methods.createPendingWithProofVoteSnapshot(
+    Array.from(operationId),
+    Array.from(params.ballotId),
+    Buffer.from(params.proof),
+    // bytes type needs Buffer
+    Array.from(params.snapshotMerkleRoot),
+    Array.from(params.noteCommitment),
+    Array.from(params.voteNullifier),
+    Array.from(params.voteCommitment),
+    new BN5(params.voteChoice),
+    new BN5(params.amount.toString()),
+    new BN5(params.weight.toString()),
+    params.encryptedContributions ? { ciphertexts: params.encryptedContributions.map((c) => Array.from(c)) } : null,
+    params.encryptedPreimage ? Buffer.from(params.encryptedPreimage) : null,
+    // bytes type needs Buffer
+    Array.from(params.outputRandomness)
+  ).accounts({
+    ballot: ballotPda,
+    pendingOperation: pendingOpPda,
+    verificationKey: vkPda,
+    relayer,
+    payer,
+    systemProgram: SystemProgram3.programId
+  }).instruction();
 }
-async function buildChangeVoteSnapshotInstructions(params, proof, rpcUrl, relayer, payer, programId = PROGRAM_ID) {
-  const operationId = generateOperationId2();
-  const lightProtocol = new LightProtocol(rpcUrl, programId);
-  return [];
+async function buildVoteSnapshotExecuteInstruction(program, operationId, ballotId, relayer, encryptedContributions = null, programId = PROGRAM_ID) {
+  const [ballotPda] = deriveBallotPda(ballotId, programId);
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  return program.methods.executeVoteSnapshot(
+    Array.from(operationId),
+    Array.from(ballotId),
+    encryptedContributions ? { ciphertexts: encryptedContributions.map((c) => Array.from(c)) } : null
+  ).accounts({
+    ballot: ballotPda,
+    pendingOperation: pendingOpPda,
+    relayer
+  }).instruction();
 }
-async function buildVoteSpendInstructions(params, proof, rpcUrl, relayer, payer, programId = PROGRAM_ID) {
-  const operationId = generateOperationId2();
-  const lightProtocol = new LightProtocol(rpcUrl, programId);
-  return [];
+async function buildChangeVoteSnapshotPhase0Instruction(program, params, operationId, payer, relayer, programId = PROGRAM_ID) {
+  const [ballotPda] = deriveBallotPda(params.ballotId, programId);
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  const [vkPda] = deriveVerificationKeyPda2(CIRCUIT_IDS3.CHANGE_VOTE_SNAPSHOT, programId);
+  return program.methods.createPendingWithProofChangeVoteSnapshot(
+    Array.from(operationId),
+    Array.from(params.oldVoteCommitment),
+    Array.from(params.oldVoteCommitmentNullifier),
+    Array.from(params.newVoteCommitment),
+    Array.from(params.voteNullifier),
+    params.oldVoteChoice,
+    params.newVoteChoice,
+    new BN5(params.weight.toString()),
+    Array.from(params.proof),
+    params.oldEncryptedContributions?.map((c) => Array.from(c)) || null,
+    params.newEncryptedContributions?.map((c) => Array.from(c)) || null
+  ).accounts({
+    ballot: ballotPda,
+    pendingOperation: pendingOpPda,
+    verificationKey: vkPda,
+    relayer,
+    payer,
+    systemProgram: SystemProgram3.programId
+  }).instruction();
 }
-async function buildClosePositionInstructions(params, proof, rpcUrl, relayer, payer, programId = PROGRAM_ID) {
-  const operationId = generateOperationId2();
-  const lightProtocol = new LightProtocol(rpcUrl, programId);
-  return [];
+async function buildChangeVoteSnapshotExecuteInstruction(program, operationId, ballotId, relayer, programId = PROGRAM_ID) {
+  const [ballotPda] = deriveBallotPda(ballotId, programId);
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  return program.methods.executeChangeVoteSnapshot().accounts({
+    ballot: ballotPda,
+    pendingOperation: pendingOpPda,
+    relayer
+  }).instruction();
 }
-async function buildClaimInstructions(params, proof, rpcUrl, relayer, payer, programId = PROGRAM_ID) {
-  const operationId = generateOperationId2();
-  const lightProtocol = new LightProtocol(rpcUrl, programId);
-  return [];
+async function buildVoteSpendPhase0Instruction(program, params, operationId, inputCommitment, payer, relayer, programId = PROGRAM_ID) {
+  const [ballotPda] = deriveBallotPda(params.ballotId, programId);
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  const [vkPda] = deriveVerificationKeyPda2(CIRCUIT_IDS3.VOTE_SPEND, programId);
+  return program.methods.createPendingWithProofVoteSpend(
+    Array.from(operationId),
+    Array.from(inputCommitment),
+    Array.from(params.spendingNullifier),
+    Array.from(params.positionCommitment),
+    params.voteChoice,
+    new BN5(params.amount.toString()),
+    new BN5(params.weight.toString()),
+    Array.from(params.proof),
+    params.encryptedContributions?.map((c) => Array.from(c)) || null,
+    params.encryptedPreimage ? Array.from(params.encryptedPreimage) : null
+  ).accounts({
+    ballot: ballotPda,
+    pendingOperation: pendingOpPda,
+    verificationKey: vkPda,
+    relayer,
+    payer,
+    systemProgram: SystemProgram3.programId
+  }).instruction();
 }
+async function buildVoteSpendExecuteInstruction(program, operationId, ballotId, tokenMint, relayer, programId = PROGRAM_ID) {
+  const [ballotPda] = deriveBallotPda(ballotId, programId);
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  const [vaultPda] = deriveBallotVaultPda(ballotId, programId);
+  return program.methods.executeVoteSpend().accounts({
+    ballot: ballotPda,
+    ballotVault: vaultPda,
+    pendingOperation: pendingOpPda,
+    relayer,
+    tokenProgram: TOKEN_PROGRAM_ID3
+  }).instruction();
+}
+async function buildCloseVotePositionPhase0Instruction(program, params, operationId, payer, relayer, programId = PROGRAM_ID) {
+  const [ballotPda] = deriveBallotPda(params.ballotId, programId);
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  const [vkPda] = deriveVerificationKeyPda2(CIRCUIT_IDS3.CLOSE_POSITION, programId);
+  return program.methods.createPendingWithProofCloseVotePosition(
+    Array.from(operationId),
+    Array.from(params.positionCommitment),
+    Array.from(params.positionNullifier),
+    Array.from(params.newTokenCommitment),
+    params.voteChoice,
+    new BN5(params.amount.toString()),
+    new BN5(params.weight.toString()),
+    Array.from(params.proof),
+    params.encryptedContributions?.map((c) => Array.from(c)) || null
+  ).accounts({
+    ballot: ballotPda,
+    pendingOperation: pendingOpPda,
+    verificationKey: vkPda,
+    relayer,
+    payer,
+    systemProgram: SystemProgram3.programId
+  }).instruction();
+}
+async function buildCloseVotePositionExecuteInstruction(program, operationId, ballotId, tokenMint, relayer, programId = PROGRAM_ID) {
+  const [ballotPda] = deriveBallotPda(ballotId, programId);
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  const [vaultPda] = deriveBallotVaultPda(ballotId, programId);
+  return program.methods.executeCloseVotePosition().accounts({
+    ballot: ballotPda,
+    ballotVault: vaultPda,
+    pendingOperation: pendingOpPda,
+    relayer,
+    tokenProgram: TOKEN_PROGRAM_ID3
+  }).instruction();
+}
+async function buildClaimPhase0Instruction(program, params, operationId, payer, relayer, programId = PROGRAM_ID) {
+  const [ballotPda] = deriveBallotPda(params.ballotId, programId);
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  const [vkPda] = deriveVerificationKeyPda2(CIRCUIT_IDS3.CLAIM, programId);
+  return program.methods.createPendingWithProofClaim(
+    Array.from(operationId),
+    Array.from(params.positionCommitment),
+    Array.from(params.positionNullifier),
+    Array.from(params.payoutCommitment),
+    params.voteChoice,
+    new BN5(params.grossPayout.toString()),
+    new BN5(params.netPayout.toString()),
+    new BN5(params.userWeight.toString()),
+    Array.from(params.proof)
+  ).accounts({
+    ballot: ballotPda,
+    pendingOperation: pendingOpPda,
+    verificationKey: vkPda,
+    relayer,
+    payer,
+    systemProgram: SystemProgram3.programId
+  }).instruction();
+}
+async function buildClaimExecuteInstruction(program, operationId, ballotId, tokenMint, protocolTreasury, relayer, programId = PROGRAM_ID) {
+  const [ballotPda] = deriveBallotPda(ballotId, programId);
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  const [vaultPda] = deriveBallotVaultPda(ballotId, programId);
+  const treasuryAta = getAssociatedTokenAddressSync2(tokenMint, protocolTreasury);
+  return program.methods.executeClaim().accounts({
+    ballot: ballotPda,
+    ballotVault: vaultPda,
+    treasury: treasuryAta,
+    pendingOperation: pendingOpPda,
+    relayer,
+    tokenProgram: TOKEN_PROGRAM_ID3
+  }).instruction();
+}
+var FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 function generateEncryptedContributions(voteChoice, weight, numOptions, timeLockPubkey, encryptionSeed) {
   const ciphertexts = [];
   for (let i = 0; i < numOptions; i++) {
-    const value = i === voteChoice ? weight : BigInt(0);
+    const value = i === voteChoice ? weight : 0n;
     const ciphertext = encryptElGamal(value, timeLockPubkey, encryptionSeed, i);
     ciphertexts.push(ciphertext);
   }
@@ -10485,85 +10814,150 @@ function generateEncryptedContributions(voteChoice, weight, numOptions, timeLock
 function generateNegatedEncryptedContributions(voteChoice, weight, numOptions, timeLockPubkey, encryptionSeed) {
   const ciphertexts = [];
   for (let i = 0; i < numOptions; i++) {
-    const value = i === voteChoice ? -weight : BigInt(0);
+    const value = i === voteChoice ? (FIELD_MODULUS - weight) % FIELD_MODULUS : 0n;
     const ciphertext = encryptElGamal(value, timeLockPubkey, encryptionSeed, i);
     ciphertexts.push(ciphertext);
   }
   return { ciphertexts };
 }
-function generateOperationId2() {
-  return crypto.getRandomValues(new Uint8Array(32));
-}
 function encryptElGamal(value, pubkey, seed, index) {
+  const indexBytes = new Uint8Array(4);
+  new DataView(indexBytes.buffer).setUint32(0, index, true);
+  const combined = new Uint8Array(seed.length + 4);
+  combined.set(seed);
+  combined.set(indexBytes, seed.length);
+  const rHash = poseidonHashDomain(0x42n, combined);
+  const r = bytesToField(rHash);
+  const h = bytesToField(pubkey);
+  const c1 = r % FIELD_MODULUS;
+  const c2 = (h * r % FIELD_MODULUS + value) % FIELD_MODULUS;
   const ciphertext = new Uint8Array(64);
+  const c1Bytes = fieldToBytes(c1);
+  const c2Bytes = fieldToBytes(c2);
+  ciphertext.set(c1Bytes, 0);
+  ciphertext.set(c2Bytes, 32);
   return ciphertext;
 }
-var CIRCUIT_IDS3 = {
-  VOTE_SNAPSHOT: new TextEncoder().encode("vote_snapshot___________________"),
-  CHANGE_VOTE_SNAPSHOT: new TextEncoder().encode("change_vote_snapshot____________"),
-  VOTE_SPEND: new TextEncoder().encode("vote_spend______________________"),
-  CLOSE_POSITION: new TextEncoder().encode("close_position__________________"),
-  CLAIM: new TextEncoder().encode("claim___________________________")
-};
+async function buildVoteSnapshotInstructions(program, params, payer, relayer, programId = PROGRAM_ID) {
+  const operationId = generateOperationId2();
+  const phase0 = [
+    ComputeBudgetProgram6.setComputeUnitLimit({ units: 4e5 }),
+    await buildVoteSnapshotPhase0Instruction(program, params, operationId, payer, relayer, programId)
+  ];
+  const phase2 = [
+    await buildVoteSnapshotExecuteInstruction(program, operationId, params.ballotId, relayer, params.encryptedContributions || null, programId)
+  ];
+  return [phase0, phase2];
+}
+async function buildChangeVoteSnapshotInstructions(program, params, payer, relayer, programId = PROGRAM_ID) {
+  const operationId = generateOperationId2();
+  const phase0 = [
+    ComputeBudgetProgram6.setComputeUnitLimit({ units: 4e5 }),
+    await buildChangeVoteSnapshotPhase0Instruction(program, params, operationId, payer, relayer, programId)
+  ];
+  const phase2 = [
+    await buildChangeVoteSnapshotExecuteInstruction(program, operationId, params.ballotId, relayer, programId)
+  ];
+  return [phase0, phase2];
+}
+async function buildVoteSpendInstructions(program, params, inputCommitment, tokenMint, payer, relayer, programId = PROGRAM_ID) {
+  const operationId = generateOperationId2();
+  const phase0 = [
+    ComputeBudgetProgram6.setComputeUnitLimit({ units: 4e5 }),
+    await buildVoteSpendPhase0Instruction(program, params, operationId, inputCommitment, payer, relayer, programId)
+  ];
+  const phase2 = [
+    await buildVoteSpendExecuteInstruction(program, operationId, params.ballotId, tokenMint, relayer, programId)
+  ];
+  return [phase0, phase2];
+}
+async function buildClosePositionInstructions(program, params, tokenMint, payer, relayer, programId = PROGRAM_ID) {
+  const operationId = generateOperationId2();
+  const phase0 = [
+    ComputeBudgetProgram6.setComputeUnitLimit({ units: 4e5 }),
+    await buildCloseVotePositionPhase0Instruction(program, params, operationId, payer, relayer, programId)
+  ];
+  const phase2 = [
+    await buildCloseVotePositionExecuteInstruction(program, operationId, params.ballotId, tokenMint, relayer, programId)
+  ];
+  return [phase0, phase2];
+}
+async function buildClaimInstructions(program, params, tokenMint, protocolTreasury, payer, relayer, programId = PROGRAM_ID) {
+  const operationId = generateOperationId2();
+  const phase0 = [
+    ComputeBudgetProgram6.setComputeUnitLimit({ units: 4e5 }),
+    await buildClaimPhase0Instruction(program, params, operationId, payer, relayer, programId)
+  ];
+  const phase2 = [
+    await buildClaimExecuteInstruction(program, operationId, params.ballotId, tokenMint, protocolTreasury, relayer, programId)
+  ];
+  return [phase0, phase2];
+}
 
 // src/voting/proofs.ts
 var VOTE_NULLIFIER_DOMAIN = BigInt(16);
 var VOTE_COMMITMENT_DOMAIN = BigInt(17);
 var POSITION_DOMAIN = BigInt(19);
 var NULLIFIER_KEY_DOMAIN = BigInt(4);
-async function generateVoteSnapshotInputs(params, revealMode, numOptions, indexerPubkeyX, indexerPubkeyY, eligibilityRoot = BigInt(0)) {
+async function generateVoteSnapshotInputs(params, revealMode, tokenMint, eligibilityRoot = BigInt(0)) {
   const spendingKeyBigInt = bytesToBigInt2(params.stealthSpendingKey);
-  const pubkeyBigInt = bytesToBigInt2(params.pubkey.toBytes());
+  const stealthPubXBigInt = bytesToBigInt2(params.stealthPubX);
   const ballotIdBigInt = bytesToBigInt2(params.ballotId);
-  const randomness = generateRandomness();
-  const randomnessBigInt = bytesToBigInt2(randomness);
+  const noteCommitmentBigInt = bytesToBigInt2(params.noteCommitment);
+  const snapshotMerkleRootBigInt = bytesToBigInt2(params.snapshotMerkleRoot);
+  const tokenMintBigInt = bytesToBigInt2(tokenMint);
+  const voteRandomness = generateRandomness();
+  const voteRandomnessBigInt = bytesToBigInt2(voteRandomness);
   const nullifierKey = deriveNullifierKey(params.stealthSpendingKey);
-  const nullifierKeyBigInt = bytesToBigInt2(nullifierKey);
   const voteNullifier = computeVoteNullifier(nullifierKey, params.ballotId);
   const voteNullifierBigInt = bytesToBigInt2(voteNullifier);
+  const amount = params.noteAmount;
+  const weight = amount;
   const voteCommitment = computeVoteCommitment(
     params.ballotId,
     voteNullifier,
-    params.pubkey.toBytes(),
+    params.stealthPubX,
     params.voteChoice,
-    BigInt(params.attestation.totalAmount),
-    randomness
+    weight,
+    voteRandomness
   );
   const voteCommitmentBigInt = bytesToBigInt2(voteCommitment);
-  const totalAmount = BigInt(params.attestation.totalAmount);
-  const weight = totalAmount;
-  const sigParts = parseEdDSASignature(params.attestation.signature);
+  const merklePathBigInt = params.merklePath.map((p) => bytesToBigInt2(p));
+  const merklePathIndicesBigInt = params.merklePathIndices.map((i) => BigInt(i));
+  while (merklePathBigInt.length < 32) {
+    merklePathBigInt.push(BigInt(0));
+    merklePathIndicesBigInt.push(BigInt(0));
+  }
   const inputs = {
-    // Public inputs
-    ballotId: ballotIdBigInt,
-    voteNullifier: voteNullifierBigInt,
-    voteCommitment: voteCommitmentBigInt,
-    totalAmount,
+    // Public inputs (must match circuit order)
+    ballot_id: ballotIdBigInt,
+    snapshot_merkle_root: snapshotMerkleRootBigInt,
+    note_commitment: noteCommitmentBigInt,
+    vote_nullifier: voteNullifierBigInt,
+    vote_commitment: voteCommitmentBigInt,
+    amount,
     weight,
-    tokenMint: bytesToBigInt2(new Uint8Array(Buffer.from(params.attestation.tokenMint))),
-    snapshotSlot: BigInt(params.attestation.snapshotSlot),
-    indexerPubkeyX,
-    indexerPubkeyY,
-    eligibilityRoot,
-    hasEligibility: eligibilityRoot !== BigInt(0) ? BigInt(1) : BigInt(0),
-    voteChoice: revealMode === 0 /* Public */ ? BigInt(params.voteChoice) : BigInt(0),
-    isPublicMode: revealMode === 0 /* Public */ ? BigInt(1) : BigInt(0),
+    token_mint: tokenMintBigInt,
+    eligibility_root: eligibilityRoot,
+    has_eligibility: eligibilityRoot !== BigInt(0) ? BigInt(1) : BigInt(0),
+    vote_choice: revealMode === 0 /* Public */ ? BigInt(params.voteChoice) : BigInt(0),
+    is_public_mode: revealMode === 0 /* Public */ ? BigInt(1) : BigInt(0),
     // Private inputs
-    spendingKey: spendingKeyBigInt,
-    pubkey: pubkeyBigInt,
-    attestationSignatureR8x: sigParts.r8x,
-    attestationSignatureR8y: sigParts.r8y,
-    attestationSignatureS: sigParts.s,
-    randomness: randomnessBigInt,
-    eligibilityPath: params.eligibilityProof?.merkleProof.map((s) => BigInt(s)) || Array(20).fill(BigInt(0)),
-    eligibilityPathIndices: params.eligibilityProof?.pathIndices.map((i) => BigInt(i)) || Array(20).fill(BigInt(0)),
-    privateVoteChoice: BigInt(params.voteChoice)
+    in_stealth_pub_x: stealthPubXBigInt,
+    in_randomness: bytesToBigInt2(params.noteRandomness),
+    in_stealth_spending_key: spendingKeyBigInt,
+    merkle_path: merklePathBigInt,
+    merkle_path_indices: merklePathIndicesBigInt,
+    vote_randomness: voteRandomnessBigInt,
+    eligibility_path: params.eligibilityProof?.merkleProof.map((s) => BigInt(s)) || Array(20).fill(BigInt(0)),
+    eligibility_path_indices: params.eligibilityProof?.pathIndices.map((i) => BigInt(i)) || Array(20).fill(BigInt(0)),
+    private_vote_choice: BigInt(params.voteChoice)
   };
   return {
     inputs,
     voteNullifier,
     voteCommitment,
-    randomness
+    voteRandomness
   };
 }
 async function generateChangeVoteSnapshotInputs(params, revealMode, weight) {
@@ -10731,53 +11125,50 @@ function bytesToBigInt2(bytes) {
   return result;
 }
 function computeVoteNullifier(nullifierKey, ballotId) {
-  const result = new Uint8Array(32);
-  result.set(nullifierKey.slice(0, 16), 0);
-  result.set(ballotId.slice(0, 16), 16);
-  return result;
+  return poseidonHashDomain(VOTE_NULLIFIER_DOMAIN, nullifierKey, ballotId);
 }
 function computeVoteCommitment(ballotId, voteNullifier, pubkey, voteChoice, weight, randomness) {
-  const result = new Uint8Array(32);
-  result.set(ballotId.slice(0, 8), 0);
-  result.set(voteNullifier.slice(0, 8), 8);
-  result.set(randomness.slice(0, 16), 16);
-  return result;
+  return poseidonHashDomain(
+    VOTE_COMMITMENT_DOMAIN,
+    ballotId,
+    voteNullifier,
+    pubkey,
+    fieldToBytes(BigInt(voteChoice)),
+    fieldToBytes(weight),
+    randomness
+  );
 }
 function computeVoteCommitmentNullifier(nullifierKey, voteCommitment) {
-  const result = new Uint8Array(32);
-  result.set(nullifierKey.slice(0, 16), 0);
-  result.set(voteCommitment.slice(0, 16), 16);
-  return result;
+  return poseidonHashDomain(VOTE_COMMITMENT_DOMAIN, nullifierKey, voteCommitment);
 }
 function computePositionCommitment2(ballotId, pubkey, voteChoice, amount, weight, randomness) {
-  const result = new Uint8Array(32);
-  result.set(ballotId.slice(0, 8), 0);
-  result.set(pubkey.slice(0, 8), 8);
-  result.set(randomness.slice(0, 16), 16);
-  return result;
+  return poseidonHashDomain(
+    POSITION_DOMAIN,
+    ballotId,
+    pubkey,
+    fieldToBytes(BigInt(voteChoice)),
+    fieldToBytes(amount),
+    fieldToBytes(weight),
+    randomness
+  );
 }
 function computePositionNullifier(nullifierKey, positionCommitment) {
-  const result = new Uint8Array(32);
-  result.set(nullifierKey.slice(0, 16), 0);
-  result.set(positionCommitment.slice(0, 16), 16);
-  return result;
+  return poseidonHashDomain(POSITION_DOMAIN, nullifierKey, positionCommitment);
 }
 function computeTokenCommitment(pubkey, tokenMint, amount, randomness) {
-  const result = new Uint8Array(32);
-  result.set(pubkey.slice(0, 8), 0);
-  result.set(tokenMint.slice(0, 8), 8);
-  result.set(randomness.slice(0, 16), 16);
-  return result;
+  const COMMITMENT_DOMAIN = 0x01n;
+  return poseidonHashDomain(
+    COMMITMENT_DOMAIN,
+    pubkey,
+    tokenMint,
+    fieldToBytes(amount),
+    randomness
+  );
 }
 function derivePublicKeyFromSpendingKey(spendingKey) {
-  return new Uint8Array(32);
-}
-function parseEdDSASignature(sigHex) {
-  return {
-    r8x: BigInt(0),
-    r8y: BigInt(0),
-    s: BigInt(0)
-  };
+  const sk = bytesToField(spendingKey);
+  const pk = derivePublicKey(sk);
+  return pk.x;
 }
 function checkIsWinner(voteChoice, outcome, voteType) {
   switch (voteType) {
@@ -10788,20 +11179,25 @@ function checkIsWinner(voteChoice, outcome, voteType) {
     case 1:
       return (voteChoice & 1 << outcome) !== 0;
     case 2:
-      return true;
-    // Simplified
+      for (let rank = 0; rank < 16; rank++) {
+        const rankedOption = voteChoice >> rank * 4 & 15;
+        if (rankedOption === outcome) {
+          return true;
+        }
+      }
+      return false;
     default:
       return false;
   }
 }
 
 // src/voting/recovery.ts
-import { PublicKey as PublicKey14 } from "@solana/web3.js";
+import { PublicKey as PublicKey13 } from "@solana/web3.js";
 var VoteRecoveryManager = class {
   constructor(config) {
     this.cachedPreimages = /* @__PURE__ */ new Map();
     this.indexerUrl = config.indexerUrl;
-    this.programId = config.programId || new PublicKey14("CLoak1111111111111111111111111111111111111");
+    this.programId = config.programId || new PublicKey13("CLoak1111111111111111111111111111111111111");
   }
   /**
    * Scan for user's vote preimages
@@ -10876,7 +11272,7 @@ var VoteRecoveryManager = class {
       throw new Error("Claim recovery only available for SpendToVote mode");
     }
     const pubkey = derivePublicKeyFromSecret(secretKey);
-    const preimages = await this.scanPreimages(new PublicKey14(pubkey), {
+    const preimages = await this.scanPreimages(new PublicKey13(pubkey), {
       ballotId,
       includeNullified: false
     });
@@ -10912,7 +11308,7 @@ var VoteRecoveryManager = class {
       throw new Error("Vote recovery only available for Snapshot mode");
     }
     const pubkey = derivePublicKeyFromSecret(secretKey);
-    const preimages = await this.scanPreimages(new PublicKey14(pubkey), {
+    const preimages = await this.scanPreimages(new PublicKey13(pubkey), {
       ballotId,
       includeNullified: false
     });
@@ -10942,7 +11338,7 @@ var VoteRecoveryManager = class {
    */
   async getActivePositions(secretKey, ballotId, ballot) {
     const pubkey = derivePublicKeyFromSecret(secretKey);
-    const preimages = await this.scanPreimages(new PublicKey14(pubkey), {
+    const preimages = await this.scanPreimages(new PublicKey13(pubkey), {
       ballotId,
       includeNullified: false
     });
@@ -10956,7 +11352,7 @@ var VoteRecoveryManager = class {
         positions.push({
           ballotId: decrypted.ballotId,
           commitment: preimage.commitment,
-          pubkey: new PublicKey14(pubkey),
+          pubkey: new PublicKey13(pubkey),
           voteChoice: decrypted.voteChoice,
           amount: decrypted.amount || 0n,
           weight: decrypted.weight,
@@ -11124,6 +11520,7 @@ export {
   TransactionStatus,
   TransactionType,
   CIRCUIT_IDS3 as VOTING_CIRCUIT_IDS,
+  VOTING_SEEDS,
   VoteBindingMode,
   VoteOption,
   VoteRecoveryManager,
@@ -11140,9 +11537,15 @@ export {
   buildAddTokenToPoolWithProgram,
   buildAtomicMultiPhaseTransaction,
   buildCancelOrderWithProgram,
+  buildChangeVoteSnapshotExecuteInstruction,
   buildChangeVoteSnapshotInstructions,
+  buildChangeVoteSnapshotPhase0Instruction,
+  buildClaimExecuteInstruction,
+  buildClaimPhase0Instruction,
   buildClosePendingOperationWithProgram,
   buildClosePositionWithProgram,
+  buildCloseVotePositionExecuteInstruction,
+  buildCloseVotePositionPhase0Instruction,
   buildClosePositionInstructions as buildCloseVotingPositionInstructions,
   buildConsolidationWithProgram,
   buildCreateBallotInstruction,
@@ -11167,8 +11570,12 @@ export {
   buildTransactWithProgram,
   buildUpdateBorrowFeesWithProgram,
   buildVersionedTransaction,
+  buildVoteSnapshotExecuteInstruction,
   buildVoteSnapshotInstructions,
+  buildVoteSnapshotPhase0Instruction,
+  buildVoteSpendExecuteInstruction,
   buildVoteSpendInstructions,
+  buildVoteSpendPhase0Instruction,
   buildClaimInstructions as buildVotingClaimInstructions,
   bytesToField,
   bytesToFieldString,
@@ -11287,6 +11694,7 @@ export {
   generateVoteSnapshotInputs,
   generateVoteSpendInputs,
   generateClaimInputs as generateVotingClaimInputs,
+  generateOperationId2 as generateVotingOperationId,
   getAmmPool,
   getAutoConsolidator,
   getFeeBps,

@@ -27,88 +27,97 @@ const NULLIFIER_KEY_DOMAIN = BigInt(4);
 
 /**
  * Generate vote_snapshot proof inputs
+ *
+ * Note-based ownership proof: User proves they own a shielded note WITHOUT spending it.
+ * The note stays intact - user just proves ownership for voting weight via merkle proof.
  */
 export async function generateVoteSnapshotInputs(
   params: VoteSnapshotParams,
   revealMode: RevealMode,
-  numOptions: number,
-  indexerPubkeyX: bigint,
-  indexerPubkeyY: bigint,
+  tokenMint: Uint8Array,
   eligibilityRoot: bigint = BigInt(0)
 ): Promise<{
   inputs: VoteSnapshotProofInputs;
   voteNullifier: Uint8Array;
   voteCommitment: Uint8Array;
-  randomness: Uint8Array;
+  voteRandomness: Uint8Array;
 }> {
   const spendingKeyBigInt = bytesToBigInt(params.stealthSpendingKey);
-  const pubkeyBigInt = bytesToBigInt(params.pubkey.toBytes());
+  const stealthPubXBigInt = bytesToBigInt(params.stealthPubX);
   const ballotIdBigInt = bytesToBigInt(params.ballotId);
+  const noteCommitmentBigInt = bytesToBigInt(params.noteCommitment);
+  const snapshotMerkleRootBigInt = bytesToBigInt(params.snapshotMerkleRoot);
+  const tokenMintBigInt = bytesToBigInt(tokenMint);
 
-  // Generate randomness
-  const randomness = generateRandomness();
-  const randomnessBigInt = bytesToBigInt(randomness);
+  // Generate vote randomness
+  const voteRandomness = generateRandomness();
+  const voteRandomnessBigInt = bytesToBigInt(voteRandomness);
 
   // Derive nullifier key
   const nullifierKey = deriveNullifierKey(params.stealthSpendingKey);
-  const nullifierKeyBigInt = bytesToBigInt(nullifierKey);
 
   // Compute vote nullifier
   const voteNullifier = computeVoteNullifier(nullifierKey, params.ballotId);
   const voteNullifierBigInt = bytesToBigInt(voteNullifier);
 
+  // Weight (for now, weight = amount, would use formula in production)
+  const amount = params.noteAmount;
+  const weight = amount; // Simplified; in production: evaluate formula
+
   // Compute vote commitment
   const voteCommitment = computeVoteCommitment(
     params.ballotId,
     voteNullifier,
-    params.pubkey.toBytes(),
+    params.stealthPubX,
     params.voteChoice,
-    BigInt(params.attestation.totalAmount),
-    randomness
+    weight,
+    voteRandomness
   );
   const voteCommitmentBigInt = bytesToBigInt(voteCommitment);
 
-  // Weight (for now, weight = amount, would use formula in production)
-  const totalAmount = BigInt(params.attestation.totalAmount);
-  const weight = totalAmount; // Simplified; in production: evaluate formula
+  // Convert merkle path to bigints
+  const merklePathBigInt = params.merklePath.map(p => bytesToBigInt(p));
+  const merklePathIndicesBigInt = params.merklePathIndices.map(i => BigInt(i));
 
-  // Parse attestation signature
-  const sigParts = parseEdDSASignature(params.attestation.signature);
+  // Pad to 32 levels if needed
+  while (merklePathBigInt.length < 32) {
+    merklePathBigInt.push(BigInt(0));
+    merklePathIndicesBigInt.push(BigInt(0));
+  }
 
-  // Build inputs
+  // Build inputs matching circuit order
   const inputs: VoteSnapshotProofInputs = {
-    // Public inputs
-    ballotId: ballotIdBigInt,
-    voteNullifier: voteNullifierBigInt,
-    voteCommitment: voteCommitmentBigInt,
-    totalAmount,
+    // Public inputs (must match circuit order)
+    ballot_id: ballotIdBigInt,
+    snapshot_merkle_root: snapshotMerkleRootBigInt,
+    note_commitment: noteCommitmentBigInt,
+    vote_nullifier: voteNullifierBigInt,
+    vote_commitment: voteCommitmentBigInt,
+    amount,
     weight,
-    tokenMint: bytesToBigInt(new Uint8Array(Buffer.from(params.attestation.tokenMint))),
-    snapshotSlot: BigInt(params.attestation.snapshotSlot),
-    indexerPubkeyX,
-    indexerPubkeyY,
-    eligibilityRoot,
-    hasEligibility: eligibilityRoot !== BigInt(0) ? BigInt(1) : BigInt(0),
-    voteChoice: revealMode === RevealMode.Public ? BigInt(params.voteChoice) : BigInt(0),
-    isPublicMode: revealMode === RevealMode.Public ? BigInt(1) : BigInt(0),
+    token_mint: tokenMintBigInt,
+    eligibility_root: eligibilityRoot,
+    has_eligibility: eligibilityRoot !== BigInt(0) ? BigInt(1) : BigInt(0),
+    vote_choice: revealMode === RevealMode.Public ? BigInt(params.voteChoice) : BigInt(0),
+    is_public_mode: revealMode === RevealMode.Public ? BigInt(1) : BigInt(0),
 
     // Private inputs
-    spendingKey: spendingKeyBigInt,
-    pubkey: pubkeyBigInt,
-    attestationSignatureR8x: sigParts.r8x,
-    attestationSignatureR8y: sigParts.r8y,
-    attestationSignatureS: sigParts.s,
-    randomness: randomnessBigInt,
-    eligibilityPath: params.eligibilityProof?.merkleProof.map(s => BigInt(s)) || Array(20).fill(BigInt(0)),
-    eligibilityPathIndices: params.eligibilityProof?.pathIndices.map(i => BigInt(i)) || Array(20).fill(BigInt(0)),
-    privateVoteChoice: BigInt(params.voteChoice),
+    in_stealth_pub_x: stealthPubXBigInt,
+    in_randomness: bytesToBigInt(params.noteRandomness),
+    in_stealth_spending_key: spendingKeyBigInt,
+    merkle_path: merklePathBigInt,
+    merkle_path_indices: merklePathIndicesBigInt,
+    vote_randomness: voteRandomnessBigInt,
+    eligibility_path: params.eligibilityProof?.merkleProof.map(s => BigInt(s)) || Array(20).fill(BigInt(0)),
+    eligibility_path_indices: params.eligibilityProof?.pathIndices.map(i => BigInt(i)) || Array(20).fill(BigInt(0)),
+    private_vote_choice: BigInt(params.voteChoice),
   };
 
   return {
     inputs,
     voteNullifier,
     voteCommitment,
-    randomness,
+    voteRandomness,
   };
 }
 
