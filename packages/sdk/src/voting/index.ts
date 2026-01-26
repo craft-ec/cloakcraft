@@ -112,3 +112,14 @@ export {
   type RecoveredClaim,
   type RecoveredVote,
 } from './recovery';
+
+// Export voting client for complete multi-phase execution
+export {
+  VotingClient,
+  type VotingClientConfig,
+  type VoteSnapshotResult,
+  type VoteSpendResult,
+  type ChangeVoteResult,
+  type ClosePositionResult,
+  type ClaimResult,
+} from './client';
