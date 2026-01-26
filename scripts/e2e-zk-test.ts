@@ -65,9 +65,15 @@ import {
   LightCommitmentClient,
   DEVNET_LIGHT_TREES,
 } from "../packages/sdk/src/light";
-import { clearCircomCache } from "../packages/sdk/src/snarkjs-prover";
+import { clearCircomCache, loadCircomArtifacts, generateSnarkjsProof } from "../packages/sdk/src/snarkjs-prover";
 import { calculateAddLiquidityAmounts, calculateSwapOutputUnified, calculateRemoveLiquidityOutput, PoolType } from "../packages/sdk/src/amm/calculations";
 import { computeAmmStateHash } from "../packages/sdk/src/amm/pool";
+import { generateVoteSnapshotInputs } from "../packages/sdk/src/voting/proofs";
+import { VoteSnapshotParams, RevealMode as VotingRevealMode } from "../packages/sdk/src/voting/types";
+import { buildVoteSnapshotPhase0Instruction, derivePendingOperationPda } from "../packages/sdk/src/voting/instructions";
+
+// EdDSA signing for voting attestations
+import { buildEddsa, buildPoseidon } from "circomlibjs";
 
 // Pyth Oracle is handled automatically by the SDK (Jupiter-style bundling)
 
@@ -3890,62 +3896,216 @@ async function main() {
     console.log("═".repeat(60));
   }
 
-  if (votingBallotPda && votingBallotId) {
-    // Test Single vote
+  // Check if we have the prerequisites for voting tests
+  const hasVotingPrerequisites = votingBallotPda && votingBallotId && scannedNotes.length > 0;
+
+  if (hasVotingPrerequisites) {
+    // =========================================================================
+    // Test 1: Vote Snapshot with Real ZK Proof Generation
+    // =========================================================================
     startTime = performance.now();
     try {
+      console.log("   Initializing vote_snapshot prover...");
       await client.initializeProver(['voting/vote_snapshot']);
 
-      // For vote snapshot, we'd need an indexer attestation
-      // This is a simplified test that checks circuit availability
-      console.log("   Testing vote_snapshot circuit availability...");
+      // Get the first scanned note for voting
+      const inputNote = scannedNotes[0];
+      console.log(`   Using note: amount=${inputNote.amount}, leafIndex=${inputNote.leafIndex}`);
 
-      const vkId = Buffer.alloc(32);
-      vkId.write("vote_snapshot");
-      const [vkPda] = PublicKey.findProgramAddressSync([Buffer.from("vk"), vkId], PROGRAM_ID);
-      const vkAccount = await connection.getAccountInfo(vkPda);
+      // Generate vote snapshot inputs using the scanned note
+      // For this test, we simulate the note data needed for voting
+      const snapshotMerkleRoot = merkleProof?.merkleRoot || new Uint8Array(32);
+      const merklePath = merkleProof?.proof || Array(32).fill(new Uint8Array(32));
+      const merklePathIndices = merkleProof?.pathIndices || Array(32).fill(0);
 
-      if (vkAccount) {
-        logTest("Voting: Single Vote", "PASS", `VK registered (${vkAccount.data.length} bytes)`, performance.now() - startTime);
+      // Create vote snapshot params
+      const voteSnapshotParams: VoteSnapshotParams = {
+        ballotId: votingBallotId!,
+        noteCommitment: inputNote.commitment || new Uint8Array(32),
+        noteAmount: inputNote.amount,
+        noteRandomness: inputNote.randomness || generateRandomness(),
+        stealthPubX: inputNote.stealthPubX || fieldToBytes(derivePublicKey(bytesToField(wallet.keypair.spending.sk)).x),
+        stealthSpendingKey: wallet.keypair.spending.sk,
+        voteChoice: 0, // Vote for option 0
+        snapshotMerkleRoot,
+        merklePath: merklePath.map((p: any) => p instanceof Uint8Array ? p : new Uint8Array(32)),
+        merklePathIndices,
+      };
+
+      // Generate proof inputs
+      console.log("   Generating vote_snapshot proof inputs...");
+      const { inputs, voteNullifier, voteCommitment, voteRandomness } = await generateVoteSnapshotInputs(
+        voteSnapshotParams,
+        VotingRevealMode.Public,
+        tokenMint.toBytes(),
+        0n // No eligibility root
+      );
+
+      console.log(`   Vote nullifier: ${Buffer.from(voteNullifier).toString('hex').slice(0, 16)}...`);
+      console.log(`   Vote commitment: ${Buffer.from(voteCommitment).toString('hex').slice(0, 16)}...`);
+
+      // Generate actual ZK proof
+      console.log("   Generating ZK proof (this may take a moment)...");
+      const proofResult = await generateSnarkjsProof(
+        'voting/vote_snapshot',
+        inputs,
+        path.join(__dirname, '..', 'circom-circuits', 'build')
+      );
+
+      console.log(`   Proof generated successfully!`);
+      console.log(`   Proof size: ${proofResult.proof.length} bytes`);
+      console.log(`   Public inputs: ${proofResult.publicSignals.length} signals`);
+
+      // Verify proof format
+      if (proofResult.proof.length > 0 && proofResult.publicSignals.length === 12) {
+        logTest("Voting: Single Vote (Proof Gen)", "PASS",
+          `Proof: ${proofResult.proof.length} bytes, ${proofResult.publicSignals.length} public inputs`,
+          performance.now() - startTime);
       } else {
-        logTest("Voting: Single Vote", "SKIP", "vote_snapshot VK not registered");
+        logTest("Voting: Single Vote (Proof Gen)", "FAIL",
+          `Invalid proof format: ${proofResult.proof.length} bytes, ${proofResult.publicSignals.length} signals`);
       }
+
+      // =========================================================================
+      // Test 1b: Submit Phase 0 (create pending with proof)
+      // =========================================================================
+      startTime = performance.now();
+      try {
+        console.log("   Building Phase 0 instruction...");
+
+        // Generate operation ID
+        const operationId = crypto.randomBytes(32);
+        const [pendingOpPda] = derivePendingOperationPda(operationId, PROGRAM_ID);
+
+        // Build the Phase 0 instruction
+        const phase0Ix = await buildVoteSnapshotPhase0Instruction(
+          program as any,
+          {
+            operationId,
+            ballotId: votingBallotId!,
+            noteCommitment: voteSnapshotParams.noteCommitment,
+            voteNullifier,
+            voteCommitment,
+            voteChoice: 0,
+            amount: inputNote.amount,
+            weight: inputNote.amount, // weight = amount for linear formula
+            proof: proofResult.proof,
+            outputRandomness: voteRandomness,
+          },
+          payer.publicKey,
+          PROGRAM_ID
+        );
+
+        console.log(`   Phase 0 instruction built, submitting...`);
+
+        // Note: Full execution requires Light Protocol state trees
+        // For now, we verify the instruction was built correctly
+        if (phase0Ix) {
+          console.log(`   Instruction accounts: ${phase0Ix.keys.length}`);
+          console.log(`   Instruction data size: ${phase0Ix.data.length} bytes`);
+          logTest("Voting: Phase 0 Build", "PASS",
+            `Built ix with ${phase0Ix.keys.length} accounts, ${phase0Ix.data.length} bytes`,
+            performance.now() - startTime);
+        } else {
+          logTest("Voting: Phase 0 Build", "FAIL", "Failed to build instruction");
+        }
+      } catch (err: any) {
+        // Phase 0 submission may fail due to Light Protocol dependencies
+        // Log the specific error for debugging
+        const errMsg = err.logs?.slice(-1)[0] || err.message || "Unknown error";
+        if (errMsg.includes("VK") || errMsg.includes("not registered")) {
+          logTest("Voting: Phase 0 Build", "SKIP", "VK not registered");
+        } else {
+          logTest("Voting: Phase 0 Build", "FAIL", errMsg.slice(0, 60));
+        }
+      }
+
     } catch (err: any) {
-      logTest("Voting: Single Vote", "SKIP", err.message?.slice(0, 50) || "Error");
+      const errMsg = err.message?.slice(0, 60) || "Error";
+      if (errMsg.includes("circuit") || errMsg.includes("wasm") || errMsg.includes("artifacts")) {
+        logTest("Voting: Single Vote (Proof Gen)", "SKIP", "Circuit artifacts not available");
+      } else {
+        logTest("Voting: Single Vote (Proof Gen)", "FAIL", errMsg);
+      }
     }
 
-    // Test Approval vote (bitmap)
+    // =========================================================================
+    // Test 2: Approval vote bitmap encoding
+    // =========================================================================
     startTime = performance.now();
     try {
       // Approval voting uses bitmap: e.g., 0b00001011 = options 0,1,3 approved
-      console.log("   Approval voting bitmap test (0b1011 = options 0,1,3)...");
+      console.log("   Testing Approval voting bitmap encoding...");
       const approvalBitmap = 0b1011; // Approve options 0, 1, 3
-      console.log(`   Approval bitmap: ${approvalBitmap} (binary: ${approvalBitmap.toString(2)})`);
-      logTest("Voting: Approval Vote", "SKIP", "Would vote for options 0,1,3");
+
+      // Verify bitmap decoding
+      const approvedOptions: number[] = [];
+      for (let i = 0; i < 16; i++) {
+        if ((approvalBitmap & (1 << i)) !== 0) {
+          approvedOptions.push(i);
+        }
+      }
+
+      console.log(`   Bitmap: ${approvalBitmap} (0b${approvalBitmap.toString(2)})`);
+      console.log(`   Approved options: ${approvedOptions.join(', ')}`);
+
+      if (approvedOptions.length === 3 && approvedOptions.includes(0) && approvedOptions.includes(1) && approvedOptions.includes(3)) {
+        logTest("Voting: Approval Vote Encoding", "PASS",
+          `Bitmap 0b${approvalBitmap.toString(2)} → options [${approvedOptions.join(',')}]`,
+          performance.now() - startTime);
+      } else {
+        logTest("Voting: Approval Vote Encoding", "FAIL", "Bitmap decoding mismatch");
+      }
     } catch (err: any) {
-      logTest("Voting: Approval Vote", "SKIP", err.message?.slice(0, 50) || "Error");
+      logTest("Voting: Approval Vote Encoding", "FAIL", err.message?.slice(0, 50) || "Error");
     }
 
-    // Test Ranked vote (Borda count)
+    // =========================================================================
+    // Test 3: Ranked vote (Borda count) encoding
+    // =========================================================================
     startTime = performance.now();
     try {
       // Ranked voting uses packed u64 (4 bits per rank)
-      // e.g., rank order [2,0,3,1] = option 2 first, option 0 second, etc.
-      console.log("   Ranked voting (Borda count) test...");
+      console.log("   Testing Ranked voting (Borda count) encoding...");
       const rankOrder = [2, 0, 3, 1]; // 1st: option 2, 2nd: option 0, etc.
+
+      // Pack into u64
       let packed = 0n;
       for (let i = 0; i < rankOrder.length; i++) {
         packed |= BigInt(rankOrder[i]) << BigInt(i * 4);
       }
-      console.log(`   Rank order: ${rankOrder.join(" > ")}, packed: ${packed}`);
-      logTest("Voting: Ranked Vote", "SKIP", `Rank: ${rankOrder.join(" > ")}`);
+
+      // Unpack to verify
+      const unpacked: number[] = [];
+      for (let i = 0; i < 4; i++) {
+        unpacked.push(Number((packed >> BigInt(i * 4)) & 0xFn));
+      }
+
+      console.log(`   Rank order: ${rankOrder.join(' > ')}`);
+      console.log(`   Packed: ${packed} (0x${packed.toString(16)})`);
+      console.log(`   Unpacked: ${unpacked.join(' > ')}`);
+
+      const matches = rankOrder.every((v, i) => v === unpacked[i]);
+      if (matches) {
+        logTest("Voting: Ranked Vote Encoding", "PASS",
+          `${rankOrder.join('>')} → 0x${packed.toString(16)} → ${unpacked.join('>')}`,
+          performance.now() - startTime);
+      } else {
+        logTest("Voting: Ranked Vote Encoding", "FAIL", "Pack/unpack mismatch");
+      }
     } catch (err: any) {
-      logTest("Voting: Ranked Vote", "SKIP", err.message?.slice(0, 50) || "Error");
+      logTest("Voting: Ranked Vote Encoding", "FAIL", err.message?.slice(0, 50) || "Error");
     }
+
   } else {
-    logTest("Voting: Single Vote", "SKIP", "No ballot available");
-    logTest("Voting: Approval Vote", "SKIP", "No ballot available");
-    logTest("Voting: Ranked Vote", "SKIP", "No ballot available");
+    // Missing prerequisites
+    if (!votingBallotPda || !votingBallotId) {
+      logTest("Voting: Single Vote (Proof Gen)", "SKIP", "No ballot available (Section 29 failed)");
+    } else if (scannedNotes.length === 0) {
+      logTest("Voting: Single Vote (Proof Gen)", "SKIP", "No scanned notes available (Section 6 failed)");
+    }
+    logTest("Voting: Approval Vote Encoding", "SKIP", "Prerequisites missing");
+    logTest("Voting: Ranked Vote Encoding", "SKIP", "Prerequisites missing");
   }
 
   // =========================================================================

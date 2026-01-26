@@ -330,7 +330,7 @@ function decryptPreimageWithKey(
 
 /**
  * ChaCha20-Poly1305 decryption
- * Placeholder - in production would use actual implementation
+ * Uses @noble/ciphers for proper AEAD decryption
  */
 function decryptChaCha20Poly1305(
   ciphertext: Uint8Array,
@@ -338,16 +338,35 @@ function decryptChaCha20Poly1305(
   nonce: Uint8Array,
   tag: Uint8Array
 ): Uint8Array {
-  // In production, use @noble/ciphers or similar
-  // For now, implement basic decryption
+  // Import @noble/ciphers for ChaCha20-Poly1305
+  // Using dynamic import to avoid bundling issues
+  const { chacha20poly1305 } = require('@noble/ciphers/chacha');
 
-  // This is a placeholder - actual implementation would use:
-  // import { chacha20poly1305 } from '@noble/ciphers/chacha';
-  // const cipher = chacha20poly1305(key, nonce);
-  // return cipher.decrypt(concat(ciphertext, tag));
+  // Validate key length (must be 32 bytes for ChaCha20)
+  if (key.length !== 32) {
+    throw new Error(`Invalid key length: expected 32, got ${key.length}`);
+  }
 
-  // For development, throw if we can't decrypt
-  throw new Error('ChaCha20-Poly1305 decryption not implemented - install @noble/ciphers');
+  // Validate nonce length (must be 12 bytes for ChaCha20-Poly1305)
+  if (nonce.length !== 12) {
+    throw new Error(`Invalid nonce length: expected 12, got ${nonce.length}`);
+  }
+
+  // Create cipher instance
+  const cipher = chacha20poly1305(key, nonce);
+
+  // Concatenate ciphertext and tag for decryption
+  // ChaCha20-Poly1305 expects: ciphertext || tag
+  const sealed = new Uint8Array(ciphertext.length + tag.length);
+  sealed.set(ciphertext, 0);
+  sealed.set(tag, ciphertext.length);
+
+  // Decrypt and verify authentication tag
+  try {
+    return cipher.decrypt(sealed);
+  } catch (e) {
+    throw new Error('Decryption failed: authentication tag mismatch or corrupted data');
+  }
 }
 
 /**
@@ -453,16 +472,37 @@ function serializePreimage(preimage: DecryptedVotePreimage): Uint8Array {
 
 /**
  * ChaCha20-Poly1305 encryption
- * Placeholder - in production would use actual implementation
+ * Uses @noble/ciphers for proper AEAD encryption
  */
 function encryptChaCha20Poly1305(
   plaintext: Uint8Array,
   key: Uint8Array,
   nonce: Uint8Array
 ): { ciphertext: Uint8Array; tag: Uint8Array } {
-  // In production, use @noble/ciphers or similar
-  // For now, placeholder
-  throw new Error('ChaCha20-Poly1305 encryption not implemented - install @noble/ciphers');
+  // Import @noble/ciphers for ChaCha20-Poly1305
+  const { chacha20poly1305 } = require('@noble/ciphers/chacha');
+
+  // Validate key length (must be 32 bytes for ChaCha20)
+  if (key.length !== 32) {
+    throw new Error(`Invalid key length: expected 32, got ${key.length}`);
+  }
+
+  // Validate nonce length (must be 12 bytes for ChaCha20-Poly1305)
+  if (nonce.length !== 12) {
+    throw new Error(`Invalid nonce length: expected 12, got ${nonce.length}`);
+  }
+
+  // Create cipher instance
+  const cipher = chacha20poly1305(key, nonce);
+
+  // Encrypt - returns ciphertext || tag (tag is 16 bytes)
+  const sealed = cipher.encrypt(plaintext);
+
+  // Split into ciphertext and tag
+  const ciphertext = sealed.slice(0, sealed.length - 16);
+  const tag = sealed.slice(sealed.length - 16);
+
+  return { ciphertext, tag };
 }
 
 // ============ Utility Functions ============
@@ -495,14 +535,19 @@ function bigIntToBytes(value: bigint): Uint8Array {
 }
 
 function derivePublicKeyFromSecret(secretKey: Uint8Array): Uint8Array {
-  // Derive public key from secret key using the stealth key derivation
-  // This would use the same curve operations as the wallet
-  // Placeholder - would use actual derivation
+  // Derive public key from secret key using BabyJubJub curve
+  // This is the same curve used for stealth addresses in the protocol
 
-  // In production:
-  // const { getPublicKey } = await import('@noble/curves/ed25519');
-  // return getPublicKey(secretKey);
+  // Import the BabyJubJub derivePublicKey function
+  const { derivePublicKey } = require('../crypto/babyjubjub');
+  const { bytesToField, fieldToBytes } = require('../crypto/poseidon');
 
-  // For now, throw error
-  throw new Error('Public key derivation not implemented');
+  // Convert secret key bytes to field element (bigint)
+  const secretKeyBigInt = bytesToField(secretKey);
+
+  // Derive public key point on BabyJubJub curve
+  const pubkeyPoint = derivePublicKey(secretKeyBigInt);
+
+  // Return the x-coordinate as bytes (standard representation)
+  return fieldToBytes(pubkeyPoint.x);
 }
