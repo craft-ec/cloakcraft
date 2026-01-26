@@ -81,6 +81,7 @@ import { derivePublicKey } from "../packages/sdk/src/crypto/babyjubjub";
 import { deriveNullifierKey } from "../packages/sdk/src/crypto/nullifier";
 import { generateRandomness } from "../packages/sdk/src/crypto/commitment";
 import { loadCircomArtifacts, generateSnarkjsProof } from "../packages/sdk/src/snarkjs-prover";
+// @ts-ignore - no type declarations
 import { buildPoseidon } from "circomlibjs";
 
 // Program ID
@@ -378,7 +379,7 @@ async function main() {
     passCount++;
 
     // Verify ballot state
-    const ballotAccount = await program.account.ballot.fetch(ballotPda1);
+    const ballotAccount = await (program.account as any).ballot.fetch(ballotPda1);
     logInfo(`Options: ${ballotAccount.numOptions}, Status: ${Object.keys(ballotAccount.status)[0]}`);
   } catch (err: any) {
     logFail("Create ballot", err.logs?.slice(-1)[0] || err.message?.slice(0, 60) || "Error");
@@ -463,7 +464,7 @@ async function main() {
     passCount++;
 
     // Verify ballot state
-    const ballotAccount = await program.account.ballot.fetch(ballotPda2);
+    const ballotAccount = await (program.account as any).ballot.fetch(ballotPda2);
     logInfo(`Options: ${ballotAccount.numOptions}, Fee: ${ballotAccount.protocolFeeBps}bps`);
   } catch (err: any) {
     logFail("Create SpendToVote ballot", err.logs?.slice(-1)[0] || err.message?.slice(0, 60) || "Error");
@@ -471,9 +472,9 @@ async function main() {
   }
 
   // =========================================================================
-  // TEST 4: VOTE WITH ZK PROOF (vote_snapshot circuit - Note-based ownership)
+  // TEST 4: VOTE WITH ZK PROOF (vote_snapshot circuit - REAL shielded tokens)
   // =========================================================================
-  logSection("TEST 4: VOTE WITH ZK PROOF (Note-Based)");
+  logSection("TEST 4: VOTE WITH ZK PROOF (Real Shielded Tokens)");
 
   // Check if vote_snapshot VK is registered (must use correct circuit ID with underscore padding)
   const vkCircuitId = Buffer.from('vote_snapshot___________________'); // Must match constants.rs
@@ -487,59 +488,170 @@ async function main() {
     skipCount++;
   } else {
     try {
-      logInfo("VK registered, generating ZK proof...");
+      logInfo("VK registered, starting REAL shielding flow...");
 
+      // ======================================================================
+      // STEP 1: Initialize SDK and shield tokens (REAL - no mock data)
+      // ======================================================================
+      const HELIUS_API_KEY = process.env.HELIUS_API_KEY || "88ac54a3-8850-4686-a521-70d116779182";
+      const snapshotClient = new CloakCraftClient({
+        rpcUrl: RPC_URL,
+        heliusApiKey: HELIUS_API_KEY,
+        programId: PROGRAM_ID,  // Pass PublicKey directly, not string
+        indexerUrl: "",  // Not used but required by interface
+      });
+      snapshotClient.setProgram(program);
+
+      // Initialize pool (pool + commitment counter)
+      logInfo("Initializing pool for vote_snapshot test...");
+      try {
+        await snapshotClient.initializePool(tokenMint, wallet);
+        logInfo("Pool initialized");
+      } catch (poolErr: any) {
+        if (!poolErr.message?.includes("already in use") && !poolErr.message?.includes("already_exists")) {
+          throw poolErr;
+        }
+        logInfo("Pool already exists");
+      }
+
+      // Create privacy wallet for shielding
+      const snapshotPrivacyWallet = snapshotClient.createWallet();
+      const { stealthAddress: snapshotStealthAddress } = generateStealthAddress(snapshotPrivacyWallet.publicKey);
+
+      // Get user token account
+      const snapshotUserTokenAccount = await getOrCreateAssociatedTokenAccount(
+        connection,
+        wallet,
+        tokenMint,
+        wallet.publicKey
+      );
+
+      // Shield tokens - NO MOCK DATA
+      const snapshotShieldAmount = BigInt(100_000_000); // 100 tokens (0.1 with 9 decimals)
+      logInfo(`Shielding ${Number(snapshotShieldAmount) / 1e6} tokens...`);
+
+      const snapshotShieldResult = await snapshotClient.shield(
+        {
+          pool: tokenMint,
+          amount: snapshotShieldAmount,
+          recipient: snapshotStealthAddress,
+          userTokenAccount: snapshotUserTokenAccount.address,
+        },
+        wallet
+      );
+      logPass("Shielded tokens for vote_snapshot", `${Number(snapshotShieldAmount) / 1e6} tokens`);
+      passCount++;
+
+      // Wait for Light Protocol to index the commitment
+      logInfo("Waiting for Light Protocol indexing (5 seconds)...");
+      await sleep(5000);
+
+      // ======================================================================
+      // STEP 2: Get REAL merkle proof from Light Protocol
+      // ======================================================================
+      logInfo("Loading privacy wallet and scanning for shielded notes...");
+
+      // Load the privacy wallet into the client to scan notes
+      snapshotClient.loadWallet(snapshotPrivacyWallet.exportSpendingKey());
+
+      // Scan notes to get the shielded note with accountHash
+      const scannedNotes = await snapshotClient.scanNotes(tokenMint);
+      if (scannedNotes.length === 0) {
+        throw new Error("No shielded notes found after shielding - Light Protocol indexing may have failed");
+      }
+
+      const shieldedNote = scannedNotes[0];
+      if (!shieldedNote.accountHash) {
+        throw new Error("Shielded note missing accountHash - cannot get merkle proof");
+      }
+
+      logInfo(`Found shielded note: amount=${shieldedNote.amount}, accountHash=${shieldedNote.accountHash.slice(0, 20)}...`);
+
+      // Get merkle proof from Light Protocol
+      const { LightProtocol } = await import("../packages/sdk/src/instructions/light-helpers");
+      const lightProtocol = new LightProtocol(RPC_URL, PROGRAM_ID);
+      const merkleProofResult = await lightProtocol.rpc.getCompressedAccountProof(bn(new PublicKey(shieldedNote.accountHash).toBytes()));
+
+      logInfo(`Light Protocol merkle proof: leafIndex=${merkleProofResult.leafIndex}, pathLength=${merkleProofResult.merkleProof.length}`);
+
+      // Convert Light Protocol merkle proof to circuit format (pad to 32 levels)
+      const MERKLE_LEVELS = 32;
+      const lightMerklePath = merkleProofResult.merkleProof.map((p: any) => p.toString());
+      const merklePath: bigint[] = [];
+      const merklePathIndices: number[] = [];
+
+      // Use Light Protocol path (18 levels) and pad with zeros to 32 levels
+      for (let i = 0; i < MERKLE_LEVELS; i++) {
+        if (i < lightMerklePath.length) {
+          merklePath.push(BigInt(lightMerklePath[i]));
+          // Compute path index from leaf index
+          merklePathIndices.push((merkleProofResult.leafIndex >> i) & 1);
+        } else {
+          // Pad with zeros for unused levels
+          merklePath.push(0n);
+          merklePathIndices.push(0);
+        }
+      }
+
+      const snapshotMerkleRoot = BigInt(merkleProofResult.root.toString());
+      logInfo(`Snapshot merkle root: ${snapshotMerkleRoot.toString().slice(0, 20)}...`);
+
+      // ======================================================================
+      // STEP 3: Prepare circuit inputs using REAL data
+      // ======================================================================
       const poseidon = await buildPoseidon();
 
-      // Generate voter spending key
-      const voterSpendingKey = crypto.randomBytes(32);
-      const voterSpendingKeyBigInt = bytesToField(voterSpendingKey);
-      const voterPubkey = derivePublicKey(voterSpendingKeyBigInt);
-      const voterPubkeyX = voterPubkey.x;
-      const voterPubkeyXBigInt = bytesToField(voterPubkeyX);
+      // Use REAL STEALTH pubkey and spending key from the shielded note
+      // The note stores stealthPubX (the stealth pubkey's x-coordinate)
+      // We need to derive the stealth spending key to prove ownership
+      const { deriveStealthPrivateKey } = await import("../packages/sdk/src/crypto/stealth");
 
-      logInfo(`Voter pubkey X: ${voterPubkeyXBigInt.toString().slice(0, 20)}...`);
+      const recipientSpendingKey = snapshotPrivacyWallet.exportSpendingKey();
+      const recipientSpendingKeyBigInt = bytesToField(recipientSpendingKey);
 
-      // Get ballot data
-      const ballotAccount = await program.account.ballot.fetch(ballotPda1);
+      // The stealth pubkey X is already in the note (what was used in commitment)
+      const stealthPubX = shieldedNote.stealthPubX;
+      const stealthPubXBigInt = bytesToField(stealthPubX);
 
-      // Prepare note data
-      const noteAmount = BigInt(100_000_000); // 100 tokens
+      // Derive stealth spending key using ephemeral pubkey
+      // stealthSpendingKey = recipientPrivateKey + factor(ephemeralPubkey)
+      if (!shieldedNote.stealthEphemeralPubkey) {
+        throw new Error("Note missing stealthEphemeralPubkey - cannot derive stealth spending key");
+      }
+      const stealthSpendingKey = deriveStealthPrivateKey(
+        recipientSpendingKeyBigInt,
+        shieldedNote.stealthEphemeralPubkey
+      );
+
+      // Verify: deriving pubkey from stealth spending key should match stealthPubX
+      const derivedPubkey = derivePublicKey(stealthSpendingKey);
+      const derivedPubkeyXBigInt = bytesToField(derivedPubkey.x);
+      if (derivedPubkeyXBigInt !== stealthPubXBigInt) {
+        logInfo(`WARNING: Stealth pubkey mismatch!`);
+        logInfo(`  Expected (from note): ${stealthPubXBigInt.toString().slice(0, 20)}...`);
+        logInfo(`  Derived (from key):   ${derivedPubkeyXBigInt.toString().slice(0, 20)}...`);
+      }
+
+      logInfo(`Stealth pubkey X: ${stealthPubXBigInt.toString().slice(0, 20)}...`);
+
+      // Use REAL note data
+      const noteAmount = BigInt(shieldedNote.amount);
       const weight = noteAmount; // Simple weight = amount
-      const noteRandomness = generateRandomness();
+      const noteRandomness = shieldedNote.randomness;
       const noteRandomnessBigInt = bytesToField(noteRandomness);
 
-      // Get token mint for this ballot
+      // Get token mint and ballot data
       const tokenMintBytes = tokenMint.toBytes();
       const tokenMintBigInt = bytesToField(tokenMintBytes);
       const ballotIdBigInt = bytesToField(ballotId1);
 
-      logInfo(`Creating note commitment...`);
-      logInfo(`voterPubkeyXBigInt: ${voterPubkeyXBigInt.toString().slice(0, 20)}...`);
-      logInfo(`tokenMintBigInt: ${tokenMintBigInt.toString().slice(0, 20)}...`);
-      logInfo(`noteAmount: ${noteAmount.toString()}`);
+      // The note commitment should match what was shielded
+      const noteCommitmentBigInt = bytesToField(shieldedNote.commitment);
+      logInfo(`Note commitment (from shield): ${noteCommitmentBigInt.toString().slice(0, 20)}...`);
 
-      // Create note commitment: Poseidon(COMMITMENT_DOMAIN, stealth_pub_x, token_mint, amount, randomness)
-      const noteCommitment = poseidon([
-        poseidon.F.e(COMMITMENT_DOMAIN),
-        poseidon.F.e(voterPubkeyXBigInt),
-        poseidon.F.e(tokenMintBigInt),
-        poseidon.F.e(noteAmount),
-        poseidon.F.e(noteRandomnessBigInt),
-      ]);
-      const noteCommitmentBigInt = poseidon.F.toObject(noteCommitment);
-      logInfo(`Note commitment: ${noteCommitmentBigInt.toString().slice(0, 20)}...`);
-
-      // Build merkle tree with this note (32 levels for the note merkle tree)
-      const MERKLE_LEVELS = 32;
-      const leafIndex = 0; // Note is at index 0
-      const { root: snapshotMerkleRoot, path: merklePath, pathIndices: merklePathIndices } =
-        await buildMerkleTreeWithProof(poseidon, [noteCommitmentBigInt], leafIndex, MERKLE_LEVELS);
-
-      logInfo(`Snapshot merkle root: ${snapshotMerkleRoot.toString().slice(0, 20)}...`);
-
-      // Derive vote nullifier
-      const nullifierKey = deriveNullifierKey(voterSpendingKey);
+      // Derive nullifier key from STEALTH spending key (not recipient key)
+      const stealthSpendingKeyBytes = fieldToBytes(stealthSpendingKey);
+      const nullifierKey = deriveNullifierKey(stealthSpendingKeyBytes);
       const voteNullifier = poseidonHashDomain(BigInt(0x10), nullifierKey, ballotId1);
       const voteNullifierBigInt = bytesToField(voteNullifier);
 
@@ -548,6 +660,7 @@ async function main() {
       const voteRandomnessBigInt = bytesToField(voteRandomness);
 
       // Compute vote commitment using two-stage hash (matching circuit)
+      // Use stealthPubX as the pubkey (not recipientPubkey)
       const voteChoice = 0; // Vote for option 0
 
       // First stage: hash(VOTE_COMMITMENT_DOMAIN, ballot_id, vote_nullifier, pubkey)
@@ -555,7 +668,7 @@ async function main() {
         poseidon.F.e(BigInt(0x11)), // VOTE_COMMITMENT_DOMAIN
         poseidon.F.e(ballotIdBigInt),
         poseidon.F.e(voteNullifierBigInt),
-        poseidon.F.e(voterPubkeyXBigInt),
+        poseidon.F.e(stealthPubXBigInt),  // Use stealth pubkey, not recipient pubkey
       ]);
 
       // Second stage: hash(hash1, vote_choice, weight, randomness)
@@ -569,7 +682,7 @@ async function main() {
 
       logInfo(`Vote commitment: ${voteCommitmentBigInt.toString().slice(0, 20)}...`);
 
-      // Build circuit inputs for note-based proof
+      // Build circuit inputs using REAL data
       const circuitInputs: Record<string, string | string[]> = {
         // Public inputs (must match circuit order)
         ballot_id: ballotIdBigInt.toString(),
@@ -585,10 +698,10 @@ async function main() {
         vote_choice: voteChoice.toString(),
         is_public_mode: "1", // Public mode
 
-        // Private inputs
-        in_stealth_pub_x: voterPubkeyXBigInt.toString(),
+        // Private inputs - ALL using REAL STEALTH data
+        in_stealth_pub_x: stealthPubXBigInt.toString(),  // From the note (stealth pubkey)
         in_randomness: noteRandomnessBigInt.toString(),
-        in_stealth_spending_key: voterSpendingKeyBigInt.toString(),
+        in_stealth_spending_key: stealthSpendingKey.toString(),  // Derived stealth spending key
         merkle_path: merklePath.map(p => p.toString()),
         merkle_path_indices: merklePathIndices.map(i => i.toString()),
         vote_randomness: voteRandomnessBigInt.toString(),
@@ -666,7 +779,7 @@ async function main() {
 
           // Verify PendingOperation was created
           const [pendingOpPda] = deriveVotingPendingOperationPda(operationId, PROGRAM_ID);
-          const pendingOp = await program.account.pendingOperation.fetch(pendingOpPda);
+          const pendingOp = await (program.account as any).pendingOperation.fetch(pendingOpPda);
           logInfo(`PendingOp proof_verified: ${pendingOp.proofVerified}`);
           logInfo(`PendingOp num_inputs: ${pendingOp.numInputs}`);
 
@@ -683,7 +796,7 @@ async function main() {
               Buffer.from(ballotId1),
               voteNullifierBytes,
             ];
-            const nullifierAddressSeed = deriveAddressSeedV2(nullifierSeeds, PROGRAM_ID);
+            const nullifierAddressSeed = deriveAddressSeedV2(nullifierSeeds);
             const nullifierAddress = deriveAddressV2(nullifierAddressSeed, addressTreeInfo.tree, PROGRAM_ID);
             logInfo(`Nullifier address: ${nullifierAddress.toBase58().slice(0, 16)}...`);
 
@@ -704,6 +817,9 @@ async function main() {
             const outputTreeIndex = packedAccounts.insertOrGet(V2_OUTPUT_QUEUE);
             const addressTreeIndex = packedAccounts.insertOrGet(addressTreeInfo.tree);
 
+            if (!nullifierProof.compressedProof) {
+              throw new Error("No validity proof returned from Light Protocol");
+            }
             const lightParams = {
               validityProof: {
                 a: Array.from(nullifierProof.compressedProof.a),
@@ -772,7 +888,7 @@ async function main() {
             passCount++;
 
             // Verify tally updated
-            const updatedBallot = await program.account.ballot.fetch(ballotPda1);
+            const updatedBallot = await (program.account as any).ballot.fetch(ballotPda1);
             logInfo(`Vote count: ${updatedBallot.voteCount.toString()}`);
             logInfo(`Total weight: ${updatedBallot.totalWeight.toString()}`);
             logInfo(`Option 0 weight: ${updatedBallot.optionWeights[0].toString()}`);
@@ -789,7 +905,7 @@ async function main() {
               Buffer.from(ballotId1),
               voteCommitmentBytes,
             ];
-            const commitmentAddressSeed = deriveAddressSeedV2(commitmentSeeds, PROGRAM_ID);
+            const commitmentAddressSeed = deriveAddressSeedV2(commitmentSeeds);
             const commitmentAddress = deriveAddressV2(commitmentAddressSeed, addressTreeInfo.tree, PROGRAM_ID);
             logInfo(`Commitment address: ${commitmentAddress.toBase58().slice(0, 16)}...`);
 
@@ -808,6 +924,9 @@ async function main() {
             const commitOutputTreeIndex = commitPackedAccounts.insertOrGet(V2_OUTPUT_QUEUE);
             const commitAddressTreeIndex = commitPackedAccounts.insertOrGet(addressTreeInfo.tree);
 
+            if (!commitmentProof.compressedProof) {
+              throw new Error("No validity proof returned from Light Protocol for commitment");
+            }
             const commitLightParams = {
               validityProof: {
                 a: Array.from(commitmentProof.compressedProof.a),
@@ -880,8 +999,8 @@ async function main() {
 
             // Save vote data for use in change vote test (Test 4b)
             test4VoteData = {
-              voterSpendingKey,
-              voterPubkeyXBigInt,
+              voterSpendingKey: stealthSpendingKeyBytes,
+              voterPubkeyXBigInt: stealthPubXBigInt,
               voteNullifierBigInt,
               voteCommitmentBigInt,
               oldVoteChoice: voteChoice,
@@ -1067,7 +1186,7 @@ async function main() {
             passCount++;
 
             // Verify the pending operation
-            const changeVotePendingOp = await program.account.pendingOperation.fetch(changeVotePendingOpPda);
+            const changeVotePendingOp = await (program.account as any).pendingOperation.fetch(changeVotePendingOpPda);
             logInfo(`PendingOp proof_verified: ${changeVotePendingOp.proofVerified}`);
 
             // Phase 1: Verify old commitment exists
@@ -1085,7 +1204,7 @@ async function main() {
               Buffer.from(ballotId1),
               Buffer.from(savedVoteCommitmentBytes),
             ];
-            const oldCommitmentAddressSeed = deriveAddressSeedV2(oldCommitmentSeeds, PROGRAM_ID);
+            const oldCommitmentAddressSeed = deriveAddressSeedV2(oldCommitmentSeeds);
             const oldCommitmentAddress = deriveAddressV2(oldCommitmentAddressSeed, addressTreeInfo.tree, PROGRAM_ID);
             logInfo(`Old commitment address: ${oldCommitmentAddress.toBase58().slice(0, 16)}...`);
 
@@ -1218,35 +1337,29 @@ async function main() {
       const nowSpend = Math.floor(Date.now() / 1000);
       const currentSlotSpend = await connection.getSlot();
 
-      logInfo("Creating SpendToVote ballot for vote_spend test...");
+      // Initialize SDK client for shielding BEFORE creating ballot
+      const HELIUS_API_KEY = process.env.HELIUS_API_KEY || "88ac54a3-8850-4686-a521-70d116779182";
+      const sdkClient = new CloakCraftClient({
+        rpcUrl: RPC_URL,
+        heliusApiKey: HELIUS_API_KEY,
+        programId: PROGRAM_ID,  // Pass PublicKey directly, not string
+        indexerUrl: "",  // Not used but required by interface
+      });
+      sdkClient.setProgram(program);
 
-      // First initialize the pool for this token if it doesn't exist
-      const [poolPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from("pool"), tokenMint.toBytes()],
-        PROGRAM_ID
-      );
-      const poolInfo = await connection.getAccountInfo(poolPda);
-      if (!poolInfo) {
-        try {
-          // Initialize pool
-          await program.methods
-            .initializePool()
-            .accounts({
-              pool: poolPda,
-              tokenMint: tokenMint,
-              authority: wallet.publicKey,
-              payer: wallet.publicKey,
-              systemProgram: SystemProgram.programId,
-              tokenProgram: TOKEN_PROGRAM_ID,
-            })
-            .rpc();
-          logInfo("Initialized token pool");
-        } catch (poolErr: any) {
-          if (!poolErr.message?.includes("already in use")) {
-            throw poolErr;
-          }
+      // Initialize pool using SDK (initializes both pool AND commitment counter)
+      logInfo("Initializing pool with SDK...");
+      try {
+        await sdkClient.initializePool(tokenMint, wallet);
+        logInfo("Initialized token pool and commitment counter");
+      } catch (poolErr: any) {
+        if (!poolErr.message?.includes("already in use") && !poolErr.message?.includes("already_exists")) {
+          throw poolErr;
         }
+        logInfo("Pool already exists");
       }
+
+      logInfo("Creating SpendToVote ballot for vote_spend test...");
 
       const configSpend = {
         bindingMode: { spendToVote: {} },
@@ -1311,18 +1424,9 @@ async function main() {
       // ================================================
       logInfo("Shielding tokens for vote_spend...");
 
-      // Initialize SDK client for shielding
-      const HELIUS_API_KEY = process.env.HELIUS_API_KEY || "88ac54a3-8850-4686-a521-70d116779182";
-      const sdkClient = new CloakCraftClient({
-        rpcUrl: RPC_URL,
-        heliusApiKey: HELIUS_API_KEY,
-        programId: PROGRAM_ID.toBase58(),
-      });
-      sdkClient.setProgram(program);
-
       // Create privacy wallet for shielding
       const privacyWallet = sdkClient.createWallet();
-      const { stealthAddress, ephemeralPubkey } = generateStealthAddress(privacyWallet.publicKey);
+      const { stealthAddress } = generateStealthAddress(privacyWallet.publicKey);
 
       // Get user token account
       const userTokenAccount = await getOrCreateAssociatedTokenAccount(
@@ -1332,65 +1436,80 @@ async function main() {
         wallet.publicKey
       );
 
-      // Shield 200 tokens
+      // Shield 200 tokens - NO MOCK DATA, shield must succeed
       const shieldAmount = BigInt(200_000_000);
-      let shieldedCommitment: Uint8Array | null = null;
-      let shieldedRandomness: Uint8Array | null = null;
+      const shieldResult = await sdkClient.shield(
+        {
+          pool: tokenMint,
+          amount: shieldAmount,
+          recipient: stealthAddress,
+          userTokenAccount: userTokenAccount.address,
+        },
+        wallet
+      );
+      logPass("Shielded tokens", `${Number(shieldAmount) / 1e6} tokens`);
+      passCount++;
 
-      try {
-        const shieldResult = await sdkClient.shield(
-          {
-            pool: tokenMint,
-            amount: shieldAmount,
-            recipient: stealthAddress,
-            userTokenAccount: userTokenAccount.address,
-          },
-          wallet
-        );
-        logPass("Shielded tokens", `${Number(shieldAmount) / 1e6} tokens`);
-        passCount++;
+      // Get commitment and randomness from shield result for proof generation
+      const shieldedCommitment = shieldResult.commitment;
+      const shieldedRandomness = shieldResult.randomness;
+      logInfo(`Commitment: ${Buffer.from(shieldedCommitment).toString('hex').slice(0, 32)}...`);
+      logInfo(`Randomness: ${Buffer.from(shieldedRandomness).toString('hex').slice(0, 32)}...`);
 
-        // Get commitment data from shield result
-        // Note: shield returns transaction signature, we need to track the commitment separately
-        logInfo("Shield successful - commitment created in Light Protocol");
-      } catch (shieldErr: any) {
-        logInfo(`Shield skipped: ${shieldErr.message?.slice(0, 60) || "Error"}`);
-        logInfo("Continuing with Phase 0 proof verification (mock data)...");
+      // Wait for Light Protocol indexing
+      logInfo("Waiting for Light Protocol indexing (5 seconds)...");
+      await sleep(5000);
+
+      // Scan for shielded notes to get the stealth keys
+      logInfo("Scanning for shielded note to get stealth keys...");
+      // Load wallet into SDK client before scanning
+      sdkClient.loadWallet(privacyWallet.exportSpendingKey());
+      const scannedNotes = await sdkClient.scanNotes(tokenMint);
+      if (scannedNotes.length === 0) {
+        throw new Error("No shielded notes found after indexing");
       }
+      const shieldedNote = scannedNotes[0];
+      logInfo(`Found shielded note: amount=${shieldedNote.amount}`);
 
       // ================================================
-      // STEP 2: Generate vote_spend proof
+      // STEP 2: Generate vote_spend proof using REAL shielded data
       // ================================================
-      logInfo("Generating vote_spend proof...");
+      logInfo("Generating vote_spend proof with real shielded note...");
 
       const poseidon = await buildPoseidon();
 
-      // Use privacy wallet keys if shield succeeded, otherwise generate mock keys
+      // Get the STEALTH keys from the scanned note (NOT the recipient's keys)
       const spendKey = privacyWallet.exportSpendingKey();
-      const spendKeyBigInt = bytesToField(spendKey);
-      const voterPub = derivePublicKey(spendKeyBigInt);
-      const voterPubX = voterPub.x;
-      const pubkeyBigInt = bytesToField(voterPubX);
+      const recipientSpendingKeyBigInt = bytesToField(spendKey);
 
-      // Derive nullifier key
-      const nk = deriveNullifierKey(spendKey);
+      // The stealth pubkey X is in the note (what was used in commitment)
+      const stealthPubX = shieldedNote.stealthPubX;
+      const stealthPubXBigInt = bytesToField(stealthPubX);
+
+      // Derive stealth spending key using ephemeral pubkey
+      if (!shieldedNote.stealthEphemeralPubkey) {
+        throw new Error("Note missing stealthEphemeralPubkey - cannot derive stealth spending key");
+      }
+      const { deriveStealthPrivateKey: deriveStealthPrivateKeySpend } = await import("../packages/sdk/src/crypto/stealth");
+      const stealthSpendingKey = deriveStealthPrivateKeySpend(
+        recipientSpendingKeyBigInt,
+        shieldedNote.stealthEphemeralPubkey
+      );
+
+      // Derive nullifier key from STEALTH spending key
+      const stealthSpendingKeyBytes = fieldToBytes(stealthSpendingKey);
+      const nk = deriveNullifierKey(stealthSpendingKeyBytes);
       const nkBigInt = bytesToField(nk);
 
-      // Create token note commitment (matches what was shielded)
+      // Use the REAL commitment and randomness from shield operation
       const tokenMintBigInt = bytesToField(tokenMint.toBytes());
       const noteAmount = shieldAmount;
-      const noteRandomness = generateRandomness();
+      const noteRandomness = shieldedRandomness;  // REAL randomness from shield
       const noteRandomnessBigInt = bytesToField(noteRandomness);
 
-      // Compute note commitment: Poseidon(COMMITMENT_DOMAIN, stealth_pub_x, token_mint, amount, randomness)
-      const noteCommitment = poseidon([
-        poseidon.F.e(BigInt(1)), // COMMITMENT_DOMAIN
-        poseidon.F.e(pubkeyBigInt),
-        poseidon.F.e(tokenMintBigInt),
-        poseidon.F.e(noteAmount),
-        poseidon.F.e(noteRandomnessBigInt),
-      ]);
-      const noteCommitmentBigInt = poseidon.F.toObject(noteCommitment);
+      // Use the REAL note commitment from shield operation
+      const noteCommitmentBigInt = bytesToField(shieldedCommitment);
+      logInfo(`Using real note commitment: ${noteCommitmentBigInt.toString(16).slice(0, 16)}...`);
 
       // Compute spending nullifier: Poseidon(SPENDING_NULLIFIER_DOMAIN, nullifier_key, commitment, leaf_index)
       const leafIndex = BigInt(0);
@@ -1408,11 +1527,11 @@ async function main() {
       const positionRandomness = generateRandomness();
       const positionRandomnessBigInt = bytesToField(positionRandomness);
 
-      // Compute position commitment using the new ballot
+      // Compute position commitment using the new ballot and STEALTH pubkey
       const posHash1 = poseidon([
         poseidon.F.e(BigInt(0x13)), // POSITION_DOMAIN
         poseidon.F.e(bytesToField(ballotIdSpend)),
-        poseidon.F.e(pubkeyBigInt),
+        poseidon.F.e(stealthPubXBigInt),  // Use stealth pubkey, not recipient pubkey
         poseidon.F.e(BigInt(voteChoice)),
       ]);
       const positionCommitment = poseidon([
@@ -1440,11 +1559,11 @@ async function main() {
         vote_choice: voteChoice.toString(),
         is_public_mode: "1",
 
-        // Private inputs
-        in_stealth_pub_x: pubkeyBigInt.toString(),
+        // Private inputs - use STEALTH keys from note
+        in_stealth_pub_x: stealthPubXBigInt.toString(),
         in_amount: noteAmount.toString(),
         in_randomness: noteRandomnessBigInt.toString(),
-        in_stealth_spending_key: spendKeyBigInt.toString(),
+        in_stealth_spending_key: stealthSpendingKey.toString(),
         merkle_path: Array(32).fill("0"),
         merkle_path_indices: Array(32).fill("0"),
         leaf_index: leafIndex.toString(),
@@ -1523,7 +1642,7 @@ async function main() {
           passCount++;
 
           // Verify PendingOperation
-          const pendingOpSpend = await program.account.pendingOperation.fetch(pendingOpPdaSpend);
+          const pendingOpSpend = await (program.account as any).pendingOperation.fetch(pendingOpPdaSpend);
           logInfo(`PendingOp proof_verified: ${pendingOpSpend.proofVerified}`);
           logInfo(`Operation type: vote_spend`);
 
@@ -1820,7 +1939,7 @@ async function main() {
           passCount++;
 
           // Verify PendingOperation
-          const pendingOpChangeSpend = await program.account.pendingOperation.fetch(pendingOpPdaChangeSpend);
+          const pendingOpChangeSpend = await (program.account as any).pendingOperation.fetch(pendingOpPdaChangeSpend);
           logInfo(`PendingOp proof_verified: ${pendingOpChangeSpend.proofVerified}`);
           logInfo(`Operation type: change_vote_spend`);
 
@@ -2085,7 +2204,7 @@ async function main() {
           passCount++;
 
           // Verify PendingOperation
-          const pendingOpClose = await program.account.pendingOperation.fetch(pendingOpPdaClose);
+          const pendingOpClose = await (program.account as any).pendingOperation.fetch(pendingOpPdaClose);
           logInfo(`PendingOp proof_verified: ${pendingOpClose.proofVerified}`);
           logInfo(`Operation type: close_vote_position`);
 
@@ -2137,7 +2256,7 @@ async function main() {
 
   try {
     // First check ballot status
-    const ballotAccount = await program.account.ballot.fetch(ballotPda1);
+    const ballotAccount = await (program.account as any).ballot.fetch(ballotPda1);
     const currentTime = Math.floor(Date.now() / 1000);
     const endTime = ballotAccount.endTime.toNumber();
 
@@ -2164,7 +2283,7 @@ async function main() {
       passCount++;
 
       // Verify resolved state
-      const resolvedBallot = await program.account.ballot.fetch(ballotPda1);
+      const resolvedBallot = await (program.account as any).ballot.fetch(ballotPda1);
       logInfo(`Status: ${Object.keys(resolvedBallot.status)[0]}`);
       logInfo(`Outcome: ${resolvedBallot.outcome !== null ? resolvedBallot.outcome : "null (no votes)"}`);
     }
@@ -2186,7 +2305,7 @@ async function main() {
   logSection("TEST 6: RESOLVE BALLOT (ORACLE)");
 
   try {
-    const ballotAccount = await program.account.ballot.fetch(ballotPda2);
+    const ballotAccount = await (program.account as any).ballot.fetch(ballotPda2);
     const currentTime = Math.floor(Date.now() / 1000);
     const endTime = ballotAccount.endTime.toNumber();
 
@@ -2214,7 +2333,7 @@ async function main() {
       passCount++;
 
       // Verify resolved state
-      const resolvedBallot = await program.account.ballot.fetch(ballotPda2);
+      const resolvedBallot = await (program.account as any).ballot.fetch(ballotPda2);
       logInfo(`Status: ${Object.keys(resolvedBallot.status)[0]}`);
       logInfo(`Outcome: ${resolvedBallot.outcome}`);
     }
@@ -2302,7 +2421,7 @@ async function main() {
     passCount++;
 
     // Verify
-    const resolvedBallot = await program.account.ballot.fetch(ballotPda3);
+    const resolvedBallot = await (program.account as any).ballot.fetch(ballotPda3);
     logInfo(`Outcome: ${resolvedBallot.outcome} (Authority chose option 2)`);
     logInfo(`Status: ${Object.keys(resolvedBallot.status)[0]}`);
   } catch (err: any) {
@@ -2323,7 +2442,7 @@ async function main() {
 
   for (const ballot of ballots) {
     try {
-      const account = await program.account.ballot.fetch(ballot.pda);
+      const account = await (program.account as any).ballot.fetch(ballot.pda);
       const status = Object.keys(account.status)[0];
       const bindingMode = Object.keys(account.bindingMode)[0];
       const revealMode = Object.keys(account.revealMode)[0];
