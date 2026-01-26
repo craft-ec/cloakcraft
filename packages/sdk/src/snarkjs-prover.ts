@@ -214,6 +214,30 @@ function bigIntToBytes(value: bigint, length: number): Uint8Array {
 }
 
 /**
+ * Generate a Groth16 proof using snarkjs with automatic artifact loading
+ *
+ * @param circuitName - Circuit name (e.g., 'voting/claim')
+ * @param inputs - Circuit inputs as key-value pairs
+ * @param buildDir - Directory containing circuit build artifacts
+ * @returns Proof formatted for Solana
+ */
+export async function generateSnarkjsProofFromCircuit(
+  circuitName: string,
+  inputs: Record<string, string | string[]>,
+  buildDir: string
+): Promise<Uint8Array> {
+  // Construct paths to WASM and zkey files
+  const wasmPath = `${buildDir}/${circuitName}/${circuitName.split('/').pop()}_js/${circuitName.split('/').pop()}.wasm`;
+  const zkeyPath = `${buildDir}/${circuitName}/${circuitName.split('/').pop()}_0001.zkey`;
+
+  // Load artifacts
+  const artifacts = await loadCircomArtifacts(circuitName, wasmPath, zkeyPath);
+
+  // Generate proof
+  return generateSnarkjsProof(artifacts, inputs);
+}
+
+/**
  * Convert Uint8Array to field element string for circom
  */
 export function bytesToFieldString(bytes: Uint8Array): string {

@@ -340,7 +340,7 @@ function decryptChaCha20Poly1305(
 ): Uint8Array {
   // Import @noble/ciphers for ChaCha20-Poly1305
   // Using dynamic import to avoid bundling issues
-  const { chacha20poly1305 } = require('@noble/ciphers/chacha');
+  const { chacha20poly1305 } = require('@noble/ciphers/chacha.js');
 
   // Validate key length (must be 32 bytes for ChaCha20)
   if (key.length !== 32) {
@@ -480,7 +480,7 @@ function encryptChaCha20Poly1305(
   nonce: Uint8Array
 ): { ciphertext: Uint8Array; tag: Uint8Array } {
   // Import @noble/ciphers for ChaCha20-Poly1305
-  const { chacha20poly1305 } = require('@noble/ciphers/chacha');
+  const { chacha20poly1305 } = require('@noble/ciphers/chacha.js');
 
   // Validate key length (must be 32 bytes for ChaCha20)
   if (key.length !== 32) {

@@ -34,6 +34,7 @@ import {
   generateChangeVoteSnapshotInputs,
   generateVoteSpendInputs,
   generateClaimInputs,
+  convertInputsToSnarkjs,
 } from './proofs';
 import {
   deriveBallotPda,
@@ -66,7 +67,7 @@ import { generateRandomness, computeCommitment } from '../crypto/commitment';
 import { deriveNullifierKey, deriveSpendingNullifier } from '../crypto/nullifier';
 import { bytesToField, fieldToBytes, poseidonHashDomain } from '../crypto/poseidon';
 import { derivePublicKey } from '../crypto/babyjubjub';
-import { generateSnarkjsProof } from '../snarkjs-prover';
+import { generateSnarkjsProofFromCircuit } from '../snarkjs-prover';
 
 // Domain constants (must match circuits)
 const VOTE_NULLIFIER_DOMAIN = BigInt(0x10);
@@ -79,6 +80,8 @@ export interface VotingClientConfig {
   programId: PublicKey;
   lightClient: LightCommitmentClient;
   circuitsBuildDir: string;
+  addressMerkleTree: PublicKey;
+  stateMerkleTree: PublicKey;
   addressLookupTables?: PublicKey[];
 }
 
@@ -132,6 +135,8 @@ export class VotingClient {
   private programId: PublicKey;
   private lightClient: LightCommitmentClient;
   private circuitsBuildDir: string;
+  private addressMerkleTree: PublicKey;
+  private stateMerkleTree: PublicKey;
   private addressLookupTables: PublicKey[];
 
   constructor(config: VotingClientConfig) {
@@ -140,6 +145,8 @@ export class VotingClient {
     this.programId = config.programId;
     this.lightClient = config.lightClient;
     this.circuitsBuildDir = config.circuitsBuildDir;
+    this.addressMerkleTree = config.addressMerkleTree;
+    this.stateMerkleTree = config.stateMerkleTree;
     this.addressLookupTables = config.addressLookupTables || [];
   }
 
@@ -180,13 +187,13 @@ export class VotingClient {
     report(0, 'Generating ZK proof...');
 
     // Generate ZK proof
-    const proofResult = await generateSnarkjsProof(
+    const proofResult = await generateSnarkjsProofFromCircuit(
       'voting/vote_snapshot',
-      inputs,
+      convertInputsToSnarkjs(inputs as unknown as Record<string, bigint | bigint[]>),
       this.circuitsBuildDir
     );
 
-    report(0, `Proof generated: ${proofResult.proof.length} bytes`);
+    report(0, `Proof generated: ${proofResult.length} bytes`);
 
     // Generate encrypted contributions for encrypted modes
     let encryptedContributions: EncryptedContributions | undefined;
@@ -213,7 +220,8 @@ export class VotingClient {
       const encryptionKey = ballot.revealMode === RevealMode.PermanentPrivate
         ? params.stealthSpendingKey
         : ballot.timeLockPubkey;
-      encryptedPreimage = encryptPreimage(preimageData, encryptionKey);
+      const isTimelockKey = ballot.revealMode === RevealMode.TimeLocked;
+      encryptedPreimage = encryptPreimage(preimageData, encryptionKey, isTimelockKey);
     }
 
     // Generate operation ID
@@ -225,15 +233,15 @@ export class VotingClient {
 
     // Build Phase 0 instruction params
     const phase0Params: VoteSnapshotInstructionParams = {
-      operationId,
       ballotId: params.ballotId,
+      snapshotMerkleRoot: params.snapshotMerkleRoot,
       noteCommitment: params.noteCommitment,
       voteNullifier,
       voteCommitment,
       voteChoice: params.voteChoice,
       amount: params.noteAmount,
       weight: params.noteAmount, // weight = amount for linear formula
-      proof: proofResult.proof,
+      proof: proofResult,
       outputRandomness: voteRandomness,
       encryptedContributions: encryptedContributions?.ciphertexts,
       encryptedPreimage,
@@ -399,13 +407,13 @@ export class VotingClient {
     report(0, 'Generating ZK proof...');
 
     // Generate ZK proof
-    const proofResult = await generateSnarkjsProof(
+    const proofResult = await generateSnarkjsProofFromCircuit(
       'voting/vote_spend',
-      inputs,
+      convertInputsToSnarkjs(inputs),
       this.circuitsBuildDir
     );
 
-    report(0, `Proof generated: ${proofResult.proof.length} bytes`);
+    report(0, `Proof generated: ${proofResult.length} bytes`);
 
     // Generate encrypted contributions for encrypted modes
     let encryptedContributions: EncryptedContributions | undefined;
@@ -433,7 +441,8 @@ export class VotingClient {
       const encryptionKey = ballot.revealMode === RevealMode.PermanentPrivate
         ? params.stealthSpendingKey
         : ballot.timeLockPubkey;
-      encryptedPreimage = encryptPreimage(preimageData, encryptionKey);
+      const isTimelockKey = ballot.revealMode === RevealMode.TimeLocked;
+      encryptedPreimage = encryptPreimage(preimageData, encryptionKey, isTimelockKey);
     }
 
     // Generate operation ID
@@ -446,10 +455,19 @@ export class VotingClient {
 
     // Fetch Light Protocol proofs
     report(0, 'Fetching Light Protocol proofs...');
-    const commitmentProof = await this.lightClient.getInclusionProofByHash(inputNote.accountHash);
+    const commitmentProof = await this.lightClient.getMerkleProofByHash(inputNote.accountHash);
 
-    const nullifierAddress = this.lightClient.deriveNullifierAddress(ballotPda, spendingNullifier);
-    const nullifierProof = await this.lightClient.getValidityProof([nullifierAddress]);
+    const nullifierAddress = this.lightClient.deriveNullifierAddress(
+      spendingNullifier,
+      this.programId,
+      this.addressMerkleTree,
+      ballotPda
+    );
+    const nullifierProof = await this.lightClient.getValidityProof({
+      newAddresses: [nullifierAddress],
+      addressMerkleTree: this.addressMerkleTree,
+      stateMerkleTree: this.stateMerkleTree,
+    });
 
     const signatures: string[] = [];
 
@@ -457,14 +475,13 @@ export class VotingClient {
     report(0, 'Submitting Phase 0: Create pending with proof...');
 
     const phase0Params: VoteSpendInstructionParams = {
-      operationId,
       ballotId: params.ballotId,
       spendingNullifier,
       positionCommitment,
       voteChoice: params.voteChoice,
       amount: inputNote.amount,
       weight: inputNote.amount,
-      proof: proofResult.proof,
+      proof: proofResult,
       encryptedContributions: encryptedContributions?.ciphertexts,
       encryptedPreimage,
     };
@@ -637,13 +654,13 @@ export class VotingClient {
     report(0, 'Generating ZK proof...');
 
     // Generate ZK proof
-    const proofResult = await generateSnarkjsProof(
+    const proofResult = await generateSnarkjsProofFromCircuit(
       'voting/change_vote_snapshot',
-      inputs,
+      convertInputsToSnarkjs(inputs),
       this.circuitsBuildDir
     );
 
-    report(0, `Proof generated: ${proofResult.proof.length} bytes`);
+    report(0, `Proof generated: ${proofResult.length} bytes`);
 
     // Generate encrypted contributions for encrypted modes
     let oldEncryptedContributions: Uint8Array[] | undefined;
@@ -685,15 +702,15 @@ export class VotingClient {
     const phase0Ix = await buildChangeVoteSnapshotPhase0Instruction(
       this.program,
       {
-        operationId,
         ballotId: params.ballotId,
         oldVoteCommitment: params.oldVoteCommitment,
+        oldVoteCommitmentNullifier,
         newVoteCommitment,
         voteNullifier: new Uint8Array(32), // Derived in circuit
         oldVoteChoice: params.oldVoteChoice,
         newVoteChoice: params.newVoteChoice,
         weight: oldWeight,
-        proof: proofResult.proof,
+        proof: proofResult,
         oldEncryptedContributions,
         newEncryptedContributions,
       },
@@ -766,6 +783,8 @@ export class VotingClient {
       operationId,
       params.ballotId,
       payer.publicKey,
+      oldEncryptedContributions || null,
+      newEncryptedContributions || null,
       this.programId
     );
 
@@ -866,10 +885,10 @@ export class VotingClient {
     );
 
     // Derive new token commitment
-    const pubkey = fieldToBytes(derivePublicKey(bytesToField(params.stealthSpendingKey)).x);
+    const pubkey = derivePublicKey(bytesToField(params.stealthSpendingKey)).x;
     const newTokenCommitment = computeCommitment({
       stealthPubX: pubkey,
-      tokenMint: ballot.tokenMint.toBytes(),
+      tokenMint: ballot.tokenMint,
       amount: params.amount,
       randomness: newTokenRandomness,
     });
@@ -896,13 +915,13 @@ export class VotingClient {
     report(0, 'Generating ZK proof...');
 
     // Generate ZK proof
-    const proofResult = await generateSnarkjsProof(
+    const proofResult = await generateSnarkjsProofFromCircuit(
       'voting/close_position',
-      inputs,
+      convertInputsToSnarkjs(inputs),
       this.circuitsBuildDir
     );
 
-    report(0, `Proof generated: ${proofResult.proof.length} bytes`);
+    report(0, `Proof generated: ${proofResult.length} bytes`);
 
     // Generate negated encrypted contributions for encrypted modes
     let encryptedContributions: Uint8Array[] | undefined;
@@ -929,7 +948,6 @@ export class VotingClient {
     report(0, 'Submitting Phase 0...');
 
     const phase0Params: CloseVotePositionInstructionParams = {
-      operationId,
       ballotId: params.ballotId,
       positionNullifier,
       positionCommitment: params.positionCommitment,
@@ -937,7 +955,7 @@ export class VotingClient {
       voteChoice: params.voteChoice,
       amount: params.amount,
       weight: params.weight,
-      proof: proofResult.proof,
+      proof: proofResult,
       encryptedContributions,
     };
 
@@ -1125,13 +1143,13 @@ export class VotingClient {
     report(0, 'Generating ZK proof...');
 
     // Generate ZK proof
-    const proofResult = await generateSnarkjsProof(
+    const proofResult = await generateSnarkjsProofFromCircuit(
       'voting/claim',
-      inputs,
+      convertInputsToSnarkjs(inputs as unknown as Record<string, bigint | bigint[]>),
       this.circuitsBuildDir
     );
 
-    report(0, `Proof generated: ${proofResult.proof.length} bytes`);
+    report(0, `Proof generated: ${proofResult.length} bytes`);
 
     // Generate operation ID
     const operationId = generateOperationId();
@@ -1152,17 +1170,15 @@ export class VotingClient {
     report(0, 'Submitting Phase 0...');
 
     const phase0Params: ClaimInstructionParams = {
-      operationId,
       ballotId: params.ballotId,
       positionNullifier,
       positionCommitment: params.positionCommitment,
       payoutCommitment,
       voteChoice: params.voteChoice,
-      amount: params.amount,
-      weight: params.weight,
       grossPayout,
       netPayout,
-      proof: proofResult.proof,
+      userWeight: params.weight,
+      proof: proofResult,
     };
 
     const phase0Ix = await buildClaimPhase0Instruction(

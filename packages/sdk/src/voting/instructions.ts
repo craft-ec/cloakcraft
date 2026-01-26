@@ -435,18 +435,114 @@ export async function buildChangeVoteSnapshotExecuteInstruction(
   operationId: Uint8Array,
   ballotId: Uint8Array,
   relayer: PublicKey,
+  oldEncryptedContributions: Uint8Array[] | null = null,
+  newEncryptedContributions: Uint8Array[] | null = null,
   programId: PublicKey = PROGRAM_ID
 ): Promise<TransactionInstruction> {
   const [ballotPda] = deriveBallotPda(ballotId, programId);
   const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
 
   return program.methods
-    .executeChangeVoteSnapshot()
+    .executeChangeVoteSnapshot(
+      Array.from(operationId),
+      Array.from(ballotId),
+      oldEncryptedContributions ? { ciphertexts: oldEncryptedContributions.map(c => Array.from(c)) } : null,
+      newEncryptedContributions ? { ciphertexts: newEncryptedContributions.map(c => Array.from(c)) } : null
+    )
     .accounts({
       ballot: ballotPda,
       pendingOperation: pendingOpPda,
       relayer,
     })
+    .instruction();
+}
+
+// ============ Verify Vote Commitment Exists (Phase 1) ============
+
+/**
+ * Merkle context for vote commitment verification
+ */
+export interface VoteCommitmentMerkleContext {
+  merkleTreePubkeyIndex: number;
+  queuePubkeyIndex: number;
+  leafIndex: number;
+  rootIndex: number;
+}
+
+/**
+ * Parameters for verifying vote commitment exists
+ */
+export interface LightVerifyVoteCommitmentParams {
+  commitmentAccountHash: Uint8Array;
+  commitmentMerkleContext: VoteCommitmentMerkleContext;
+  commitmentInclusionProof: {
+    rootIndices: number[];
+    proof: Uint8Array[];
+  };
+  commitmentAddressTreeInfo: {
+    addressMerkleTreePubkeyIndex: number;
+    addressQueuePubkeyIndex: number;
+  };
+}
+
+/**
+ * Build verify_vote_commitment_exists instruction (Phase 1)
+ *
+ * Voting-specific commitment verification for operations that spend existing commitments.
+ * Uses Ballot account instead of Pool account.
+ *
+ * Required for:
+ * - change_vote_snapshot: Verify old_vote_commitment exists
+ * - vote_spend: Verify token note commitment exists
+ * - change_vote_spend: Verify old position commitment exists
+ * - close_position: Verify position commitment exists
+ * - claim: Verify position commitment exists
+ */
+export async function buildVerifyVoteCommitmentExistsInstruction(
+  program: Program,
+  operationId: Uint8Array,
+  ballotId: Uint8Array,
+  commitmentIndex: number,
+  lightParams: LightVerifyVoteCommitmentParams,
+  relayer: PublicKey,
+  remainingAccounts: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[],
+  programId: PublicKey = PROGRAM_ID
+): Promise<TransactionInstruction> {
+  const [ballotPda] = deriveBallotPda(ballotId, programId);
+  const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
+
+  // Convert params to on-chain format
+  const onChainParams = {
+    commitmentAccountHash: Array.from(lightParams.commitmentAccountHash),
+    commitmentMerkleContext: {
+      merkleTreePubkeyIndex: lightParams.commitmentMerkleContext.merkleTreePubkeyIndex,
+      queuePubkeyIndex: lightParams.commitmentMerkleContext.queuePubkeyIndex,
+      leafIndex: lightParams.commitmentMerkleContext.leafIndex,
+      rootIndex: lightParams.commitmentMerkleContext.rootIndex,
+    },
+    commitmentInclusionProof: {
+      rootIndices: lightParams.commitmentInclusionProof.rootIndices,
+      proof: lightParams.commitmentInclusionProof.proof.map(p => Array.from(p)),
+    },
+    commitmentAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: lightParams.commitmentAddressTreeInfo.addressMerkleTreePubkeyIndex,
+      addressQueuePubkeyIndex: lightParams.commitmentAddressTreeInfo.addressQueuePubkeyIndex,
+    },
+  };
+
+  return program.methods
+    .verifyVoteCommitmentExists(
+      Array.from(operationId),
+      Array.from(ballotId),
+      commitmentIndex,
+      onChainParams
+    )
+    .accounts({
+      ballot: ballotPda,
+      pendingOperation: pendingOpPda,
+      relayer,
+    })
+    .remainingAccounts(remainingAccounts)
     .instruction();
 }
 
@@ -843,7 +939,15 @@ export async function buildChangeVoteSnapshotInstructions(
 
   // Phase 2: Execute change vote
   const phase2 = [
-    await buildChangeVoteSnapshotExecuteInstruction(program, operationId, params.ballotId, relayer, programId),
+    await buildChangeVoteSnapshotExecuteInstruction(
+      program,
+      operationId,
+      params.ballotId,
+      relayer,
+      params.oldEncryptedContributions || null,
+      params.newEncryptedContributions || null,
+      programId
+    ),
   ];
 
   return [phase0, phase2];

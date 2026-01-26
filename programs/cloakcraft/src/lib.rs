@@ -1010,6 +1010,20 @@ pub mod cloakcraft {
         voting::create_vote_commitment(ctx, operation_id, ballot_id, commitment_index, encrypted_preimage, encryption_type, light_params)
     }
 
+    /// Verify Vote Commitment Exists (Phase 1)
+    ///
+    /// Voting-specific commitment verification for operations that spend existing commitments.
+    /// Uses Ballot account instead of Pool account.
+    pub fn verify_vote_commitment_exists<'info>(
+        ctx: Context<'_, '_, '_, 'info, VerifyVoteCommitmentExists<'info>>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        commitment_index: u8,
+        light_params: voting::LightVerifyVoteCommitmentParams,
+    ) -> Result<()> {
+        voting::verify_vote_commitment_exists(ctx, operation_id, ballot_id, commitment_index, light_params)
+    }
+
     /// Create Pending with Proof - Change Vote Snapshot (Phase 0)
     ///
     /// Atomic vote change: nullifies old vote_commitment and creates new one.

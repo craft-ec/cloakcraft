@@ -524,6 +524,21 @@ function parseEdDSASignature(sigHex: string): { r8x: bigint; r8y: bigint; s: big
 }
 
 /**
+ * Convert proof inputs with bigint values to snarkjs-compatible string format
+ */
+export function convertInputsToSnarkjs(inputs: Record<string, bigint | bigint[]>): Record<string, string | string[]> {
+  const result: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(inputs)) {
+    if (Array.isArray(value)) {
+      result[key] = value.map(v => v.toString());
+    } else {
+      result[key] = value.toString();
+    }
+  }
+  return result;
+}
+
+/**
  * Check if a vote choice won based on vote type
  */
 function checkIsWinner(voteChoice: number, outcome: number, voteType: number): boolean {

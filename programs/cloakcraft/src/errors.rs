@@ -480,4 +480,7 @@ pub enum CloakCraftError {
 
     #[msg("Protocol fee exceeds maximum (10000 bps = 100%)")]
     ProtocolFeeExceedsMax,
+
+    #[msg("Ballot ID mismatch - does not match expected ballot")]
+    BallotIdMismatch,
 }

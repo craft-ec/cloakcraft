@@ -87,6 +87,9 @@ export {
   generateEncryptedContributions,
   generateNegatedEncryptedContributions,
 
+  // Verify vote commitment exists (Phase 1)
+  buildVerifyVoteCommitmentExistsInstruction,
+
   // Param types
   type CreateBallotInstructionParams,
   type VoteSnapshotInstructionParams,
@@ -94,6 +97,8 @@ export {
   type VoteSpendInstructionParams,
   type CloseVotePositionInstructionParams,
   type ClaimInstructionParams,
+  type VoteCommitmentMerkleContext,
+  type LightVerifyVoteCommitmentParams,
 } from './instructions';
 
 // Export proof generation
@@ -102,6 +107,7 @@ export {
   generateChangeVoteSnapshotInputs,
   generateVoteSpendInputs,
   generateClaimInputs as generateVotingClaimInputs,
+  convertInputsToSnarkjs,
 } from './proofs';
 
 // Export recovery utilities

@@ -20,6 +20,7 @@ mod create_vote_commitment;
 
 // Snapshot vote change (atomic, multi-phase)
 mod create_pending_with_proof_change_vote_snapshot;
+mod verify_vote_commitment_exists;
 mod execute_change_vote_snapshot;
 
 // SpendToVote (multi-phase)
@@ -52,6 +53,7 @@ pub use create_vote_commitment::*;
 
 // Snapshot vote change exports
 pub use create_pending_with_proof_change_vote_snapshot::*;
+pub use verify_vote_commitment_exists::*;
 pub use execute_change_vote_snapshot::*;
 
 // SpendToVote exports

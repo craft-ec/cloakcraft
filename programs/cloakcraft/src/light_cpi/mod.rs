@@ -436,3 +436,219 @@ pub fn verify_commitment_inclusion<'info>(
         }
     }
 }
+
+// =============================================================================
+// Voting-Specific Commitment Operations
+// =============================================================================
+
+use light_sdk::LightDiscriminator;
+
+/// Vote commitment account for Light Protocol
+/// Uses ballot_id as the context instead of pool pubkey
+#[derive(Clone, Debug, LightDiscriminator, AnchorSerialize, AnchorDeserialize)]
+pub struct VoteCommitmentAccount {
+    /// Ballot ID this commitment belongs to
+    pub ballot_id: [u8; 32],
+    /// The commitment hash (from ZK proof)
+    pub commitment: [u8; 32],
+    /// Leaf index in the ballot's commitment tree
+    pub leaf_index: u64,
+    /// User's encrypted vote preimage (for claim recovery)
+    pub encrypted_preimage: [u8; 128],
+    /// Encryption type (0 = user_key, 1 = timelock_key)
+    pub encryption_type: u8,
+    /// Timestamp when created
+    pub created_at: i64,
+}
+
+impl Default for VoteCommitmentAccount {
+    fn default() -> Self {
+        Self {
+            ballot_id: [0u8; 32],
+            commitment: [0u8; 32],
+            leaf_index: 0,
+            encrypted_preimage: [0u8; 128],
+            encryption_type: 0,
+            created_at: 0,
+        }
+    }
+}
+
+impl VoteCommitmentAccount {
+    pub const SEED_PREFIX: &'static [u8] = b"vote_commitment";
+}
+
+/// Create a vote commitment compressed account
+///
+/// This stores a vote commitment in Light Protocol's state tree.
+/// Uses ballot_id instead of pool pubkey for address derivation.
+pub fn create_vote_commitment_account<'info>(
+    fee_payer: &AccountInfo<'info>,
+    remaining_accounts: &[AccountInfo<'info>],
+    proof: LightValidityProof,
+    address_tree_info: LightAddressTreeInfo,
+    output_tree_index: u8,
+    ballot_id: [u8; 32],
+    commitment: [u8; 32],
+    leaf_index: u64,
+    encrypted_preimage: [u8; 128],
+    encryption_type: u8,
+) -> Result<()> {
+    // Convert IDL-safe types to Light SDK types
+    let proof: ValidityProof = proof.into();
+    let address_tree_info: PackedAddressTreeInfo = address_tree_info.into();
+
+    // Setup Light CPI accounts (v2)
+    let light_cpi_accounts = CpiAccounts::new(
+        fee_payer,
+        remaining_accounts,
+        LIGHT_CPI_SIGNER,
+    );
+
+    // Get address tree pubkey
+    let address_tree_pubkey = address_tree_info.get_tree_pubkey(&light_cpi_accounts)
+        .map_err(|_| CloakCraftError::LightCpiError)?;
+
+    // Derive address from ballot_id + commitment hash
+    // Seeds: ["vote_commitment", ballot_id, commitment]
+    let (address, address_seed) = derive_address(
+        &[
+            VoteCommitmentAccount::SEED_PREFIX,
+            ballot_id.as_ref(),
+            commitment.as_ref(),
+        ],
+        &address_tree_pubkey,
+        &crate::ID,
+    );
+
+    // Create new address params for the compressed account (V2 format)
+    let new_address_params = address_tree_info
+        .into_new_address_params_assigned_packed(address_seed, Some(output_tree_index));
+
+    // Initialize the compressed account
+    let mut commitment_account = LightAccount::<VoteCommitmentAccount>::new_init(
+        &crate::ID,
+        Some(address),
+        output_tree_index,
+    );
+
+    // Set account data
+    let clock = Clock::get()?;
+    commitment_account.ballot_id = ballot_id;
+    commitment_account.commitment = commitment;
+    commitment_account.leaf_index = leaf_index;
+    commitment_account.encrypted_preimage = encrypted_preimage;
+    commitment_account.encryption_type = encryption_type;
+    commitment_account.created_at = clock.unix_timestamp;
+
+    // Invoke Light System Program to create the compressed account
+    LightSystemProgramCpi::new_cpi(LIGHT_CPI_SIGNER, proof)
+        .with_light_account(commitment_account)
+        .map_err(|_| CloakCraftError::LightCpiError)?
+        .with_new_addresses(&[new_address_params])
+        .invoke(light_cpi_accounts)
+        .map_err(|_| CloakCraftError::CommitmentCreationFailed)?;
+
+    Ok(())
+}
+
+/// Derive the compressed account address for a vote commitment
+pub fn derive_vote_commitment_address(
+    ballot_id: &[u8; 32],
+    commitment: &[u8; 32],
+    address_tree: &Pubkey,
+) -> [u8; 32] {
+    let (address, _) = derive_address(
+        &[
+            VoteCommitmentAccount::SEED_PREFIX,
+            ballot_id.as_ref(),
+            commitment.as_ref(),
+        ],
+        address_tree,
+        &crate::ID,
+    );
+    address
+}
+
+/// Verify a vote commitment exists in Light Protocol state tree
+///
+/// This is the voting-specific version of verify_commitment_inclusion.
+/// Uses ballot_key as context instead of pool.
+pub fn verify_vote_commitment_inclusion<'info>(
+    fee_payer: &AccountInfo<'info>,
+    remaining_accounts: &[AccountInfo<'info>],
+    commitment_account_hash: [u8; 32],
+    commitment_merkle_context: crate::instructions::voting::VoteCommitmentMerkleContext,
+    inclusion_proof: LightValidityProof,
+    _address_tree_info: LightAddressTreeInfo,
+    commitment: [u8; 32],
+    ballot: Pubkey,
+) -> Result<()> {
+    msg!("=== Verify Vote Commitment Inclusion ===");
+    msg!("Ballot: {:?}", ballot);
+    msg!("Commitment: {:02x?}...", &commitment[0..8]);
+    msg!("Account hash: {:02x?}...", &commitment_account_hash[0..8]);
+    msg!("Leaf index: {}", commitment_merkle_context.leaf_index);
+    msg!("Root index: {}", commitment_merkle_context.root_index);
+    msg!("State tree index: {}", commitment_merkle_context.merkle_tree_pubkey_index);
+
+    // Convert IDL-safe types to Light SDK types
+    let _proof: ValidityProof = inclusion_proof.into();
+
+    // Setup Light CPI accounts
+    let light_cpi_accounts = CpiAccounts::new(
+        fee_payer,
+        remaining_accounts,
+        LIGHT_CPI_SIGNER,
+    );
+
+    // Use the provided commitment_account_hash directly from the scanner
+    let commitment_address = commitment_account_hash;
+
+    msg!("Using commitment address: {:02x?}...", &commitment_address[0..8]);
+
+    // Build the packed read-only account for verification
+    use light_compressed_account::compressed_account::{PackedReadOnlyCompressedAccount, PackedMerkleContext};
+
+    let read_only_account = PackedReadOnlyCompressedAccount {
+        account_hash: commitment_address,
+        merkle_context: PackedMerkleContext {
+            merkle_tree_pubkey_index: commitment_merkle_context.merkle_tree_pubkey_index,
+            queue_pubkey_index: commitment_merkle_context.queue_pubkey_index,
+            leaf_index: commitment_merkle_context.leaf_index,
+            prove_by_index: true,
+        },
+        root_index: commitment_merkle_context.root_index,
+    };
+
+    msg!("Verifying vote commitment with Light Protocol CPI...");
+
+    // Build CPI instruction for read-only verification
+    use light_compressed_account::instruction_data::with_account_info::InstructionDataInvokeCpiWithAccountInfo;
+
+    let cpi_instruction = InstructionDataInvokeCpiWithAccountInfo {
+        bump: LIGHT_CPI_SIGNER.bump,
+        invoking_program_id: LIGHT_CPI_SIGNER.program_id.into(),
+        proof: None, // No ZK proof needed - merkle context in read_only_account is the verification
+        mode: 1, // v2 mode
+        read_only_accounts: vec![read_only_account],
+        ..Default::default()
+    };
+
+    let result = cpi_instruction.invoke(light_cpi_accounts);
+
+    match result {
+        Ok(_) => {
+            msg!("Vote commitment inclusion verified by Light Protocol");
+            msg!("   Ballot: {:?}", ballot);
+            msg!("   Commitment: {:02x?}...", &commitment[0..8]);
+            msg!("   Account hash: {:02x?}...", &commitment_address[0..8]);
+            Ok(())
+        }
+        Err(e) => {
+            msg!("Vote commitment verification failed: {:?}", e);
+            msg!("   This means the vote commitment does not exist in the state tree");
+            Err(CloakCraftError::CommitmentNotFound.into())
+        }
+    }
+}
