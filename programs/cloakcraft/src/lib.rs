@@ -955,16 +955,31 @@ pub mod cloakcraft {
         vote_choice: u64,
         total_amount: u64,
         weight: u64,
-        attestation_signature: [u8; 64],
+        indexer_pubkey_x: [u8; 32],
+        indexer_pubkey_y: [u8; 32],
         encrypted_contributions: Option<voting::EncryptedContributions>,
         encrypted_preimage: Option<Vec<u8>>,
         output_randomness: [u8; 32],
     ) -> Result<()> {
         voting::create_pending_with_proof_vote_snapshot(
             ctx, operation_id, ballot_id, proof, vote_nullifier, vote_commitment,
-            vote_choice, total_amount, weight, attestation_signature,
+            vote_choice, total_amount, weight, indexer_pubkey_x, indexer_pubkey_y,
             encrypted_contributions, encrypted_preimage, output_randomness
         )
+    }
+
+    /// Create Vote Nullifier (Phase 1)
+    ///
+    /// Creates the vote_nullifier via Light Protocol.
+    /// Uses action_nullifier with ballot_id as aggregation_id.
+    pub fn create_vote_nullifier<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreateVoteNullifier<'info>>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        nullifier_index: u8,
+        light_params: LightCreateVoteNullifierParams,
+    ) -> Result<()> {
+        voting::create_vote_nullifier(ctx, operation_id, ballot_id, nullifier_index, light_params)
     }
 
     /// Execute Vote Snapshot (Phase 2)
@@ -977,6 +992,22 @@ pub mod cloakcraft {
         encrypted_contributions: Option<voting::EncryptedContributions>,
     ) -> Result<()> {
         voting::execute_vote_snapshot(ctx, operation_id, ballot_id, encrypted_contributions)
+    }
+
+    /// Create Vote Commitment (Phase 3)
+    ///
+    /// Creates the vote_commitment via Light Protocol.
+    /// Uses ballot_id for commitment address derivation.
+    pub fn create_vote_commitment<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreateVoteCommitment<'info>>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        commitment_index: u8,
+        encrypted_preimage: [u8; 128],
+        encryption_type: u8,
+        light_params: LightCreateVoteCommitmentParams,
+    ) -> Result<()> {
+        voting::create_vote_commitment(ctx, operation_id, ballot_id, commitment_index, encrypted_preimage, encryption_type, light_params)
     }
 
     /// Create Pending with Proof - Change Vote Snapshot (Phase 0)
@@ -1061,6 +1092,51 @@ pub mod cloakcraft {
         encrypted_contributions: Option<voting::EncryptedContributions>,
     ) -> Result<()> {
         voting::execute_vote_spend(ctx, operation_id, ballot_id, encrypted_contributions)
+    }
+
+    // ============ SpendToVote Vote Change (Multi-Phase) ============
+
+    /// Create Pending with Proof - Change Vote Spend (Phase 0)
+    ///
+    /// SpendToVote mode: Atomic vote change (old position -> new position).
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pending_with_proof_change_vote_spend<'info>(
+        ctx: Context<'_, '_, '_, 'info, CreatePendingWithProofChangeVoteSpend<'info>>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        proof: Vec<u8>,
+        old_position_commitment: [u8; 32],
+        old_position_nullifier: [u8; 32],
+        new_position_commitment: [u8; 32],
+        old_vote_choice: u64,
+        new_vote_choice: u64,
+        amount: u64,
+        weight: u64,
+        old_encrypted_contributions: Option<voting::EncryptedContributions>,
+        new_encrypted_contributions: Option<voting::EncryptedContributions>,
+        output_randomness: [u8; 32],
+    ) -> Result<()> {
+        voting::create_pending_with_proof_change_vote_spend(
+            ctx, operation_id, ballot_id, proof,
+            old_position_commitment, old_position_nullifier, new_position_commitment,
+            old_vote_choice, new_vote_choice, amount, weight,
+            old_encrypted_contributions, new_encrypted_contributions, output_randomness
+        )
+    }
+
+    /// Execute Change Vote Spend (Phase 3)
+    ///
+    /// Updates ballot tally for SpendToVote vote change: decrements old, increments new.
+    pub fn execute_change_vote_spend(
+        ctx: Context<ExecuteChangeVoteSpend>,
+        operation_id: [u8; 32],
+        ballot_id: [u8; 32],
+        old_encrypted_contributions: Option<voting::EncryptedContributions>,
+        new_encrypted_contributions: Option<voting::EncryptedContributions>,
+    ) -> Result<()> {
+        voting::execute_change_vote_spend(
+            ctx, operation_id, ballot_id, old_encrypted_contributions, new_encrypted_contributions
+        )
     }
 
     // ============ Close Position (Multi-Phase) ============

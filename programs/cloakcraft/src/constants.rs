@@ -61,7 +61,9 @@ pub mod circuits {
     pub const CHANGE_VOTE_SNAPSHOT: [u8; 32] = *b"change_vote_snapshot____________";
     /// SpendToVote mode voting circuit
     pub const VOTE_SPEND: [u8; 32] = *b"vote_spend______________________";
-    /// SpendToVote mode close position circuit (for vote change/exit)
+    /// SpendToVote mode vote change circuit (atomic close+new position)
+    pub const CHANGE_VOTE_SPEND: [u8; 32] = *b"change_vote_spend_______________";
+    /// SpendToVote mode close position circuit (for exit/cancel)
     pub const CLOSE_POSITION: [u8; 32] = *b"close_position__________________";
     /// SpendToVote mode claim circuit
     pub const CLAIM: [u8; 32] = *b"claim___________________________";
@@ -116,6 +118,8 @@ pub mod operation_types {
     pub const CHANGE_VOTE_SNAPSHOT: u8 = 21;
     /// SpendToVote mode voting
     pub const VOTE_SPEND: u8 = 22;
+    /// SpendToVote mode vote change (atomic close+new position)
+    pub const CHANGE_VOTE_SPEND: u8 = 25;
     /// SpendToVote mode close vote position
     pub const CLOSE_VOTE_POSITION: u8 = 23;
     /// SpendToVote mode claim

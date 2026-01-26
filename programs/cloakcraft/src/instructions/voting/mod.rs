@@ -14,7 +14,9 @@ mod decrypt_tally;
 
 // Snapshot voting (multi-phase)
 mod create_pending_with_proof_vote_snapshot;
+mod create_vote_nullifier;
 mod execute_vote_snapshot;
+mod create_vote_commitment;
 
 // Snapshot vote change (atomic, multi-phase)
 mod create_pending_with_proof_change_vote_snapshot;
@@ -23,6 +25,10 @@ mod execute_change_vote_snapshot;
 // SpendToVote (multi-phase)
 mod create_pending_with_proof_vote_spend;
 mod execute_vote_spend;
+
+// SpendToVote vote change (atomic, multi-phase)
+mod create_pending_with_proof_change_vote_spend;
+mod execute_change_vote_spend;
 
 // Close vote position (multi-phase)
 mod create_pending_with_proof_close_vote_position;
@@ -40,7 +46,9 @@ pub use decrypt_tally::*;
 
 // Snapshot voting exports
 pub use create_pending_with_proof_vote_snapshot::*;
+pub use create_vote_nullifier::*;
 pub use execute_vote_snapshot::*;
+pub use create_vote_commitment::*;
 
 // Snapshot vote change exports
 pub use create_pending_with_proof_change_vote_snapshot::*;
@@ -49,6 +57,10 @@ pub use execute_change_vote_snapshot::*;
 // SpendToVote exports
 pub use create_pending_with_proof_vote_spend::*;
 pub use execute_vote_spend::*;
+
+// SpendToVote vote change exports
+pub use create_pending_with_proof_change_vote_spend::*;
+pub use execute_change_vote_spend::*;
 
 // Close vote position exports
 pub use create_pending_with_proof_close_vote_position::*;

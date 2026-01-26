@@ -88,7 +88,11 @@ const CIRCUITS: CircuitConfig[] = [
     vkJsonPath: "circom-circuits/build/voting/vote_spend_verification_key.json",
   },
   {
-    id: "voting_close_position",
+    id: "change_vote_spend",
+    vkJsonPath: "circom-circuits/build/voting/change_vote_spend_verification_key.json",
+  },
+  {
+    id: "close_position",
     vkJsonPath: "circom-circuits/build/voting/close_position_verification_key.json",
   },
   {
@@ -153,9 +157,9 @@ function convertCircomVk(vkJson: any): Buffer {
 }
 
 function padCircuitId(id: string): Buffer {
-  const buf = Buffer.alloc(32);
-  buf.write(id);
-  return buf;
+  // Pad with underscores to match on-chain constants.rs format
+  const padded = id.padEnd(32, '_');
+  return Buffer.from(padded);
 }
 
 async function registerVk(
