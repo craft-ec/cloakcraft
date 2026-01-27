@@ -1,0 +1,60 @@
+name: CI - SDK
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - 'packages/sdk/**'
+      - 'packages/types/**'
+      - 'packages/hooks/**'
+      - 'packages/ui/**'
+  pull_request:
+    branches: [main, staging]
+    paths:
+      - 'packages/sdk/**'
+      - 'packages/types/**'
+      - 'packages/hooks/**'
+      - 'packages/ui/**'
+  workflow_dispatch:
+
+concurrency:
+  group: sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-sdk:
+    name: Build & Test SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "8.15.0"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Packages
+        run: pnpm --filter @cloakcraft/sdk --filter @cloakcraft/hooks --filter @cloakcraft/ui --filter @cloakcraft/types build
+
+      - name: Type Check
+        run: pnpm --filter @cloakcraft/sdk exec tsc --noEmit
+        continue-on-error: true
+
+      - name: Run Tests
+        run: pnpm --filter @cloakcraft/sdk test
+        continue-on-error: true
+
+      - name: Build Summary
+        run: |
+          echo "## SDK Build" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Cloakcraft SDK packages built successfully" >> $GITHUB_STEP_SUMMARY

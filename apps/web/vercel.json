@@ -1,7 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "pnpm build",
-  "installCommand": "pnpm install",
+  "buildCommand": "cd ../.. && pnpm build --filter @cloakcraft/web",
+  "installCommand": "cd ../.. && pnpm install",
   "framework": "nextjs",
-  "outputDirectory": ".next"
+  "outputDirectory": ".next",
+  "ignoreCommand": "git diff HEAD^ HEAD --quiet -- . ../../packages/"
 }

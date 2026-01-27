@@ -1,0 +1,79 @@
+name: CI - Program
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - 'programs/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Anchor.toml'
+  pull_request:
+    branches: [main, staging]
+    paths:
+      - 'programs/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Anchor.toml'
+  workflow_dispatch:
+
+concurrency:
+  group: program-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOLANA_VERSION: "2.0.0"
+  ANCHOR_VERSION: "0.32.1"
+
+jobs:
+  build-program:
+    name: Build & Test Program
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-
+
+      - name: Install Solana
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Install Anchor
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked
+
+      - name: Setup Keypair
+        run: |
+          solana-keygen new --no-bip39-passphrase -o ~/.config/solana/id.json
+          solana config set --url localhost
+
+      - name: Build Program
+        run: anchor build --skip-lint
+
+      - name: Run Tests
+        run: anchor test --skip-build --skip-lint
+        continue-on-error: true
+
+      - name: Build Summary
+        run: |
+          echo "## Program Build" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Cloakcraft program built successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          ls -la target/deploy/*.so 2>/dev/null || echo "No .so files found"

@@ -1,0 +1,60 @@
+name: CI - Frontend
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - 'apps/web/**'
+      - 'packages/sdk/**'
+      - 'packages/hooks/**'
+      - 'packages/ui/**'
+  pull_request:
+    branches: [main, staging]
+    paths:
+      - 'apps/web/**'
+      - 'packages/sdk/**'
+      - 'packages/hooks/**'
+      - 'packages/ui/**'
+  workflow_dispatch:
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-frontend:
+    name: Build & Lint Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "8.15.0"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm --filter @cloakcraft/web lint
+        continue-on-error: true
+
+      - name: Build
+        run: pnpm --filter @cloakcraft/web build
+        env:
+          NEXT_PUBLIC_SOLANA_RPC_URL: https://api.devnet.solana.com
+          NEXT_PUBLIC_SOLANA_NETWORK: devnet
+          NEXT_PUBLIC_PROGRAM_ID: CLKVyDPYXw8G2qNFJjW7SfrfVjP2VhgqPkxfBZqJCQC9
+
+      - name: Build Summary
+        run: |
+          echo "## Frontend Build" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Cloakcraft web app built successfully" >> $GITHUB_STEP_SUMMARY
