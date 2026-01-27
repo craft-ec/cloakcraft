@@ -2,9 +2,11 @@
  * Scanner hook for automatic note detection
  *
  * Uses Light Protocol to scan for notes and track balances in real-time.
+ *
+ * OPTIMIZED: Includes debouncing and caching support.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { PublicKey } from '@solana/web3.js';
 import { useCloakCraft } from './provider';
 import type { DecryptedNote } from '@cloakcraft/types';
@@ -15,12 +17,48 @@ interface ScannerState {
   error: string | null;
 }
 
+/**
+ * Scanner statistics for performance monitoring
+ */
+interface ScannerStats {
+  totalAccounts: number;
+  cachedHits: number;
+  decryptAttempts: number;
+  successfulDecrypts: number;
+  scanDurationMs: number;
+  rpcCalls: number;
+}
+
 interface UsePrivateBalanceResult {
   balance: bigint;
   noteCount: number;
   isLoading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
+}
+
+/**
+ * Debounce hook - prevents rapid function calls
+ */
+function useDebounce<T extends (...args: any[]) => any>(
+  fn: T,
+  delayMs: number
+): T {
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const fnRef = useRef(fn);
+  fnRef.current = fn;
+
+  return useCallback(
+    ((...args) => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => {
+        fnRef.current(...args);
+      }, delayMs);
+    }) as T,
+    [delayMs]
+  );
 }
 
 /**
@@ -83,26 +121,55 @@ export function usePrivateBalance(tokenMint?: PublicKey): UsePrivateBalanceResul
 
 /**
  * Hook for scanning notes with auto-refresh
+ *
+ * OPTIMIZED: Includes debouncing to prevent rapid scans
+ *
+ * @param tokenMint - Filter to specific token (optional)
+ * @param autoRefreshMs - Auto-refresh interval in ms (optional)
+ * @param debounceMs - Debounce rapid scan calls (default: 500ms)
  */
-export function useScanner(tokenMint?: PublicKey, autoRefreshMs?: number) {
+export function useScanner(
+  tokenMint?: PublicKey,
+  autoRefreshMs?: number,
+  debounceMs: number = 500
+) {
   const { client, wallet, notes, sync } = useCloakCraft();
   const [state, setState] = useState<ScannerState>({
     isScanning: false,
     lastScanned: null,
     error: null,
   });
+  const [stats, setStats] = useState<ScannerStats | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isScanningRef = useRef(false); // Prevent concurrent scans
 
-  const scan = useCallback(async () => {
+  const scanImpl = useCallback(async () => {
     if (!client || !wallet) {
       setState((s) => ({ ...s, error: 'Wallet not connected' }));
       return;
     }
 
+    // Prevent concurrent scans
+    if (isScanningRef.current) {
+      return;
+    }
+
+    isScanningRef.current = true;
     setState((s) => ({ ...s, isScanning: true, error: null }));
 
     try {
       await sync(tokenMint);
+
+      // Get stats from light client if available
+      try {
+        const lightClient = (client as any).lightClient;
+        if (lightClient?.getLastScanStats) {
+          setStats(lightClient.getLastScanStats());
+        }
+      } catch {
+        // Stats not available
+      }
+
       setState({
         isScanning: false,
         lastScanned: new Date(),
@@ -111,17 +178,25 @@ export function useScanner(tokenMint?: PublicKey, autoRefreshMs?: number) {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Scan failed';
       setState((s) => ({ ...s, isScanning: false, error: message }));
+    } finally {
+      isScanningRef.current = false;
     }
   }, [client, wallet, sync, tokenMint]);
+
+  // Debounced scan to prevent rapid calls
+  const scan = useDebounce(scanImpl, debounceMs);
+
+  // Immediate scan (bypasses debounce)
+  const scanNow = scanImpl;
 
   // Auto-refresh
   useEffect(() => {
     if (autoRefreshMs && autoRefreshMs > 0 && client && wallet) {
       // Initial scan
-      scan();
+      scanNow();
 
       // Set up interval
-      intervalRef.current = setInterval(scan, autoRefreshMs);
+      intervalRef.current = setInterval(scanNow, autoRefreshMs);
 
       return () => {
         if (intervalRef.current) {
@@ -129,21 +204,27 @@ export function useScanner(tokenMint?: PublicKey, autoRefreshMs?: number) {
         }
       };
     }
-  }, [autoRefreshMs, client, wallet, scan]);
+  }, [autoRefreshMs, client, wallet, scanNow]);
 
-  // Filter notes by token mint
-  const filteredNotes = tokenMint
-    ? notes.filter((n) => n.tokenMint && n.tokenMint.equals(tokenMint))
-    : notes;
+  // Filter notes by token mint (memoized)
+  const filteredNotes = useMemo(() => {
+    return tokenMint
+      ? notes.filter((n) => n.tokenMint && n.tokenMint.equals(tokenMint))
+      : notes;
+  }, [notes, tokenMint]);
 
-  const totalAmount = filteredNotes.reduce((sum, n) => sum + n.amount, 0n);
+  const totalAmount = useMemo(() => {
+    return filteredNotes.reduce((sum, n) => sum + n.amount, 0n);
+  }, [filteredNotes]);
 
   return {
     ...state,
     notes: filteredNotes,
     totalAmount,
     noteCount: filteredNotes.length,
-    scan,
+    scan, // Debounced
+    scanNow, // Immediate
+    stats, // Performance stats
   };
 }
 
