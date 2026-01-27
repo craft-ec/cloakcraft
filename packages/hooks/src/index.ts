@@ -81,6 +81,8 @@ export {
   // Position operations
   useOpenPosition,
   useClosePosition,
+  // Position scanning
+  usePerpsPositions,
   // Liquidity operations
   usePerpsAddLiquidity,
   usePerpsRemoveLiquidity,
@@ -93,7 +95,7 @@ export {
   useTokenUtilization,
   usePositionValidation,
 } from './usePerps';
-export type { PerpsProgressStage } from './usePerps';
+export type { PerpsProgressStage, ScannedPerpsPosition } from './usePerps';
 
 // Voting / Governance
 export {

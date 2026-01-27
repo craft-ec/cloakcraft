@@ -11,11 +11,13 @@ import {
   useClosePosition,
   usePerpsAddLiquidity,
   usePerpsRemoveLiquidity,
+  usePerpsPositions,
   usePositionPnL,
   useLiquidationPrice,
   useLpValue,
   useTokenUtilization,
   type PerpsProgressStage,
+  type ScannedPerpsPosition,
 } from '@cloakcraft/hooks';
 import type {
   PerpsPoolState,
@@ -622,50 +624,184 @@ function PositionsTab({
   isProverReady: boolean;
   notes: DecryptedNote[];
 }) {
-  // TODO: Implement position scanning from notes
-  // Positions are stored as encrypted notes with position data
-  // The DecryptedPerpsPosition type from SDK defines the structure
-  // Need to add position note type detection to the scanner
+  const [selectedPool, setSelectedPool] = useState<(PerpsPoolState & { address: PublicKey }) | null>(null);
 
-  // For now, show informational placeholder
-  const hasNotes = notes.length > 0;
+  // Set default pool for position scanning
+  useEffect(() => {
+    if (!poolsLoading && pools.length > 0 && !selectedPool) {
+      setSelectedPool(pools[0]);
+    }
+  }, [poolsLoading, pools, selectedPool]);
+
+  // Scan for positions in the selected pool
+  // Position pool is derived from the perps pool address
+  const { positions, isLoading: positionsLoading, refresh: refreshPositions } = usePerpsPositions(
+    selectedPool?.address ?? null
+  );
+
+  // Format price for display
+  const formatPrice = (price: bigint): string => {
+    // Assuming price is in 1e8 (standard oracle precision)
+    const num = Number(price) / 1e8;
+    return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  };
+
+  // Format margin/size for display
+  const formatMargin = (amount: bigint, decimals: number = 6): string => {
+    const num = Number(amount) / Math.pow(10, decimals);
+    return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  };
+
+  if (poolsLoading) {
+    return (
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Your Positions</CardTitle>
-        <CardDescription>
-          View and manage your open leveraged positions
-        </CardDescription>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>Your Positions</CardTitle>
+            <CardDescription>
+              View and manage your open leveraged positions
+            </CardDescription>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={refreshPositions}
+            disabled={positionsLoading}
+          >
+            <Loader2 className={`h-4 w-4 ${positionsLoading ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-col items-center justify-center py-8 text-center">
-          <BarChart3 className="h-12 w-12 text-muted-foreground/50 mb-4" />
-          <p className="text-muted-foreground font-medium">No open positions</p>
-          <p className="text-sm text-muted-foreground/70 max-w-sm mt-1">
-            Open a position in the Trade tab to start trading perpetual futures
-            with up to 100x leverage.
-          </p>
-        </div>
-
-        {/* Position tracking info */}
-        <div className="rounded-lg bg-muted/50 p-4 space-y-2">
-          <div className="flex items-start gap-2">
-            <Info className="h-4 w-4 mt-0.5 text-muted-foreground" />
-            <div className="text-sm text-muted-foreground">
-              <p className="font-medium text-foreground">How positions work</p>
-              <ul className="mt-2 space-y-1 list-disc list-inside text-xs">
-                <li>Positions are stored as private encrypted notes</li>
-                <li>Only you can view and manage your positions</li>
-                <li>PnL is calculated based on oracle prices</li>
-                <li>Positions can be liquidated if margin falls below threshold</li>
-              </ul>
-            </div>
+        {/* Pool selector for scanning */}
+        {pools.length > 1 && (
+          <div className="space-y-2">
+            <Label>Pool</Label>
+            <Select
+              value={selectedPool?.address.toBase58()}
+              onValueChange={(value) => {
+                const pool = pools.find(p => p.address.toBase58() === value);
+                setSelectedPool(pool || null);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select pool" />
+              </SelectTrigger>
+              <SelectContent>
+                {pools.map((pool) => (
+                  <SelectItem key={pool.address.toBase58()} value={pool.address.toBase58()}>
+                    Pool {pool.address.toBase58().slice(0, 8)}...
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        </div>
+        )}
+
+        {/* Positions list */}
+        {positionsLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-sm text-muted-foreground">Scanning positions...</span>
+          </div>
+        ) : positions.length === 0 ? (
+          <>
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <BarChart3 className="h-12 w-12 text-muted-foreground/50 mb-4" />
+              <p className="text-muted-foreground font-medium">No open positions</p>
+              <p className="text-sm text-muted-foreground/70 max-w-sm mt-1">
+                Open a position in the Trade tab to start trading perpetual futures
+                with up to 100x leverage.
+              </p>
+            </div>
+
+            {/* Position tracking info */}
+            <div className="rounded-lg bg-muted/50 p-4 space-y-2">
+              <div className="flex items-start gap-2">
+                <Info className="h-4 w-4 mt-0.5 text-muted-foreground" />
+                <div className="text-sm text-muted-foreground">
+                  <p className="font-medium text-foreground">How positions work</p>
+                  <ul className="mt-2 space-y-1 list-disc list-inside text-xs">
+                    <li>Positions are stored as private encrypted notes</li>
+                    <li>Only you can view and manage your positions</li>
+                    <li>PnL is calculated based on oracle prices</li>
+                    <li>Positions can be liquidated if margin falls below threshold</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="space-y-3">
+            {positions.map((position, index) => (
+              <div
+                key={`${position.accountHash}-${index}`}
+                className="rounded-lg border p-4 space-y-3"
+              >
+                {/* Position header */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {position.isLong ? (
+                      <Badge className="bg-green-600">
+                        <TrendingUp className="h-3 w-3 mr-1" />
+                        LONG
+                      </Badge>
+                    ) : (
+                      <Badge className="bg-red-600">
+                        <TrendingDown className="h-3 w-3 mr-1" />
+                        SHORT
+                      </Badge>
+                    )}
+                    <span className="text-sm font-medium">{position.leverage}x</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground font-mono">
+                    {position.accountHash.slice(0, 8)}...
+                  </span>
+                </div>
+
+                {/* Position details */}
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Margin</p>
+                    <p className="font-medium">{formatMargin(position.margin)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Size</p>
+                    <p className="font-medium">{formatMargin(position.size)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Entry Price</p>
+                    <p className="font-medium">${formatPrice(position.entryPrice)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Leverage</p>
+                    <p className="font-medium">{position.leverage}x</p>
+                  </div>
+                </div>
+
+                {/* Close position button (placeholder) */}
+                <Button variant="outline" size="sm" className="w-full" disabled>
+                  Close Position (Coming Soon)
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Quick stats */}
-        {pools.length > 0 && (
+        {pools.length > 0 && positions.length === 0 && (
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="rounded-lg bg-muted/30 p-3">
               <p className="text-muted-foreground text-xs">Available Pools</p>

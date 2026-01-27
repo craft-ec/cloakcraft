@@ -1,8 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "cd ../.. && pnpm build --filter @cloakcraft/web",
-  "installCommand": "cd ../.. && pnpm install",
   "framework": "nextjs",
-  "outputDirectory": ".next",
-  "ignoreCommand": "git diff HEAD^ HEAD --quiet -- . ../../packages/"
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
+  "buildCommand": "cd ../.. && pnpm turbo run build --filter=@cloakcraft/web...",
+  "outputDirectory": ".next"
 }

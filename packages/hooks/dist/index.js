@@ -76,6 +76,7 @@ __export(index_exports, {
   usePerpsMarkets: () => usePerpsMarkets,
   usePerpsPool: () => usePerpsPool,
   usePerpsPools: () => usePerpsPools,
+  usePerpsPositions: () => usePerpsPositions,
   usePerpsRemoveLiquidity: () => usePerpsRemoveLiquidity,
   usePool: () => usePool,
   usePoolAnalytics: () => usePoolAnalytics,
@@ -3217,6 +3218,51 @@ function usePositionValidation(pool, market, marginAmount, leverage, direction) 
     return { isValid: true, error: null, positionSize };
   }, [pool, market, marginAmount, leverage, direction]);
 }
+function usePerpsPositions(positionPool) {
+  const { client, wallet } = useCloakCraft();
+  const [positions, setPositions] = (0, import_react19.useState)([]);
+  const [isLoading, setIsLoading] = (0, import_react19.useState)(false);
+  const [error, setError] = (0, import_react19.useState)(null);
+  const refresh = (0, import_react19.useCallback)(async () => {
+    if (!client || !wallet || !positionPool) {
+      setPositions([]);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const scannedPositions = await client.scanPositionNotes(positionPool);
+      const uiPositions = scannedPositions.map((pos) => ({
+        commitment: pos.commitment,
+        accountHash: pos.accountHash,
+        marketId: pos.marketId,
+        isLong: pos.isLong,
+        margin: pos.margin,
+        size: pos.size,
+        leverage: pos.leverage,
+        entryPrice: pos.entryPrice,
+        randomness: pos.randomness,
+        pool: pos.pool,
+        spent: pos.spent
+      }));
+      setPositions(uiPositions.filter((p) => !p.spent));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to scan positions");
+      setPositions([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [client, wallet, positionPool]);
+  (0, import_react19.useEffect)(() => {
+    refresh();
+  }, [refresh]);
+  return {
+    positions,
+    isLoading,
+    error,
+    refresh
+  };
+}
 
 // src/useVoting.ts
 var import_react20 = require("react");
@@ -3805,6 +3851,7 @@ function useCanClaim(ballot, voteChoice) {
   usePerpsMarkets,
   usePerpsPool,
   usePerpsPools,
+  usePerpsPositions,
   usePerpsRemoveLiquidity,
   usePool,
   usePoolAnalytics,

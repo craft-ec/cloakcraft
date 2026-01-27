@@ -1057,6 +1057,45 @@ declare function usePositionValidation(pool: PerpsPoolState | null, market: Perp
     error: null;
     positionSize: bigint;
 };
+/** Scanned position data for UI display */
+interface ScannedPerpsPosition {
+    /** Position commitment hash */
+    commitment: Uint8Array;
+    /** Account hash for Light Protocol operations */
+    accountHash: string;
+    /** Market ID (32 bytes) */
+    marketId: Uint8Array;
+    /** Position direction */
+    isLong: boolean;
+    /** Margin amount */
+    margin: bigint;
+    /** Position size (margin * leverage) */
+    size: bigint;
+    /** Leverage multiplier */
+    leverage: number;
+    /** Entry price */
+    entryPrice: bigint;
+    /** Position randomness */
+    randomness: Uint8Array;
+    /** Pool this position belongs to */
+    pool: PublicKey;
+    /** Whether position is closed/spent */
+    spent: boolean;
+}
+/**
+ * Hook for scanning user's perps positions
+ *
+ * Scans Light Protocol compressed accounts for position notes
+ * belonging to the current user's stealth wallet.
+ *
+ * @param positionPool - Position pool address (perps pool's position commitment pool)
+ */
+declare function usePerpsPositions(positionPool: PublicKey | null): {
+    positions: ScannedPerpsPosition[];
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
 
 /**
  * Voting hooks
@@ -1324,4 +1363,4 @@ declare function useCanClaim(ballot: Ballot | null, voteChoice: number | null): 
     reason: null;
 };
 
-export { type AddLiquidityProgressStage, type BallotWithAddress, type ChangeVoteOptions, type ClaimOptions, type ClaimResult, CloakCraftProvider, type ClosePositionOptions, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type PerpsProgressStage, type ProtocolFeeConfig, type RemoveLiquidityProgressStage, type SpendResult, type SwapProgressStage, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, type VoteResult, type VoteSnapshotOptions, type VoteSpendOptions, type VotingProgressStage, WALLET_DERIVATION_MESSAGE, useActiveBallots, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useBallot, useBallotTally, useBallotTimeStatus, useBallots, useCanClaim, useChangeVote, useClaim, useCloakCraft, useClosePosition, useCloseVotePosition, useConsolidation, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsConsolidationRecommended, useIsFreeOperation, useLiquidationPrice, useLpMintPreview, useLpValue, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOpenPosition, useOrders, usePayoutPreview, usePerpsAddLiquidity, usePerpsMarkets, usePerpsPool, usePerpsPools, usePerpsRemoveLiquidity, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePositionPnL, usePositionValidation, usePrivateBalance, useProtocolFees, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTokenUtilization, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useVoteSnapshot, useVoteSpend, useVoteValidation, useWallet, useWithdrawPreview };
+export { type AddLiquidityProgressStage, type BallotWithAddress, type ChangeVoteOptions, type ClaimOptions, type ClaimResult, CloakCraftProvider, type ClosePositionOptions, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type PerpsProgressStage, type ProtocolFeeConfig, type RemoveLiquidityProgressStage, type ScannedPerpsPosition, type SpendResult, type SwapProgressStage, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, type VoteResult, type VoteSnapshotOptions, type VoteSpendOptions, type VotingProgressStage, WALLET_DERIVATION_MESSAGE, useActiveBallots, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useBallot, useBallotTally, useBallotTimeStatus, useBallots, useCanClaim, useChangeVote, useClaim, useCloakCraft, useClosePosition, useCloseVotePosition, useConsolidation, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsConsolidationRecommended, useIsFreeOperation, useLiquidationPrice, useLpMintPreview, useLpValue, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOpenPosition, useOrders, usePayoutPreview, usePerpsAddLiquidity, usePerpsMarkets, usePerpsPool, usePerpsPools, usePerpsPositions, usePerpsRemoveLiquidity, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePositionPnL, usePositionValidation, usePrivateBalance, useProtocolFees, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTokenUtilization, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useVoteSnapshot, useVoteSpend, useVoteValidation, useWallet, useWithdrawPreview };

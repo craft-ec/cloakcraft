@@ -1,0 +1,33 @@
+# Solana/Anchor build artifacts
+test-ledger/
+target/
+.anchor/
+
+# ZK circuit files (224MB+)
+keys/
+circom-circuits/
+*.pk
+*.vk
+*.r1cs
+*.wasm
+*.sym
+*.zkey
+
+# Build tools
+tools/
+tinygo/
+gnark-solana/
+
+# Large dev files
+scripts/
+relay/
+indexer/
+
+# Already in node_modules
+node_modules/
+
+# Don't need for frontend
+programs/
+tests/
+*.docx
+Cargo.*

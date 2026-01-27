@@ -54,3 +54,5 @@ yarn-error.log*
 coverage/
 .nyc_output/
 .env
+.vercel
+.env*.local

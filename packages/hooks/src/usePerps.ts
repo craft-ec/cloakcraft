@@ -884,3 +884,98 @@ export function usePositionValidation(
     return { isValid: true, error: null, positionSize };
   }, [pool, market, marginAmount, leverage, direction]);
 }
+
+// =============================================================================
+// Position Scanning Hook
+// =============================================================================
+
+/** Scanned position data for UI display */
+export interface ScannedPerpsPosition {
+  /** Position commitment hash */
+  commitment: Uint8Array;
+  /** Account hash for Light Protocol operations */
+  accountHash: string;
+  /** Market ID (32 bytes) */
+  marketId: Uint8Array;
+  /** Position direction */
+  isLong: boolean;
+  /** Margin amount */
+  margin: bigint;
+  /** Position size (margin * leverage) */
+  size: bigint;
+  /** Leverage multiplier */
+  leverage: number;
+  /** Entry price */
+  entryPrice: bigint;
+  /** Position randomness */
+  randomness: Uint8Array;
+  /** Pool this position belongs to */
+  pool: PublicKey;
+  /** Whether position is closed/spent */
+  spent: boolean;
+}
+
+/**
+ * Hook for scanning user's perps positions
+ *
+ * Scans Light Protocol compressed accounts for position notes
+ * belonging to the current user's stealth wallet.
+ *
+ * @param positionPool - Position pool address (perps pool's position commitment pool)
+ */
+export function usePerpsPositions(positionPool: PublicKey | null) {
+  const { client, wallet } = useCloakCraft();
+  const [positions, setPositions] = useState<ScannedPerpsPosition[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!client || !wallet || !positionPool) {
+      setPositions([]);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // scanPositionNotes returns ScannedPositionNote[] from light.ts
+      // which includes: commitment, accountHash, marketId, isLong, margin, size, leverage, entryPrice, randomness, pool, spent
+      const scannedPositions = await client.scanPositionNotes(positionPool);
+
+      // Map to our UI format
+      const uiPositions: ScannedPerpsPosition[] = scannedPositions.map((pos: any) => ({
+        commitment: pos.commitment,
+        accountHash: pos.accountHash,
+        marketId: pos.marketId,
+        isLong: pos.isLong,
+        margin: pos.margin,
+        size: pos.size,
+        leverage: pos.leverage,
+        entryPrice: pos.entryPrice,
+        randomness: pos.randomness,
+        pool: pos.pool,
+        spent: pos.spent,
+      }));
+
+      // Filter out spent/closed positions
+      setPositions(uiPositions.filter(p => !p.spent));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to scan positions');
+      setPositions([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [client, wallet, positionPool]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return {
+    positions,
+    isLoading,
+    error,
+    refresh,
+  };
+}
