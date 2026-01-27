@@ -5,7 +5,7 @@
 import { PublicKey } from '@solana/web3.js';
 
 // Default program ID (devnet deployment)
-export const PROGRAM_ID = new PublicKey('CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj');
+export const PROGRAM_ID = new PublicKey('2VWF9TxMFgzHwbd5WPpYKoqHvtzk3fN66Ka3tVV82nZG');
 
 // PDA seeds
 export const SEEDS = {
@@ -44,12 +44,12 @@ export const CIRCUIT_IDS = {
 } as const;
 
 /**
- * Pad circuit ID to 32 bytes
+ * Pad circuit ID to 32 bytes with underscores
+ * Must match on-chain constants.rs format: "transfer_1x2____________________"
  */
 export function padCircuitId(id: string): Buffer {
-  const buf = Buffer.alloc(32);
-  buf.write(id);
-  return buf;
+  const padded = id.padEnd(32, '_');
+  return Buffer.from(padded);
 }
 
 /**

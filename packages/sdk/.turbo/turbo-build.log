@@ -8,27 +8,30 @@ CLI tsup v8.5.1
 CLI Target: es2020
 CJS Build start
 ESM Build start
-CJS dist/idl/index.js 306.10 KB
-CJS dist/index.js     466.67 KB
-CJS ⚡️ Build success in 37ms
-ESM dist/light-helpers-35JZDV5K.mjs 146.00 B
-ESM dist/shield-BDTU7A5W.mjs        362.00 B
-ESM dist/swap-2762Z3PQ.mjs          804.00 B
-ESM dist/constants-PISERNW3.mjs     545.00 B
-ESM dist/index.mjs                  379.61 KB
-ESM dist/chunk-MP66GKEX.mjs         7.18 KB
-ESM dist/idl/index.mjs              305.15 KB
-ESM dist/fees-KBXAZGVX.mjs          678.00 B
-ESM dist/chunk-HIEEVT7A.mjs         5.27 KB
-ESM dist/chunk-Y6FXYEAI.mjs         390.00 B
-ESM dist/chunk-6HCXB7RH.mjs         36.51 KB
-ESM dist/chunk-NSYBEMKY.mjs         10.91 KB
-ESM dist/chunk-LFEHKWZL.mjs         3.07 KB
-ESM dist/chunk-MUPTW2K4.mjs         4.53 KB
-ESM ⚡️ Build success in 37ms
+ESM dist/constants-ZW3YX7HL.mjs     545.00 B
+ESM dist/chunk-IQYJ7OCA.mjs         39.48 KB
+ESM dist/chunk-QO6UOFEI.mjs         321.67 KB
+ESM dist/idl/index.mjs              134.00 B
+ESM dist/light-KJUSHYDO.mjs         370.00 B
+ESM dist/light-helpers-DCAHIINJ.mjs 146.00 B
+ESM dist/index.mjs                  433.97 KB
+ESM dist/swap-ZK5X5ODM.mjs          804.00 B
+ESM dist/shield-U4E47T3Z.mjs        362.00 B
+ESM dist/chunk-GZDL4HRF.mjs         22.25 KB
+ESM dist/fees-BRCRWJSC.mjs          678.00 B
+ESM dist/chunk-4SXWHU7R.mjs         3.08 KB
+ESM dist/chunk-MAO47QW7.mjs         5.60 KB
+ESM dist/chunk-JHGCZB7R.mjs         4.53 KB
+ESM dist/chunk-E6R2YCRL.mjs         5.27 KB
+ESM dist/chunk-CIESM3BP.mjs         1.30 KB
+ESM dist/chunk-Y7AZCOB6.mjs         36.23 KB
+ESM ⚡️ Build success in 35ms
+CJS dist/idl/index.js 322.66 KB
+CJS dist/index.js     896.88 KB
+CJS ⚡️ Build success in 35ms
 DTS Build start
-DTS ⚡️ Build success in 1701ms
-DTS dist/index.d.ts      181.81 KB
-DTS dist/idl/index.d.ts  211.61 KB
-DTS dist/index.d.mts     181.81 KB
-DTS dist/idl/index.d.mts 211.61 KB
+DTS ⚡️ Build success in 1625ms
+DTS dist/index.d.ts      217.72 KB
+DTS dist/idl/index.d.ts  223.49 KB
+DTS dist/index.d.mts     217.72 KB
+DTS dist/idl/index.d.mts 223.49 KB

@@ -1,64 +1,53 @@
 'use client';
 
-import { useMemo, useEffect } from 'react';
-import dynamic from 'next/dynamic';
-import { ConnectionProvider, WalletProvider, useWallet as useSolanaWallet } from '@solana/wallet-adapter-react';
+import { useMemo, useEffect, useCallback, useState } from 'react';
+import { ConnectionProvider, WalletProvider, useWallet as useSolanaWallet, useConnection } from '@solana/wallet-adapter-react';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
+import { WalletError } from '@solana/wallet-adapter-base';
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
 import { useCloakCraft, CloakCraftProvider } from '@cloakcraft/hooks';
-import { Program, AnchorProvider, setProvider } from '@coral-xyz/anchor';
-import { RPC_URL, INDEXER_URL, NETWORK, HELIUS_API_KEY, ADDRESS_LOOKUP_TABLES, PROGRAM_ID } from './constants';
-import { IDL } from '@cloakcraft/sdk/idl';
+import { DIRECT_RPC_URL, WSS_URL, INDEXER_URL, NETWORK, HELIUS_API_KEY, ADDRESS_LOOKUP_TABLES, PROGRAM_ID } from './constants';
 
 import '@solana/wallet-adapter-react-ui/styles.css';
 
-// Dynamically import CloakCraftProvider to prevent SSR issues
-const CloakCraftProviderDynamic = dynamic(
-  () => import('@cloakcraft/hooks').then((mod) => mod.CloakCraftProvider),
-  { ssr: false }
-);
+// Import CloakCraftProvider directly (matches scalecraft pattern)
+// SSR is handled by 'use client' directive
 
 /**
- * Inner provider that sets up Anchor program after wallet connection
+ * Inner component that sets up wallet in SDK after wallet connection
+ * Matches scalecraft pattern exactly - pass wallet functions directly
  */
-function AnchorProgramSetup({ children }: { children: React.ReactNode }) {
-  const { publicKey, signTransaction, signAllTransactions } = useSolanaWallet();
-  const { setProgram, client } = useCloakCraft();
+function WalletSetup({ children }: { children: React.ReactNode }) {
+  const wallet = useSolanaWallet();
+  const { setWallet, client } = useCloakCraft();
 
+  // Update wallet in client when wallet changes (matches scalecraft exactly)
   useEffect(() => {
-    if (publicKey && signTransaction && signAllTransactions && client) {
-      // Create Anchor wallet adapter
-      const wallet = {
-        publicKey,
-        signTransaction,
-        signAllTransactions,
-      };
-
-      // Create Anchor provider
-      const provider = new AnchorProvider(client.connection, wallet, {
-        commitment: 'confirmed',
-        preflightCommitment: 'confirmed',
-      });
-      setProvider(provider);
-
-      // Create program instance
-      const program = new Program(IDL as any, provider);
-      setProgram(program);
+    if (client && wallet.publicKey && wallet.signTransaction && wallet.signAllTransactions) {
+      // Cast to any to bypass Anchor's payer requirement (matches scalecraft)
+      const anchorWallet = {
+        publicKey: wallet.publicKey,
+        signTransaction: wallet.signTransaction,
+        signAllTransactions: wallet.signAllTransactions,
+      } as any;
+      setWallet(anchorWallet);
     }
-  }, [publicKey, signTransaction, signAllTransactions, client, setProgram]);
+  }, [client, wallet.publicKey, wallet.signTransaction, wallet.signAllTransactions, setWallet]);
 
   return <>{children}</>;
 }
 
 /**
- * CloakCraft wrapper with wallet pubkey for per-wallet stealth storage
+ * CloakCraft wrapper that passes wallet adapter's connection to SDK
+ * This ensures the SDK uses the SAME connection as wallet adapter (like scalecraft)
  */
 function CloakCraftWrapper({ children }: { children: React.ReactNode }) {
   const { publicKey } = useSolanaWallet();
+  const { connection } = useConnection();
 
   return (
-    <CloakCraftProviderDynamic
-      rpcUrl={RPC_URL}
+    <CloakCraftProvider
+      connection={connection}
       indexerUrl={INDEXER_URL}
       programId={PROGRAM_ID.toBase58()}
       network={NETWORK}
@@ -66,8 +55,8 @@ function CloakCraftWrapper({ children }: { children: React.ReactNode }) {
       solanaWalletPubkey={publicKey?.toBase58()}
       addressLookupTables={ADDRESS_LOOKUP_TABLES}
     >
-      <AnchorProgramSetup>{children}</AnchorProgramSetup>
-    </CloakCraftProviderDynamic>
+      <WalletSetup>{children}</WalletSetup>
+    </CloakCraftProvider>
   );
 }
 
@@ -75,14 +64,56 @@ function CloakCraftWrapper({ children }: { children: React.ReactNode }) {
  * Root providers for the application
  */
 export function Providers({ children }: { children: React.ReactNode }) {
+  // Use state to hold the endpoint - only set after mounting on client
+  const [rpcUrl, setRpcUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Only runs on client, so window is available
+    setRpcUrl(`${window.location.origin}/api/rpc`);
+  }, []);
+
+  // Log configuration on mount
+  useEffect(() => {
+    if (rpcUrl) {
+      console.log('[Providers] ======== CONFIGURATION ========');
+      console.log('[Providers] RPC_URL (proxy):', rpcUrl);
+      console.log('[Providers] DIRECT_RPC_URL:', DIRECT_RPC_URL);
+      console.log('[Providers] WSS_URL:', WSS_URL);
+      console.log('[Providers] INDEXER_URL:', INDEXER_URL);
+      console.log('[Providers] NETWORK:', NETWORK);
+      console.log('[Providers] PROGRAM_ID:', PROGRAM_ID.toBase58());
+      console.log('[Providers] HELIUS_API_KEY:', HELIUS_API_KEY ? '***' + HELIUS_API_KEY.slice(-4) : 'undefined');
+      console.log('[Providers] ====================================');
+    }
+  }, [rpcUrl]);
+
   const wallets = useMemo(
     () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
     []
   );
 
+  // Connection config with WebSocket for transaction confirmations
+  const connectionConfig = useMemo(() => ({
+    commitment: 'confirmed' as const,
+    wsEndpoint: WSS_URL,
+  }), []);
+
+  // Log wallet errors for debugging
+  const onError = useCallback((error: WalletError) => {
+    console.error('[Wallet] Error:', {
+      name: error.name,
+      message: error.message,
+    });
+  }, []);
+
+  // Don't render children until endpoint is set to ensure we use the RPC proxy
+  if (!rpcUrl) {
+    return null;
+  }
+
   return (
-    <ConnectionProvider endpoint={RPC_URL}>
-      <WalletProvider wallets={wallets} autoConnect>
+    <ConnectionProvider endpoint={rpcUrl} config={connectionConfig}>
+      <WalletProvider wallets={wallets} autoConnect onError={onError}>
         <WalletModalProvider>
           <CloakCraftWrapper>{children}</CloakCraftWrapper>
         </WalletModalProvider>

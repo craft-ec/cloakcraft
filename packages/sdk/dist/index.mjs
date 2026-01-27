@@ -1,11 +1,26 @@
 import {
   cloakcraft_default
-} from "./chunk-HPPIUFGZ.mjs";
+} from "./chunk-QO6UOFEI.mjs";
+import {
+  DEVNET_LIGHT_TREES,
+  LightClient,
+  LightCommitmentClient,
+  MAINNET_LIGHT_TREES,
+  checkNullifierSpent,
+  checkStealthOwnership,
+  deriveActionNullifier,
+  deriveNullifierKey,
+  deriveSpendingNullifier,
+  deriveStealthPrivateKey,
+  generateStealthAddress,
+  getRandomStateTreeSet,
+  getStateTreeSet
+} from "./chunk-IQYJ7OCA.mjs";
 import {
   buildShieldInstructions,
   buildShieldInstructionsForVersionedTx,
   buildShieldWithProgram
-} from "./chunk-RZYNYNZH.mjs";
+} from "./chunk-MAO47QW7.mjs";
 import {
   buildAddLiquidityWithProgram,
   buildClosePendingOperationWithProgram,
@@ -17,7 +32,7 @@ import {
   canonicalTokenOrder,
   derivePendingOperationPda,
   generateOperationId
-} from "./chunk-FQDVSGRA.mjs";
+} from "./chunk-Y7AZCOB6.mjs";
 import {
   DOMAIN_ACTION_NULLIFIER,
   DOMAIN_COMMITMENT,
@@ -35,6 +50,7 @@ import {
   NOTE_TYPE_POSITION,
   NOTE_TYPE_STANDARD,
   POSITION_COMMITMENT_DOMAIN,
+  babyjubjub_exports,
   bytesToField,
   computeCommitment,
   computeLpCommitment,
@@ -56,6 +72,8 @@ import {
   fieldToBytes,
   generateRandomness,
   initPoseidon,
+  init_babyjubjub,
+  init_poseidon,
   isInSubgroup,
   isOnCurve,
   pointAdd,
@@ -64,6 +82,7 @@ import {
   poseidonHashAsync,
   poseidonHashDomain,
   poseidonHashDomainAsync,
+  poseidon_exports,
   scalarMul,
   serializeEncryptedNote,
   serializeLpNote,
@@ -75,10 +94,10 @@ import {
   verifyCommitment,
   verifyLpCommitment,
   verifyPositionCommitment
-} from "./chunk-S3PRATTB.mjs";
+} from "./chunk-GZDL4HRF.mjs";
 import {
   LightProtocol
-} from "./chunk-2TM5Q5LB.mjs";
+} from "./chunk-E6R2YCRL.mjs";
 import {
   BPS_DIVISOR,
   DEFAULT_FEE_CONFIG,
@@ -94,7 +113,7 @@ import {
   isFeeableOperation,
   isFreeOperation,
   verifyFeeAmount
-} from "./chunk-HAQO2M3W.mjs";
+} from "./chunk-JHGCZB7R.mjs";
 import {
   CIRCUIT_IDS,
   DEVNET_V2_TREES,
@@ -108,46 +127,27 @@ import {
   deriveVaultPda,
   deriveVerificationKeyPda,
   padCircuitId
-} from "./chunk-BZE6X6LW.mjs";
+} from "./chunk-4SXWHU7R.mjs";
 import {
-  __require
-} from "./chunk-Y6FXYEAI.mjs";
+  __require,
+  __toCommonJS
+} from "./chunk-CIESM3BP.mjs";
 
 // src/index.ts
 export * from "@cloakcraft/types";
 
 // src/client.ts
 import {
-  Connection as Connection2,
+  Connection as Connection3,
   PublicKey as PublicKey9,
   Transaction as Transaction2
 } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { Program, AnchorProvider, BN as BN4 } from "@coral-xyz/anchor";
 
-// src/crypto/nullifier.ts
-function deriveNullifierKey(spendingKey) {
-  const zero = new Uint8Array(32);
-  return poseidonHashDomain(DOMAIN_NULLIFIER_KEY, spendingKey, zero);
-}
-function deriveSpendingNullifier(nullifierKey, commitment, leafIndex) {
-  const leafIndexBytes = fieldToBytes(BigInt(leafIndex));
-  return poseidonHashDomain(DOMAIN_SPENDING_NULLIFIER, nullifierKey, commitment, leafIndexBytes);
-}
-function deriveActionNullifier(nullifierKey, commitment, actionDomain) {
-  return poseidonHashDomain(DOMAIN_ACTION_NULLIFIER, nullifierKey, commitment, actionDomain);
-}
-async function checkNullifierSpent(indexerUrl, nullifier) {
-  const nullifierHex = Buffer.from(nullifier).toString("hex");
-  const response = await fetch(`${indexerUrl}/nullifier/${nullifierHex}`);
-  if (!response.ok) {
-    throw new Error("Failed to check nullifier");
-  }
-  const data = await response.json();
-  return data.spent;
-}
-
 // src/wallet.ts
+init_babyjubjub();
+init_poseidon();
 var SUBGROUP_ORDER = 2736030358979909402780800718157159386076813972158567259200215660948447373041n;
 var DOMAIN_IVK = 0x10n;
 var Wallet = class {
@@ -268,6 +268,7 @@ function generateRandomSpendingKey() {
 
 // src/notes.ts
 import { PublicKey } from "@solana/web3.js";
+init_poseidon();
 var NoteManager = class {
   constructor(indexerUrl) {
     this.cachedNotes = /* @__PURE__ */ new Map();
@@ -423,50 +424,7 @@ var NoteManager = class {
 // src/proofs.ts
 import * as fs from "fs";
 import * as path from "path";
-
-// src/crypto/stealth.ts
-var SUBGROUP_ORDER2 = 2736030358979909402780800718157159386076813972158567259200215660948447373041n;
-function generateStealthAddress(recipientPubkey) {
-  const toHex = (arr) => Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("");
-  const ephemeralPrivate = generateRandomScalar();
-  const ephemeralPubkey = derivePublicKey(ephemeralPrivate);
-  const sharedSecret = scalarMul(recipientPubkey, ephemeralPrivate);
-  const factor = deriveStealthFactor(sharedSecret.x);
-  const factorPoint = scalarMul(GENERATOR, factor);
-  const stealthPubkey = addPoints(recipientPubkey, factorPoint);
-  return {
-    stealthAddress: {
-      stealthPubkey,
-      ephemeralPubkey
-    },
-    ephemeralPrivate
-  };
-}
-function deriveStealthPrivateKey(recipientPrivateKey, ephemeralPubkey) {
-  const toHex = (arr) => Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("");
-  const sharedSecret = scalarMul(ephemeralPubkey, recipientPrivateKey);
-  const factor = deriveStealthFactor(sharedSecret.x);
-  const stealthPriv = (recipientPrivateKey + factor) % SUBGROUP_ORDER2;
-  return stealthPriv;
-}
-function checkStealthOwnership(stealthPubkey, ephemeralPubkey, recipientKeypair) {
-  const privateKey = bytesToField(recipientKeypair.spending.sk);
-  const derivedStealthPrivate = deriveStealthPrivateKey(privateKey, ephemeralPubkey);
-  const derivedStealthPubkey = derivePublicKey(derivedStealthPrivate);
-  return bytesToField(derivedStealthPubkey.x) === bytesToField(stealthPubkey.x) && bytesToField(derivedStealthPubkey.y) === bytesToField(stealthPubkey.y);
-}
-function deriveStealthFactor(sharedSecretX) {
-  const hash = poseidonHashDomain(DOMAIN_STEALTH, sharedSecretX);
-  return bytesToField(hash) % SUBGROUP_ORDER2;
-}
-function addPoints(p1, p2) {
-  return pointAdd(p1, p2);
-}
-function generateRandomScalar() {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return bytesToField(bytes) % SUBGROUP_ORDER2;
-}
+init_poseidon();
 
 // src/crypto/field.ts
 var BN254_FIELD_MODULUS = new Uint8Array([
@@ -648,6 +606,12 @@ function bigIntToBytes(value, length) {
     v >>= 8n;
   }
   return bytes;
+}
+async function generateSnarkjsProofFromCircuit(circuitName, inputs, buildDir) {
+  const wasmPath = `${buildDir}/${circuitName}/${circuitName.split("/").pop()}_js/${circuitName.split("/").pop()}.wasm`;
+  const zkeyPath = `${buildDir}/${circuitName}/${circuitName.split("/").pop()}_0001.zkey`;
+  const artifacts = await loadCircomArtifacts(circuitName, wasmPath, zkeyPath);
+  return generateSnarkjsProof(artifacts, inputs);
 }
 function bytesToFieldString(bytes) {
   let result = 0n;
@@ -2084,957 +2048,8 @@ function serializeGroth16Proof(proof) {
   return bytes;
 }
 
-// src/light.ts
-import { PublicKey as PublicKey3 } from "@solana/web3.js";
-import { deriveAddressSeedV2, deriveAddressV2, createRpc, bn } from "@lightprotocol/stateless.js";
-var LightClient = class {
-  constructor(config) {
-    const baseUrl = config.network === "mainnet-beta" ? "https://mainnet.helius-rpc.com" : "https://devnet.helius-rpc.com";
-    this.rpcUrl = `${baseUrl}/?api-key=${config.apiKey}`;
-    this.lightRpc = createRpc(this.rpcUrl, this.rpcUrl, this.rpcUrl);
-  }
-  /**
-   * Get compressed account by address
-   *
-   * Returns null if account doesn't exist (nullifier not spent)
-   */
-  async getCompressedAccount(address) {
-    const addressBase58 = new PublicKey3(address).toBase58();
-    const response = await fetch(this.rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getCompressedAccount",
-        params: {
-          address: addressBase58
-        }
-      })
-    });
-    const result = await response.json();
-    if (result.error) {
-      throw new Error(`Helius RPC error: ${result.error.message}`);
-    }
-    return result.result?.value ?? null;
-  }
-  /**
-   * Check if a nullifier has been spent
-   *
-   * Returns true if the nullifier compressed account exists
-   */
-  async isNullifierSpent(nullifier, programId, addressTree, pool) {
-    const address = this.deriveNullifierAddress(nullifier, programId, addressTree, pool);
-    const account = await this.getCompressedAccount(address);
-    return account !== null;
-  }
-  /**
-   * Batch check if multiple nullifiers have been spent
-   *
-   * Uses getMultipleCompressedAccounts for efficiency (single API call)
-   * Returns a Set of addresses that exist (are spent)
-   */
-  async batchCheckNullifiers(addresses) {
-    if (addresses.length === 0) {
-      return /* @__PURE__ */ new Set();
-    }
-    const response = await fetch(this.rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getMultipleCompressedAccounts",
-        params: {
-          addresses
-        }
-      })
-    });
-    const result = await response.json();
-    if (result.error) {
-      throw new Error(`Helius RPC error: ${result.error.message}`);
-    }
-    const spentSet = /* @__PURE__ */ new Set();
-    const items = result.result?.value?.items ?? [];
-    for (const item of items) {
-      if (item && item.address) {
-        spentSet.add(item.address);
-      }
-    }
-    return spentSet;
-  }
-  /**
-   * Get validity proof for creating a new compressed account
-   *
-   * This proves that the address doesn't exist yet (non-inclusion proof)
-   *
-   * Helius API expects:
-   * - hashes: Array of existing account hashes to verify (optional)
-   * - newAddressesWithTrees: Array of {address, tree} for non-inclusion proofs
-   */
-  async getValidityProof(params) {
-    const newAddressesWithTrees = params.newAddresses.map((addr) => ({
-      address: new PublicKey3(addr).toBase58(),
-      tree: params.addressMerkleTree.toBase58()
-    }));
-    const response = await fetch(this.rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getValidityProof",
-        params: {
-          // Helius expects hashes (for inclusion) and newAddressesWithTrees (for non-inclusion)
-          hashes: params.hashes ?? [],
-          newAddressesWithTrees
-        }
-      })
-    });
-    const result = await response.json();
-    if (result.error) {
-      throw new Error(`failed to get validity proof for hashes ${params.hashes?.join(", ") ?? "[]"}: ${result.error.message}`);
-    }
-    return {
-      compressedProof: result.result.compressedProof,
-      rootIndices: result.result.rootIndices,
-      merkleTrees: result.result.merkleTrees.map((t) => new PublicKey3(t))
-    };
-  }
-  /**
-   * Prepare Light Protocol params for transact instruction
-   */
-  async prepareLightParams(params) {
-    const nullifierAddress = this.deriveNullifierAddress(
-      params.nullifier,
-      params.programId,
-      params.addressMerkleTree,
-      params.pool
-    );
-    const validityProof = await this.getValidityProof({
-      newAddresses: [nullifierAddress],
-      addressMerkleTree: params.addressMerkleTree,
-      stateMerkleTree: params.stateMerkleTree
-    });
-    return {
-      validityProof,
-      addressTreeInfo: {
-        addressMerkleTreeAccountIndex: params.addressMerkleTreeAccountIndex,
-        addressQueueAccountIndex: params.addressQueueAccountIndex
-      },
-      outputTreeIndex: params.outputTreeIndex
-    };
-  }
-  /**
-   * Get remaining accounts needed for Light Protocol CPI
-   *
-   * These accounts must be passed to the transact instruction
-   */
-  async getRemainingAccounts(params) {
-    const LIGHT_SYSTEM_PROGRAM = new PublicKey3("LightSystem111111111111111111111111111111111");
-    const ACCOUNT_COMPRESSION_PROGRAM = new PublicKey3("compr6CUsB5m2jS4Y3831ztGSTnDpnKJTKS95d64XVq");
-    const NOOP_PROGRAM = new PublicKey3("noopb9bkMVfRPU8AsBHBNRs27gxNvyqrDGj3zPqsR");
-    const REGISTERED_PROGRAM_PDA = new PublicKey3("4LfVCK1CgVbS6Xeu1RSMvKWv9NLLdwVBJ64dJpqpKbLi");
-    return [
-      // Light system accounts
-      { pubkey: LIGHT_SYSTEM_PROGRAM, isSigner: false, isWritable: false },
-      { pubkey: ACCOUNT_COMPRESSION_PROGRAM, isSigner: false, isWritable: false },
-      { pubkey: NOOP_PROGRAM, isSigner: false, isWritable: false },
-      { pubkey: REGISTERED_PROGRAM_PDA, isSigner: false, isWritable: false },
-      // Merkle trees
-      { pubkey: params.stateMerkleTree, isSigner: false, isWritable: true },
-      { pubkey: params.addressMerkleTree, isSigner: false, isWritable: true },
-      { pubkey: params.nullifierQueue, isSigner: false, isWritable: true }
-    ];
-  }
-  /**
-   * Derive spend nullifier compressed account address
-   *
-   * Uses Light Protocol's Poseidon-based address derivation.
-   * Must match the on-chain derivation in light_cpi/mod.rs:
-   * Seeds: ["spend_nullifier", pool, nullifier]
-   */
-  deriveNullifierAddress(nullifier, programId, addressTree, pool) {
-    const seeds = pool ? [
-      Buffer.from("spend_nullifier"),
-      pool.toBuffer(),
-      Buffer.from(nullifier)
-    ] : [
-      Buffer.from("spend_nullifier"),
-      Buffer.from(nullifier)
-    ];
-    const seed = deriveAddressSeedV2(seeds);
-    const address = deriveAddressV2(seed, addressTree, programId);
-    return address.toBytes();
-  }
-};
-var DEVNET_LIGHT_TREES = {
-  /** V2 batch address tree from Light SDK getBatchAddressTreeInfo() */
-  addressTree: new PublicKey3("amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx"),
-  /** 5 parallel state tree sets for throughput */
-  stateTrees: [
-    {
-      stateTree: new PublicKey3("bmt1LryLZUMmF7ZtqESaw7wifBXLfXHQYoE4GAmrahU"),
-      outputQueue: new PublicKey3("oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto"),
-      cpiContext: new PublicKey3("cpi15BoVPKgEPw5o8wc2T816GE7b378nMXnhH3Xbq4y")
-    },
-    {
-      stateTree: new PublicKey3("bmt2UxoBxB9xWev4BkLvkGdapsz6sZGkzViPNph7VFi"),
-      outputQueue: new PublicKey3("oq2UkeMsJLfXt2QHzim242SUi3nvjJs8Pn7Eac9H9vg"),
-      cpiContext: new PublicKey3("cpi2yGapXUR3As5SjnHBAVvmApNiLsbeZpF3euWnW6B")
-    },
-    {
-      stateTree: new PublicKey3("bmt3ccLd4bqSVZVeCJnH1F6C8jNygAhaDfxDwePyyGb"),
-      outputQueue: new PublicKey3("oq3AxjekBWgo64gpauB6QtuZNesuv19xrhaC1ZM1THQ"),
-      cpiContext: new PublicKey3("cpi3mbwMpSX8FAGMZVP85AwxqCaQMfEk9Em1v8QK9Rf")
-    },
-    {
-      stateTree: new PublicKey3("bmt4d3p1a4YQgk9PeZv5s4DBUmbF5NxqYpk9HGjQsd8"),
-      outputQueue: new PublicKey3("oq4ypwvVGzCUMoiKKHWh4S1SgZJ9vCvKpcz6RT6A8dq"),
-      cpiContext: new PublicKey3("cpi4yyPDc4bCgHAnsenunGA8Y77j3XEDyjgfyCKgcoc")
-    },
-    {
-      stateTree: new PublicKey3("bmt5yU97jC88YXTuSukYHa8Z5Bi2ZDUtmzfkDTA2mG2"),
-      outputQueue: new PublicKey3("oq5oh5ZR3yGomuQgFduNDzjtGvVWfDRGLuDVjv9a96P"),
-      cpiContext: new PublicKey3("cpi5ZTjdgYpZ1Xr7B1cMLLUE81oTtJbNNAyKary2nV6")
-    }
-  ]
-};
-function getRandomStateTreeSet() {
-  const index = Math.floor(Math.random() * DEVNET_LIGHT_TREES.stateTrees.length);
-  return DEVNET_LIGHT_TREES.stateTrees[index];
-}
-function getStateTreeSet(index) {
-  if (index < 0 || index >= DEVNET_LIGHT_TREES.stateTrees.length) {
-    throw new Error(`Invalid state tree index: ${index}. Must be 0-4.`);
-  }
-  return DEVNET_LIGHT_TREES.stateTrees[index];
-}
-var MAINNET_LIGHT_TREES = {
-  addressTree: new PublicKey3("amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx"),
-  stateTrees: DEVNET_LIGHT_TREES.stateTrees
-};
-var LightCommitmentClient = class extends LightClient {
-  constructor() {
-    super(...arguments);
-    // Cache for decrypted notes - keyed by viewing key hash
-    this.noteCache = /* @__PURE__ */ new Map();
-  }
-  /**
-   * Clear note cache (call when wallet changes)
-   */
-  clearCache() {
-    this.noteCache.clear();
-  }
-  /**
-   * Get cache key from viewing key
-   */
-  getCacheKey(viewingKey) {
-    return viewingKey.toString(16).slice(0, 16);
-  }
-  /**
-   * Get commitment by its address
-   */
-  async getCommitment(pool, commitment, programId, addressTree) {
-    const address = this.deriveCommitmentAddress(pool, commitment, programId, addressTree);
-    return this.getCompressedAccount(address);
-  }
-  /**
-   * Check if a commitment exists in the tree
-   */
-  async commitmentExists(pool, commitment, programId, addressTree) {
-    const account = await this.getCommitment(pool, commitment, programId, addressTree);
-    return account !== null;
-  }
-  /**
-   * Get merkle proof for a commitment using account hash
-   *
-   * This is the preferred method - uses the hash stored during scanning.
-   * Uses Light SDK for proper API handling.
-   */
-  async getMerkleProofByHash(accountHash) {
-    const hashBytes = new PublicKey3(accountHash).toBytes();
-    const hashBn = bn(hashBytes);
-    const proofResult = await this.lightRpc.getCompressedAccountProof(hashBn);
-    const pathElements = proofResult.merkleProof.map((p) => {
-      if (p.toArray) {
-        return new Uint8Array(p.toArray("be", 32));
-      }
-      return new Uint8Array(p);
-    });
-    const pathIndices = this.leafIndexToPathIndices(proofResult.leafIndex, pathElements.length);
-    let rootBytes;
-    if (proofResult.root.toArray) {
-      rootBytes = new Uint8Array(proofResult.root.toArray("be", 32));
-    } else if (proofResult.root instanceof Uint8Array) {
-      rootBytes = proofResult.root;
-    } else if (Array.isArray(proofResult.root)) {
-      rootBytes = new Uint8Array(proofResult.root);
-    } else {
-      rootBytes = new Uint8Array(32);
-    }
-    return {
-      root: rootBytes,
-      pathElements,
-      pathIndices,
-      leafIndex: proofResult.leafIndex
-    };
-  }
-  /**
-   * Get merkle proof for a commitment (legacy - derives address)
-   *
-   * Prefer getMerkleProofByHash if you have the account hash from scanning.
-   */
-  async getCommitmentMerkleProof(pool, commitment, programId, addressTree, _stateMerkleTree) {
-    const address = this.deriveCommitmentAddress(pool, commitment, programId, addressTree);
-    const addressBase58 = new PublicKey3(address).toBase58();
-    const account = await this.getCompressedAccount(address);
-    if (!account) {
-      throw new Error(`Commitment account not found at address: ${addressBase58}`);
-    }
-    return this.getMerkleProofByHash(account.hash);
-  }
-  /**
-   * Prepare Light params for shield instruction
-   */
-  async prepareShieldParams(params) {
-    const address = this.deriveCommitmentAddress(
-      params.pool,
-      params.commitment,
-      params.programId,
-      params.addressMerkleTree
-    );
-    const validityProof = await this.getValidityProof({
-      newAddresses: [address],
-      addressMerkleTree: params.addressMerkleTree,
-      stateMerkleTree: params.stateMerkleTree
-    });
-    return {
-      validityProof,
-      addressTreeInfo: {
-        addressMerkleTreeAccountIndex: params.addressMerkleTreeAccountIndex,
-        addressQueueAccountIndex: params.addressQueueAccountIndex
-      },
-      outputTreeIndex: params.outputTreeIndex
-    };
-  }
-  /**
-   * Derive commitment compressed account address
-   *
-   * Uses Light Protocol's address derivation (same as nullifier).
-   * Seeds: ["commitment", pool, commitment_hash]
-   */
-  deriveCommitmentAddress(pool, commitment, programId, addressTree) {
-    const seeds = [
-      Buffer.from("commitment"),
-      pool.toBuffer(),
-      Buffer.from(commitment)
-    ];
-    const seed = deriveAddressSeedV2(seeds);
-    const address = deriveAddressV2(seed, addressTree, programId);
-    return address.toBytes();
-  }
-  /**
-   * Convert leaf index to path indices (bit representation)
-   */
-  leafIndexToPathIndices(leafIndex, depth) {
-    const indices = [];
-    let idx = leafIndex;
-    for (let i = 0; i < depth; i++) {
-      indices.push(idx & 1);
-      idx >>= 1;
-    }
-    return indices;
-  }
-  // =========================================================================
-  // Note Scanner
-  // =========================================================================
-  /**
-   * Scan for notes belonging to a user and check spent status
-   *
-   * Queries all commitment accounts, decrypts with viewing key,
-   * then checks nullifier status for each note.
-   *
-   * @param viewingKey - User's viewing private key (for decryption)
-   * @param nullifierKey - User's nullifier key (for deriving nullifiers)
-   * @param programId - CloakCraft program ID
-   * @param pool - Pool to scan (optional, scans all if not provided)
-   * @returns Array of notes with spent status
-   */
-  async scanNotesWithStatus(viewingKey, nullifierKey, programId, pool) {
-    await initPoseidon();
-    const notes = await this.scanNotes(viewingKey, programId, pool);
-    if (notes.length === 0) {
-      return [];
-    }
-    const addressTree = DEVNET_LIGHT_TREES.addressTree;
-    const nullifierData = [];
-    for (const note of notes) {
-      let effectiveNullifierKey = nullifierKey;
-      if (note.stealthEphemeralPubkey) {
-        const stealthSpendingKey = deriveStealthPrivateKey(viewingKey, note.stealthEphemeralPubkey);
-        effectiveNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
-      }
-      const nullifier = deriveSpendingNullifier(
-        effectiveNullifierKey,
-        note.commitment,
-        note.leafIndex
-      );
-      const address = this.deriveNullifierAddress(nullifier, programId, addressTree, note.pool);
-      const addressStr = new PublicKey3(address).toBase58();
-      nullifierData.push({ note, nullifier, address });
-    }
-    const addresses = nullifierData.map((d) => new PublicKey3(d.address).toBase58());
-    const spentSet = await this.batchCheckNullifiers(addresses);
-    return nullifierData.map(({ note, nullifier, address }) => {
-      const addressStr = new PublicKey3(address).toBase58();
-      const isSpent = spentSet.has(addressStr);
-      return {
-        ...note,
-        spent: isSpent,
-        nullifier
-      };
-    });
-  }
-  /**
-   * Get only unspent notes (available balance)
-   */
-  async getUnspentNotes(viewingKey, nullifierKey, programId, pool) {
-    const notes = await this.scanNotesWithStatus(viewingKey, nullifierKey, programId, pool);
-    return notes.filter((n) => !n.spent);
-  }
-  /**
-   * Calculate total balance from unspent notes
-   */
-  async getBalance(viewingKey, nullifierKey, programId, pool) {
-    const unspent = await this.getUnspentNotes(viewingKey, nullifierKey, programId, pool);
-    return unspent.reduce((sum, note) => sum + note.amount, 0n);
-  }
-  /**
-   * Scan for notes belonging to a user
-   *
-   * Queries all commitment accounts for a pool and attempts to decrypt
-   * the encrypted notes with the user's viewing key.
-   *
-   * @param viewingKey - User's viewing private key (for decryption)
-   * @param programId - CloakCraft program ID
-   * @param pool - Pool to scan (optional, scans all if not provided)
-   * @returns Array of decrypted notes owned by the user
-   */
-  async scanNotes(viewingKey, programId, pool) {
-    const accounts = await this.getCommitmentAccounts(programId, pool);
-    const cacheKey = this.getCacheKey(viewingKey);
-    if (!this.noteCache.has(cacheKey)) {
-      this.noteCache.set(cacheKey, /* @__PURE__ */ new Map());
-    }
-    const cache = this.noteCache.get(cacheKey);
-    const COMMITMENT_DISCRIMINATOR_APPROX = 15491678376909513e3;
-    const decryptedNotes = [];
-    for (const account of accounts) {
-      if (!account.data?.data) {
-        continue;
-      }
-      if (cache.has(account.hash)) {
-        const cachedNote = cache.get(account.hash);
-        if (cachedNote) {
-          decryptedNotes.push(cachedNote);
-        }
-        continue;
-      }
-      const disc = account.data.discriminator;
-      console.log(`[scanNotes] Account ${account.hash.slice(0, 8)}... discriminator: ${disc}`);
-      if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1e3) {
-        console.log(`[scanNotes] SKIPPED: discriminator mismatch (expected ~${COMMITMENT_DISCRIMINATOR_APPROX})`);
-        cache.set(account.hash, null);
-        continue;
-      }
-      const dataLen = atob(account.data.data).length;
-      console.log(`[scanNotes] Data length: ${dataLen} (need >= 396)`);
-      if (dataLen < 396) {
-        console.log(`[scanNotes] SKIPPED: data too short`);
-        cache.set(account.hash, null);
-        continue;
-      }
-      try {
-        const parsed = this.parseCommitmentAccountData(account.data.data);
-        if (!parsed) {
-          console.log(`[scanNotes] SKIPPED: failed to parse commitment account`);
-          cache.set(account.hash, null);
-          continue;
-        }
-        const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
-        if (!encryptedNote) {
-          console.log(`[scanNotes] SKIPPED: failed to deserialize encrypted note`);
-          cache.set(account.hash, null);
-          continue;
-        }
-        let decryptionKey;
-        if (parsed.stealthEphemeralPubkey) {
-          decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
-        } else {
-          decryptionKey = viewingKey;
-        }
-        const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
-        console.log(`[scanNotes] Decryption result: ${decryptResult ? `SUCCESS (${decryptResult.type})` : "failed"}`);
-        if (!decryptResult) {
-          cache.set(account.hash, null);
-          continue;
-        }
-        let recomputed;
-        let noteAmount;
-        if (decryptResult.type === "standard") {
-          recomputed = computeCommitment(decryptResult.note);
-          noteAmount = decryptResult.note.amount;
-        } else if (decryptResult.type === "position") {
-          recomputed = computePositionCommitment(decryptResult.note);
-          noteAmount = decryptResult.note.margin;
-        } else if (decryptResult.type === "lp") {
-          recomputed = computeLpCommitment(decryptResult.note);
-          noteAmount = decryptResult.note.lpAmount;
-        } else {
-          cache.set(account.hash, null);
-          continue;
-        }
-        const matches = Buffer.from(recomputed).toString("hex") === Buffer.from(parsed.commitment).toString("hex");
-        console.log(`[scanNotes] Commitment verification: ${matches ? "MATCH" : "MISMATCH"}`);
-        if (!matches) {
-          console.log(`[scanNotes]   Expected: ${Buffer.from(parsed.commitment).toString("hex").slice(0, 16)}...`);
-          console.log(`[scanNotes]   Got: ${Buffer.from(recomputed).toString("hex").slice(0, 16)}...`);
-          cache.set(account.hash, null);
-          continue;
-        }
-        if (noteAmount === 0n) {
-          console.log(`[scanNotes] SKIPPED: zero amount`);
-          cache.set(account.hash, null);
-          continue;
-        }
-        console.log(`[scanNotes] FOUND valid note: type=${decryptResult.type}, amount=${noteAmount}`);
-        if (decryptResult.type !== "standard") {
-          console.log(`[scanNotes] SKIPPED: non-standard note type (use scanPositionNotes or scanLpNotes)`);
-          cache.set(account.hash, null);
-          continue;
-        }
-        const note = decryptResult.note;
-        const decryptedNote = {
-          ...note,
-          commitment: parsed.commitment,
-          leafIndex: parsed.leafIndex,
-          pool: new PublicKey3(parsed.pool),
-          accountHash: account.hash,
-          // Store for merkle proof fetching
-          stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? void 0
-          // Store for stealth key derivation
-        };
-        cache.set(account.hash, decryptedNote);
-        decryptedNotes.push(decryptedNote);
-      } catch (err) {
-        cache.set(account.hash, null);
-        continue;
-      }
-    }
-    return decryptedNotes;
-  }
-  /**
-   * Get all commitment compressed accounts
-   *
-   * @param programId - CloakCraft program ID
-   * @param poolPda - Pool PDA to filter by (optional). Note: pass the pool PDA, not the token mint.
-   */
-  async getCommitmentAccounts(programId, poolPda) {
-    console.log(`[getCommitmentAccounts] Querying with pool filter: ${poolPda?.toBase58() ?? "none"}`);
-    const response = await fetch(this["rpcUrl"], {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getCompressedAccountsByOwner",
-        params: {
-          owner: programId.toBase58(),
-          // Pool is first 32 bytes of data (Helius provides discriminator separately)
-          filters: poolPda ? [
-            { memcmp: { offset: 0, bytes: poolPda.toBase58() } }
-          ] : void 0
-        }
-      })
-    });
-    const result = await response.json();
-    if (result.error) {
-      throw new Error(`Helius RPC error: ${result.error.message}`);
-    }
-    const items = result.result?.value?.items ?? result.result?.items ?? [];
-    console.log(`[getCommitmentAccounts] Helius returned ${items.length} accounts`);
-    if (poolPda && items.length === 0) {
-      const debugResponse = await fetch(this["rpcUrl"], {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "getCompressedAccountsByOwner",
-          params: { owner: programId.toBase58() }
-        })
-      });
-      const debugResult = await debugResponse.json();
-      const totalItems = debugResult.result?.value?.items ?? debugResult.result?.items ?? [];
-      console.log(`[getCommitmentAccounts] DEBUG: Total accounts without filter: ${totalItems.length}`);
-      if (totalItems.length > 0) {
-        console.log(`[getCommitmentAccounts] DEBUG: First 3 account pools:`);
-        for (let i = 0; i < Math.min(3, totalItems.length); i++) {
-          const item = totalItems[i];
-          if (item.data?.data) {
-            try {
-              const dataBytes = Uint8Array.from(atob(item.data.data), (c) => c.charCodeAt(0));
-              if (dataBytes.length >= 32) {
-                const storedPool = new PublicKey3(dataBytes.slice(0, 32));
-                console.log(`  [${i}] Pool: ${storedPool.toBase58()}`);
-              }
-            } catch (e) {
-              console.log(`  [${i}] Failed to parse pool`);
-            }
-          }
-        }
-      }
-    }
-    return items;
-  }
-  /**
-   * Parse commitment account data from base64
-   *
-   * Note: Helius returns discriminator separately, so data doesn't include it
-   * Layout (after discriminator) - matches CommitmentAccount struct:
-   * - pool: 32 bytes
-   * - commitment: 32 bytes
-   * - leaf_index: 8 bytes (u64)
-   * - stealth_ephemeral_pubkey: 64 bytes (X + Y coordinates)
-   * - encrypted_note: 200 bytes (FIXED SIZE array)
-   * - encrypted_note_len: 2 bytes (u16) - actual length of data in encrypted_note
-   * - created_at: 8 bytes (i64)
-   *
-   * Total: 32 + 32 + 8 + 64 + 200 + 2 + 8 = 346 bytes
-   */
-  parseCommitmentAccountData(dataBase64) {
-    try {
-      const binaryString = atob(dataBase64);
-      const data = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        data[i] = binaryString.charCodeAt(i);
-      }
-      const MIN_SIZE = 396;
-      const MAX_NOTE_SIZE = 250;
-      if (data.length < MIN_SIZE) {
-        console.log(`[parseCommitmentAccountData] Data too short: ${data.length} < ${MIN_SIZE}`);
-        return null;
-      }
-      const pool = data.slice(0, 32);
-      const commitment = data.slice(32, 64);
-      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-      const leafIndex = Number(view.getBigUint64(64, true));
-      const ephemeralX = data.slice(72, 104);
-      const ephemeralY = data.slice(104, 136);
-      const isNonZero = ephemeralX.some((b) => b !== 0) || ephemeralY.some((b) => b !== 0);
-      const stealthEphemeralPubkey = isNonZero ? { x: new Uint8Array(ephemeralX), y: new Uint8Array(ephemeralY) } : null;
-      const encryptedNoteLen = view.getUint16(386, true);
-      if (encryptedNoteLen > MAX_NOTE_SIZE) {
-        console.log(`[parseCommitmentAccountData] Invalid note length: ${encryptedNoteLen} > ${MAX_NOTE_SIZE}`);
-        return null;
-      }
-      const encryptedNote = data.slice(136, 136 + encryptedNoteLen);
-      return {
-        pool: new Uint8Array(pool),
-        commitment: new Uint8Array(commitment),
-        leafIndex,
-        stealthEphemeralPubkey,
-        encryptedNote: new Uint8Array(encryptedNote)
-      };
-    } catch (err) {
-      return null;
-    }
-  }
-  /**
-   * Deserialize encrypted note from bytes
-   *
-   * Format:
-   * - ephemeral_pubkey_x: 32 bytes
-   * - ephemeral_pubkey_y: 32 bytes
-   * - ciphertext_len: 4 bytes (u32 LE)
-   * - ciphertext: variable (includes 12-byte nonce)
-   * - tag: 16 bytes
-   */
-  deserializeEncryptedNote(data) {
-    try {
-      if (data.length < 32 + 32 + 4 + 16) {
-        return null;
-      }
-      let offset = 0;
-      const ephemeralX = data.slice(offset, offset + 32);
-      offset += 32;
-      const ephemeralY = data.slice(offset, offset + 32);
-      offset += 32;
-      const ciphertextLen = new DataView(data.buffer, data.byteOffset + offset).getUint32(0, true);
-      offset += 4;
-      const ciphertext = data.slice(offset, offset + ciphertextLen);
-      offset += ciphertextLen;
-      const tag = data.slice(offset, offset + 16);
-      const ephemeralPubkey = {
-        x: new Uint8Array(ephemeralX),
-        y: new Uint8Array(ephemeralY)
-      };
-      return {
-        ephemeralPubkey,
-        ciphertext: new Uint8Array(ciphertext),
-        tag: new Uint8Array(tag)
-      };
-    } catch {
-      return null;
-    }
-  }
-  // =========================================================================
-  // Position Note Scanner (Perps)
-  // =========================================================================
-  /**
-   * Scan for position notes belonging to a user
-   *
-   * Similar to scanNotes but specifically for perps position commitments.
-   * Uses the position commitment formula for verification.
-   *
-   * @param viewingKey - User's viewing private key (for decryption)
-   * @param programId - CloakCraft program ID
-   * @param positionPool - Position pool to scan
-   * @returns Array of decrypted position notes owned by the user
-   */
-  async scanPositionNotes(viewingKey, programId, positionPool) {
-    await initPoseidon();
-    const accounts = await this.getCommitmentAccounts(programId, positionPool);
-    console.log(`[scanPositionNotes] Found ${accounts.length} accounts in position pool`);
-    const COMMITMENT_DISCRIMINATOR_APPROX = 15491678376909513e3;
-    const positionNotes = [];
-    for (const account of accounts) {
-      if (!account.data?.data) {
-        continue;
-      }
-      const disc = account.data.discriminator;
-      if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1e3) {
-        continue;
-      }
-      const dataLen = atob(account.data.data).length;
-      if (dataLen < 346) {
-        continue;
-      }
-      try {
-        const parsed = this.parseCommitmentAccountData(account.data.data);
-        if (!parsed) continue;
-        const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
-        if (!encryptedNote) continue;
-        let decryptionKey;
-        if (parsed.stealthEphemeralPubkey) {
-          decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
-        } else {
-          decryptionKey = viewingKey;
-        }
-        const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
-        if (!decryptResult || decryptResult.type !== "position") {
-          continue;
-        }
-        const recomputed = computePositionCommitment(decryptResult.note);
-        const matches = Buffer.from(recomputed).toString("hex") === Buffer.from(parsed.commitment).toString("hex");
-        if (!matches) {
-          console.log(`[scanPositionNotes] Commitment mismatch for account ${account.hash.slice(0, 8)}...`);
-          console.log(`  Stored commitment:    ${Buffer.from(parsed.commitment).toString("hex")}`);
-          console.log(`  Recomputed commitment: ${Buffer.from(recomputed).toString("hex")}`);
-          console.log(`  Note fields:`);
-          console.log(`    stealthPubX: ${Buffer.from(decryptResult.note.stealthPubX).toString("hex").slice(0, 16)}...`);
-          console.log(`    marketId: ${Buffer.from(decryptResult.note.marketId).toString("hex")}`);
-          console.log(`    isLong: ${decryptResult.note.isLong}`);
-          console.log(`    margin: ${decryptResult.note.margin}`);
-          console.log(`    size: ${decryptResult.note.size}`);
-          console.log(`    leverage: ${decryptResult.note.leverage}`);
-          console.log(`    entryPrice: ${decryptResult.note.entryPrice}`);
-          console.log(`    randomness: ${Buffer.from(decryptResult.note.randomness).toString("hex").slice(0, 16)}...`);
-          continue;
-        }
-        if (decryptResult.note.margin === 0n) {
-          continue;
-        }
-        console.log(`[scanPositionNotes] FOUND valid position: margin=${decryptResult.note.margin}, size=${decryptResult.note.size}`);
-        const scannedNote = {
-          ...decryptResult.note,
-          spent: false,
-          // Will be set by scanPositionNotesWithStatus
-          nullifier: new Uint8Array(32),
-          // Will be computed by scanPositionNotesWithStatus
-          commitment: parsed.commitment,
-          leafIndex: parsed.leafIndex,
-          pool: positionPool,
-          accountHash: account.hash,
-          stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? void 0
-        };
-        positionNotes.push(scannedNote);
-      } catch {
-        continue;
-      }
-    }
-    return positionNotes;
-  }
-  /**
-   * Scan for position notes with spent status
-   */
-  async scanPositionNotesWithStatus(viewingKey, nullifierKey, programId, positionPool) {
-    const notes = await this.scanPositionNotes(viewingKey, programId, positionPool);
-    if (notes.length === 0) {
-      return [];
-    }
-    const addressTree = DEVNET_LIGHT_TREES.addressTree;
-    const nullifierData = [];
-    for (const note of notes) {
-      let effectiveNullifierKey = nullifierKey;
-      if (note.stealthEphemeralPubkey) {
-        const stealthSpendingKey = deriveStealthPrivateKey(viewingKey, note.stealthEphemeralPubkey);
-        effectiveNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
-      }
-      const nullifier = deriveSpendingNullifier(
-        effectiveNullifierKey,
-        note.commitment,
-        note.leafIndex
-      );
-      const address = this.deriveNullifierAddress(nullifier, programId, addressTree, note.pool);
-      nullifierData.push({ note, nullifier, address });
-    }
-    const addresses = nullifierData.map((d) => new PublicKey3(d.address).toBase58());
-    const spentSet = await this.batchCheckNullifiers(addresses);
-    return nullifierData.map(({ note, nullifier, address }) => {
-      const addressStr = new PublicKey3(address).toBase58();
-      return {
-        ...note,
-        spent: spentSet.has(addressStr),
-        nullifier
-      };
-    });
-  }
-  /**
-   * Get unspent position notes
-   */
-  async getUnspentPositionNotes(viewingKey, nullifierKey, programId, positionPool) {
-    const notes = await this.scanPositionNotesWithStatus(viewingKey, nullifierKey, programId, positionPool);
-    return notes.filter((n) => !n.spent);
-  }
-  // =========================================================================
-  // LP Note Scanner (Perps)
-  // =========================================================================
-  /**
-   * Scan for LP notes belonging to a user
-   *
-   * Similar to scanNotes but specifically for perps LP commitments.
-   * Uses the LP commitment formula for verification.
-   *
-   * @param viewingKey - User's viewing private key (for decryption)
-   * @param programId - CloakCraft program ID
-   * @param lpPool - LP pool to scan
-   * @returns Array of decrypted LP notes owned by the user
-   */
-  async scanLpNotes(viewingKey, programId, lpPool) {
-    await initPoseidon();
-    const accounts = await this.getCommitmentAccounts(programId, lpPool);
-    console.log(`[scanLpNotes] Found ${accounts.length} accounts in LP pool`);
-    const COMMITMENT_DISCRIMINATOR_APPROX = 15491678376909513e3;
-    const lpNotes = [];
-    for (const account of accounts) {
-      if (!account.data?.data) {
-        continue;
-      }
-      const disc = account.data.discriminator;
-      if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1e3) {
-        continue;
-      }
-      const dataLen = atob(account.data.data).length;
-      if (dataLen < 346) {
-        continue;
-      }
-      try {
-        const parsed = this.parseCommitmentAccountData(account.data.data);
-        if (!parsed) continue;
-        const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
-        if (!encryptedNote) continue;
-        let decryptionKey;
-        if (parsed.stealthEphemeralPubkey) {
-          decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
-        } else {
-          decryptionKey = viewingKey;
-        }
-        const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
-        if (!decryptResult || decryptResult.type !== "lp") {
-          continue;
-        }
-        const recomputed = computeLpCommitment(decryptResult.note);
-        const matches = Buffer.from(recomputed).toString("hex") === Buffer.from(parsed.commitment).toString("hex");
-        if (!matches) {
-          console.log(`[scanLpNotes] Commitment mismatch for account ${account.hash.slice(0, 8)}...`);
-          continue;
-        }
-        if (decryptResult.note.lpAmount === 0n) {
-          continue;
-        }
-        console.log(`[scanLpNotes] FOUND valid LP note: lpAmount=${decryptResult.note.lpAmount}`);
-        const scannedNote = {
-          ...decryptResult.note,
-          spent: false,
-          nullifier: new Uint8Array(32),
-          commitment: parsed.commitment,
-          leafIndex: parsed.leafIndex,
-          pool: lpPool,
-          accountHash: account.hash,
-          stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? void 0
-        };
-        lpNotes.push(scannedNote);
-      } catch {
-        continue;
-      }
-    }
-    return lpNotes;
-  }
-  /**
-   * Scan for LP notes with spent status
-   */
-  async scanLpNotesWithStatus(viewingKey, nullifierKey, programId, lpPool) {
-    const notes = await this.scanLpNotes(viewingKey, programId, lpPool);
-    if (notes.length === 0) {
-      return [];
-    }
-    const addressTree = DEVNET_LIGHT_TREES.addressTree;
-    const nullifierData = [];
-    for (const note of notes) {
-      let effectiveNullifierKey = nullifierKey;
-      if (note.stealthEphemeralPubkey) {
-        const stealthSpendingKey = deriveStealthPrivateKey(viewingKey, note.stealthEphemeralPubkey);
-        effectiveNullifierKey = deriveNullifierKey(fieldToBytes(stealthSpendingKey));
-      }
-      const nullifier = deriveSpendingNullifier(
-        effectiveNullifierKey,
-        note.commitment,
-        note.leafIndex
-      );
-      const address = this.deriveNullifierAddress(nullifier, programId, addressTree, note.pool);
-      nullifierData.push({ note, nullifier, address });
-    }
-    const addresses = nullifierData.map((d) => new PublicKey3(d.address).toBase58());
-    const spentSet = await this.batchCheckNullifiers(addresses);
-    return nullifierData.map(({ note, nullifier, address }) => {
-      const addressStr = new PublicKey3(address).toBase58();
-      return {
-        ...note,
-        spent: spentSet.has(addressStr),
-        nullifier
-      };
-    });
-  }
-  /**
-   * Get unspent LP notes
-   */
-  async getUnspentLpNotes(viewingKey, nullifierKey, programId, lpPool) {
-    const notes = await this.scanLpNotesWithStatus(viewingKey, nullifierKey, programId, lpPool);
-    return notes.filter((n) => !n.spent);
-  }
-};
+// src/client.ts
+init_poseidon();
 
 // src/pyth.ts
 var PYTH_FEED_IDS = {
@@ -3262,7 +2277,7 @@ function getPythService(connection) {
 
 // src/instructions/transact.ts
 import {
-  PublicKey as PublicKey4,
+  PublicKey as PublicKey3,
   ComputeBudgetProgram
 } from "@solana/web3.js";
 import {
@@ -3342,7 +2357,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     encryptedNotes.push(Buffer.alloc(0));
     outputAmounts.push(0n);
   }
-  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-CZJGDH63.mjs");
+  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-ZK5X5ODM.mjs");
   const operationId = generateOperationId3(
     nullifier,
     outputCommitments[0],
@@ -3372,11 +2387,11 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
   console.log("[Transact] Fetching nullifier non-inclusion proof...");
   const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, nullifier);
   const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-  const commitmentTree = new PublicKey4(commitmentProof.treeInfo.tree);
-  const commitmentQueue = new PublicKey4(commitmentProof.treeInfo.queue);
-  const commitmentCpiContext = commitmentProof.treeInfo.cpiContext ? new PublicKey4(commitmentProof.treeInfo.cpiContext) : null;
+  const commitmentTree = new PublicKey3(commitmentProof.treeInfo.tree);
+  const commitmentQueue = new PublicKey3(commitmentProof.treeInfo.queue);
+  const commitmentCpiContext = commitmentProof.treeInfo.cpiContext ? new PublicKey3(commitmentProof.treeInfo.cpiContext) : null;
   const { SystemAccountMetaConfig, PackedAccounts } = await import("@lightprotocol/stateless.js");
-  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-RPCVNJXD.mjs");
+  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-ZW3YX7HL.mjs");
   const systemConfig = SystemAccountMetaConfig.new(lightProtocol.programId);
   const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
   const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES2.OUTPUT_QUEUE);
@@ -3392,7 +2407,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
   console.log("[Transact] ADDRESS tree (current):", addressTree.toBase58(), "index:", addressTreeIndex);
   const { remainingAccounts: finalRemainingAccounts } = packedAccounts.toAccountMetas();
   const lightParams = {
-    commitmentAccountHash: Array.from(new PublicKey4(params.input.accountHash).toBytes()),
+    commitmentAccountHash: Array.from(new PublicKey3(params.input.accountHash).toBytes()),
     commitmentMerkleContext: {
       merkleTreePubkeyIndex: commitmentStateTreeIndex,
       // STATE tree from proof (for data/merkle verification)
@@ -3470,7 +2485,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: new PublicKey4("11111111111111111111111111111111")
+    systemProgram: new PublicKey3("11111111111111111111111111111111")
   }).preInstructions([
     ComputeBudgetProgram.setComputeUnitLimit({ units: 45e4 }),
     // Reduced: smaller PDA (192 bytes saved) = less serialization
@@ -3621,7 +2636,7 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
   }
   const [poolPda] = derivePoolPda(params.tokenMint, programId);
   const [vkPda] = deriveVerificationKeyPda(circuitId, programId);
-  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-CZJGDH63.mjs");
+  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-ZK5X5ODM.mjs");
   const operationId = generateOperationId3(
     params.nullifiers[0],
     params.outputCommitment,
@@ -3649,7 +2664,7 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
     encryptedNote: new Uint8Array(encryptedNote)
   }];
   const { SystemAccountMetaConfig, PackedAccounts } = await import("@lightprotocol/stateless.js");
-  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-RPCVNJXD.mjs");
+  const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-ZW3YX7HL.mjs");
   const systemConfig = SystemAccountMetaConfig.new(lightProtocol.programId);
   const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
   const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES2.OUTPUT_QUEUE);
@@ -3659,12 +2674,12 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
     params.inputs.map(async (input, i) => {
       console.log(`[Consolidation] Fetching proof for input ${i}: ${input.accountHash}`);
       const commitmentProof = await lightProtocol.getInclusionProofByHash(input.accountHash);
-      const commitmentTree = new PublicKey4(commitmentProof.treeInfo.tree);
-      const commitmentQueue = new PublicKey4(commitmentProof.treeInfo.queue);
+      const commitmentTree = new PublicKey3(commitmentProof.treeInfo.tree);
+      const commitmentQueue = new PublicKey3(commitmentProof.treeInfo.queue);
       const treeIndex = packedAccounts.insertOrGet(commitmentTree);
       const queueIndex = packedAccounts.insertOrGet(commitmentQueue);
       if (commitmentProof.treeInfo.cpiContext) {
-        packedAccounts.insertOrGet(new PublicKey4(commitmentProof.treeInfo.cpiContext));
+        packedAccounts.insertOrGet(new PublicKey3(commitmentProof.treeInfo.cpiContext));
       }
       return {
         commitmentProof,
@@ -3701,7 +2716,7 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
     verificationKey: vkPda,
     pendingOperation: pendingOpPda,
     relayer: params.relayer,
-    systemProgram: new PublicKey4("11111111111111111111111111111111")
+    systemProgram: new PublicKey3("11111111111111111111111111111111")
   }).preInstructions([
     ComputeBudgetProgram.setComputeUnitLimit({ units: 45e4 }),
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5e4 })
@@ -3710,7 +2725,7 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
     params.inputs.map(async (input, i) => {
       const proof = inputProofs[i];
       const lightParams = {
-        commitmentAccountHash: Array.from(new PublicKey4(input.accountHash).toBytes()),
+        commitmentAccountHash: Array.from(new PublicKey3(input.accountHash).toBytes()),
         commitmentMerkleContext: {
           merkleTreePubkeyIndex: proof.treeIndex,
           queuePubkeyIndex: proof.queueIndex,
@@ -3904,11 +2919,11 @@ async function initializePool(program, tokenMint, authority, payer) {
 
 // src/instructions/market.ts
 import {
-  PublicKey as PublicKey6,
+  PublicKey as PublicKey5,
   ComputeBudgetProgram as ComputeBudgetProgram3
 } from "@solana/web3.js";
 function deriveOrderPda(orderId, programId) {
-  return PublicKey6.findProgramAddressSync(
+  return PublicKey5.findProgramAddressSync(
     [Buffer.from("order"), Buffer.from(orderId)],
     programId
   );
@@ -4278,12 +3293,13 @@ function isValidPositionSize(positionSize, market) {
 
 // src/perps/instructions.ts
 import {
-  PublicKey as PublicKey7,
+  PublicKey as PublicKey6,
   ComputeBudgetProgram as ComputeBudgetProgram4,
   SystemProgram as SystemProgram2
 } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID as TOKEN_PROGRAM_ID2 } from "@solana/spl-token";
 import BN3 from "bn.js";
+init_poseidon();
 var PYTH_FEED_IDS2 = {
   /** SOL/USD price feed */
   SOL_USD: new Uint8Array([
@@ -4440,25 +3456,25 @@ var PERPS_CIRCUIT_IDS = {
   LIQUIDATE: "perps_liquidate"
 };
 function derivePerpsPoolPda(poolId, programId = PROGRAM_ID) {
-  return PublicKey7.findProgramAddressSync(
+  return PublicKey6.findProgramAddressSync(
     [PERPS_SEEDS.PERPS_POOL, poolId.toBuffer()],
     programId
   );
 }
 function derivePerpsMarketPda(perpsPool, marketId, programId = PROGRAM_ID) {
-  return PublicKey7.findProgramAddressSync(
+  return PublicKey6.findProgramAddressSync(
     [PERPS_SEEDS.PERPS_MARKET, perpsPool.toBuffer(), Buffer.from(marketId)],
     programId
   );
 }
 function derivePerpsVaultPda(perpsPool, tokenMint, programId = PROGRAM_ID) {
-  return PublicKey7.findProgramAddressSync(
+  return PublicKey6.findProgramAddressSync(
     [PERPS_SEEDS.PERPS_VAULT, perpsPool.toBuffer(), tokenMint.toBuffer()],
     programId
   );
 }
 function derivePerpsLpMintPda(perpsPool, programId = PROGRAM_ID) {
-  return PublicKey7.findProgramAddressSync(
+  return PublicKey6.findProgramAddressSync(
     [PERPS_SEEDS.PERPS_LP_MINT, perpsPool.toBuffer()],
     programId
   );
@@ -4889,8 +3905,8 @@ async function buildInitializePerpsPoolWithProgram(program, params) {
 }
 async function buildAddTokenToPoolWithProgram(program, params) {
   const programId = program.programId;
-  const { getAssociatedTokenAddressSync: getAssociatedTokenAddressSync3 } = await import("@solana/spl-token");
-  const vaultPda = getAssociatedTokenAddressSync3(params.tokenMint, params.perpsPool, true);
+  const { getAssociatedTokenAddressSync: getAssociatedTokenAddressSync4 } = await import("@solana/spl-token");
+  const vaultPda = getAssociatedTokenAddressSync4(params.tokenMint, params.perpsPool, true);
   const tx = await program.methods.addTokenToPool(Array.from(params.pythFeedId)).accountsStrict({
     perpsPool: params.perpsPool,
     tokenMint: params.tokenMint,
@@ -4899,7 +3915,7 @@ async function buildAddTokenToPoolWithProgram(program, params) {
     payer: params.payer,
     systemProgram: SystemProgram2.programId,
     tokenProgram: TOKEN_PROGRAM_ID2,
-    associatedTokenProgram: new PublicKey7("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+    associatedTokenProgram: new PublicKey6("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
   });
   return { tx };
 }
@@ -4926,6 +3942,308 @@ async function buildUpdateBorrowFeesWithProgram(program, perpsPool, keeper) {
     keeper
   });
   return { tx };
+}
+
+// src/perps/oracle.ts
+import { PublicKey as PublicKey7 } from "@solana/web3.js";
+var PERPS_PYTH_FEED_IDS = {
+  /** SOL/USD price feed */
+  SOL_USD: new Uint8Array([
+    239,
+    13,
+    139,
+    111,
+    218,
+    44,
+    235,
+    164,
+    29,
+    161,
+    93,
+    64,
+    149,
+    209,
+    218,
+    57,
+    42,
+    13,
+    47,
+    142,
+    208,
+    198,
+    199,
+    188,
+    15,
+    76,
+    250,
+    200,
+    194,
+    128,
+    181,
+    109
+  ]),
+  /** BTC/USD price feed */
+  BTC_USD: new Uint8Array([
+    230,
+    45,
+    246,
+    200,
+    180,
+    168,
+    95,
+    225,
+    166,
+    125,
+    180,
+    77,
+    193,
+    45,
+    229,
+    219,
+    51,
+    15,
+    122,
+    198,
+    107,
+    114,
+    220,
+    101,
+    138,
+    254,
+    223,
+    15,
+    74,
+    65,
+    91,
+    67
+  ]),
+  /** ETH/USD price feed */
+  ETH_USD: new Uint8Array([
+    255,
+    97,
+    73,
+    26,
+    147,
+    17,
+    18,
+    221,
+    241,
+    189,
+    129,
+    71,
+    205,
+    27,
+    100,
+    19,
+    117,
+    247,
+    159,
+    88,
+    37,
+    18,
+    109,
+    102,
+    84,
+    128,
+    135,
+    70,
+    52,
+    253,
+    10,
+    206
+  ]),
+  /** USDC/USD price feed (stablecoin) */
+  USDC_USD: new Uint8Array([
+    234,
+    160,
+    32,
+    198,
+    28,
+    196,
+    121,
+    113,
+    42,
+    53,
+    122,
+    181,
+    228,
+    199,
+    154,
+    152,
+    237,
+    151,
+    158,
+    212,
+    48,
+    36,
+    247,
+    80,
+    86,
+    190,
+    45,
+    184,
+    191,
+    106,
+    67,
+    88
+  ]),
+  /** USDT/USD price feed */
+  USDT_USD: new Uint8Array([
+    43,
+    137,
+    185,
+    220,
+    143,
+    223,
+    159,
+    52,
+    18,
+    77,
+    178,
+    41,
+    55,
+    101,
+    214,
+    31,
+    89,
+    53,
+    44,
+    105,
+    254,
+    241,
+    95,
+    51,
+    195,
+    144,
+    239,
+    22,
+    144,
+    62,
+    56,
+    241
+  ])
+};
+function getFeedIdBySymbol(symbol) {
+  const symbolToFeed = {
+    "SOL": PERPS_PYTH_FEED_IDS.SOL_USD,
+    "BTC": PERPS_PYTH_FEED_IDS.BTC_USD,
+    "ETH": PERPS_PYTH_FEED_IDS.ETH_USD,
+    "USDC": PERPS_PYTH_FEED_IDS.USDC_USD,
+    "USDT": PERPS_PYTH_FEED_IDS.USDT_USD
+  };
+  return symbolToFeed[symbol.toUpperCase()];
+}
+async function fetchPythPrice(feedId, hermesUrl = "https://hermes.pyth.network") {
+  const feedIdHex = feedIdToHex(feedId);
+  const response = await fetch(
+    `${hermesUrl}/v2/updates/price/latest?ids[]=${feedIdHex}`
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Pyth price: ${response.statusText}`);
+  }
+  const data = await response.json();
+  if (!data?.parsed?.length) {
+    throw new Error(`No price available for feed ${feedIdHex}`);
+  }
+  const parsed = data.parsed[0].price;
+  return {
+    price: BigInt(parsed.price),
+    confidence: BigInt(parsed.conf),
+    expo: parsed.expo,
+    publishTime: parsed.publish_time
+  };
+}
+async function fetchPythPriceUsd(feedId, decimals = 9, hermesUrl) {
+  const priceData = await fetchPythPrice(feedId, hermesUrl);
+  const expoAdjustment = decimals + priceData.expo;
+  if (expoAdjustment >= 0) {
+    return priceData.price * BigInt(10 ** expoAdjustment);
+  } else {
+    return priceData.price / BigInt(10 ** -expoAdjustment);
+  }
+}
+async function fetchPythVaa(feedId, hermesUrl = "https://hermes.pyth.network") {
+  const feedIdHex = feedIdToHex(feedId);
+  const response = await fetch(
+    `${hermesUrl}/v2/updates/price/latest?ids[]=${feedIdHex}&encoding=base64`
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Pyth VAA: ${response.statusText}`);
+  }
+  const data = await response.json();
+  if (!data?.binary?.data?.length) {
+    throw new Error(`No VAA available for feed ${feedIdHex}`);
+  }
+  return data.binary.data;
+}
+async function getPriceUpdateAccountAddress(connection, feedId) {
+  const PYTH_RECEIVER_PROGRAM = new PublicKey7("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
+  const [pda] = PublicKey7.findProgramAddressSync(
+    [Buffer.from("price_feed"), feedId],
+    PYTH_RECEIVER_PROGRAM
+  );
+  return pda;
+}
+async function isPriceUpdateValid(connection, priceUpdateAccount, maxAge = 60) {
+  try {
+    const accountInfo = await connection.getAccountInfo(priceUpdateAccount);
+    if (!accountInfo) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function calculatePositionPrice(oraclePrice, isLong, slippageBps = 10) {
+  const slippageMultiplier = isLong ? 10000n + BigInt(slippageBps) : 10000n - BigInt(slippageBps);
+  return oraclePrice * slippageMultiplier / 10000n;
+}
+async function fetchPythPrices(feedIds, hermesUrl = "https://hermes.pyth.network") {
+  const feedIdHexes = feedIds.map(feedIdToHex);
+  const idsParam = feedIdHexes.map((id) => `ids[]=${id}`).join("&");
+  const response = await fetch(
+    `${hermesUrl}/v2/updates/price/latest?${idsParam}`
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Pyth prices: ${response.statusText}`);
+  }
+  const data = await response.json();
+  const result = /* @__PURE__ */ new Map();
+  if (data?.parsed) {
+    for (const item of data.parsed) {
+      const feedId = "0x" + item.id;
+      result.set(feedId, {
+        price: BigInt(item.price.price),
+        confidence: BigInt(item.price.conf),
+        expo: item.price.expo,
+        publishTime: item.price.publish_time
+      });
+    }
+  }
+  return result;
+}
+async function getPoolOraclePrices(tokenFeedIds, decimals = 9, hermesUrl) {
+  const pricesMap = await fetchPythPrices(tokenFeedIds, hermesUrl);
+  const prices = [];
+  for (const feedId of tokenFeedIds) {
+    const feedIdHex = feedIdToHex(feedId);
+    const priceData = pricesMap.get(feedIdHex);
+    if (!priceData) {
+      prices.push(0n);
+      continue;
+    }
+    const expoAdjustment = decimals + priceData.expo;
+    if (expoAdjustment >= 0) {
+      prices.push(priceData.price * BigInt(10 ** expoAdjustment));
+    } else {
+      prices.push(priceData.price / BigInt(10 ** -expoAdjustment));
+    }
+  }
+  while (prices.length < 8) {
+    prices.push(0n);
+  }
+  return prices;
 }
 
 // src/address-lookup-table.ts
@@ -5107,7 +4425,7 @@ var CloakCraftClient = class {
       this.connection = config.connection;
       this.rpcUrl = "";
     } else if (config.rpcUrl) {
-      this.connection = new Connection2(config.rpcUrl, config.commitment ?? "confirmed");
+      this.connection = new Connection3(config.rpcUrl, config.commitment ?? "confirmed");
       this.rpcUrl = config.rpcUrl;
     } else {
       throw new Error("Either connection or rpcUrl must be provided");
@@ -5164,9 +4482,9 @@ var CloakCraftClient = class {
    * @param rpcUrl - Helius RPC URL for Light Protocol queries
    */
   async buildLightProtocolParams(accountHash, nullifier, pool, rpcUrl) {
-    const { LightProtocol: LightProtocol2 } = await import("./light-helpers-DTQW3ADN.mjs");
+    const { LightProtocol: LightProtocol2 } = await import("./light-helpers-DCAHIINJ.mjs");
     const { SystemAccountMetaConfig, PackedAccounts } = await import("@lightprotocol/stateless.js");
-    const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-RPCVNJXD.mjs");
+    const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-ZW3YX7HL.mjs");
     const lightProtocol = new LightProtocol2(rpcUrl, this.programId);
     console.log("[buildLightProtocolParams] Fetching commitment inclusion proof...");
     const commitmentProof = await lightProtocol.getInclusionProofByHash(accountHash);
@@ -5558,7 +4876,7 @@ var CloakCraftClient = class {
       user: payer.publicKey
     };
     console.log("[Shield] Building transaction with Anchor...");
-    const { buildShieldWithProgram: buildShieldWithProgram2 } = await import("./shield-WC2UBBMU.mjs");
+    const { buildShieldWithProgram: buildShieldWithProgram2 } = await import("./shield-U4E47T3Z.mjs");
     const { tx: anchorTx, commitment, randomness } = await buildShieldWithProgram2(
       this.program,
       instructionParams,
@@ -5706,7 +5024,7 @@ var CloakCraftClient = class {
     if (params.fee && params.fee > 0n) {
       const [configPda] = deriveProtocolConfigPda(this.programId);
       protocolConfig = configPda;
-      const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2 } = await import("./fees-W2JZZVN6.mjs");
+      const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2 } = await import("./fees-BRCRWJSC.mjs");
       const feeConfig = await fetchProtocolFeeConfig2(this.connection, this.programId);
       if (feeConfig?.treasury) {
         treasuryWallet = feeConfig.treasury;
@@ -5790,7 +5108,7 @@ var CloakCraftClient = class {
       console.error("[Transfer] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
     console.log("[Transfer] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -5833,7 +5151,7 @@ var CloakCraftClient = class {
         console.log(`[Transfer] ALT ${i}: ${alt.state.addresses.length} addresses`);
       });
     }
-    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ name, builder }) => {
@@ -5842,8 +5160,8 @@ var CloakCraftClient = class {
           const preIxs = builder._preInstructions || [];
           const allInstructions = [...preIxs, mainIx];
           console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
-          return new VersionedTransaction3(
-            new TransactionMessage2({
+          return new VersionedTransaction4(
+            new TransactionMessage3({
               payerKey: relayerPubkey,
               recentBlockhash: blockhash,
               instructions: allInstructions
@@ -6028,7 +5346,7 @@ var CloakCraftClient = class {
     const commitment = preparedInputs[0].commitment;
     const dummyPath = Array(32).fill(new Uint8Array(32));
     const dummyIndices = Array(32).fill(0);
-    const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2, calculateProtocolFee: calculateProtocolFee2 } = await import("./fees-W2JZZVN6.mjs");
+    const { fetchProtocolFeeConfig: fetchProtocolFeeConfig2, calculateProtocolFee: calculateProtocolFee2 } = await import("./fees-BRCRWJSC.mjs");
     const feeConfig = await fetchProtocolFeeConfig2(this.connection, this.programId);
     const totalInputAmount = preparedInputs.reduce((sum, input) => sum + input.amount, 0n);
     const transferAmount = preparedOutputs[0]?.amount ?? 0n;
@@ -6231,7 +5549,7 @@ var CloakCraftClient = class {
       console.error("[Consolidation] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
     for (let i = 0; i < phase1Txs.length; i++) {
@@ -6265,15 +5583,15 @@ var CloakCraftClient = class {
     transactionBuilders.push({ name: "Final (Close Pending)", builder: closeTx });
     console.log(`[Consolidation] Built ${transactionBuilders.length} transactions total`);
     const lookupTables = await this.getAddressLookupTables();
-    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ name, builder }) => {
         const mainIx = await builder.instruction();
         const preIxs = builder._preInstructions || [];
         const allInstructions = [...preIxs, mainIx];
-        return new VersionedTransaction3(
-          new TransactionMessage2({
+        return new VersionedTransaction4(
+          new TransactionMessage3({
             payerKey: relayerPubkey,
             recentBlockhash: blockhash,
             instructions: allInstructions
@@ -6668,7 +5986,7 @@ var CloakCraftClient = class {
       console.error("[Swap] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
     console.log("[Swap] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -6710,7 +6028,7 @@ var CloakCraftClient = class {
         console.log(`[Swap] ALT ${i}: ${alt.state.addresses.length} addresses`);
       });
     }
-    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ name, builder }) => {
@@ -6719,8 +6037,8 @@ var CloakCraftClient = class {
           const preIxs = builder._preInstructions || [];
           const allInstructions = [...preIxs, mainIx];
           console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
-          return new VersionedTransaction3(
-            new TransactionMessage2({
+          return new VersionedTransaction4(
+            new TransactionMessage3({
               payerKey: relayerPubkey,
               recentBlockhash: blockhash,
               instructions: allInstructions
@@ -6883,7 +6201,7 @@ var CloakCraftClient = class {
       console.error("[Add Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
     console.log("[Add Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -6927,7 +6245,7 @@ var CloakCraftClient = class {
         console.log(`[Add Liquidity] ALT ${i}: ${alt.state.addresses.length} addresses`);
       });
     }
-    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ name, builder }) => {
@@ -6936,8 +6254,8 @@ var CloakCraftClient = class {
           const preIxs = builder._preInstructions || [];
           const allInstructions = [...preIxs, mainIx];
           console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
-          return new VersionedTransaction3(
-            new TransactionMessage2({
+          return new VersionedTransaction4(
+            new TransactionMessage3({
               payerKey: relayerPubkey,
               recentBlockhash: blockhash,
               instructions: allInstructions
@@ -7111,7 +6429,7 @@ var CloakCraftClient = class {
       console.error("[Remove Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
     console.log("[Remove Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -7153,7 +6471,7 @@ var CloakCraftClient = class {
         console.log(`[Remove Liquidity] ALT ${i}: ${alt.state.addresses.length} addresses`);
       });
     }
-    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const transactions = await Promise.all(
       transactionBuilders.map(async ({ name, builder }) => {
@@ -7162,8 +6480,8 @@ var CloakCraftClient = class {
           const preIxs = builder._preInstructions || [];
           const allInstructions = [...preIxs, mainIx];
           console.log(`[${name}] Including ${preIxs.length} pre-instructions + 1 main instruction`);
-          return new VersionedTransaction3(
-            new TransactionMessage2({
+          return new VersionedTransaction4(
+            new TransactionMessage3({
               payerKey: relayerPubkey,
               recentBlockhash: blockhash,
               instructions: allInstructions
@@ -7665,8 +6983,8 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
-    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();
     const transactionBuilders = [];
@@ -7714,8 +7032,8 @@ var CloakCraftClient = class {
       if (name.includes("Final") && params.pythCloseInstructions?.length) {
         allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
-      const tx = new VersionedTransaction3(
-        new TransactionMessage2({
+      const tx = new VersionedTransaction4(
+        new TransactionMessage3({
           payerKey: relayerPubkey,
           recentBlockhash: blockhash,
           instructions: allInstructions
@@ -7869,8 +7187,8 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
-    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();
     const transactionBuilders = [];
@@ -7918,8 +7236,8 @@ var CloakCraftClient = class {
       if (name.includes("Final") && params.pythCloseInstructions?.length) {
         allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
-      const tx = new VersionedTransaction3(
-        new TransactionMessage2({
+      const tx = new VersionedTransaction4(
+        new TransactionMessage3({
           payerKey: relayerPubkey,
           recentBlockhash: blockhash,
           instructions: allInstructions
@@ -8064,8 +7382,8 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
-    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();
     const transactionBuilders = [];
@@ -8113,8 +7431,8 @@ var CloakCraftClient = class {
       if (name.includes("Final") && params.pythCloseInstructions?.length) {
         allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
-      const tx = new VersionedTransaction3(
-        new TransactionMessage2({
+      const tx = new VersionedTransaction4(
+        new TransactionMessage3({
           payerKey: relayerPubkey,
           recentBlockhash: blockhash,
           instructions: allInstructions
@@ -8273,8 +7591,8 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-CZJGDH63.mjs");
-    const { VersionedTransaction: VersionedTransaction3, TransactionMessage: TransactionMessage2 } = await import("@solana/web3.js");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();
     const transactionBuilders = [];
@@ -8322,8 +7640,8 @@ var CloakCraftClient = class {
       if (name.includes("Final") && params.pythCloseInstructions?.length) {
         allInstructions = [...allInstructions, ...params.pythCloseInstructions];
       }
-      const tx = new VersionedTransaction3(
-        new TransactionMessage2({
+      const tx = new VersionedTransaction4(
+        new TransactionMessage3({
           payerKey: relayerPubkey,
           recentBlockhash: blockhash,
           instructions: allInstructions
@@ -8392,9 +7710,108 @@ var CloakCraftClient = class {
       data: acc.account
     }));
   }
+  // =============================================================================
+  // Perps Note Scanning
+  // =============================================================================
+  /**
+   * Scan for position notes belonging to the current wallet
+   *
+   * Scans the position pool for encrypted position notes and attempts to decrypt
+   * them with the user's viewing key. Returns only unspent positions.
+   *
+   * @param positionMint - The position mint (from perps pool's positionMint field)
+   * @returns Array of decrypted position notes owned by the user
+   */
+  async scanPositionNotes(positionMint) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    if (!this.lightClient) {
+      throw new Error("Light Protocol not configured. Provide heliusApiKey in config.");
+    }
+    const viewingKey = bytesToField(this.wallet.keypair.spending.sk);
+    const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
+    const [positionPoolPda] = PublicKey9.findProgramAddressSync(
+      [Buffer.from("pool"), positionMint.toBuffer()],
+      this.programId
+    );
+    return this.lightClient.getUnspentPositionNotes(viewingKey, nullifierKey, this.programId, positionPoolPda);
+  }
+  /**
+   * Scan for LP notes belonging to the current wallet
+   *
+   * Scans the LP pool for encrypted LP notes and attempts to decrypt
+   * them with the user's viewing key. Returns only unspent LP positions.
+   *
+   * @param lpMint - The LP mint (from perps pool's lpMint field)
+   * @returns Array of decrypted LP notes owned by the user
+   */
+  async scanLpNotes(lpMint) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    if (!this.lightClient) {
+      throw new Error("Light Protocol not configured. Provide heliusApiKey in config.");
+    }
+    const viewingKey = bytesToField(this.wallet.keypair.spending.sk);
+    const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
+    const [lpPoolPda] = PublicKey9.findProgramAddressSync(
+      [Buffer.from("pool"), lpMint.toBuffer()],
+      this.programId
+    );
+    return this.lightClient.getUnspentLpNotes(viewingKey, nullifierKey, this.programId, lpPoolPda);
+  }
+  /**
+   * Scan for all position notes (including spent) for advanced use cases
+   *
+   * @param positionMint - The position mint
+   * @returns Array of position notes with spent status
+   */
+  async scanPositionNotesWithStatus(positionMint) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    if (!this.lightClient) {
+      throw new Error("Light Protocol not configured. Provide heliusApiKey in config.");
+    }
+    const viewingKey = bytesToField(this.wallet.keypair.spending.sk);
+    const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
+    const [positionPoolPda] = PublicKey9.findProgramAddressSync(
+      [Buffer.from("pool"), positionMint.toBuffer()],
+      this.programId
+    );
+    return this.lightClient.scanPositionNotesWithStatus(viewingKey, nullifierKey, this.programId, positionPoolPda);
+  }
+  /**
+   * Scan for all LP notes (including spent) for advanced use cases
+   *
+   * @param lpMint - The LP mint
+   * @returns Array of LP notes with spent status
+   */
+  async scanLpNotesWithStatus(lpMint) {
+    if (!this.wallet) {
+      throw new Error("No wallet loaded");
+    }
+    if (!this.lightClient) {
+      throw new Error("Light Protocol not configured. Provide heliusApiKey in config.");
+    }
+    const viewingKey = bytesToField(this.wallet.keypair.spending.sk);
+    const nullifierKey = deriveNullifierKey(this.wallet.keypair.spending.sk);
+    const [lpPoolPda] = PublicKey9.findProgramAddressSync(
+      [Buffer.from("pool"), lpMint.toBuffer()],
+      this.programId
+    );
+    return this.lightClient.scanLpNotesWithStatus(viewingKey, nullifierKey, this.programId, lpPoolPda);
+  }
 };
 
+// src/crypto/index.ts
+init_poseidon();
+init_babyjubjub();
+
 // src/crypto/elgamal.ts
+init_poseidon();
+init_babyjubjub();
 function elgamalEncrypt(message, pubkey, randomness) {
   const c1 = scalarMul(GENERATOR, randomness);
   const mG = scalarMul(GENERATOR, message);
@@ -8513,7 +7930,7 @@ function negatePoint(p) {
   return { x: negX, y: p.y };
 }
 function generateDleqProof(secretKey, publicKey, c1, decryptionShare) {
-  const k = generateRandomScalar2();
+  const k = generateRandomScalar();
   const A = scalarMul(GENERATOR, k);
   const B = scalarMul(c1, k);
   const challenge = poseidonHash([
@@ -8564,7 +7981,7 @@ function verifyDleqProof(proof, publicKey, c1, decryptionShare) {
   const expectedC = bytesToField(challenge);
   return c === expectedC;
 }
-function generateRandomScalar2() {
+function generateRandomScalar() {
   const bytes = new Uint8Array(32);
   if (typeof globalThis.crypto !== "undefined") {
     globalThis.crypto.getRandomValues(bytes);
@@ -10446,10 +9863,10 @@ function disableAutoConsolidation() {
 }
 
 // src/voting/types.ts
-var VoteBindingMode = /* @__PURE__ */ ((VoteBindingMode2) => {
-  VoteBindingMode2[VoteBindingMode2["Snapshot"] = 0] = "Snapshot";
-  VoteBindingMode2[VoteBindingMode2["SpendToVote"] = 1] = "SpendToVote";
-  return VoteBindingMode2;
+var VoteBindingMode = /* @__PURE__ */ ((VoteBindingMode3) => {
+  VoteBindingMode3[VoteBindingMode3["Snapshot"] = 0] = "Snapshot";
+  VoteBindingMode3[VoteBindingMode3["SpendToVote"] = 1] = "SpendToVote";
+  return VoteBindingMode3;
 })(VoteBindingMode || {});
 var RevealMode = /* @__PURE__ */ ((RevealMode2) => {
   RevealMode2[RevealMode2["Public"] = 0] = "Public";
@@ -10500,6 +9917,7 @@ import {
 } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID as TOKEN_PROGRAM_ID3, getAssociatedTokenAddressSync as getAssociatedTokenAddressSync2 } from "@solana/spl-token";
 import { BN as BN5 } from "@coral-xyz/anchor";
+init_poseidon();
 var VOTING_SEEDS = {
   BALLOT: Buffer.from("ballot"),
   BALLOT_VAULT: Buffer.from("ballot_vault"),
@@ -10684,14 +10102,50 @@ async function buildChangeVoteSnapshotPhase0Instruction(program, params, operati
     systemProgram: SystemProgram3.programId
   }).instruction();
 }
-async function buildChangeVoteSnapshotExecuteInstruction(program, operationId, ballotId, relayer, programId = PROGRAM_ID) {
+async function buildChangeVoteSnapshotExecuteInstruction(program, operationId, ballotId, relayer, oldEncryptedContributions = null, newEncryptedContributions = null, programId = PROGRAM_ID) {
   const [ballotPda] = deriveBallotPda(ballotId, programId);
   const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
-  return program.methods.executeChangeVoteSnapshot().accounts({
+  return program.methods.executeChangeVoteSnapshot(
+    Array.from(operationId),
+    Array.from(ballotId),
+    oldEncryptedContributions ? { ciphertexts: oldEncryptedContributions.map((c) => Array.from(c)) } : null,
+    newEncryptedContributions ? { ciphertexts: newEncryptedContributions.map((c) => Array.from(c)) } : null
+  ).accounts({
     ballot: ballotPda,
     pendingOperation: pendingOpPda,
     relayer
   }).instruction();
+}
+async function buildVerifyVoteCommitmentExistsInstruction(program, operationId, ballotId, commitmentIndex, lightParams, relayer, remainingAccounts, programId = PROGRAM_ID) {
+  const [ballotPda] = deriveBallotPda(ballotId, programId);
+  const [pendingOpPda] = derivePendingOperationPda2(operationId, programId);
+  const onChainParams = {
+    commitmentAccountHash: Array.from(lightParams.commitmentAccountHash),
+    commitmentMerkleContext: {
+      merkleTreePubkeyIndex: lightParams.commitmentMerkleContext.merkleTreePubkeyIndex,
+      queuePubkeyIndex: lightParams.commitmentMerkleContext.queuePubkeyIndex,
+      leafIndex: lightParams.commitmentMerkleContext.leafIndex,
+      rootIndex: lightParams.commitmentMerkleContext.rootIndex
+    },
+    commitmentInclusionProof: {
+      rootIndices: lightParams.commitmentInclusionProof.rootIndices,
+      proof: lightParams.commitmentInclusionProof.proof.map((p) => Array.from(p))
+    },
+    commitmentAddressTreeInfo: {
+      addressMerkleTreePubkeyIndex: lightParams.commitmentAddressTreeInfo.addressMerkleTreePubkeyIndex,
+      addressQueuePubkeyIndex: lightParams.commitmentAddressTreeInfo.addressQueuePubkeyIndex
+    }
+  };
+  return program.methods.verifyVoteCommitmentExists(
+    Array.from(operationId),
+    Array.from(ballotId),
+    commitmentIndex,
+    onChainParams
+  ).accounts({
+    ballot: ballotPda,
+    pendingOperation: pendingOpPda,
+    relayer
+  }).remainingAccounts(remainingAccounts).instruction();
 }
 async function buildVoteSpendPhase0Instruction(program, params, operationId, inputCommitment, payer, relayer, programId = PROGRAM_ID) {
   const [ballotPda] = deriveBallotPda(params.ballotId, programId);
@@ -10856,7 +10310,15 @@ async function buildChangeVoteSnapshotInstructions(program, params, payer, relay
     await buildChangeVoteSnapshotPhase0Instruction(program, params, operationId, payer, relayer, programId)
   ];
   const phase2 = [
-    await buildChangeVoteSnapshotExecuteInstruction(program, operationId, params.ballotId, relayer, programId)
+    await buildChangeVoteSnapshotExecuteInstruction(
+      program,
+      operationId,
+      params.ballotId,
+      relayer,
+      params.oldEncryptedContributions || null,
+      params.newEncryptedContributions || null,
+      programId
+    )
   ];
   return [phase0, phase2];
 }
@@ -10895,6 +10357,8 @@ async function buildClaimInstructions(program, params, tokenMint, protocolTreasu
 }
 
 // src/voting/proofs.ts
+init_poseidon();
+init_babyjubjub();
 var VOTE_NULLIFIER_DOMAIN = BigInt(16);
 var VOTE_COMMITMENT_DOMAIN = BigInt(17);
 var POSITION_DOMAIN = BigInt(19);
@@ -11170,6 +10634,17 @@ function derivePublicKeyFromSpendingKey(spendingKey) {
   const pk = derivePublicKey(sk);
   return pk.x;
 }
+function convertInputsToSnarkjs(inputs) {
+  const result = {};
+  for (const [key, value] of Object.entries(inputs)) {
+    if (Array.isArray(value)) {
+      result[key] = value.map((v) => v.toString());
+    } else {
+      result[key] = value.toString();
+    }
+  }
+  return result;
+}
 function checkIsWinner(voteChoice, outcome, voteType) {
   switch (voteType) {
     case 0:
@@ -11380,7 +10855,22 @@ function decryptPreimageWithKey(encryptedData, key) {
   return decryptChaCha20Poly1305(ciphertext, key, nonce, tag);
 }
 function decryptChaCha20Poly1305(ciphertext, key, nonce, tag) {
-  throw new Error("ChaCha20-Poly1305 decryption not implemented - install @noble/ciphers");
+  const { chacha20poly1305 } = __require("@noble/ciphers/chacha.js");
+  if (key.length !== 32) {
+    throw new Error(`Invalid key length: expected 32, got ${key.length}`);
+  }
+  if (nonce.length !== 12) {
+    throw new Error(`Invalid nonce length: expected 12, got ${nonce.length}`);
+  }
+  const cipher = chacha20poly1305(key, nonce);
+  const sealed = new Uint8Array(ciphertext.length + tag.length);
+  sealed.set(ciphertext, 0);
+  sealed.set(tag, ciphertext.length);
+  try {
+    return cipher.decrypt(sealed);
+  } catch (e) {
+    throw new Error("Decryption failed: authentication tag mismatch or corrupted data");
+  }
 }
 function parseDecryptedPreimage(data, bindingMode) {
   const expectedLength = bindingMode === 0 /* Snapshot */ ? 73 : 81;
@@ -11439,7 +10929,18 @@ function serializePreimage(preimage) {
   return result;
 }
 function encryptChaCha20Poly1305(plaintext, key, nonce) {
-  throw new Error("ChaCha20-Poly1305 encryption not implemented - install @noble/ciphers");
+  const { chacha20poly1305 } = __require("@noble/ciphers/chacha.js");
+  if (key.length !== 32) {
+    throw new Error(`Invalid key length: expected 32, got ${key.length}`);
+  }
+  if (nonce.length !== 12) {
+    throw new Error(`Invalid nonce length: expected 12, got ${nonce.length}`);
+  }
+  const cipher = chacha20poly1305(key, nonce);
+  const sealed = cipher.encrypt(plaintext);
+  const ciphertext = sealed.slice(0, sealed.length - 16);
+  const tag = sealed.slice(sealed.length - 16);
+  return { ciphertext, tag };
 }
 function hexToBytes(hex) {
   if (hex.startsWith("0x")) {
@@ -11466,8 +10967,918 @@ function bigIntToBytes3(value) {
   return bytes;
 }
 function derivePublicKeyFromSecret(secretKey) {
-  throw new Error("Public key derivation not implemented");
+  const { derivePublicKey: derivePublicKey3 } = (init_babyjubjub(), __toCommonJS(babyjubjub_exports));
+  const { bytesToField: bytesToField2, fieldToBytes: fieldToBytes3 } = (init_poseidon(), __toCommonJS(poseidon_exports));
+  const secretKeyBigInt = bytesToField2(secretKey);
+  const pubkeyPoint = derivePublicKey3(secretKeyBigInt);
+  return fieldToBytes3(pubkeyPoint.x);
 }
+
+// src/voting/client.ts
+import {
+  VersionedTransaction as VersionedTransaction3,
+  TransactionMessage as TransactionMessage2,
+  ComputeBudgetProgram as ComputeBudgetProgram7
+} from "@solana/web3.js";
+import { getAssociatedTokenAddressSync as getAssociatedTokenAddressSync3 } from "@solana/spl-token";
+init_poseidon();
+init_babyjubjub();
+var VOTE_NULLIFIER_DOMAIN2 = BigInt(16);
+var VOTE_COMMITMENT_DOMAIN2 = BigInt(17);
+var POSITION_DOMAIN2 = BigInt(19);
+var VotingClient = class {
+  constructor(config) {
+    this.connection = config.connection;
+    this.program = config.program;
+    this.programId = config.programId;
+    this.lightClient = config.lightClient;
+    this.circuitsBuildDir = config.circuitsBuildDir;
+    this.addressMerkleTree = config.addressMerkleTree;
+    this.stateMerkleTree = config.stateMerkleTree;
+    this.addressLookupTables = config.addressLookupTables || [];
+  }
+  // ============================================================================
+  // VOTE SNAPSHOT - Full Multi-Phase Execution
+  // ============================================================================
+  /**
+   * Execute complete vote_snapshot flow (all phases)
+   *
+   * Phase 0: Create pending with ZK proof
+   * Phase 1: Create vote nullifier (Light Protocol)
+   * Phase 2: Execute vote (update tally)
+   * Phase 3: Create vote commitment (Light Protocol)
+   * Phase 4: Close pending operation
+   */
+  async voteSnapshot(params, ballot, payer, onProgress) {
+    const report = (phase, msg) => {
+      console.log(`[VoteSnapshot Phase ${phase}] ${msg}`);
+      onProgress?.(phase, msg);
+    };
+    report(0, "Generating proof inputs...");
+    const { inputs, voteNullifier, voteCommitment, voteRandomness } = await generateVoteSnapshotInputs(
+      params,
+      ballot.revealMode,
+      ballot.tokenMint.toBytes(),
+      ballot.hasEligibilityRoot ? bytesToField(ballot.eligibilityRoot) : 0n
+    );
+    report(0, "Generating ZK proof...");
+    const proofResult = await generateSnarkjsProofFromCircuit(
+      "voting/vote_snapshot",
+      convertInputsToSnarkjs(inputs),
+      this.circuitsBuildDir
+    );
+    report(0, `Proof generated: ${proofResult.length} bytes`);
+    let encryptedContributions;
+    if (ballot.revealMode !== 0 /* Public */) {
+      const encSeed = generateRandomness();
+      encryptedContributions = generateEncryptedContributions(
+        params.voteChoice,
+        params.noteAmount,
+        // weight = amount for linear formula
+        ballot.numOptions,
+        ballot.timeLockPubkey,
+        encSeed
+      );
+    }
+    let encryptedPreimage;
+    if (ballot.revealMode !== 0 /* Public */) {
+      const preimageData = {
+        voteChoice: params.voteChoice,
+        weight: params.noteAmount,
+        randomness: voteRandomness,
+        ballotId: params.ballotId
+      };
+      const encryptionKey = ballot.revealMode === 2 /* PermanentPrivate */ ? params.stealthSpendingKey : ballot.timeLockPubkey;
+      const isTimelockKey = ballot.revealMode === 1 /* TimeLocked */;
+      encryptedPreimage = encryptPreimage(preimageData, encryptionKey, isTimelockKey);
+    }
+    const operationId = generateOperationId2();
+    const [pendingOpPda] = derivePendingOperationPda2(operationId, this.programId);
+    const [ballotPda] = deriveBallotPda(params.ballotId, this.programId);
+    report(0, `Operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
+    const phase0Params = {
+      ballotId: params.ballotId,
+      snapshotMerkleRoot: params.snapshotMerkleRoot,
+      noteCommitment: params.noteCommitment,
+      voteNullifier,
+      voteCommitment,
+      voteChoice: params.voteChoice,
+      amount: params.noteAmount,
+      weight: params.noteAmount,
+      // weight = amount for linear formula
+      proof: proofResult,
+      outputRandomness: voteRandomness,
+      encryptedContributions: encryptedContributions?.ciphertexts,
+      encryptedPreimage
+    };
+    const signatures = [];
+    report(0, "Submitting Phase 0: Create pending with proof...");
+    const phase0Ix = await buildVoteSnapshotPhase0Instruction(
+      this.program,
+      phase0Params,
+      operationId,
+      payer.publicKey,
+      payer.publicKey,
+      this.programId
+    );
+    const phase0Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 6e5 }),
+        phase0Ix
+      ],
+      payer,
+      "Phase 0"
+    );
+    signatures.push(phase0Sig);
+    report(0, `Phase 0 complete: ${phase0Sig}`);
+    report(1, "Creating vote nullifier...");
+    await this.waitForConfirmation(phase0Sig);
+    report(2, "Executing vote...");
+    const phase2Ix = await buildVoteSnapshotExecuteInstruction(
+      this.program,
+      operationId,
+      params.ballotId,
+      payer.publicKey,
+      encryptedContributions?.ciphertexts || null,
+      this.programId
+    );
+    const phase2Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        phase2Ix
+      ],
+      payer,
+      "Phase 2 (Execute)"
+    );
+    signatures.push(phase2Sig);
+    report(2, `Phase 2 complete: ${phase2Sig}`);
+    report(3, "Creating vote commitment...");
+    const { DEVNET_LIGHT_TREES: DEVNET_LIGHT_TREES2 } = await import("./light-KJUSHYDO.mjs");
+    const createCommitmentIx = await this.program.methods.createCommitment(
+      Array.from(operationId),
+      0
+      // commitment index
+    ).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase3Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 2e5 }),
+        createCommitmentIx
+      ],
+      payer,
+      "Phase 3 (Create Commitment)"
+    );
+    signatures.push(phase3Sig);
+    report(3, `Phase 3 complete: ${phase3Sig}`);
+    report(4, "Closing pending operation...");
+    const closeIx = await this.program.methods.closePendingOperation(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase4Sig = await this.sendTransaction(
+      [closeIx],
+      payer,
+      "Phase 4 (Close)"
+    );
+    signatures.push(phase4Sig);
+    report(4, `Phase 4 complete: ${phase4Sig}`);
+    report(4, `Vote snapshot complete! ${signatures.length} transactions`);
+    return {
+      operationId,
+      voteNullifier,
+      voteCommitment,
+      voteRandomness,
+      signatures
+    };
+  }
+  // ============================================================================
+  // VOTE SPEND - Full Multi-Phase Execution (SpendToVote)
+  // ============================================================================
+  /**
+   * Execute complete vote_spend flow (all phases)
+   *
+   * Phase 0: Create pending with ZK proof
+   * Phase 1: Verify input commitment exists (Light Protocol)
+   * Phase 2: Create spending nullifier (Light Protocol)
+   * Phase 3: Execute vote spend (update tally, transfer to vault)
+   * Phase 4: Create position commitment (Light Protocol)
+   * Phase 5: Close pending operation
+   */
+  async voteSpend(params, ballot, inputNote, payer, onProgress) {
+    const report = (phase, msg) => {
+      console.log(`[VoteSpend Phase ${phase}] ${msg}`);
+      onProgress?.(phase, msg);
+    };
+    report(0, "Generating proof inputs...");
+    const { spendingNullifier, positionCommitment, positionRandomness, inputs } = await generateVoteSpendInputs(
+      params,
+      ballot.revealMode,
+      ballot.hasEligibilityRoot ? bytesToField(ballot.eligibilityRoot) : 0n
+    );
+    report(0, "Generating ZK proof...");
+    const proofResult = await generateSnarkjsProofFromCircuit(
+      "voting/vote_spend",
+      convertInputsToSnarkjs(inputs),
+      this.circuitsBuildDir
+    );
+    report(0, `Proof generated: ${proofResult.length} bytes`);
+    let encryptedContributions;
+    if (ballot.revealMode !== 0 /* Public */) {
+      const encSeed = generateRandomness();
+      encryptedContributions = generateEncryptedContributions(
+        params.voteChoice,
+        inputNote.amount,
+        ballot.numOptions,
+        ballot.timeLockPubkey,
+        encSeed
+      );
+    }
+    let encryptedPreimage;
+    if (ballot.revealMode !== 0 /* Public */) {
+      const preimageData = {
+        voteChoice: params.voteChoice,
+        weight: inputNote.amount,
+        amount: inputNote.amount,
+        randomness: positionRandomness,
+        ballotId: params.ballotId
+      };
+      const encryptionKey = ballot.revealMode === 2 /* PermanentPrivate */ ? params.stealthSpendingKey : ballot.timeLockPubkey;
+      const isTimelockKey = ballot.revealMode === 1 /* TimeLocked */;
+      encryptedPreimage = encryptPreimage(preimageData, encryptionKey, isTimelockKey);
+    }
+    const operationId = generateOperationId2();
+    const [pendingOpPda] = derivePendingOperationPda2(operationId, this.programId);
+    const [ballotPda] = deriveBallotPda(params.ballotId, this.programId);
+    const [ballotVaultPda] = deriveBallotVaultPda(params.ballotId, this.programId);
+    report(0, `Operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
+    report(0, "Fetching Light Protocol proofs...");
+    const commitmentProof = await this.lightClient.getMerkleProofByHash(inputNote.accountHash);
+    const nullifierAddress = this.lightClient.deriveNullifierAddress(
+      spendingNullifier,
+      this.programId,
+      this.addressMerkleTree,
+      ballotPda
+    );
+    const nullifierProof = await this.lightClient.getValidityProof({
+      newAddresses: [nullifierAddress],
+      addressMerkleTree: this.addressMerkleTree,
+      stateMerkleTree: this.stateMerkleTree
+    });
+    const signatures = [];
+    report(0, "Submitting Phase 0: Create pending with proof...");
+    const phase0Params = {
+      ballotId: params.ballotId,
+      spendingNullifier,
+      positionCommitment,
+      voteChoice: params.voteChoice,
+      amount: inputNote.amount,
+      weight: inputNote.amount,
+      proof: proofResult,
+      encryptedContributions: encryptedContributions?.ciphertexts,
+      encryptedPreimage
+    };
+    const phase0Ix = await buildVoteSpendPhase0Instruction(
+      this.program,
+      phase0Params,
+      operationId,
+      inputNote.commitment,
+      payer.publicKey,
+      payer.publicKey,
+      this.programId
+    );
+    const phase0Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 6e5 }),
+        phase0Ix
+      ],
+      payer,
+      "Phase 0"
+    );
+    signatures.push(phase0Sig);
+    report(0, `Phase 0 complete: ${phase0Sig}`);
+    report(1, "Verifying input commitment exists...");
+    const verifyCommitmentIx = await this.program.methods.verifyCommitmentExists(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase1Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        verifyCommitmentIx
+      ],
+      payer,
+      "Phase 1 (Verify Commitment)"
+    );
+    signatures.push(phase1Sig);
+    report(1, `Phase 1 complete: ${phase1Sig}`);
+    report(2, "Creating spending nullifier...");
+    const createNullifierIx = await this.program.methods.createNullifierAndPending(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase2Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        createNullifierIx
+      ],
+      payer,
+      "Phase 2 (Create Nullifier)"
+    );
+    signatures.push(phase2Sig);
+    report(2, `Phase 2 complete: ${phase2Sig}`);
+    report(3, "Executing vote spend...");
+    const phase3Ix = await buildVoteSpendExecuteInstruction(
+      this.program,
+      operationId,
+      params.ballotId,
+      ballot.tokenMint,
+      payer.publicKey,
+      this.programId
+    );
+    const phase3Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        phase3Ix
+      ],
+      payer,
+      "Phase 3 (Execute Vote Spend)"
+    );
+    signatures.push(phase3Sig);
+    report(3, `Phase 3 complete: ${phase3Sig}`);
+    report(4, "Creating position commitment...");
+    const createCommitmentIx = await this.program.methods.createCommitment(Array.from(operationId), 0).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase4Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 2e5 }),
+        createCommitmentIx
+      ],
+      payer,
+      "Phase 4 (Create Commitment)"
+    );
+    signatures.push(phase4Sig);
+    report(4, `Phase 4 complete: ${phase4Sig}`);
+    report(5, "Closing pending operation...");
+    const closeIx = await this.program.methods.closePendingOperation(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase5Sig = await this.sendTransaction(
+      [closeIx],
+      payer,
+      "Phase 5 (Close)"
+    );
+    signatures.push(phase5Sig);
+    report(5, `Phase 5 complete: ${phase5Sig}`);
+    report(5, `Vote spend complete! ${signatures.length} transactions`);
+    return {
+      operationId,
+      spendingNullifier,
+      positionCommitment,
+      positionRandomness,
+      signatures
+    };
+  }
+  // ============================================================================
+  // CHANGE VOTE SNAPSHOT - Full Multi-Phase Execution
+  // ============================================================================
+  /**
+   * Execute complete change_vote_snapshot flow (atomic vote change)
+   */
+  async changeVoteSnapshot(params, ballot, oldWeight, payer, onProgress) {
+    const report = (phase, msg) => {
+      console.log(`[ChangeVote Phase ${phase}] ${msg}`);
+      onProgress?.(phase, msg);
+    };
+    report(0, "Generating proof inputs...");
+    const { oldVoteCommitmentNullifier, newVoteCommitment, newRandomness, inputs } = await generateChangeVoteSnapshotInputs(params, ballot.revealMode, oldWeight);
+    report(0, "Generating ZK proof...");
+    const proofResult = await generateSnarkjsProofFromCircuit(
+      "voting/change_vote_snapshot",
+      convertInputsToSnarkjs(inputs),
+      this.circuitsBuildDir
+    );
+    report(0, `Proof generated: ${proofResult.length} bytes`);
+    let oldEncryptedContributions;
+    let newEncryptedContributions;
+    if (ballot.revealMode !== 0 /* Public */) {
+      const oldEncSeed = generateRandomness();
+      const newEncSeed = generateRandomness();
+      oldEncryptedContributions = generateNegatedEncryptedContributions(
+        params.oldVoteChoice,
+        oldWeight,
+        ballot.numOptions,
+        ballot.timeLockPubkey,
+        oldEncSeed
+      ).ciphertexts;
+      newEncryptedContributions = generateEncryptedContributions(
+        params.newVoteChoice,
+        oldWeight,
+        // weight unchanged in snapshot mode
+        ballot.numOptions,
+        ballot.timeLockPubkey,
+        newEncSeed
+      ).ciphertexts;
+    }
+    const operationId = generateOperationId2();
+    const [pendingOpPda] = derivePendingOperationPda2(operationId, this.programId);
+    report(0, `Operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
+    const signatures = [];
+    report(0, "Submitting Phase 0...");
+    const phase0Ix = await buildChangeVoteSnapshotPhase0Instruction(
+      this.program,
+      {
+        ballotId: params.ballotId,
+        oldVoteCommitment: params.oldVoteCommitment,
+        oldVoteCommitmentNullifier,
+        newVoteCommitment,
+        voteNullifier: new Uint8Array(32),
+        // Derived in circuit
+        oldVoteChoice: params.oldVoteChoice,
+        newVoteChoice: params.newVoteChoice,
+        weight: oldWeight,
+        proof: proofResult,
+        oldEncryptedContributions,
+        newEncryptedContributions
+      },
+      operationId,
+      payer.publicKey,
+      payer.publicKey,
+      this.programId
+    );
+    const phase0Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 6e5 }),
+        phase0Ix
+      ],
+      payer,
+      "Phase 0"
+    );
+    signatures.push(phase0Sig);
+    report(0, `Phase 0 complete: ${phase0Sig}`);
+    report(1, "Verifying old vote commitment exists...");
+    const verifyIx = await this.program.methods.verifyCommitmentExists(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase1Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        verifyIx
+      ],
+      payer,
+      "Phase 1 (Verify)"
+    );
+    signatures.push(phase1Sig);
+    report(1, `Phase 1 complete: ${phase1Sig}`);
+    report(2, "Creating old vote commitment nullifier...");
+    const nullifierIx = await this.program.methods.createNullifierAndPending(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase2Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        nullifierIx
+      ],
+      payer,
+      "Phase 2 (Nullifier)"
+    );
+    signatures.push(phase2Sig);
+    report(2, `Phase 2 complete: ${phase2Sig}`);
+    report(3, "Executing change vote...");
+    const executeIx = await buildChangeVoteSnapshotExecuteInstruction(
+      this.program,
+      operationId,
+      params.ballotId,
+      payer.publicKey,
+      oldEncryptedContributions || null,
+      newEncryptedContributions || null,
+      this.programId
+    );
+    const phase3Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        executeIx
+      ],
+      payer,
+      "Phase 3 (Execute)"
+    );
+    signatures.push(phase3Sig);
+    report(3, `Phase 3 complete: ${phase3Sig}`);
+    report(4, "Creating new vote commitment...");
+    const createCommitmentIx = await this.program.methods.createCommitment(Array.from(operationId), 0).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase4Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 2e5 }),
+        createCommitmentIx
+      ],
+      payer,
+      "Phase 4 (Create Commitment)"
+    );
+    signatures.push(phase4Sig);
+    report(4, `Phase 4 complete: ${phase4Sig}`);
+    report(5, "Closing pending operation...");
+    const closeIx = await this.program.methods.closePendingOperation(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase5Sig = await this.sendTransaction(
+      [closeIx],
+      payer,
+      "Phase 5 (Close)"
+    );
+    signatures.push(phase5Sig);
+    report(5, `Phase 5 complete: ${phase5Sig}`);
+    report(5, `Change vote complete! ${signatures.length} transactions`);
+    return {
+      operationId,
+      oldVoteCommitmentNullifier,
+      newVoteCommitment,
+      newRandomness,
+      signatures
+    };
+  }
+  // ============================================================================
+  // CLOSE POSITION - Full Multi-Phase Execution
+  // ============================================================================
+  /**
+   * Execute complete close_position flow (exit SpendToVote position)
+   */
+  async closePosition(params, ballot, positionNote, newTokenRandomness, payer, onProgress) {
+    const report = (phase, msg) => {
+      console.log(`[ClosePosition Phase ${phase}] ${msg}`);
+      onProgress?.(phase, msg);
+    };
+    report(0, "Generating proof inputs...");
+    const nullifierKey = deriveNullifierKey(params.stealthSpendingKey);
+    const positionNullifier = poseidonHashDomain(
+      POSITION_DOMAIN2,
+      nullifierKey,
+      params.positionCommitment
+    );
+    const pubkey = derivePublicKey(bytesToField(params.stealthSpendingKey)).x;
+    const newTokenCommitment = computeCommitment({
+      stealthPubX: pubkey,
+      tokenMint: ballot.tokenMint,
+      amount: params.amount,
+      randomness: newTokenRandomness
+    });
+    const inputs = {
+      ballotId: bytesToField(params.ballotId),
+      positionCommitment: bytesToField(params.positionCommitment),
+      positionNullifier: bytesToField(positionNullifier),
+      tokenCommitment: bytesToField(newTokenCommitment),
+      voteChoice: ballot.revealMode === 0 /* Public */ ? BigInt(params.voteChoice) : 0n,
+      amount: params.amount,
+      weight: params.weight,
+      isPublicMode: ballot.revealMode === 0 /* Public */ ? 1n : 0n,
+      // Private inputs
+      spendingKey: bytesToField(params.stealthSpendingKey),
+      pubkey: bytesToField(pubkey),
+      positionRandomness: bytesToField(params.positionRandomness),
+      tokenRandomness: bytesToField(newTokenRandomness),
+      tokenMint: bytesToField(ballot.tokenMint.toBytes()),
+      privateVoteChoice: BigInt(params.voteChoice)
+    };
+    report(0, "Generating ZK proof...");
+    const proofResult = await generateSnarkjsProofFromCircuit(
+      "voting/close_position",
+      convertInputsToSnarkjs(inputs),
+      this.circuitsBuildDir
+    );
+    report(0, `Proof generated: ${proofResult.length} bytes`);
+    let encryptedContributions;
+    if (ballot.revealMode !== 0 /* Public */) {
+      const encSeed = generateRandomness();
+      encryptedContributions = generateNegatedEncryptedContributions(
+        params.voteChoice,
+        params.weight,
+        ballot.numOptions,
+        ballot.timeLockPubkey,
+        encSeed
+      ).ciphertexts;
+    }
+    const operationId = generateOperationId2();
+    const [pendingOpPda] = derivePendingOperationPda2(operationId, this.programId);
+    report(0, `Operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
+    const signatures = [];
+    report(0, "Submitting Phase 0...");
+    const phase0Params = {
+      ballotId: params.ballotId,
+      positionNullifier,
+      positionCommitment: params.positionCommitment,
+      newTokenCommitment,
+      voteChoice: params.voteChoice,
+      amount: params.amount,
+      weight: params.weight,
+      proof: proofResult,
+      encryptedContributions
+    };
+    const phase0Ix = await buildCloseVotePositionPhase0Instruction(
+      this.program,
+      phase0Params,
+      operationId,
+      payer.publicKey,
+      payer.publicKey,
+      this.programId
+    );
+    const phase0Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 6e5 }),
+        phase0Ix
+      ],
+      payer,
+      "Phase 0"
+    );
+    signatures.push(phase0Sig);
+    report(0, `Phase 0 complete: ${phase0Sig}`);
+    report(1, "Verifying position exists...");
+    const verifyIx = await this.program.methods.verifyCommitmentExists(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase1Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        verifyIx
+      ],
+      payer,
+      "Phase 1 (Verify)"
+    );
+    signatures.push(phase1Sig);
+    report(1, `Phase 1 complete: ${phase1Sig}`);
+    report(2, "Creating position nullifier...");
+    const nullifierIx = await this.program.methods.createNullifierAndPending(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase2Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        nullifierIx
+      ],
+      payer,
+      "Phase 2 (Nullifier)"
+    );
+    signatures.push(phase2Sig);
+    report(2, `Phase 2 complete: ${phase2Sig}`);
+    report(3, "Executing close position...");
+    const executeIx = await buildCloseVotePositionExecuteInstruction(
+      this.program,
+      operationId,
+      params.ballotId,
+      ballot.tokenMint,
+      payer.publicKey,
+      this.programId
+    );
+    const phase3Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        executeIx
+      ],
+      payer,
+      "Phase 3 (Execute)"
+    );
+    signatures.push(phase3Sig);
+    report(3, `Phase 3 complete: ${phase3Sig}`);
+    report(4, "Creating new token commitment...");
+    const createCommitmentIx = await this.program.methods.createCommitment(Array.from(operationId), 0).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase4Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 2e5 }),
+        createCommitmentIx
+      ],
+      payer,
+      "Phase 4 (Create Commitment)"
+    );
+    signatures.push(phase4Sig);
+    report(4, `Phase 4 complete: ${phase4Sig}`);
+    report(5, "Closing pending operation...");
+    const closeIx = await this.program.methods.closePendingOperation(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase5Sig = await this.sendTransaction(
+      [closeIx],
+      payer,
+      "Phase 5 (Close)"
+    );
+    signatures.push(phase5Sig);
+    report(5, `Phase 5 complete: ${phase5Sig}`);
+    report(5, `Close position complete! ${signatures.length} transactions`);
+    return {
+      operationId,
+      positionNullifier,
+      newTokenCommitment,
+      tokenRandomness: newTokenRandomness,
+      signatures
+    };
+  }
+  // ============================================================================
+  // CLAIM - Full Multi-Phase Execution
+  // ============================================================================
+  /**
+   * Execute complete claim flow (claim winnings from SpendToVote ballot)
+   */
+  async claim(params, ballot, positionNote, payer, onProgress) {
+    const report = (phase, msg) => {
+      console.log(`[Claim Phase ${phase}] ${msg}`);
+      onProgress?.(phase, msg);
+    };
+    if (!ballot.hasOutcome) {
+      throw new Error("Ballot not resolved - cannot claim");
+    }
+    report(0, "Generating proof inputs...");
+    const { positionNullifier, payoutCommitment, payoutRandomness, grossPayout, netPayout, inputs } = await generateClaimInputs(params, {
+      outcome: ballot.outcome,
+      totalPool: ballot.poolBalance,
+      winnerWeight: ballot.winnerWeight,
+      protocolFeeBps: ballot.protocolFeeBps,
+      voteType: 3,
+      // Weighted (SpendToVote always weighted)
+      tokenMint: ballot.tokenMint.toBytes(),
+      revealMode: ballot.revealMode
+    });
+    report(0, `Gross payout: ${grossPayout}, Net payout: ${netPayout}`);
+    report(0, "Generating ZK proof...");
+    const proofResult = await generateSnarkjsProofFromCircuit(
+      "voting/claim",
+      convertInputsToSnarkjs(inputs),
+      this.circuitsBuildDir
+    );
+    report(0, `Proof generated: ${proofResult.length} bytes`);
+    const operationId = generateOperationId2();
+    const [pendingOpPda] = derivePendingOperationPda2(operationId, this.programId);
+    const [ballotVaultPda] = deriveBallotVaultPda(params.ballotId, this.programId);
+    const protocolTreasuryAta = getAssociatedTokenAddressSync3(
+      ballot.tokenMint,
+      ballot.protocolTreasury
+    );
+    report(0, `Operation ID: ${Buffer.from(operationId).toString("hex").slice(0, 16)}...`);
+    const signatures = [];
+    report(0, "Submitting Phase 0...");
+    const phase0Params = {
+      ballotId: params.ballotId,
+      positionNullifier,
+      positionCommitment: params.positionCommitment,
+      payoutCommitment,
+      voteChoice: params.voteChoice,
+      grossPayout,
+      netPayout,
+      userWeight: params.weight,
+      proof: proofResult
+    };
+    const phase0Ix = await buildClaimPhase0Instruction(
+      this.program,
+      phase0Params,
+      operationId,
+      payer.publicKey,
+      payer.publicKey,
+      this.programId
+    );
+    const phase0Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 6e5 }),
+        phase0Ix
+      ],
+      payer,
+      "Phase 0"
+    );
+    signatures.push(phase0Sig);
+    report(0, `Phase 0 complete: ${phase0Sig}`);
+    report(1, "Verifying position exists...");
+    const verifyIx = await this.program.methods.verifyCommitmentExists(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase1Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        verifyIx
+      ],
+      payer,
+      "Phase 1 (Verify)"
+    );
+    signatures.push(phase1Sig);
+    report(1, `Phase 1 complete: ${phase1Sig}`);
+    report(2, "Creating position nullifier...");
+    const nullifierIx = await this.program.methods.createNullifierAndPending(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase2Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        nullifierIx
+      ],
+      payer,
+      "Phase 2 (Nullifier)"
+    );
+    signatures.push(phase2Sig);
+    report(2, `Phase 2 complete: ${phase2Sig}`);
+    report(3, "Executing claim...");
+    const executeIx = await buildClaimExecuteInstruction(
+      this.program,
+      operationId,
+      params.ballotId,
+      ballot.tokenMint,
+      protocolTreasuryAta,
+      payer.publicKey,
+      this.programId
+    );
+    const phase3Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 3e5 }),
+        executeIx
+      ],
+      payer,
+      "Phase 3 (Execute)"
+    );
+    signatures.push(phase3Sig);
+    report(3, `Phase 3 complete: ${phase3Sig}`);
+    report(4, "Creating payout commitment...");
+    const createCommitmentIx = await this.program.methods.createCommitment(Array.from(operationId), 0).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase4Sig = await this.sendTransaction(
+      [
+        ComputeBudgetProgram7.setComputeUnitLimit({ units: 2e5 }),
+        createCommitmentIx
+      ],
+      payer,
+      "Phase 4 (Create Commitment)"
+    );
+    signatures.push(phase4Sig);
+    report(4, `Phase 4 complete: ${phase4Sig}`);
+    report(5, "Closing pending operation...");
+    const closeIx = await this.program.methods.closePendingOperation(Array.from(operationId)).accounts({
+      pendingOperation: pendingOpPda,
+      relayer: payer.publicKey
+    }).instruction();
+    const phase5Sig = await this.sendTransaction(
+      [closeIx],
+      payer,
+      "Phase 5 (Close)"
+    );
+    signatures.push(phase5Sig);
+    report(5, `Phase 5 complete: ${phase5Sig}`);
+    report(5, `Claim complete! ${signatures.length} transactions, payout: ${netPayout}`);
+    return {
+      operationId,
+      positionNullifier,
+      payoutCommitment,
+      grossPayout,
+      netPayout,
+      signatures
+    };
+  }
+  // ============================================================================
+  // Helper Methods
+  // ============================================================================
+  async sendTransaction(instructions, payer, phaseName) {
+    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
+    const message = new TransactionMessage2({
+      payerKey: payer.publicKey,
+      recentBlockhash: blockhash,
+      instructions
+    }).compileToV0Message();
+    const tx = new VersionedTransaction3(message);
+    tx.sign([payer]);
+    const signature = await this.connection.sendTransaction(tx, {
+      skipPreflight: false,
+      preflightCommitment: "confirmed"
+    });
+    const confirmation = await this.connection.confirmTransaction({
+      signature,
+      blockhash,
+      lastValidBlockHeight
+    });
+    if (confirmation.value.err) {
+      throw new Error(`${phaseName} transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+    return signature;
+  }
+  async waitForConfirmation(signature) {
+    const status = await this.connection.getSignatureStatus(signature, {
+      searchTransactionHistory: true
+    });
+    if (status.value?.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
+    }
+  }
+};
 export {
   ALTManager,
   AutoConsolidator,
@@ -11503,6 +11914,7 @@ export {
   NOTE_TYPE_STANDARD,
   NoteManager,
   PERPS_CIRCUIT_IDS,
+  PERPS_PYTH_FEED_IDS,
   PERPS_SEEDS,
   POSITION_COMMITMENT_DOMAIN,
   PROGRAM_ID,
@@ -11525,6 +11937,7 @@ export {
   VoteOption,
   VoteRecoveryManager,
   VoteType,
+  VotingClient,
   WALLET_DERIVATION_MESSAGE,
   Wallet,
   WeightOp,
@@ -11569,6 +11982,7 @@ export {
   buildSwapWithProgram,
   buildTransactWithProgram,
   buildUpdateBorrowFeesWithProgram,
+  buildVerifyVoteCommitmentExistsInstruction,
   buildVersionedTransaction,
   buildVoteSnapshotExecuteInstruction,
   buildVoteSnapshotInstructions,
@@ -11592,6 +12006,7 @@ export {
   calculateMinimumFee,
   calculatePnL,
   calculatePositionFee,
+  calculatePositionPrice,
   calculatePriceImpact,
   calculatePriceRatio,
   calculateProtocolFee,
@@ -11617,6 +12032,7 @@ export {
   computeLpCommitment,
   computePositionCommitment,
   consolidationService,
+  convertInputsToSnarkjs,
   createAddressLookupTable,
   createCloakCraftALT,
   createLpNote,
@@ -11673,6 +12089,10 @@ export {
   fetchAddressLookupTable,
   fetchAmmPool,
   fetchProtocolFeeConfig,
+  fetchPythPrice,
+  fetchPythPriceUsd,
+  fetchPythPrices,
+  fetchPythVaa,
   fieldToBytes,
   formatAmmPool,
   formatApy,
@@ -11689,6 +12109,7 @@ export {
   generateOperationId,
   generateRandomness,
   generateSnarkjsProof,
+  generateSnarkjsProofFromCircuit,
   generateStealthAddress,
   generateVoteRandomness,
   generateVoteSnapshotInputs,
@@ -11698,8 +12119,11 @@ export {
   getAmmPool,
   getAutoConsolidator,
   getFeeBps,
+  getFeedIdBySymbol,
   getInstructionFromAnchorMethod,
   getLightProtocolCommonAccounts,
+  getPoolOraclePrices,
+  getPriceUpdateAccountAddress,
   getPythService,
   getRandomStateTreeSet,
   getStateTreeSet,
@@ -11709,6 +12133,7 @@ export {
   isFreeOperation,
   isInSubgroup,
   isOnCurve,
+  isPriceUpdateValid,
   isValidLeverage,
   isValidPositionSize,
   lagrangeCoefficient,

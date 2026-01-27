@@ -9,7 +9,7 @@ export * from '@cloakcraft/types';
 
 // Export client
 export { CloakCraftClient } from './client';
-export type { CloakCraftClientConfig } from './client';
+export type { CloakCraftClientConfig, AnchorWallet } from './client';
 
 // Export crypto utilities
 export * from './crypto';

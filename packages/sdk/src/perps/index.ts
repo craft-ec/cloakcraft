@@ -91,3 +91,29 @@ export type {
   AddTokenToPoolParams,
   AddMarketParams,
 } from './instructions';
+
+// Oracle Integration
+export {
+  // Pyth Feed IDs
+  PERPS_PYTH_FEED_IDS,
+  // Feed ID helpers (feedIdToHex is exported from main pyth module)
+  getFeedIdBySymbol,
+  // Price fetching
+  fetchPythPrice,
+  fetchPythPriceUsd,
+  fetchPythVaa,
+  fetchPythPrices,
+  // Price update helpers
+  getPriceUpdateAccountAddress,
+  isPriceUpdateValid,
+  // Price calculations
+  calculatePositionPrice,
+  // Multi-feed support
+  getPoolOraclePrices,
+} from './oracle';
+
+export type {
+  // Oracle types
+  PythPriceData,
+  PriceUpdateResult,
+} from './oracle';

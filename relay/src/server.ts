@@ -226,8 +226,11 @@ export class RelayServer extends EventEmitter {
               preflightCommitment: 'confirmed',
             });
 
-            // Wait for confirmation
+            // Wait for confirmation and check for execution errors
             const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+            if (confirmation.value.err) {
+              throw new Error(`Transaction reverted: ${JSON.stringify(confirmation.value.err)}`);
+            }
 
             // Send result
             const response = encodeMessage({

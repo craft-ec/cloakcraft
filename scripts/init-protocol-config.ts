@@ -20,7 +20,7 @@ import * as path from "path";
 import * as os from "os";
 
 // Program ID (update to match your deployment)
-const PROGRAM_ID = new PublicKey("CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj");
+const PROGRAM_ID = new PublicKey("2VWF9TxMFgzHwbd5WPpYKoqHvtzk3fN66Ka3tVV82nZG");
 
 // Protocol config seed
 const PROTOCOL_CONFIG_SEED = Buffer.from("protocol_config");

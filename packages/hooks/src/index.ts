@@ -94,3 +94,35 @@ export {
   usePositionValidation,
 } from './usePerps';
 export type { PerpsProgressStage } from './usePerps';
+
+// Voting / Governance
+export {
+  // Ballot fetching
+  useBallots,
+  useActiveBallots,
+  useBallot,
+  useBallotTally,
+  useBallotTimeStatus,
+  // Voting operations
+  useVoteSnapshot,
+  useVoteSpend,
+  useChangeVote,
+  useCloseVotePosition,
+  useClaim,
+  // Calculations
+  usePayoutPreview,
+  useVoteValidation,
+  useCanClaim,
+} from './useVoting';
+export type {
+  VotingProgressStage,
+  BallotWithAddress,
+  VoteSnapshotOptions,
+  VoteSpendOptions,
+  ChangeVoteOptions,
+  ClosePositionOptions,
+  ClaimOptions,
+  VoteResult,
+  SpendResult,
+  ClaimResult,
+} from './useVoting';

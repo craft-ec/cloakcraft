@@ -39,13 +39,22 @@ __export(index_exports, {
   formatPriceChange: () => import_sdk8.formatPriceChange,
   formatShare: () => import_sdk10.formatShare,
   formatTvl: () => import_sdk10.formatTvl,
+  useActiveBallots: () => useActiveBallots,
   useAddLiquidity: () => useAddLiquidity,
   useAllBalances: () => useAllBalances,
   useAmmPools: () => useAmmPools,
   useAutoConsolidation: () => useAutoConsolidation,
   useBalance: () => useBalance,
+  useBallot: () => useBallot,
+  useBallotTally: () => useBallotTally,
+  useBallotTimeStatus: () => useBallotTimeStatus,
+  useBallots: () => useBallots,
+  useCanClaim: () => useCanClaim,
+  useChangeVote: () => useChangeVote,
+  useClaim: () => useClaim,
   useCloakCraft: () => useCloakCraft,
   useClosePosition: () => useClosePosition,
+  useCloseVotePosition: () => useCloseVotePosition,
   useConsolidation: () => useConsolidation,
   useFragmentationScore: () => useFragmentationScore,
   useImpermanentLoss: () => useImpermanentLoss,
@@ -62,6 +71,7 @@ __export(index_exports, {
   useNullifierStatus: () => useNullifierStatus,
   useOpenPosition: () => useOpenPosition,
   useOrders: () => useOrders,
+  usePayoutPreview: () => usePayoutPreview,
   usePerpsAddLiquidity: () => usePerpsAddLiquidity,
   usePerpsMarkets: () => usePerpsMarkets,
   usePerpsPool: () => usePerpsPool,
@@ -94,6 +104,9 @@ __export(index_exports, {
   useTransfer: () => useTransfer,
   useUnshield: () => useUnshield,
   useUserPosition: () => useUserPosition,
+  useVoteSnapshot: () => useVoteSnapshot,
+  useVoteSpend: () => useVoteSpend,
+  useVoteValidation: () => useVoteValidation,
   useWallet: () => useWallet,
   useWithdrawPreview: () => useWithdrawPreview
 });
@@ -108,6 +121,7 @@ var CloakCraftContext = (0, import_react.createContext)(null);
 function CloakCraftProvider({
   children,
   rpcUrl,
+  connection,
   indexerUrl,
   programId,
   heliusApiKey,
@@ -139,6 +153,8 @@ function CloakCraftProvider({
   }, [solanaWalletPubkey]);
   const client = (0, import_react.useMemo)(
     () => new import_sdk.CloakCraftClient({
+      // Use connection if provided (matches scalecraft pattern), otherwise use rpcUrl
+      connection,
       rpcUrl,
       indexerUrl,
       programId: new import_web3.PublicKey(programId),
@@ -148,7 +164,7 @@ function CloakCraftProvider({
       // Circom circuits in /public/circom/
       addressLookupTables: addressLookupTables?.map((addr) => new import_web3.PublicKey(addr))
     }),
-    [rpcUrl, indexerUrl, programId, heliusApiKey, network, addressLookupTables]
+    [connection, rpcUrl, indexerUrl, programId, heliusApiKey, network, addressLookupTables]
   );
   (0, import_react.useEffect)(() => {
     if (autoInitialize && !isInitialized && !isInitializing) {
@@ -287,6 +303,10 @@ function CloakCraftProvider({
     client.setProgram(program);
     setIsProgramReady(true);
   }, [client]);
+  const setAnchorWallet = (0, import_react.useCallback)((anchorWallet) => {
+    client.setWallet(anchorWallet);
+    setIsProgramReady(true);
+  }, [client]);
   const initializeProver = (0, import_react.useCallback)(async (circuits) => {
     setIsInitializing(true);
     try {
@@ -318,6 +338,7 @@ function CloakCraftProvider({
     sync,
     createWallet,
     setProgram,
+    setWallet: setAnchorWallet,
     initializeProver
   };
   return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CloakCraftContext.Provider, { value, children });
@@ -3196,6 +3217,546 @@ function usePositionValidation(pool, market, marginAmount, leverage, direction) 
     return { isValid: true, error: null, positionSize };
   }, [pool, market, marginAmount, leverage, direction]);
 }
+
+// src/useVoting.ts
+var import_react20 = require("react");
+var import_web34 = require("@solana/web3.js");
+function useBallots() {
+  const { client } = useCloakCraft();
+  const [ballots, setBallots] = (0, import_react20.useState)([]);
+  const [isLoading, setIsLoading] = (0, import_react20.useState)(false);
+  const [error, setError] = (0, import_react20.useState)(null);
+  const refresh = (0, import_react20.useCallback)(async () => {
+    if (!client?.getProgram()) {
+      setBallots([]);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const program = client.getProgram();
+      if (!program) {
+        throw new Error("Program not available");
+      }
+      const accounts = await program.account.ballot.all();
+      const ballotData = accounts.map((acc) => ({
+        ...acc.account,
+        address: acc.publicKey
+      }));
+      setBallots(ballotData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch ballots");
+      setBallots([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [client]);
+  (0, import_react20.useEffect)(() => {
+    refresh();
+  }, [refresh]);
+  return {
+    ballots,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function useActiveBallots() {
+  const { ballots, isLoading, error, refresh } = useBallots();
+  const activeBallots = (0, import_react20.useMemo)(() => {
+    return ballots.filter(
+      (b) => b.status === 1
+      // BallotStatus.Active
+    );
+  }, [ballots]);
+  return {
+    ballots: activeBallots,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function useBallot(ballotAddress) {
+  const { client } = useCloakCraft();
+  const [ballot, setBallot] = (0, import_react20.useState)(null);
+  const [isLoading, setIsLoading] = (0, import_react20.useState)(false);
+  const [error, setError] = (0, import_react20.useState)(null);
+  const address = (0, import_react20.useMemo)(() => {
+    if (!ballotAddress) return null;
+    if (typeof ballotAddress === "string") {
+      try {
+        return new import_web34.PublicKey(ballotAddress);
+      } catch {
+        return null;
+      }
+    }
+    return ballotAddress;
+  }, [ballotAddress]);
+  const refresh = (0, import_react20.useCallback)(async () => {
+    if (!client?.getProgram() || !address) {
+      setBallot(null);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const program = client.getProgram();
+      if (!program) {
+        throw new Error("Program not available");
+      }
+      const account = await program.account.ballot.fetch(address);
+      setBallot({ ...account, address });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch ballot");
+      setBallot(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [client, address]);
+  (0, import_react20.useEffect)(() => {
+    refresh();
+  }, [refresh]);
+  return {
+    ballot,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function useBallotTally(ballot) {
+  return (0, import_react20.useMemo)(() => {
+    if (!ballot) {
+      return null;
+    }
+    const totalVotes = Number(ballot.voteCount);
+    const totalWeight = ballot.totalWeight;
+    const totalAmount = ballot.totalAmount;
+    const optionStats = ballot.optionWeights.map((weight, index) => {
+      const amount = ballot.optionAmounts[index] || 0n;
+      const percentage = totalWeight > 0n ? Number(weight * 10000n / totalWeight) / 100 : 0;
+      return {
+        index,
+        weight,
+        amount,
+        percentage
+      };
+    });
+    const leadingOption = optionStats.reduce(
+      (max, opt) => opt.weight > max.weight ? opt : max,
+      optionStats[0] || { index: 0, weight: 0n, amount: 0n, percentage: 0 }
+    );
+    return {
+      totalVotes,
+      totalWeight,
+      totalAmount,
+      optionStats,
+      leadingOption,
+      hasQuorum: totalWeight >= ballot.quorumThreshold,
+      quorumProgress: ballot.quorumThreshold > 0n ? Number(totalWeight * 10000n / ballot.quorumThreshold) / 100 : 100
+    };
+  }, [ballot]);
+}
+function useBallotTimeStatus(ballot) {
+  const [now, setNow] = (0, import_react20.useState)(() => Math.floor(Date.now() / 1e3));
+  (0, import_react20.useEffect)(() => {
+    const interval = setInterval(() => {
+      setNow(Math.floor(Date.now() / 1e3));
+    }, 1e3);
+    return () => clearInterval(interval);
+  }, []);
+  return (0, import_react20.useMemo)(() => {
+    if (!ballot) {
+      return null;
+    }
+    const startTime = ballot.startTime;
+    const endTime = ballot.endTime;
+    const claimDeadline = ballot.claimDeadline;
+    const hasStarted = now >= startTime;
+    const hasEnded = now >= endTime;
+    const canClaim = ballot.hasOutcome && now < claimDeadline;
+    const claimExpired = ballot.hasOutcome && now >= claimDeadline;
+    const timeUntilStart = Math.max(0, startTime - now);
+    const timeUntilEnd = Math.max(0, endTime - now);
+    const timeUntilClaimDeadline = Math.max(0, claimDeadline - now);
+    return {
+      now,
+      startTime,
+      endTime,
+      claimDeadline,
+      hasStarted,
+      hasEnded,
+      canClaim,
+      claimExpired,
+      timeUntilStart,
+      timeUntilEnd,
+      timeUntilClaimDeadline,
+      isVotingPeriod: hasStarted && !hasEnded
+    };
+  }, [ballot, now]);
+}
+function useVoteSnapshot() {
+  const { client, wallet, sync } = useCloakCraft();
+  const [state, setState] = (0, import_react20.useState)({
+    isVoting: false,
+    error: null,
+    result: null
+  });
+  const vote = (0, import_react20.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isVoting: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      if (!client.getProgram()) {
+        setState({ isVoting: false, error: "Program not set", result: null });
+        return null;
+      }
+      setState({ isVoting: true, error: null, result: null });
+      try {
+        const { ballot, note, voteChoice, snapshotMerkleRoot, merklePath, merklePathIndices, eligibilityProof, onProgress } = options;
+        onProgress?.("preparing", 0);
+        if (voteChoice < 0 || voteChoice >= ballot.numOptions) {
+          throw new Error(`Invalid vote choice. Must be 0-${ballot.numOptions - 1}`);
+        }
+        if (ballot.status !== 1) {
+          throw new Error("Ballot is not active");
+        }
+        if (ballot.bindingMode !== 0) {
+          throw new Error("This ballot requires spend-to-vote");
+        }
+        onProgress?.("generating", 0);
+        onProgress?.("building", 0);
+        onProgress?.("approving", 0);
+        onProgress?.("executing", 0);
+        const result = {
+          operationId: new Uint8Array(32),
+          voteNullifier: new Uint8Array(32),
+          voteCommitment: new Uint8Array(32),
+          voteRandomness: new Uint8Array(32),
+          signatures: ["pending_implementation"]
+        };
+        onProgress?.("confirming", 0);
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        setState({ isVoting: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Vote failed";
+        setState({ isVoting: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet, sync]
+  );
+  const reset = (0, import_react20.useCallback)(() => {
+    setState({ isVoting: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    vote,
+    reset
+  };
+}
+function useVoteSpend() {
+  const { client, wallet, sync } = useCloakCraft();
+  const [state, setState] = (0, import_react20.useState)({
+    isVoting: false,
+    error: null,
+    result: null
+  });
+  const vote = (0, import_react20.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isVoting: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      if (!client.getProgram()) {
+        setState({ isVoting: false, error: "Program not set", result: null });
+        return null;
+      }
+      setState({ isVoting: true, error: null, result: null });
+      try {
+        const { ballot, note, voteChoice, merklePath, merklePathIndices, leafIndex, eligibilityProof, onProgress } = options;
+        onProgress?.("preparing", 0);
+        if (voteChoice < 0 || voteChoice >= ballot.numOptions) {
+          throw new Error(`Invalid vote choice. Must be 0-${ballot.numOptions - 1}`);
+        }
+        if (ballot.status !== 1) {
+          throw new Error("Ballot is not active");
+        }
+        if (ballot.bindingMode !== 1) {
+          throw new Error("This ballot uses snapshot voting");
+        }
+        if (!note.tokenMint.equals(ballot.tokenMint)) {
+          throw new Error("Note token does not match ballot token");
+        }
+        onProgress?.("generating", 0);
+        onProgress?.("building", 0);
+        onProgress?.("approving", 0);
+        onProgress?.("executing", 0);
+        const result = {
+          operationId: new Uint8Array(32),
+          spendingNullifier: new Uint8Array(32),
+          positionCommitment: new Uint8Array(32),
+          positionRandomness: new Uint8Array(32),
+          signatures: ["pending_implementation"]
+        };
+        onProgress?.("confirming", 0);
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        await sync(note.tokenMint, true);
+        setState({ isVoting: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Vote failed";
+        setState({ isVoting: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet, sync]
+  );
+  const reset = (0, import_react20.useCallback)(() => {
+    setState({ isVoting: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    vote,
+    reset
+  };
+}
+function useChangeVote() {
+  const { client, wallet } = useCloakCraft();
+  const [state, setState] = (0, import_react20.useState)({
+    isChanging: false,
+    error: null,
+    result: null
+  });
+  const changeVote = (0, import_react20.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isChanging: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      setState({ isChanging: true, error: null, result: null });
+      try {
+        const { ballot, oldVoteCommitment, oldVoteChoice, oldRandomness, newVoteChoice, onProgress } = options;
+        onProgress?.("preparing", 0);
+        if (newVoteChoice < 0 || newVoteChoice >= ballot.numOptions) {
+          throw new Error(`Invalid vote choice. Must be 0-${ballot.numOptions - 1}`);
+        }
+        if (ballot.status !== 1) {
+          throw new Error("Ballot is not active");
+        }
+        if (ballot.bindingMode !== 0) {
+          throw new Error("Can only change vote in snapshot mode");
+        }
+        onProgress?.("generating", 0);
+        onProgress?.("building", 0);
+        onProgress?.("approving", 0);
+        onProgress?.("executing", 0);
+        const result = {
+          operationId: new Uint8Array(32),
+          voteCommitment: new Uint8Array(32),
+          voteRandomness: new Uint8Array(32),
+          signatures: ["pending_implementation"]
+        };
+        onProgress?.("confirming", 0);
+        setState({ isChanging: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Change vote failed";
+        setState({ isChanging: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet]
+  );
+  const reset = (0, import_react20.useCallback)(() => {
+    setState({ isChanging: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    changeVote,
+    reset
+  };
+}
+function useCloseVotePosition() {
+  const { client, wallet, sync } = useCloakCraft();
+  const [state, setState] = (0, import_react20.useState)({
+    isClosing: false,
+    error: null,
+    result: null
+  });
+  const closePosition = (0, import_react20.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isClosing: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      setState({ isClosing: true, error: null, result: null });
+      try {
+        const { ballot, positionCommitment, voteChoice, amount, weight, positionRandomness, onProgress } = options;
+        onProgress?.("preparing", 0);
+        if (ballot.status >= 3) {
+          throw new Error("Cannot close position after ballot is resolved");
+        }
+        if (ballot.bindingMode !== 1) {
+          throw new Error("Only spend-to-vote positions can be closed");
+        }
+        onProgress?.("generating", 0);
+        onProgress?.("building", 0);
+        onProgress?.("approving", 0);
+        onProgress?.("executing", 0);
+        const result = {
+          operationId: new Uint8Array(32),
+          signatures: ["pending_implementation"]
+        };
+        onProgress?.("confirming", 0);
+        await sync(ballot.tokenMint, true);
+        setState({ isClosing: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Close position failed";
+        setState({ isClosing: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet, sync]
+  );
+  const reset = (0, import_react20.useCallback)(() => {
+    setState({ isClosing: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    closePosition,
+    reset
+  };
+}
+function useClaim() {
+  const { client, wallet, sync } = useCloakCraft();
+  const [state, setState] = (0, import_react20.useState)({
+    isClaiming: false,
+    error: null,
+    result: null
+  });
+  const claim = (0, import_react20.useCallback)(
+    async (options) => {
+      if (!client || !wallet) {
+        setState({ isClaiming: false, error: "Wallet not connected", result: null });
+        return null;
+      }
+      setState({ isClaiming: true, error: null, result: null });
+      try {
+        const { ballot, positionCommitment, voteChoice, amount, weight, positionRandomness, onProgress } = options;
+        onProgress?.("preparing", 0);
+        if (!ballot.hasOutcome) {
+          throw new Error("Ballot not resolved yet");
+        }
+        if (voteChoice !== ballot.outcome) {
+          throw new Error("Cannot claim - did not vote for winning option");
+        }
+        if (ballot.bindingMode !== 1) {
+          throw new Error("Only spend-to-vote ballots have claims");
+        }
+        onProgress?.("generating", 0);
+        onProgress?.("building", 0);
+        onProgress?.("approving", 0);
+        onProgress?.("executing", 0);
+        const result = {
+          operationId: new Uint8Array(32),
+          positionNullifier: new Uint8Array(32),
+          payoutCommitment: new Uint8Array(32),
+          grossPayout: amount,
+          netPayout: amount * 99n / 100n,
+          // After fees
+          signatures: ["pending_implementation"]
+        };
+        onProgress?.("confirming", 0);
+        await sync(ballot.tokenMint, true);
+        setState({ isClaiming: false, error: null, result });
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Claim failed";
+        setState({ isClaiming: false, error, result: null });
+        return null;
+      }
+    },
+    [client, wallet, sync]
+  );
+  const reset = (0, import_react20.useCallback)(() => {
+    setState({ isClaiming: false, error: null, result: null });
+  }, []);
+  return {
+    ...state,
+    claim,
+    reset
+  };
+}
+function usePayoutPreview(ballot, voteChoice, weight) {
+  return (0, import_react20.useMemo)(() => {
+    if (!ballot || !ballot.hasOutcome || voteChoice !== ballot.outcome) {
+      return null;
+    }
+    if (ballot.winnerWeight === 0n) {
+      return null;
+    }
+    const totalPool = ballot.poolBalance;
+    const grossPayout = weight * totalPool / ballot.winnerWeight;
+    const feeAmount = grossPayout * BigInt(ballot.protocolFeeBps) / 10000n;
+    const netPayout = grossPayout - feeAmount;
+    const multiplier = weight > 0n ? Number(grossPayout * 1000n / weight) / 1e3 : 0;
+    return {
+      grossPayout,
+      netPayout,
+      multiplier
+    };
+  }, [ballot, voteChoice, weight]);
+}
+function useVoteValidation(ballot, note, voteChoice) {
+  return (0, import_react20.useMemo)(() => {
+    if (!ballot) {
+      return { isValid: false, error: "Ballot not loaded" };
+    }
+    if (!note) {
+      return { isValid: false, error: "No note selected" };
+    }
+    if (voteChoice < 0 || voteChoice >= ballot.numOptions) {
+      return { isValid: false, error: `Vote choice must be 0-${ballot.numOptions - 1}` };
+    }
+    if (ballot.status !== 1) {
+      return { isValid: false, error: "Ballot is not active" };
+    }
+    if (!note.tokenMint.equals(ballot.tokenMint)) {
+      return { isValid: false, error: "Note token does not match ballot token" };
+    }
+    if (note.amount <= 0n) {
+      return { isValid: false, error: "Note has no balance" };
+    }
+    return { isValid: true, error: null, weight: note.amount };
+  }, [ballot, note, voteChoice]);
+}
+function useCanClaim(ballot, voteChoice) {
+  return (0, import_react20.useMemo)(() => {
+    if (!ballot) {
+      return { canClaim: false, reason: "Ballot not loaded" };
+    }
+    if (!ballot.hasOutcome) {
+      return { canClaim: false, reason: "Ballot not resolved yet" };
+    }
+    if (voteChoice === null) {
+      return { canClaim: false, reason: "No vote recorded" };
+    }
+    if (voteChoice !== ballot.outcome) {
+      return { canClaim: false, reason: "Did not vote for winning option" };
+    }
+    if (ballot.bindingMode !== 1) {
+      return { canClaim: false, reason: "Only spend-to-vote ballots have claims" };
+    }
+    const now = Math.floor(Date.now() / 1e3);
+    if (now >= ballot.claimDeadline) {
+      return { canClaim: false, reason: "Claim deadline passed" };
+    }
+    return { canClaim: true, reason: null };
+  }, [ballot, voteChoice]);
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   CloakCraftProvider,
@@ -3207,13 +3768,22 @@ function usePositionValidation(pool, market, marginAmount, leverage, direction) 
   formatPriceChange,
   formatShare,
   formatTvl,
+  useActiveBallots,
   useAddLiquidity,
   useAllBalances,
   useAmmPools,
   useAutoConsolidation,
   useBalance,
+  useBallot,
+  useBallotTally,
+  useBallotTimeStatus,
+  useBallots,
+  useCanClaim,
+  useChangeVote,
+  useClaim,
   useCloakCraft,
   useClosePosition,
+  useCloseVotePosition,
   useConsolidation,
   useFragmentationScore,
   useImpermanentLoss,
@@ -3230,6 +3800,7 @@ function usePositionValidation(pool, market, marginAmount, leverage, direction) 
   useNullifierStatus,
   useOpenPosition,
   useOrders,
+  usePayoutPreview,
   usePerpsAddLiquidity,
   usePerpsMarkets,
   usePerpsPool,
@@ -3262,6 +3833,9 @@ function usePositionValidation(pool, market, marginAmount, leverage, direction) 
   useTransfer,
   useUnshield,
   useUserPosition,
+  useVoteSnapshot,
+  useVoteSpend,
+  useVoteValidation,
   useWallet,
   useWithdrawPreview
 });

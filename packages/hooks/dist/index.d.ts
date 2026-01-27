@@ -1,8 +1,8 @@
 import * as react_jsx_runtime from 'react/jsx-runtime';
 import { ReactNode } from 'react';
-import { PublicKey, Keypair } from '@solana/web3.js';
+import { Connection, PublicKey, Keypair } from '@solana/web3.js';
 import * as _cloakcraft_sdk from '@cloakcraft/sdk';
-import { CloakCraftClient, Wallet, SelectionStrategy, TransactionFilter, TransactionRecord, TransactionType, TransactionStatus, TokenPrice, PoolAnalytics, PoolStats, UserPoolPosition, FragmentationReport, ConsolidationSuggestion, ConsolidationBatch, AutoConsolidationState, PerpsPoolState, PerpsMarketState, DecryptedPerpsPosition, PerpsPosition, PnLResult, LiquidationPriceResult, LpValueResult, WithdrawableResult } from '@cloakcraft/sdk';
+import { CloakCraftClient, Wallet, AnchorWallet, SelectionStrategy, TransactionFilter, TransactionRecord, TransactionType, TransactionStatus, TokenPrice, PoolAnalytics, PoolStats, UserPoolPosition, FragmentationReport, ConsolidationSuggestion, ConsolidationBatch, AutoConsolidationState, PerpsPoolState, PerpsMarketState, DecryptedPerpsPosition, PerpsPosition, PnLResult, LiquidationPriceResult, LpValueResult, WithdrawableResult, Ballot } from '@cloakcraft/sdk';
 export { PoolAnalytics, PoolStats, TokenPrice, TransactionFilter, TransactionRecord, TransactionStatus, TransactionType, UserPoolPosition, formatApy, formatPrice, formatPriceChange, formatShare, formatTvl } from '@cloakcraft/sdk';
 import * as _cloakcraft_types from '@cloakcraft/types';
 import { SyncStatus, DecryptedNote, TransactionResult, StealthAddress, PoolState, OrderState, AmmPoolState } from '@cloakcraft/types';
@@ -23,13 +23,18 @@ interface CloakCraftContextValue {
     disconnect: () => void;
     sync: (tokenMint?: PublicKey, clearCache?: boolean) => Promise<void>;
     createWallet: () => Wallet;
-    /** Set the Anchor program instance (version-agnostic) */
+    /** Set the Anchor program instance (version-agnostic) - @deprecated use setWallet instead */
     setProgram: (program: unknown) => void;
+    /** Set wallet adapter and create AnchorProvider/Program internally (matches scalecraft pattern) */
+    setWallet: (wallet: AnchorWallet) => void;
     initializeProver: (circuits?: string[]) => Promise<void>;
 }
 interface CloakCraftProviderProps {
     children: ReactNode;
-    rpcUrl: string;
+    /** Solana RPC URL (use this OR connection, not both) */
+    rpcUrl?: string;
+    /** Solana Connection object from wallet adapter (preferred - matches scalecraft pattern) */
+    connection?: Connection;
     /** Indexer URL for merkle proof fetching */
     indexerUrl: string;
     /** CloakCraft program ID */
@@ -45,7 +50,7 @@ interface CloakCraftProviderProps {
     /** Address Lookup Table addresses for atomic transaction compression (optional) */
     addressLookupTables?: string[];
 }
-declare function CloakCraftProvider({ children, rpcUrl, indexerUrl, programId, heliusApiKey, network, autoInitialize, solanaWalletPubkey, addressLookupTables, }: CloakCraftProviderProps): react_jsx_runtime.JSX.Element;
+declare function CloakCraftProvider({ children, rpcUrl, connection, indexerUrl, programId, heliusApiKey, network, autoInitialize, solanaWalletPubkey, addressLookupTables, }: CloakCraftProviderProps): react_jsx_runtime.JSX.Element;
 declare function useCloakCraft(): CloakCraftContextValue;
 
 /**
@@ -890,7 +895,7 @@ interface OpenPositionOptions {
     /** Optional progress callback */
     onProgress?: (stage: PerpsProgressStage) => void;
 }
-interface ClosePositionOptions {
+interface ClosePositionOptions$1 {
     /** Position to close */
     position: DecryptedPerpsPosition;
     /** Perps pool */
@@ -985,7 +990,7 @@ declare function useOpenPosition(): {
  * Hook for closing a perpetual position
  */
 declare function useClosePosition(): {
-    closePosition: (options: ClosePositionOptions) => Promise<TransactionResult | null>;
+    closePosition: (options: ClosePositionOptions$1) => Promise<TransactionResult | null>;
     reset: () => void;
     isClosing: boolean;
     error: string | null;
@@ -1053,4 +1058,270 @@ declare function usePositionValidation(pool: PerpsPoolState | null, market: Perp
     positionSize: bigint;
 };
 
-export { type AddLiquidityProgressStage, CloakCraftProvider, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type PerpsProgressStage, type ProtocolFeeConfig, type RemoveLiquidityProgressStage, type SwapProgressStage, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, WALLET_DERIVATION_MESSAGE, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useCloakCraft, useClosePosition, useConsolidation, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsConsolidationRecommended, useIsFreeOperation, useLiquidationPrice, useLpMintPreview, useLpValue, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOpenPosition, useOrders, usePerpsAddLiquidity, usePerpsMarkets, usePerpsPool, usePerpsPools, usePerpsRemoveLiquidity, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePositionPnL, usePositionValidation, usePrivateBalance, useProtocolFees, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTokenUtilization, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useWallet, useWithdrawPreview };
+/**
+ * Voting hooks
+ *
+ * Provides interface for voting operations: ballots, voting, and claims
+ */
+
+/** Progress stages for voting operations */
+type VotingProgressStage = 'preparing' | 'generating' | 'building' | 'approving' | 'executing' | 'confirming';
+interface BallotWithAddress extends Ballot {
+    address: PublicKey;
+}
+interface VoteSnapshotOptions {
+    /** Ballot to vote on */
+    ballot: BallotWithAddress;
+    /** Input note for snapshot voting (proves balance) */
+    note: DecryptedNote;
+    /** Vote choice (option index) */
+    voteChoice: number;
+    /** Merkle proof for note inclusion in snapshot */
+    snapshotMerkleRoot: Uint8Array;
+    merklePath: Uint8Array[];
+    merklePathIndices: number[];
+    /** Optional eligibility proof */
+    eligibilityProof?: {
+        merkleProof: Uint8Array[];
+        pathIndices: number[];
+        leafIndex: number;
+    };
+    /** Optional progress callback */
+    onProgress?: (stage: VotingProgressStage, phase?: number) => void;
+}
+interface VoteSpendOptions {
+    /** Ballot to vote on */
+    ballot: BallotWithAddress;
+    /** Input note to spend (locks tokens) */
+    note: DecryptedNote;
+    /** Vote choice (option index) */
+    voteChoice: number;
+    /** Merkle proof for note */
+    merklePath: Uint8Array[];
+    merklePathIndices: number[];
+    leafIndex: number;
+    /** Optional eligibility proof */
+    eligibilityProof?: {
+        merkleProof: Uint8Array[];
+        pathIndices: number[];
+        leafIndex: number;
+    };
+    /** Optional progress callback */
+    onProgress?: (stage: VotingProgressStage, phase?: number) => void;
+}
+interface ChangeVoteOptions {
+    /** Ballot */
+    ballot: BallotWithAddress;
+    /** Old vote commitment */
+    oldVoteCommitment: Uint8Array;
+    /** Old vote choice */
+    oldVoteChoice: number;
+    /** Old randomness */
+    oldRandomness: Uint8Array;
+    /** New vote choice */
+    newVoteChoice: number;
+    /** Optional progress callback */
+    onProgress?: (stage: VotingProgressStage, phase?: number) => void;
+}
+interface ClosePositionOptions {
+    /** Ballot */
+    ballot: BallotWithAddress;
+    /** Position commitment */
+    positionCommitment: Uint8Array;
+    /** Vote choice */
+    voteChoice: number;
+    /** Amount locked */
+    amount: bigint;
+    /** Vote weight */
+    weight: bigint;
+    /** Position randomness */
+    positionRandomness: Uint8Array;
+    /** Optional progress callback */
+    onProgress?: (stage: VotingProgressStage, phase?: number) => void;
+}
+interface ClaimOptions {
+    /** Ballot */
+    ballot: BallotWithAddress;
+    /** Position commitment */
+    positionCommitment: Uint8Array;
+    /** Vote choice */
+    voteChoice: number;
+    /** Amount locked */
+    amount: bigint;
+    /** Vote weight */
+    weight: bigint;
+    /** Position randomness */
+    positionRandomness: Uint8Array;
+    /** Optional progress callback */
+    onProgress?: (stage: VotingProgressStage, phase?: number) => void;
+}
+interface VoteResult {
+    operationId: Uint8Array;
+    voteNullifier?: Uint8Array;
+    voteCommitment?: Uint8Array;
+    voteRandomness?: Uint8Array;
+    signatures: string[];
+}
+interface SpendResult {
+    operationId: Uint8Array;
+    spendingNullifier: Uint8Array;
+    positionCommitment: Uint8Array;
+    positionRandomness: Uint8Array;
+    signatures: string[];
+}
+interface ClaimResult {
+    operationId: Uint8Array;
+    positionNullifier: Uint8Array;
+    payoutCommitment: Uint8Array;
+    grossPayout: bigint;
+    netPayout: bigint;
+    signatures: string[];
+}
+/**
+ * Hook for fetching all ballots
+ */
+declare function useBallots(): {
+    ballots: BallotWithAddress[];
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
+/**
+ * Hook for fetching active ballots only
+ */
+declare function useActiveBallots(): {
+    ballots: BallotWithAddress[];
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
+/**
+ * Hook for fetching a single ballot
+ */
+declare function useBallot(ballotAddress: PublicKey | string | null): {
+    ballot: BallotWithAddress | null;
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
+/**
+ * Hook for ballot tally information
+ */
+declare function useBallotTally(ballot: Ballot | null): {
+    totalVotes: number;
+    totalWeight: bigint;
+    totalAmount: bigint;
+    optionStats: {
+        index: number;
+        weight: bigint;
+        amount: bigint;
+        percentage: number;
+    }[];
+    leadingOption: {
+        index: number;
+        weight: bigint;
+        amount: bigint;
+        percentage: number;
+    };
+    hasQuorum: boolean;
+    quorumProgress: number;
+} | null;
+/**
+ * Hook for ballot time status
+ */
+declare function useBallotTimeStatus(ballot: Ballot | null): {
+    now: number;
+    startTime: number;
+    endTime: number;
+    claimDeadline: number;
+    hasStarted: boolean;
+    hasEnded: boolean;
+    canClaim: boolean;
+    claimExpired: boolean;
+    timeUntilStart: number;
+    timeUntilEnd: number;
+    timeUntilClaimDeadline: number;
+    isVotingPeriod: boolean;
+} | null;
+/**
+ * Hook for snapshot voting (tokens stay liquid)
+ */
+declare function useVoteSnapshot(): {
+    vote: (options: VoteSnapshotOptions) => Promise<VoteResult | null>;
+    reset: () => void;
+    isVoting: boolean;
+    error: string | null;
+    result: VoteResult | null;
+};
+/**
+ * Hook for spend-to-vote (tokens locked until outcome)
+ */
+declare function useVoteSpend(): {
+    vote: (options: VoteSpendOptions) => Promise<SpendResult | null>;
+    reset: () => void;
+    isVoting: boolean;
+    error: string | null;
+    result: SpendResult | null;
+};
+/**
+ * Hook for changing vote (snapshot mode only)
+ */
+declare function useChangeVote(): {
+    changeVote: (options: ChangeVoteOptions) => Promise<VoteResult | null>;
+    reset: () => void;
+    isChanging: boolean;
+    error: string | null;
+    result: VoteResult | null;
+};
+/**
+ * Hook for closing a vote position (exit before resolution)
+ */
+declare function useCloseVotePosition(): {
+    closePosition: (options: ClosePositionOptions) => Promise<VoteResult | null>;
+    reset: () => void;
+    isClosing: boolean;
+    error: string | null;
+    result: VoteResult | null;
+};
+/**
+ * Hook for claiming winnings from resolved ballot
+ */
+declare function useClaim(): {
+    claim: (options: ClaimOptions) => Promise<ClaimResult | null>;
+    reset: () => void;
+    isClaiming: boolean;
+    error: string | null;
+    result: ClaimResult | null;
+};
+/**
+ * Hook for calculating potential payout from a position
+ */
+declare function usePayoutPreview(ballot: Ballot | null, voteChoice: number, weight: bigint): {
+    grossPayout: bigint;
+    netPayout: bigint;
+    multiplier: number;
+} | null;
+/**
+ * Hook for vote validation
+ */
+declare function useVoteValidation(ballot: Ballot | null, note: DecryptedNote | null, voteChoice: number): {
+    isValid: boolean;
+    error: string;
+    weight?: undefined;
+} | {
+    isValid: boolean;
+    error: null;
+    weight: bigint;
+};
+/**
+ * Hook for determining if user can claim
+ */
+declare function useCanClaim(ballot: Ballot | null, voteChoice: number | null): {
+    canClaim: boolean;
+    reason: string;
+} | {
+    canClaim: boolean;
+    reason: null;
+};
+
+export { type AddLiquidityProgressStage, type BallotWithAddress, type ChangeVoteOptions, type ClaimOptions, type ClaimResult, CloakCraftProvider, type ClosePositionOptions, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type PerpsProgressStage, type ProtocolFeeConfig, type RemoveLiquidityProgressStage, type SpendResult, type SwapProgressStage, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, type VoteResult, type VoteSnapshotOptions, type VoteSpendOptions, type VotingProgressStage, WALLET_DERIVATION_MESSAGE, useActiveBallots, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useBallot, useBallotTally, useBallotTimeStatus, useBallots, useCanClaim, useChangeVote, useClaim, useCloakCraft, useClosePosition, useCloseVotePosition, useConsolidation, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsConsolidationRecommended, useIsFreeOperation, useLiquidationPrice, useLpMintPreview, useLpValue, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOpenPosition, useOrders, usePayoutPreview, usePerpsAddLiquidity, usePerpsMarkets, usePerpsPool, usePerpsPools, usePerpsRemoveLiquidity, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePositionPnL, usePositionValidation, usePrivateBalance, useProtocolFees, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTokenUtilization, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useVoteSnapshot, useVoteSpend, useVoteValidation, useWallet, useWithdrawPreview };

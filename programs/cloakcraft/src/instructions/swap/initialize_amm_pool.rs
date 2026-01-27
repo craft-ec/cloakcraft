@@ -5,8 +5,6 @@
 //! - StableSwap: Curve-style formula, best for pegged assets (stablecoins)
 
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::program::invoke_signed;
-use anchor_lang::solana_program::system_instruction;
 use anchor_spl::token::{Mint, Token};
 
 use crate::state::{AmmPool, PoolType};
@@ -24,16 +22,19 @@ pub struct InitializeAmmPool<'info> {
         seeds = [seeds::AMM_POOL, token_a_mint.as_ref(), token_b_mint.as_ref()],
         bump
     )]
-    pub amm_pool: Account<'info, AmmPool>,
+    pub amm_pool: Box<Account<'info, AmmPool>>,
 
     /// LP token mint (PDA derived from token pair)
-    /// CHECK: This account is initialized as a mint via CPI
+    /// Using Anchor's init macro ensures simulation works correctly
     #[account(
-        mut,
+        init,
+        payer = payer,
         seeds = [seeds::LP_MINT, token_a_mint.as_ref(), token_b_mint.as_ref()],
-        bump
+        bump,
+        mint::decimals = 9,
+        mint::authority = amm_pool,
     )]
-    pub lp_mint: AccountInfo<'info>,
+    pub lp_mint: Account<'info, Mint>,
 
     /// Token A mint
     pub token_a_mint_account: Account<'info, Mint>,
@@ -53,9 +54,6 @@ pub struct InitializeAmmPool<'info> {
 
     /// Token program
     pub token_program: Program<'info, Token>,
-
-    /// Rent
-    pub rent: Sysvar<'info, Rent>,
 }
 
 pub fn initialize_amm_pool(
@@ -84,48 +82,9 @@ pub fn initialize_amm_pool(
     }
 
     let amm_pool = &mut ctx.accounts.amm_pool;
-    let lp_mint_bump = ctx.bumps.lp_mint;
 
-    // Create LP mint account as PDA using invoke_signed
-    let rent = Rent::get()?;
-    let space = 82; // Mint account size
-    let lamports = rent.minimum_balance(space);
-
-    // PDA seeds for LP mint (must match account constraint: [LP_MINT, token_a, token_b])
-    let lp_mint_seeds: &[&[u8]] = &[
-        seeds::LP_MINT,
-        token_a_mint.as_ref(),
-        token_b_mint.as_ref(),
-        &[lp_mint_bump],
-    ];
-
-    invoke_signed(
-        &system_instruction::create_account(
-            ctx.accounts.payer.key,
-            ctx.accounts.lp_mint.key,
-            lamports,
-            space as u64,
-            &ctx.accounts.token_program.key(),
-        ),
-        &[
-            ctx.accounts.payer.to_account_info(),
-            ctx.accounts.lp_mint.to_account_info(),
-            ctx.accounts.system_program.to_account_info(),
-        ],
-        &[lp_mint_seeds],
-    )?;
-
-    // Initialize the LP mint via CPI with PDA signer
-    let cpi_accounts = anchor_spl::token::InitializeMint {
-        mint: ctx.accounts.lp_mint.to_account_info(),
-        rent: ctx.accounts.rent.to_account_info(),
-    };
-    let cpi_program = ctx.accounts.token_program.to_account_info();
-    let signer_seeds_array: [&[&[u8]]; 1] = [lp_mint_seeds];
-    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, &signer_seeds_array);
-
-    // Set amm_pool as mint authority, no freeze authority
-    anchor_spl::token::initialize_mint(cpi_ctx, 9, &amm_pool.key(), None)?;
+    // LP mint is now initialized by Anchor via the init macro
+    // No manual invoke_signed needed - this ensures simulation works correctly
 
     amm_pool.pool_id = amm_pool.key();
     amm_pool.token_a_mint = token_a_mint;
@@ -138,7 +97,7 @@ pub fn initialize_amm_pool(
     amm_pool.authority = ctx.accounts.authority.key();
     amm_pool.is_active = true;
     amm_pool.bump = ctx.bumps.amm_pool;
-    amm_pool.lp_mint_bump = lp_mint_bump;
+    amm_pool.lp_mint_bump = ctx.bumps.lp_mint;
     amm_pool.pool_type = pool_type;
     amm_pool.amplification = if pool_type == PoolType::StableSwap {
         amplification

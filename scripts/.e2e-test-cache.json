@@ -1,201 +1,265 @@
 {
   "passedTests": {
     "Initialize Poseidon": {
-      "timestamp": 1769277337711,
+      "timestamp": 1769421490588,
       "message": "BN254 hash function ready"
     },
     "Initialize Proof Generator": {
-      "timestamp": 1769277337711,
+      "timestamp": 1769421490588,
       "message": "transfer_1x2 circuit files found"
     },
     "Create Wallet": {
-      "timestamp": 1769277337726,
-      "message": "PubKey: 106a6d22b38ce953..."
+      "timestamp": 1769421490603,
+      "message": "PubKey: 23b98449f5da1de5..."
     },
     "Generate Stealth Address": {
-      "timestamp": 1769277337764,
-      "message": "Ephemeral: 2c61e22a667db697..."
+      "timestamp": 1769421490641,
+      "message": "Ephemeral: 2d22e618d8f562a9..."
     },
     "Create Token Mint": {
-      "timestamp": 1769277340742,
-      "message": "8aAa6Wr8JbAi..."
+      "timestamp": 1769421492980,
+      "message": "GwS8M18tvHks..."
     },
     "Mint Tokens": {
-      "timestamp": 1769277345158,
+      "timestamp": 1769421496915,
       "message": "1000 tokens minted to ATA"
     },
     "Get Merkle Proof": {
-      "timestamp": 1769277371155,
-      "message": "Root: 3010d4c07bd1b4ca..., depth: 32"
+      "timestamp": 1769421521994,
+      "message": "Root: 15fa1ea3063e4098..., depth: 32"
     },
     "Generate ZK Proof": {
-      "timestamp": 1769277371681,
+      "timestamp": 1769421522505,
       "message": "Proof size: 256 bytes"
     },
     "Verify Nullifier Status": {
-      "timestamp": 1769277420941,
+      "timestamp": 1769421564766,
       "message": "Total: 4, Spent: 2, Unspent: 2"
     },
     "Voting: SpendToVote Ballot": {
-      "timestamp": 1769277773647,
+      "timestamp": 1769421978180,
       "message": "SpendToVote/Public/Weighted/Oracle"
     },
     "Voting: Single Vote": {
-      "timestamp": 1769277773992,
+      "timestamp": 1769341450585,
       "message": "VK registered (1806 bytes)"
     },
     "Voting: Change Vote": {
-      "timestamp": 1769277774344,
+      "timestamp": 1769341450905,
       "message": "VK registered (1806 bytes)"
     },
     "Voting: Vote Spend": {
-      "timestamp": 1769277774682,
+      "timestamp": 1769341451225,
       "message": "VK registered (1806 bytes)"
     },
     "Voting: Close Position": {
-      "timestamp": 1769277775017,
-      "message": "VK registered (1806 bytes)"
+      "timestamp": 1769404669898,
+      "message": "VK registered (1806 bytes), full flow requires position"
     },
     "Voting: Claim": {
-      "timestamp": 1769277775330,
+      "timestamp": 1769341451847,
       "message": "VK registered (1806 bytes)"
     },
     "Protocol Config": {
-      "timestamp": 1769277776047,
+      "timestamp": 1769421979566,
       "message": "Fees: enabled"
     },
     "Transfer Fee Calc": {
-      "timestamp": 1769277776351,
-      "message": "Fee: 0.15 tokens (15 bps)"
+      "timestamp": 1769421979879,
+      "message": "Fee: 0.1 tokens (10 bps)"
     },
     "Unshield Fee Calc": {
-      "timestamp": 1769277776732,
+      "timestamp": 1769421980183,
       "message": "Fee: 0.125 tokens (25 bps)"
     },
     "AMM Swap Fee Calc": {
-      "timestamp": 1769277776732,
+      "timestamp": 1769421980184,
       "message": "Fee: 3 tokens for 1000 token swap"
     },
     "Perps Position Fee": {
-      "timestamp": 1769277776732,
+      "timestamp": 1769421980184,
       "message": "Fee: 0.06 tokens for 100 token position"
     },
     "Voting Claim Fee": {
-      "timestamp": 1769277776732,
+      "timestamp": 1769421980184,
       "message": "Fee: 1 token for 100 token payout"
     },
     "Fee Boundary Tests": {
-      "timestamp": 1769277777875,
+      "timestamp": 1769421981517,
       "message": "All boundary cases handled correctly"
     },
     "AMM Swap B→A": {
-      "timestamp": 1769277750538,
+      "timestamp": 1769421916436,
       "message": "Swapped 5 tokens B → A"
     },
     "AMM Remove Liquidity": {
-      "timestamp": 1769277552713,
+      "timestamp": 1769421689007,
       "message": "Removed 10000000000 LP tokens"
     },
     "Initialize Pool": {
-      "timestamp": 1769277347820,
-      "message": "TX: 59R24RWdPywvHwdu..."
+      "timestamp": 1769421499434,
+      "message": "TX: 4HbFxJPpP5VvZ9Yj..."
     },
     "Initialize Commitment Counter": {
-      "timestamp": 1769277349782,
-      "message": "TX: 5ruyoZRhEiKRXM6S..."
+      "timestamp": 1769421501766,
+      "message": "TX: 3dZCQxXbf9MZX3Mr..."
     },
     "Shield Tokens": {
-      "timestamp": 1769277352506,
-      "message": "100 tokens shielded, commitment: 045b8a37d31a25d8..."
+      "timestamp": 1769421504500,
+      "message": "100 tokens shielded, commitment: 198f73db3549be95..."
     },
     "Scan Notes": {
-      "timestamp": 1769277368283,
+      "timestamp": 1769421520282,
       "message": "Found 1 note(s), total: 100000000000 tokens"
     },
-    "Submit Transact": {
-      "timestamp": 1769277389357,
-      "message": "Private transfer complete"
-    },
-    "Unshield Tokens": {
-      "timestamp": 1769277416483,
-      "message": "Withdrew 10 tokens to public wallet"
-    },
-    "Consolidation": {
-      "timestamp": 1769277462850,
-      "message": "3 notes → 1 note (109925000000 tokens)"
-    },
     "Initialize AMM Pool": {
-      "timestamp": 1769277481213,
-      "message": "Pool: 7J5mEqkgKYS3..."
+      "timestamp": 1769421619835,
+      "message": "Pool: 3FXMBDFDN1Uf..."
     },
     "AMM Add Liquidity": {
-      "timestamp": 1769277517329,
+      "timestamp": 1769421654086,
       "message": "Added 20+20 tokens"
     },
     "AMM Swap A→B": {
-      "timestamp": 1769277533659,
+      "timestamp": 1769421669065,
       "message": "Swapped 10 tokens A → B"
     },
     "Initialize Perps Pool": {
-      "timestamp": 1769277576424,
-      "message": "Pool: 3eAFA33nregX..."
-    },
-    "Transfer 2x2": {
-      "timestamp": 1768986405451,
-      "message": "Consolidate 2→1, then 1→2 outputs"
-    },
-    "Full Unshield": {
-      "timestamp": 1769277711047,
-      "message": "5000000000 tokens (no change)"
-    },
-    "Consolidation 2→1": {
-      "timestamp": 1769277728638,
-      "message": "2 notes → 1 note (10000000000 tokens)"
+      "timestamp": 1769421710026,
+      "message": "Pool: ENEbEbuNawS3..."
     },
     "Voting: Public Ballot": {
-      "timestamp": 1769277770873,
+      "timestamp": 1769421975181,
       "message": "Snapshot/Public/Single/TallyBased"
     },
     "AMM ConstantProduct Pool": {
-      "timestamp": 1769277784420,
+      "timestamp": 1769421987586,
       "message": "30 bps fee, correct type"
     },
     "AMM StableSwap Pool": {
-      "timestamp": 1769277790322,
+      "timestamp": 1769421992763,
       "message": "4 bps fee, A=100"
     },
     "Voting: Create Test Ballot": {
-      "timestamp": 1769277801235,
-      "message": "Ballot: FdFdgyKdXQFQ..."
+      "timestamp": 1769422022111,
+      "message": "Ballot: 4SEaxTVZ6WqF..."
     },
     "Voting: Resolve Ballot (TallyBased)": {
-      "timestamp": 1769277803623,
+      "timestamp": 1769422024485,
       "message": "Outcome: 0"
     },
     "Voting: Resolve (Authority Mode)": {
-      "timestamp": 1769277810080,
+      "timestamp": 1769422030960,
       "message": "Authority set outcome=2"
     },
     "Protocol: Update Fees": {
-      "timestamp": 1769277812833,
+      "timestamp": 1769422033688,
       "message": "Transfer fee updated to 15 bps"
     },
     "Protocol: Set VK Data": {
-      "timestamp": 1769277815731,
+      "timestamp": 1769422040928,
       "message": "Full VK data set"
     },
     "Protocol: Register VK": {
-      "timestamp": 1769261874770,
+      "timestamp": 1769422036271,
       "message": "VK registered successfully"
     },
+    "Perps Pool Init (Full Params)": {
+      "timestamp": 1769421997027,
+      "message": "All 7 parameters set correctly"
+    },
+    "Perps: Add Token to Pool": {
+      "timestamp": 1769422005379,
+      "message": "2 tokens added, pool now has 2 tokens"
+    },
+    "Perps: Add Market": {
+      "timestamp": 1769422007496,
+      "message": "SOL-USD market created"
+    },
+    "Perps: Update Pool Config": {
+      "timestamp": 1769422009884,
+      "message": "Config updated successfully"
+    },
+    "Perps: Update Token Status": {
+      "timestamp": 1769422014063,
+      "message": "Token deactivated and reactivated"
+    },
+    "Perps: Update Market Status": {
+      "timestamp": 1769422018013,
+      "message": "Market deactivated and reactivated"
+    },
+    "Perps: Update Borrow Fees": {
+      "timestamp": 1769422020283,
+      "message": "Keeper instruction executed"
+    },
+    "Voting: Approval Vote Encoding": {
+      "timestamp": 1769421978191,
+      "message": "Bitmap 0b1011 → options [0,1,3]"
+    },
+    "Voting: Ranked Vote Encoding": {
+      "timestamp": 1769421978191,
+      "message": "2>0>3>1 → 0x1302 → 2>0>3>1"
+    },
+    "Voting: Claim (Complete)": {
+      "timestamp": 1769404670253,
+      "message": "VK registered (1806 bytes), full flow requires position"
+    },
+    "Submit Transact": {
+      "timestamp": 1769421536402,
+      "message": "Private transfer complete"
+    },
+    "Unshield Tokens": {
+      "timestamp": 1769421560544,
+      "message": "Withdrew 10 tokens to public wallet"
+    },
+    "Consolidation": {
+      "timestamp": 1769421601849,
+      "message": "3 notes → 1 note (109950000000 tokens)"
+    },
     "Perps Add Liquidity": {
-      "timestamp": 1769277596480,
-      "message": "Added 89925000000 liquidity"
+      "timestamp": 1769421726213,
+      "message": "Added 89950000000 liquidity"
     },
     "Perps Open Position (Long)": {
-      "timestamp": 1769277652512,
+      "timestamp": 1769421771905,
       "message": "Opened 5x long position"
+    },
+    "Perps Close Position": {
+      "timestamp": 1769421792887,
+      "message": "Closed position with profit"
+    },
+    "Perps Remove Liquidity": {
+      "timestamp": 1769421815531,
+      "message": "Removed 3939736038837 PLP"
+    },
+    "Transfer 2x2": {
+      "timestamp": 1769421858271,
+      "message": "Consolidate 2→1, then 1→2 outputs"
+    },
+    "Full Unshield": {
+      "timestamp": 1769421884637,
+      "message": "5000000000 tokens (no change)"
+    },
+    "Consolidation 2→1": {
+      "timestamp": 1769421901680,
+      "message": "2 notes → 1 note (18964955000 tokens)"
+    },
+    "Perps Short Position": {
+      "timestamp": 1769421935530,
+      "message": "Opened 5x short"
+    },
+    "Perps 2x Leverage": {
+      "timestamp": 1769421953941,
+      "message": "Opened 2x position"
+    },
+    "Perps 10x Leverage": {
+      "timestamp": 1769421972038,
+      "message": "Opened 10x position"
+    },
+    "Protocol: Append VK Data": {
+      "timestamp": 1769422046949,
+      "message": "Chunked upload successful"
     }
   },
-  "lastRun": 1769277817220
+  "lastRun": 1769422046949
 }

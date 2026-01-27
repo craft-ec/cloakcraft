@@ -25,7 +25,7 @@ import * as os from "os";
 import * as crypto from "crypto";
 
 // Program ID
-const PROGRAM_ID = new PublicKey("CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj");
+const PROGRAM_ID = new PublicKey("2VWF9TxMFgzHwbd5WPpYKoqHvtzk3fN66Ka3tVV82nZG");
 
 // Seeds
 const BALLOT_SEED = Buffer.from("ballot");

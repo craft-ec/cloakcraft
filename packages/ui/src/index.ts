@@ -39,5 +39,31 @@ export { AddLiquidityForm } from './components/AddLiquidityForm';
 export { RemoveLiquidityForm } from './components/RemoveLiquidityForm';
 export { AmmPoolDetails } from './components/AmmPoolDetails';
 
+// Perpetuals Components
+export { PositionCard } from './components/PositionCard';
+export type { PositionData, PositionCardProps } from './components/PositionCard';
+export { TradeForm } from './components/TradeForm';
+export type { TradeFormProps, NoteOption as TradeNoteOption, MarketOption } from './components/TradeForm';
+export { LiquidationWarning } from './components/LiquidationWarning';
+export type { LiquidationWarningProps } from './components/LiquidationWarning';
+export { PoolStats } from './components/PoolStats';
+export type { PoolStatsProps, TokenUtilization } from './components/PoolStats';
+
+// Voting Components
+export { BallotCard } from './components/BallotCard';
+export type {
+  BallotCardProps,
+  BallotOption,
+  BallotStatus as BallotCardStatus,
+  BindingMode,
+  RevealMode as BallotRevealMode,
+} from './components/BallotCard';
+export { VoteForm } from './components/VoteForm';
+export type { VoteFormProps, VoteOption, NoteOption as VoteNoteOption } from './components/VoteForm';
+export { ClaimButton } from './components/ClaimButton';
+export type { ClaimButtonProps } from './components/ClaimButton';
+export { TallyDisplay } from './components/TallyDisplay';
+export type { TallyDisplayProps, TallyOption } from './components/TallyDisplay';
+
 // Styles (for customization)
 export { styles, colors } from './styles';

@@ -544,6 +544,9 @@ var RelayServer = class extends import_events3.EventEmitter {
               preflightCommitment: "confirmed"
             });
             const confirmation = await this.connection.confirmTransaction(signature, "confirmed");
+            if (confirmation.value.err) {
+              throw new Error(`Transaction reverted: ${JSON.stringify(confirmation.value.err)}`);
+            }
             const response = encodeMessage({
               type: 129 /* TX_RESULT */,
               requestId: item.requestId,

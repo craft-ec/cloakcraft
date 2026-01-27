@@ -12,7 +12,6 @@ import {
   PublicKey,
   ComputeBudgetProgram,
   SystemProgram,
-  SYSVAR_RENT_PUBKEY,
 } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { Program } from '@coral-xyz/anchor';
@@ -156,8 +155,8 @@ export async function buildInitializeAmmPoolWithProgram(
   // Amplification: default to 0 for constant product, require value for stable
   const amplification = params.amplification ?? (params.poolType === 'stableSwap' ? 200 : 0);
 
-  // Build transaction with tokens in canonical order
-  const tx = await program.methods
+  // Build transaction with tokens in canonical order (use accountsPartial like scalecraft)
+  const tx = program.methods
     .initializeAmmPool(
       canonicalA,
       canonicalB,
@@ -165,20 +164,14 @@ export async function buildInitializeAmmPoolWithProgram(
       poolTypeEnum,
       new BN(amplification)
     )
-    .accountsStrict({
+    .accountsPartial({
       ammPool: ammPoolPda,
       lpMint: lpMintPda,
       tokenAMintAccount: canonicalA,
       tokenBMintAccount: canonicalB,
       authority: params.authority,
       payer: params.payer,
-      systemProgram: SystemProgram.programId,
-      tokenProgram: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
-      rent: SYSVAR_RENT_PUBKEY,
-    })
-    .preInstructions([
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
-    ]);
+    });
 
   return { tx, lpMint: lpMintPda, ammPool: ammPoolPda };
 }

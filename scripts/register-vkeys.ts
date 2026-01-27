@@ -12,7 +12,7 @@ import * as path from "path";
 import * as os from "os";
 
 // Program ID
-const PROGRAM_ID = new PublicKey("CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj");
+const PROGRAM_ID = new PublicKey("2VWF9TxMFgzHwbd5WPpYKoqHvtzk3fN66Ka3tVV82nZG");
 
 // Seeds
 const VK_SEED = Buffer.from("vk");
@@ -33,9 +33,9 @@ const CIRCUITS = [
 ];
 
 function padCircuitId(id: string): Buffer {
-  const buf = Buffer.alloc(32);
-  buf.write(id);
-  return buf;
+  // Pad with underscores to match on-chain constants.rs format
+  const padded = id.padEnd(32, '_');
+  return Buffer.from(padded);
 }
 
 async function main() {

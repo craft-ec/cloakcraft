@@ -12,7 +12,7 @@ import {
 import { Program } from '@coral-xyz/anchor';
 import BN from 'bn.js';
 
-import { derivePoolPda, PROGRAM_ID } from './constants';
+import { derivePoolPda } from './constants';
 import { LightProtocol, LightStoreCommitmentParams } from './light-helpers';
 
 /**
@@ -88,6 +88,7 @@ export async function buildStoreCommitmentWithProgram(
  * Build and execute store_commitment transactions for multiple commitments
  *
  * After transact, call this to store each output commitment
+ * Note: Anchor's .rpc() already handles confirmation - no extra verification needed
  */
 export async function storeCommitments(
   program: Program,

@@ -361,6 +361,242 @@ interface AmmPoolDetailsProps {
 declare function AmmPoolDetails({ tokenA, tokenB, pool, className, }: AmmPoolDetailsProps): react_jsx_runtime.JSX.Element;
 
 /**
+ * PositionCard Component
+ *
+ * Displays a perpetual position with PnL, leverage, and action buttons
+ */
+interface PositionData {
+    id: string;
+    market: string;
+    direction: 'long' | 'short';
+    size: bigint;
+    margin: bigint;
+    leverage: number;
+    entryPrice: bigint;
+    markPrice: bigint;
+    liquidationPrice: bigint;
+    pnl: bigint;
+    pnlPercentage: number;
+    borrowFees: bigint;
+    timestamp: number;
+}
+interface PositionCardProps {
+    position: PositionData;
+    tokenSymbol?: string;
+    tokenDecimals?: number;
+    onClose?: () => void;
+    onAddMargin?: () => void;
+    isClosing?: boolean;
+    compact?: boolean;
+}
+declare function PositionCard({ position, tokenSymbol, tokenDecimals, onClose, onAddMargin, isClosing, compact, }: PositionCardProps): react_jsx_runtime.JSX.Element;
+
+interface NoteOption$1 {
+    commitment: string;
+    tokenMint: PublicKey;
+    amount: bigint;
+    label?: string;
+}
+interface MarketOption {
+    address: string;
+    name: string;
+    baseToken: string;
+    quoteToken: string;
+    currentPrice: bigint;
+    maxLeverage: number;
+}
+interface TradeFormProps {
+    markets: MarketOption[];
+    notes: NoteOption$1[];
+    selectedMarket?: string;
+    onSelectMarket?: (marketAddress: string) => void;
+    onSubmit: (params: {
+        market: string;
+        note: string;
+        direction: 'long' | 'short';
+        marginAmount: bigint;
+        leverage: number;
+    }) => void;
+    isSubmitting?: boolean;
+    tokenDecimals?: number;
+    tokenSymbol?: string;
+}
+declare function TradeForm({ markets, notes, selectedMarket, onSelectMarket, onSubmit, isSubmitting, tokenDecimals, tokenSymbol, }: TradeFormProps): react_jsx_runtime.JSX.Element;
+
+/**
+ * LiquidationWarning Component
+ *
+ * Displays liquidation risk warning with price distance indicator
+ */
+interface LiquidationWarningProps {
+    currentPrice: bigint;
+    liquidationPrice: bigint;
+    direction: 'long' | 'short';
+    priceDecimals?: number;
+    threshold?: number;
+    onAddMargin?: () => void;
+}
+declare function LiquidationWarning({ currentPrice, liquidationPrice, direction, priceDecimals, threshold, onAddMargin, }: LiquidationWarningProps): react_jsx_runtime.JSX.Element | null;
+
+interface TokenUtilization {
+    tokenIndex: number;
+    mint: PublicKey;
+    symbol: string;
+    balance: bigint;
+    reserved: bigint;
+    utilization: number;
+    borrowRate: number;
+}
+interface PoolStatsProps {
+    poolName: string;
+    poolAddress?: string;
+    tvl: bigint;
+    totalOpenInterest: bigint;
+    numPositions: number;
+    maxLeverage: number;
+    maxUtilization: number;
+    baseBorrowRate: number;
+    tokens: TokenUtilization[];
+    lpSupply?: bigint;
+    lpPrice?: bigint;
+    tokenDecimals?: number;
+    tokenSymbol?: string;
+    onAddLiquidity?: () => void;
+    onRemoveLiquidity?: () => void;
+}
+declare function PoolStats({ poolName, poolAddress, tvl, totalOpenInterest, numPositions, maxLeverage, maxUtilization, baseBorrowRate, tokens, lpSupply, lpPrice, tokenDecimals, tokenSymbol, onAddLiquidity, onRemoveLiquidity, }: PoolStatsProps): react_jsx_runtime.JSX.Element;
+
+type BallotStatus = 'pending' | 'active' | 'closed' | 'resolved' | 'finalized';
+type BindingMode = 'snapshot' | 'spend-to-vote';
+type RevealMode = 'public' | 'time-locked' | 'permanent-private';
+interface BallotOption {
+    index: number;
+    label: string;
+    weight: bigint;
+    amount: bigint;
+    percentage: number;
+    isWinner?: boolean;
+}
+interface BallotCardProps {
+    ballotId: string;
+    title: string;
+    description?: string;
+    status: BallotStatus;
+    bindingMode: BindingMode;
+    revealMode: RevealMode;
+    tokenSymbol: string;
+    tokenMint?: PublicKey;
+    options: BallotOption[];
+    totalVotes: number;
+    totalWeight: bigint;
+    quorumThreshold: bigint;
+    hasQuorum: boolean;
+    startTime: number;
+    endTime: number;
+    outcome?: number;
+    userVote?: number;
+    userWeight?: bigint;
+    compact?: boolean;
+    onClick?: () => void;
+}
+declare function BallotCard({ ballotId, title, description, status, bindingMode, revealMode, tokenSymbol, options, totalVotes, totalWeight, quorumThreshold, hasQuorum, startTime, endTime, outcome, userVote, userWeight, compact, onClick, }: BallotCardProps): react_jsx_runtime.JSX.Element;
+
+interface NoteOption {
+    commitment: string;
+    tokenMint: PublicKey;
+    amount: bigint;
+    label?: string;
+}
+interface VoteOption {
+    index: number;
+    label: string;
+    description?: string;
+    currentWeight: bigint;
+    currentPercentage: number;
+}
+interface VoteFormProps {
+    ballotTitle: string;
+    options: VoteOption[];
+    notes: NoteOption[];
+    tokenSymbol: string;
+    tokenDecimals?: number;
+    bindingMode: 'snapshot' | 'spend-to-vote';
+    isSubmitting?: boolean;
+    onSubmit: (params: {
+        noteCommitment: string;
+        voteChoice: number;
+    }) => void;
+    onCancel?: () => void;
+}
+declare function VoteForm({ ballotTitle, options, notes, tokenSymbol, tokenDecimals, bindingMode, isSubmitting, onSubmit, onCancel, }: VoteFormProps): react_jsx_runtime.JSX.Element;
+
+/**
+ * ClaimButton Component
+ *
+ * Button for claiming winnings from resolved spend-to-vote ballots
+ */
+interface ClaimButtonProps {
+    /** User's vote choice */
+    voteChoice: number;
+    /** Winning option index */
+    outcome: number;
+    /** User's voting weight */
+    userWeight: bigint;
+    /** Total pool balance */
+    totalPool: bigint;
+    /** Total weight of winning option */
+    winnerWeight: bigint;
+    /** Protocol fee in basis points */
+    protocolFeeBps: number;
+    /** Token symbol */
+    tokenSymbol: string;
+    /** Token decimals */
+    tokenDecimals?: number;
+    /** Claim deadline timestamp */
+    claimDeadline: number;
+    /** Whether claim is already in progress */
+    isClaiming?: boolean;
+    /** Whether user has already claimed */
+    hasClaimed?: boolean;
+    /** Callback when claim is initiated */
+    onClaim: () => void;
+}
+declare function ClaimButton({ voteChoice, outcome, userWeight, totalPool, winnerWeight, protocolFeeBps, tokenSymbol, tokenDecimals, claimDeadline, isClaiming, hasClaimed, onClaim, }: ClaimButtonProps): react_jsx_runtime.JSX.Element;
+
+/**
+ * TallyDisplay Component
+ *
+ * Displays vote tally results with animated bars and statistics
+ */
+interface TallyOption {
+    index: number;
+    label: string;
+    weight: bigint;
+    amount: bigint;
+    voteCount: number;
+    percentage: number;
+    isWinner?: boolean;
+}
+interface TallyDisplayProps {
+    options: TallyOption[];
+    totalVotes: number;
+    totalWeight: bigint;
+    totalAmount: bigint;
+    quorumThreshold: bigint;
+    hasQuorum: boolean;
+    tokenSymbol: string;
+    tokenDecimals?: number;
+    revealMode: 'public' | 'time-locked' | 'permanent-private';
+    isRevealed?: boolean;
+    unlockTime?: number;
+    outcome?: number;
+    showVoteCounts?: boolean;
+    showAmounts?: boolean;
+    compact?: boolean;
+}
+declare function TallyDisplay({ options, totalVotes, totalWeight, totalAmount, quorumThreshold, hasQuorum, tokenSymbol, tokenDecimals, revealMode, isRevealed, unlockTime, outcome, showVoteCounts, showAmounts, compact, }: TallyDisplayProps): react_jsx_runtime.JSX.Element;
+
+/**
  * Shared styles for CloakCraft UI components
  * Theme: Technical Precision - Clean light theme emphasizing cryptographic clarity
  */
@@ -386,4 +622,4 @@ declare const colors: {
 };
 declare const styles: Record<string, CSSProperties>;
 
-export { AddLiquidityForm, AmmPoolDetails, BalanceDisplay, BalanceInline, BalanceSummary, CreatePoolForm, DEVNET_TOKENS, InitializePoolForm, MAINNET_TOKENS, MultiPrivateBalanceDisplay, MultiTokenBalanceDisplay, NotesList, OrderBook, PoolInfo, PoolStatusBadge, PublicBalanceDisplay, RemoveLiquidityForm, ShieldForm, SwapForm, SwapPanel, TokenSelector, TransactionHistory, TransferForm, UnshieldForm, WalletBackup, WalletButton, WalletImport, WalletManager, colors, styles };
+export { AddLiquidityForm, AmmPoolDetails, BalanceDisplay, BalanceInline, BalanceSummary, BallotCard, type BallotCardProps, type BallotStatus as BallotCardStatus, type BallotOption, type RevealMode as BallotRevealMode, type BindingMode, ClaimButton, type ClaimButtonProps, CreatePoolForm, DEVNET_TOKENS, InitializePoolForm, LiquidationWarning, type LiquidationWarningProps, MAINNET_TOKENS, type MarketOption, MultiPrivateBalanceDisplay, MultiTokenBalanceDisplay, NotesList, OrderBook, PoolInfo, PoolStats, type PoolStatsProps, PoolStatusBadge, PositionCard, type PositionCardProps, type PositionData, PublicBalanceDisplay, RemoveLiquidityForm, ShieldForm, SwapForm, SwapPanel, TallyDisplay, type TallyDisplayProps, type TallyOption, TokenSelector, type TokenUtilization, TradeForm, type TradeFormProps, type NoteOption$1 as TradeNoteOption, TransactionHistory, TransferForm, UnshieldForm, VoteForm, type VoteFormProps, type NoteOption as VoteNoteOption, type VoteOption, WalletBackup, WalletButton, WalletImport, WalletManager, colors, styles };

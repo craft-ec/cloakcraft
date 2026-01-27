@@ -194,6 +194,16 @@ pub fn create_pending_with_proof_change_vote_snapshot<'info>(
 }
 
 /// Build public inputs array for ZK proof verification
+/// Must match the circuit's public inputs exactly in order:
+/// 1. ballot_id
+/// 2. vote_nullifier
+/// 3. old_vote_commitment
+/// 4. old_vote_commitment_nullifier
+/// 5. new_vote_commitment
+/// 6. weight
+/// 7. old_vote_choice
+/// 8. new_vote_choice
+/// 9. is_public_mode
 fn build_public_inputs(
     ballot: &Ballot,
     ballot_id: &[u8; 32],
@@ -204,61 +214,40 @@ fn build_public_inputs(
     old_vote_choice: u64,
     new_vote_choice: u64,
     weight: u64,
-    old_encrypted_contributions: Option<&EncryptedContributions>,
-    new_encrypted_contributions: Option<&EncryptedContributions>,
+    _old_encrypted_contributions: Option<&EncryptedContributions>,
+    _new_encrypted_contributions: Option<&EncryptedContributions>,
 ) -> Result<Vec<[u8; 32]>> {
+    use crate::helpers::field::{bytes_to_field, u64_to_field};
+
     let mut inputs = Vec::new();
 
-    // Core public inputs
-    inputs.push(*ballot_id);
-    inputs.push(*old_vote_commitment);
-    inputs.push(*old_vote_commitment_nullifier);
-    inputs.push(*new_vote_commitment);
-    inputs.push(*vote_nullifier);
+    // 1. ballot_id
+    inputs.push(bytes_to_field(ballot_id));
 
-    // Weight (same for old and new)
-    let mut weight_bytes = [0u8; 32];
-    weight_bytes[24..32].copy_from_slice(&weight.to_be_bytes());
-    inputs.push(weight_bytes);
+    // 2. vote_nullifier
+    inputs.push(bytes_to_field(vote_nullifier));
 
-    // For public mode, vote choices are public
-    if ballot.reveal_mode == RevealMode::Public {
-        let mut old_choice_bytes = [0u8; 32];
-        old_choice_bytes[24..32].copy_from_slice(&old_vote_choice.to_be_bytes());
-        inputs.push(old_choice_bytes);
+    // 3. old_vote_commitment
+    inputs.push(bytes_to_field(old_vote_commitment));
 
-        let mut new_choice_bytes = [0u8; 32];
-        new_choice_bytes[24..32].copy_from_slice(&new_vote_choice.to_be_bytes());
-        inputs.push(new_choice_bytes);
-    }
+    // 4. old_vote_commitment_nullifier
+    inputs.push(bytes_to_field(old_vote_commitment_nullifier));
 
-    // Encrypted contributions (for encrypted modes)
-    if let (Some(old_contrib), Some(new_contrib)) =
-        (old_encrypted_contributions, new_encrypted_contributions)
-    {
-        // Old contributions (negated for decrement)
-        for ciphertext in &old_contrib.ciphertexts {
-            let mut ct_part1 = [0u8; 32];
-            let mut ct_part2 = [0u8; 32];
-            ct_part1.copy_from_slice(&ciphertext[0..32]);
-            ct_part2.copy_from_slice(&ciphertext[32..64]);
-            inputs.push(ct_part1);
-            inputs.push(ct_part2);
-        }
+    // 5. new_vote_commitment
+    inputs.push(bytes_to_field(new_vote_commitment));
 
-        // New contributions (for increment)
-        for ciphertext in &new_contrib.ciphertexts {
-            let mut ct_part1 = [0u8; 32];
-            let mut ct_part2 = [0u8; 32];
-            ct_part1.copy_from_slice(&ciphertext[0..32]);
-            ct_part2.copy_from_slice(&ciphertext[32..64]);
-            inputs.push(ct_part1);
-            inputs.push(ct_part2);
-        }
+    // 6. weight
+    inputs.push(u64_to_field(weight));
 
-        // Time lock pubkey
-        inputs.push(ballot.time_lock_pubkey);
-    }
+    // 7. old_vote_choice
+    inputs.push(u64_to_field(old_vote_choice));
+
+    // 8. new_vote_choice
+    inputs.push(u64_to_field(new_vote_choice));
+
+    // 9. is_public_mode
+    let is_public = if ballot.reveal_mode == RevealMode::Public { 1u64 } else { 0u64 };
+    inputs.push(u64_to_field(is_public));
 
     Ok(inputs)
 }

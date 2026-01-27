@@ -624,23 +624,59 @@ function PositionsTab({
 }) {
   // TODO: Implement position scanning from notes
   // Positions are stored as encrypted notes with position data
+  // The DecryptedPerpsPosition type from SDK defines the structure
+  // Need to add position note type detection to the scanner
+
+  // For now, show informational placeholder
+  const hasNotes = notes.length > 0;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Your Positions</CardTitle>
         <CardDescription>
-          View and manage your open positions
+          View and manage your open leveraged positions
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
         <div className="flex flex-col items-center justify-center py-8 text-center">
           <BarChart3 className="h-12 w-12 text-muted-foreground/50 mb-4" />
-          <p className="text-muted-foreground">No open positions</p>
-          <p className="text-sm text-muted-foreground/70">
-            Open a position in the Trade tab to get started
+          <p className="text-muted-foreground font-medium">No open positions</p>
+          <p className="text-sm text-muted-foreground/70 max-w-sm mt-1">
+            Open a position in the Trade tab to start trading perpetual futures
+            with up to 100x leverage.
           </p>
         </div>
+
+        {/* Position tracking info */}
+        <div className="rounded-lg bg-muted/50 p-4 space-y-2">
+          <div className="flex items-start gap-2">
+            <Info className="h-4 w-4 mt-0.5 text-muted-foreground" />
+            <div className="text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">How positions work</p>
+              <ul className="mt-2 space-y-1 list-disc list-inside text-xs">
+                <li>Positions are stored as private encrypted notes</li>
+                <li>Only you can view and manage your positions</li>
+                <li>PnL is calculated based on oracle prices</li>
+                <li>Positions can be liquidated if margin falls below threshold</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        {/* Quick stats */}
+        {pools.length > 0 && (
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="rounded-lg bg-muted/30 p-3">
+              <p className="text-muted-foreground text-xs">Available Pools</p>
+              <p className="font-medium">{pools.length}</p>
+            </div>
+            <div className="rounded-lg bg-muted/30 p-3">
+              <p className="text-muted-foreground text-xs">Max Leverage</p>
+              <p className="font-medium">{pools[0]?.maxLeverage || 100}x</p>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

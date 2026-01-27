@@ -1,5 +1,5 @@
 {
-  "address": "CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj",
+  "address": "2VWF9TxMFgzHwbd5WPpYKoqHvtzk3fN66Ka3tVV82nZG",
   "metadata": {
     "name": "cloakcraft",
     "version": "0.1.0",
@@ -4977,11 +4977,20 @@
           "type": "u64"
         },
         {
-          "name": "attestation_signature",
+          "name": "indexer_pubkey_x",
           "type": {
             "array": [
               "u8",
-              64
+              32
+            ]
+          }
+        },
+        {
+          "name": "indexer_pubkey_y",
+          "type": {
+            "array": [
+              "u8",
+              32
             ]
           }
         },
@@ -5280,6 +5289,251 @@
               "u8",
               32
             ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "create_vote_commitment",
+      "docs": [
+        "Create Vote Commitment (Phase 3)",
+        "",
+        "Creates the vote_commitment via Light Protocol.",
+        "Uses ballot_id for commitment address derivation."
+      ],
+      "discriminator": [
+        165,
+        146,
+        239,
+        8,
+        166,
+        54,
+        3,
+        188
+      ],
+      "accounts": [
+        {
+          "name": "ballot",
+          "docs": [
+            "Ballot for this vote"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pending_operation",
+          "docs": [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer (pays for commitment creation, must match pending operation)"
+          ],
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "operation_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "ballot_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "commitment_index",
+          "type": "u8"
+        },
+        {
+          "name": "encrypted_preimage",
+          "type": {
+            "array": [
+              "u8",
+              128
+            ]
+          }
+        },
+        {
+          "name": "encryption_type",
+          "type": "u8"
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "defined": {
+              "name": "LightCreateVoteCommitmentParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "create_vote_nullifier",
+      "docs": [
+        "Create Vote Nullifier (Phase 1)",
+        "",
+        "Creates the vote_nullifier via Light Protocol.",
+        "Uses action_nullifier with ballot_id as aggregation_id."
+      ],
+      "discriminator": [
+        33,
+        125,
+        29,
+        9,
+        192,
+        226,
+        105,
+        173
+      ],
+      "accounts": [
+        {
+          "name": "ballot",
+          "docs": [
+            "Ballot for this vote"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pending_operation",
+          "docs": [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Relayer (pays for nullifier creation, must match pending operation)"
+          ],
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "operation_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "ballot_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "nullifier_index",
+          "type": "u8"
+        },
+        {
+          "name": "light_params",
+          "type": {
+            "defined": {
+              "name": "LightCreateVoteNullifierParams"
+            }
           }
         }
       ]
@@ -8094,7 +8348,8 @@
         {
           "name": "lp_mint",
           "docs": [
-            "LP token mint (PDA derived from token pair)"
+            "LP token mint (PDA derived from token pair)",
+            "Using Anchor's init macro ensures simulation works correctly"
           ],
           "writable": true,
           "pda": {
@@ -8162,13 +8417,6 @@
             "Token program"
           ],
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "rent",
-          "docs": [
-            "Rent"
-          ],
-          "address": "SysvarRent111111111111111111111111111111111"
         }
       ],
       "args": [
@@ -12795,6 +13043,86 @@
         "fields": [
           {
             "name": "proof",
+            "docs": [
+              "Validity proof for nullifier (non-inclusion proof)"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "address_tree_info",
+            "docs": [
+              "Address tree info for nullifier"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightCreateVoteCommitmentParams",
+      "docs": [
+        "Parameters for Light Protocol vote commitment creation"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "validity_proof",
+            "docs": [
+              "Validity proof for commitment (non-inclusion proof)"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightValidityProof"
+              }
+            }
+          },
+          {
+            "name": "address_tree_info",
+            "docs": [
+              "Address tree info for commitment"
+            ],
+            "type": {
+              "defined": {
+                "name": "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            "name": "output_tree_index",
+            "docs": [
+              "Output state tree index"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LightCreateVoteNullifierParams",
+      "docs": [
+        "Parameters for Light Protocol vote nullifier creation"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "validity_proof",
             "docs": [
               "Validity proof for nullifier (non-inclusion proof)"
             ],

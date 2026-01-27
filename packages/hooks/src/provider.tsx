@@ -3,8 +3,8 @@
  */
 
 import React, { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
-import { PublicKey, Keypair as SolanaKeypair } from '@solana/web3.js';
-import { CloakCraftClient, Wallet, initPoseidon } from '@cloakcraft/sdk';
+import { PublicKey, Keypair as SolanaKeypair, Connection, Transaction } from '@solana/web3.js';
+import { CloakCraftClient, Wallet, initPoseidon, AnchorWallet } from '@cloakcraft/sdk';
 import type { DecryptedNote, SyncStatus } from '@cloakcraft/types';
 
 interface CloakCraftContextValue {
@@ -24,8 +24,10 @@ interface CloakCraftContextValue {
   disconnect: () => void;
   sync: (tokenMint?: PublicKey, clearCache?: boolean) => Promise<void>;
   createWallet: () => Wallet;
-  /** Set the Anchor program instance (version-agnostic) */
+  /** Set the Anchor program instance (version-agnostic) - @deprecated use setWallet instead */
   setProgram: (program: unknown) => void;
+  /** Set wallet adapter and create AnchorProvider/Program internally (matches scalecraft pattern) */
+  setWallet: (wallet: AnchorWallet) => void;
   initializeProver: (circuits?: string[]) => Promise<void>;
 }
 
@@ -33,7 +35,10 @@ const CloakCraftContext = createContext<CloakCraftContextValue | null>(null);
 
 interface CloakCraftProviderProps {
   children: ReactNode;
-  rpcUrl: string;
+  /** Solana RPC URL (use this OR connection, not both) */
+  rpcUrl?: string;
+  /** Solana Connection object from wallet adapter (preferred - matches scalecraft pattern) */
+  connection?: Connection;
   /** Indexer URL for merkle proof fetching */
   indexerUrl: string;
   /** CloakCraft program ID */
@@ -53,6 +58,7 @@ interface CloakCraftProviderProps {
 export function CloakCraftProvider({
   children,
   rpcUrl,
+  connection,
   indexerUrl,
   programId,
   heliusApiKey,
@@ -98,6 +104,8 @@ export function CloakCraftProvider({
   const client = useMemo(
     () =>
       new CloakCraftClient({
+        // Use connection if provided (matches scalecraft pattern), otherwise use rpcUrl
+        connection,
         rpcUrl,
         indexerUrl,
         programId: new PublicKey(programId),
@@ -106,7 +114,7 @@ export function CloakCraftProvider({
         circuitsBaseUrl: '/circom',  // Circom circuits in /public/circom/
         addressLookupTables: addressLookupTables?.map(addr => new PublicKey(addr)),
       }),
-    [rpcUrl, indexerUrl, programId, heliusApiKey, network, addressLookupTables]
+    [connection, rpcUrl, indexerUrl, programId, heliusApiKey, network, addressLookupTables]
   );
 
   // Initialize Poseidon on mount
@@ -290,6 +298,12 @@ export function CloakCraftProvider({
     setIsProgramReady(true);
   }, [client]);
 
+  // setWallet - creates AnchorProvider and Program internally (matches scalecraft pattern)
+  const setAnchorWallet = useCallback((anchorWallet: AnchorWallet) => {
+    client.setWallet(anchorWallet);
+    setIsProgramReady(true);
+  }, [client]);
+
   const initializeProver = useCallback(async (circuits?: string[]) => {
     setIsInitializing(true);
     try {
@@ -322,6 +336,7 @@ export function CloakCraftProvider({
     sync,
     createWallet,
     setProgram,
+    setWallet: setAnchorWallet,
     initializeProver,
   };
 

@@ -1385,12 +1385,12 @@ function OrderBook({ className }) {
     return date.toLocaleDateString() + " " + date.toLocaleTimeString();
   };
   const getStatusBadge = (status) => {
-    const styles2 = {
+    const styles3 = {
       0: { bg: "#dcfce7", text: "#166534", label: "Open" },
       1: { bg: "#dbeafe", text: "#1e40af", label: "Filled" },
       2: { bg: "#fee2e2", text: "#991b1b", label: "Cancelled" }
     };
-    const style = styles2[status] ?? { bg: "#f3f4f6", text: "#374151", label: "Unknown" };
+    const style = styles3[status] ?? { bg: "#f3f4f6", text: "#374151", label: "Unknown" };
     return /* @__PURE__ */ jsx8(
       "span",
       {
@@ -3182,7 +3182,7 @@ function AmmPoolDetails({
       maximumFractionDigits: 4
     });
   };
-  const formatCompact = (amount, decimals) => {
+  const formatCompact3 = (amount, decimals) => {
     const num = Number(amount) / Math.pow(10, decimals);
     if (num >= 1e6) {
       return `${(num / 1e6).toFixed(2)}M`;
@@ -3195,13 +3195,13 @@ function AmmPoolDetails({
   const reserveBNum = Number(pool.reserveB) / Math.pow(10, tokenB.decimals);
   const priceRatio = reserveANum > 0 ? reserveBNum / reserveANum : 0;
   const inversePriceRatio = reserveBNum > 0 ? reserveANum / reserveBNum : 0;
-  const formatPrice = (price) => {
+  const formatPrice4 = (price) => {
     if (price === 0) return "0";
     if (price < 1e-6) return price.toExponential(6);
     if (price < 0.01) return price.toFixed(8);
     return price.toFixed(6);
   };
-  const totalValueLocked = formatCompact(pool.reserveA, tokenA.decimals);
+  const totalValueLocked = formatCompact3(pool.reserveA, tokenA.decimals);
   return /* @__PURE__ */ jsxs16("div", { className, style: styles.card, children: [
     /* @__PURE__ */ jsxs16("h3", { style: { ...styles.cardTitle, marginBottom: "16px" }, children: [
       "Pool Details: ",
@@ -3217,7 +3217,7 @@ function AmmPoolDetails({
     }, children: /* @__PURE__ */ jsxs16("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }, children: [
       /* @__PURE__ */ jsxs16("div", { children: [
         /* @__PURE__ */ jsx16("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginBottom: "4px" }, children: "Price" }),
-        /* @__PURE__ */ jsx16("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: formatPrice(priceRatio) }),
+        /* @__PURE__ */ jsx16("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: formatPrice4(priceRatio) }),
         /* @__PURE__ */ jsxs16("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "2px" }, children: [
           tokenB.symbol,
           " per ",
@@ -3226,7 +3226,7 @@ function AmmPoolDetails({
       ] }),
       /* @__PURE__ */ jsxs16("div", { children: [
         /* @__PURE__ */ jsx16("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginBottom: "4px" }, children: "Inverse Price" }),
-        /* @__PURE__ */ jsx16("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: formatPrice(inversePriceRatio) }),
+        /* @__PURE__ */ jsx16("div", { style: { fontSize: "1.25rem", fontWeight: 600 }, children: formatPrice4(inversePriceRatio) }),
         /* @__PURE__ */ jsxs16("div", { style: { fontSize: "0.75rem", color: colors.textMuted, marginTop: "2px" }, children: [
           tokenA.symbol,
           " per ",
@@ -4886,32 +4886,1872 @@ TX: ${signature}`);
     ) : null
   ] });
 }
+
+// src/components/PositionCard.tsx
+import { jsx as jsx21, jsxs as jsxs21 } from "react/jsx-runtime";
+function formatBigInt(value, decimals = 6) {
+  const divisor = BigInt(10 ** decimals);
+  const intPart = value / divisor;
+  const fracPart = (value % divisor).toString().padStart(decimals, "0").slice(0, 2);
+  return `${intPart}.${fracPart}`;
+}
+function formatPrice(value, decimals = 8) {
+  const divisor = BigInt(10 ** decimals);
+  const intPart = value / divisor;
+  const fracPart = (value % divisor).toString().padStart(decimals, "0").slice(0, 4);
+  return `$${intPart}.${fracPart}`;
+}
+function PositionCard({
+  position,
+  tokenSymbol = "USDC",
+  tokenDecimals = 6,
+  onClose,
+  onAddMargin,
+  isClosing = false,
+  compact = false
+}) {
+  const isLong = position.direction === "long";
+  const isProfitable = position.pnl > 0n;
+  const isAtRisk = position.pnlPercentage < -50;
+  const directionColor = isLong ? colors.success : colors.error;
+  const pnlColor = isProfitable ? colors.success : colors.error;
+  if (compact) {
+    return /* @__PURE__ */ jsxs21("div", { style: {
+      ...styles.card,
+      padding: "12px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "12px"
+    }, children: [
+      /* @__PURE__ */ jsxs21("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
+        /* @__PURE__ */ jsx21("span", { style: {
+          fontSize: "12px",
+          fontWeight: "600",
+          color: directionColor,
+          textTransform: "uppercase"
+        }, children: position.direction }),
+        /* @__PURE__ */ jsx21("span", { style: { fontWeight: "600" }, children: position.market }),
+        /* @__PURE__ */ jsxs21("span", { style: { color: colors.textMuted, fontSize: "12px" }, children: [
+          position.leverage,
+          "x"
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs21("div", { style: { display: "flex", alignItems: "center", gap: "12px" }, children: [
+        /* @__PURE__ */ jsxs21("span", { style: { color: pnlColor, fontWeight: "500" }, children: [
+          isProfitable ? "+" : "",
+          formatBigInt(position.pnl, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] }),
+        onClose && /* @__PURE__ */ jsx21(
+          "button",
+          {
+            onClick: onClose,
+            disabled: isClosing,
+            style: {
+              ...styles.buttonSecondary,
+              padding: "4px 12px",
+              fontSize: "12px"
+            },
+            children: "Close"
+          }
+        )
+      ] })
+    ] });
+  }
+  return /* @__PURE__ */ jsxs21("div", { style: {
+    ...styles.card,
+    border: isAtRisk ? `1px solid ${colors.error}` : void 0
+  }, children: [
+    /* @__PURE__ */ jsxs21("div", { style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "flex-start",
+      marginBottom: "16px"
+    }, children: [
+      /* @__PURE__ */ jsxs21("div", { children: [
+        /* @__PURE__ */ jsxs21("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }, children: [
+          /* @__PURE__ */ jsx21("span", { style: {
+            padding: "2px 8px",
+            borderRadius: "4px",
+            fontSize: "12px",
+            fontWeight: "600",
+            backgroundColor: isLong ? `${colors.success}20` : `${colors.error}20`,
+            color: directionColor,
+            textTransform: "uppercase"
+          }, children: position.direction }),
+          /* @__PURE__ */ jsx21("span", { style: { fontSize: "18px", fontWeight: "600" }, children: position.market })
+        ] }),
+        /* @__PURE__ */ jsxs21("div", { style: { fontSize: "12px", color: colors.textMuted }, children: [
+          position.leverage,
+          "x Leverage"
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs21("div", { style: { textAlign: "right" }, children: [
+        /* @__PURE__ */ jsxs21("div", { style: {
+          fontSize: "20px",
+          fontWeight: "600",
+          color: pnlColor
+        }, children: [
+          isProfitable ? "+" : "",
+          formatBigInt(position.pnl, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] }),
+        /* @__PURE__ */ jsxs21("div", { style: {
+          fontSize: "12px",
+          color: pnlColor
+        }, children: [
+          "(",
+          position.pnlPercentage > 0 ? "+" : "",
+          position.pnlPercentage.toFixed(2),
+          "%)"
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs21("div", { style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(2, 1fr)",
+      gap: "12px",
+      marginBottom: "16px"
+    }, children: [
+      /* @__PURE__ */ jsxs21("div", { children: [
+        /* @__PURE__ */ jsx21("div", { style: { fontSize: "12px", color: colors.textMuted, marginBottom: "2px" }, children: "Size" }),
+        /* @__PURE__ */ jsxs21("div", { style: { fontWeight: "500" }, children: [
+          formatBigInt(position.size, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs21("div", { children: [
+        /* @__PURE__ */ jsx21("div", { style: { fontSize: "12px", color: colors.textMuted, marginBottom: "2px" }, children: "Margin" }),
+        /* @__PURE__ */ jsxs21("div", { style: { fontWeight: "500" }, children: [
+          formatBigInt(position.margin, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs21("div", { children: [
+        /* @__PURE__ */ jsx21("div", { style: { fontSize: "12px", color: colors.textMuted, marginBottom: "2px" }, children: "Entry Price" }),
+        /* @__PURE__ */ jsx21("div", { style: { fontWeight: "500" }, children: formatPrice(position.entryPrice) })
+      ] }),
+      /* @__PURE__ */ jsxs21("div", { children: [
+        /* @__PURE__ */ jsx21("div", { style: { fontSize: "12px", color: colors.textMuted, marginBottom: "2px" }, children: "Mark Price" }),
+        /* @__PURE__ */ jsx21("div", { style: { fontWeight: "500" }, children: formatPrice(position.markPrice) })
+      ] }),
+      /* @__PURE__ */ jsxs21("div", { children: [
+        /* @__PURE__ */ jsx21("div", { style: { fontSize: "12px", color: colors.textMuted, marginBottom: "2px" }, children: "Liquidation Price" }),
+        /* @__PURE__ */ jsx21("div", { style: {
+          fontWeight: "500",
+          color: isAtRisk ? colors.error : void 0
+        }, children: formatPrice(position.liquidationPrice) })
+      ] }),
+      /* @__PURE__ */ jsxs21("div", { children: [
+        /* @__PURE__ */ jsx21("div", { style: { fontSize: "12px", color: colors.textMuted, marginBottom: "2px" }, children: "Borrow Fees" }),
+        /* @__PURE__ */ jsxs21("div", { style: { fontWeight: "500", color: colors.textMuted }, children: [
+          "-",
+          formatBigInt(position.borrowFees, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] })
+      ] })
+    ] }),
+    isAtRisk && /* @__PURE__ */ jsxs21("div", { style: {
+      padding: "8px 12px",
+      borderRadius: "6px",
+      backgroundColor: `${colors.error}15`,
+      color: colors.error,
+      fontSize: "12px",
+      marginBottom: "16px",
+      display: "flex",
+      alignItems: "center",
+      gap: "8px"
+    }, children: [
+      /* @__PURE__ */ jsx21("span", { children: "\u26A0\uFE0F" }),
+      /* @__PURE__ */ jsx21("span", { children: "Position at risk of liquidation" })
+    ] }),
+    /* @__PURE__ */ jsxs21("div", { style: { display: "flex", gap: "8px" }, children: [
+      onAddMargin && /* @__PURE__ */ jsx21(
+        "button",
+        {
+          onClick: onAddMargin,
+          style: {
+            ...styles.buttonSecondary,
+            flex: 1
+          },
+          children: "Add Margin"
+        }
+      ),
+      onClose && /* @__PURE__ */ jsx21(
+        "button",
+        {
+          onClick: onClose,
+          disabled: isClosing,
+          style: {
+            ...styles.buttonPrimary,
+            flex: 1,
+            opacity: isClosing ? 0.6 : 1
+          },
+          children: isClosing ? "Closing..." : "Close Position"
+        }
+      )
+    ] })
+  ] });
+}
+
+// src/components/TradeForm.tsx
+import { useState as useState14, useMemo as useMemo6, useCallback as useCallback3 } from "react";
+import { jsx as jsx22, jsxs as jsxs22 } from "react/jsx-runtime";
+function formatBigInt2(value, decimals = 6) {
+  const divisor = BigInt(10 ** decimals);
+  const intPart = value / divisor;
+  const fracPart = (value % divisor).toString().padStart(decimals, "0").slice(0, 2);
+  return `${intPart}.${fracPart}`;
+}
+function formatPrice2(value, decimals = 8) {
+  const divisor = BigInt(10 ** decimals);
+  const intPart = value / divisor;
+  const fracPart = (value % divisor).toString().padStart(decimals, "0").slice(0, 2);
+  return `$${intPart}.${fracPart}`;
+}
+function TradeForm({
+  markets,
+  notes,
+  selectedMarket,
+  onSelectMarket,
+  onSubmit,
+  isSubmitting = false,
+  tokenDecimals = 6,
+  tokenSymbol = "USDC"
+}) {
+  const [marketAddress, setMarketAddress] = useState14(selectedMarket || markets[0]?.address || "");
+  const [noteCommitment, setNoteCommitment] = useState14(notes[0]?.commitment || "");
+  const [direction, setDirection] = useState14("long");
+  const [marginInput, setMarginInput] = useState14("");
+  const [leverage, setLeverage] = useState14(10);
+  const selectedMarketData = useMemo6(() => {
+    return markets.find((m) => m.address === marketAddress);
+  }, [markets, marketAddress]);
+  const selectedNote = useMemo6(() => {
+    return notes.find((n) => n.commitment === noteCommitment);
+  }, [notes, noteCommitment]);
+  const marginAmount = useMemo6(() => {
+    try {
+      const parsed = parseFloat(marginInput);
+      if (isNaN(parsed) || parsed <= 0) return 0n;
+      return BigInt(Math.floor(parsed * 10 ** tokenDecimals));
+    } catch {
+      return 0n;
+    }
+  }, [marginInput, tokenDecimals]);
+  const positionSize = useMemo6(() => {
+    return marginAmount * BigInt(leverage);
+  }, [marginAmount, leverage]);
+  const maxMargin = selectedNote?.amount || 0n;
+  const validation = useMemo6(() => {
+    if (!selectedMarketData) {
+      return { isValid: false, error: "Select a market" };
+    }
+    if (!selectedNote) {
+      return { isValid: false, error: "Select a note" };
+    }
+    if (marginAmount <= 0n) {
+      return { isValid: false, error: "Enter margin amount" };
+    }
+    if (marginAmount > maxMargin) {
+      return { isValid: false, error: "Insufficient balance" };
+    }
+    if (leverage < 1 || leverage > selectedMarketData.maxLeverage) {
+      return { isValid: false, error: `Leverage must be 1-${selectedMarketData.maxLeverage}x` };
+    }
+    return { isValid: true, error: null };
+  }, [selectedMarketData, selectedNote, marginAmount, maxMargin, leverage]);
+  const handleMarketChange = useCallback3((address) => {
+    setMarketAddress(address);
+    onSelectMarket?.(address);
+  }, [onSelectMarket]);
+  const handleSubmit = useCallback3((e) => {
+    e.preventDefault();
+    if (!validation.isValid) return;
+    onSubmit({
+      market: marketAddress,
+      note: noteCommitment,
+      direction,
+      marginAmount,
+      leverage
+    });
+  }, [validation.isValid, marketAddress, noteCommitment, direction, marginAmount, leverage, onSubmit]);
+  const handleMaxMargin = useCallback3(() => {
+    if (maxMargin > 0n) {
+      setMarginInput(formatBigInt2(maxMargin, tokenDecimals));
+    }
+  }, [maxMargin, tokenDecimals]);
+  return /* @__PURE__ */ jsxs22("form", { onSubmit: handleSubmit, style: styles.card, children: [
+    /* @__PURE__ */ jsx22("h3", { style: { fontSize: "18px", fontWeight: "600", marginBottom: "16px" }, children: "Open Position" }),
+    /* @__PURE__ */ jsxs22("div", { style: { marginBottom: "16px" }, children: [
+      /* @__PURE__ */ jsx22("label", { style: { display: "block", fontSize: "12px", color: colors.textMuted, marginBottom: "4px" }, children: "Market" }),
+      /* @__PURE__ */ jsxs22(
+        "select",
+        {
+          value: marketAddress,
+          onChange: (e) => handleMarketChange(e.target.value),
+          style: styles.input,
+          disabled: isSubmitting,
+          children: [
+            markets.length === 0 && /* @__PURE__ */ jsx22("option", { value: "", children: "No markets available" }),
+            markets.map((market) => /* @__PURE__ */ jsxs22("option", { value: market.address, children: [
+              market.name,
+              " (",
+              formatPrice2(market.currentPrice),
+              ")"
+            ] }, market.address))
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ jsxs22("div", { style: { marginBottom: "16px" }, children: [
+      /* @__PURE__ */ jsx22("label", { style: { display: "block", fontSize: "12px", color: colors.textMuted, marginBottom: "4px" }, children: "Direction" }),
+      /* @__PURE__ */ jsxs22("div", { style: { display: "flex", gap: "8px" }, children: [
+        /* @__PURE__ */ jsx22(
+          "button",
+          {
+            type: "button",
+            onClick: () => setDirection("long"),
+            disabled: isSubmitting,
+            style: {
+              flex: 1,
+              padding: "10px",
+              borderRadius: "6px",
+              border: "none",
+              cursor: "pointer",
+              fontWeight: "600",
+              backgroundColor: direction === "long" ? colors.success : colors.border,
+              color: direction === "long" ? "#fff" : colors.text,
+              transition: "all 0.2s"
+            },
+            children: "Long \u2191"
+          }
+        ),
+        /* @__PURE__ */ jsx22(
+          "button",
+          {
+            type: "button",
+            onClick: () => setDirection("short"),
+            disabled: isSubmitting,
+            style: {
+              flex: 1,
+              padding: "10px",
+              borderRadius: "6px",
+              border: "none",
+              cursor: "pointer",
+              fontWeight: "600",
+              backgroundColor: direction === "short" ? colors.error : colors.border,
+              color: direction === "short" ? "#fff" : colors.text,
+              transition: "all 0.2s"
+            },
+            children: "Short \u2193"
+          }
+        )
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs22("div", { style: { marginBottom: "16px" }, children: [
+      /* @__PURE__ */ jsx22("label", { style: { display: "block", fontSize: "12px", color: colors.textMuted, marginBottom: "4px" }, children: "Source Note" }),
+      /* @__PURE__ */ jsxs22(
+        "select",
+        {
+          value: noteCommitment,
+          onChange: (e) => setNoteCommitment(e.target.value),
+          style: styles.input,
+          disabled: isSubmitting,
+          children: [
+            notes.length === 0 && /* @__PURE__ */ jsx22("option", { value: "", children: "No notes available" }),
+            notes.map((note) => /* @__PURE__ */ jsxs22("option", { value: note.commitment, children: [
+              note.label || note.commitment.slice(0, 8),
+              "... (",
+              formatBigInt2(note.amount, tokenDecimals),
+              " ",
+              tokenSymbol,
+              ")"
+            ] }, note.commitment))
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ jsxs22("div", { style: { marginBottom: "16px" }, children: [
+      /* @__PURE__ */ jsxs22("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }, children: [
+        /* @__PURE__ */ jsx22("label", { style: { fontSize: "12px", color: colors.textMuted }, children: "Margin Amount" }),
+        /* @__PURE__ */ jsxs22(
+          "button",
+          {
+            type: "button",
+            onClick: handleMaxMargin,
+            style: {
+              fontSize: "11px",
+              color: colors.primary,
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: 0
+            },
+            children: [
+              "Max: ",
+              formatBigInt2(maxMargin, tokenDecimals),
+              " ",
+              tokenSymbol
+            ]
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxs22("div", { style: { position: "relative" }, children: [
+        /* @__PURE__ */ jsx22(
+          "input",
+          {
+            type: "text",
+            value: marginInput,
+            onChange: (e) => setMarginInput(e.target.value),
+            placeholder: "0.00",
+            style: styles.input,
+            disabled: isSubmitting
+          }
+        ),
+        /* @__PURE__ */ jsx22("span", { style: {
+          position: "absolute",
+          right: "12px",
+          top: "50%",
+          transform: "translateY(-50%)",
+          color: colors.textMuted,
+          fontSize: "14px"
+        }, children: tokenSymbol })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs22("div", { style: { marginBottom: "20px" }, children: [
+      /* @__PURE__ */ jsxs22("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }, children: [
+        /* @__PURE__ */ jsx22("label", { style: { fontSize: "12px", color: colors.textMuted }, children: "Leverage" }),
+        /* @__PURE__ */ jsxs22("span", { style: { fontWeight: "600" }, children: [
+          leverage,
+          "x"
+        ] })
+      ] }),
+      /* @__PURE__ */ jsx22(
+        "input",
+        {
+          type: "range",
+          min: 1,
+          max: selectedMarketData?.maxLeverage || 100,
+          value: leverage,
+          onChange: (e) => setLeverage(parseInt(e.target.value)),
+          style: { width: "100%" },
+          disabled: isSubmitting
+        }
+      ),
+      /* @__PURE__ */ jsxs22("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: colors.textMuted, marginTop: "4px" }, children: [
+        /* @__PURE__ */ jsx22("span", { children: "1x" }),
+        /* @__PURE__ */ jsxs22("span", { children: [
+          selectedMarketData?.maxLeverage || 100,
+          "x"
+        ] })
+      ] })
+    ] }),
+    marginAmount > 0n && selectedMarketData && /* @__PURE__ */ jsxs22("div", { style: {
+      padding: "12px",
+      borderRadius: "6px",
+      backgroundColor: colors.border + "30",
+      marginBottom: "16px"
+    }, children: [
+      /* @__PURE__ */ jsxs22("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: "8px" }, children: [
+        /* @__PURE__ */ jsx22("span", { style: { fontSize: "12px", color: colors.textMuted }, children: "Position Size" }),
+        /* @__PURE__ */ jsxs22("span", { style: { fontWeight: "500" }, children: [
+          formatBigInt2(positionSize, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs22("div", { style: { display: "flex", justifyContent: "space-between" }, children: [
+        /* @__PURE__ */ jsx22("span", { style: { fontSize: "12px", color: colors.textMuted }, children: "Entry Price" }),
+        /* @__PURE__ */ jsx22("span", { style: { fontWeight: "500" }, children: formatPrice2(selectedMarketData.currentPrice) })
+      ] })
+    ] }),
+    validation.error && marginInput && /* @__PURE__ */ jsx22("div", { style: {
+      padding: "8px 12px",
+      borderRadius: "6px",
+      backgroundColor: `${colors.error}15`,
+      color: colors.error,
+      fontSize: "12px",
+      marginBottom: "16px"
+    }, children: validation.error }),
+    /* @__PURE__ */ jsx22(
+      "button",
+      {
+        type: "submit",
+        disabled: !validation.isValid || isSubmitting,
+        style: {
+          ...styles.buttonPrimary,
+          width: "100%",
+          opacity: !validation.isValid || isSubmitting ? 0.6 : 1,
+          backgroundColor: direction === "long" ? colors.success : colors.error
+        },
+        children: isSubmitting ? "Opening Position..." : `Open ${direction.charAt(0).toUpperCase() + direction.slice(1)} Position`
+      }
+    )
+  ] });
+}
+
+// src/components/LiquidationWarning.tsx
+import { jsx as jsx23, jsxs as jsxs23 } from "react/jsx-runtime";
+function formatPrice3(value, decimals = 8) {
+  const divisor = BigInt(10 ** decimals);
+  const intPart = value / divisor;
+  const fracPart = (value % divisor).toString().padStart(decimals, "0").slice(0, 4);
+  return `$${intPart}.${fracPart}`;
+}
+function LiquidationWarning({
+  currentPrice,
+  liquidationPrice,
+  direction,
+  priceDecimals = 8,
+  threshold = 10,
+  onAddMargin
+}) {
+  const distancePercent = currentPrice > 0n ? Number((currentPrice - liquidationPrice) * 10000n / currentPrice) / 100 : 0;
+  const absoluteDistance = direction === "long" ? distancePercent : -distancePercent;
+  const isHighRisk = absoluteDistance < 5;
+  const isMediumRisk = absoluteDistance >= 5 && absoluteDistance < threshold;
+  const isLowRisk = absoluteDistance >= threshold;
+  if (isLowRisk) {
+    return null;
+  }
+  const riskLevel = isHighRisk ? "critical" : "warning";
+  const bgColor = isHighRisk ? colors.error : colors.warning;
+  return /* @__PURE__ */ jsx23("div", { style: {
+    padding: "12px 16px",
+    borderRadius: "8px",
+    backgroundColor: `${bgColor}15`,
+    border: `1px solid ${bgColor}40`
+  }, children: /* @__PURE__ */ jsxs23("div", { style: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "12px"
+  }, children: [
+    /* @__PURE__ */ jsx23("span", { style: { fontSize: "20px" }, children: isHighRisk ? "\u{1F6A8}" : "\u26A0\uFE0F" }),
+    /* @__PURE__ */ jsxs23("div", { style: { flex: 1 }, children: [
+      /* @__PURE__ */ jsx23("div", { style: {
+        fontWeight: "600",
+        color: bgColor,
+        marginBottom: "4px"
+      }, children: isHighRisk ? "Liquidation Imminent!" : "Liquidation Risk" }),
+      /* @__PURE__ */ jsxs23("div", { style: { fontSize: "13px", marginBottom: "8px" }, children: [
+        "Your position is ",
+        /* @__PURE__ */ jsxs23("strong", { children: [
+          absoluteDistance.toFixed(2),
+          "%"
+        ] }),
+        " away from liquidation."
+      ] }),
+      /* @__PURE__ */ jsxs23("div", { style: {
+        display: "flex",
+        gap: "16px",
+        fontSize: "12px",
+        color: colors.textMuted,
+        marginBottom: "12px"
+      }, children: [
+        /* @__PURE__ */ jsxs23("div", { children: [
+          /* @__PURE__ */ jsx23("span", { children: "Current: " }),
+          /* @__PURE__ */ jsx23("strong", { style: { color: colors.text }, children: formatPrice3(currentPrice, priceDecimals) })
+        ] }),
+        /* @__PURE__ */ jsxs23("div", { children: [
+          /* @__PURE__ */ jsx23("span", { children: "Liquidation: " }),
+          /* @__PURE__ */ jsx23("strong", { style: { color: bgColor }, children: formatPrice3(liquidationPrice, priceDecimals) })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsx23("div", { style: {
+        height: "6px",
+        borderRadius: "3px",
+        backgroundColor: colors.border,
+        overflow: "hidden",
+        marginBottom: onAddMargin ? "12px" : 0
+      }, children: /* @__PURE__ */ jsx23("div", { style: {
+        height: "100%",
+        width: `${Math.max(0, Math.min(100, 100 - absoluteDistance))}%`,
+        backgroundColor: bgColor,
+        transition: "width 0.3s"
+      } }) }),
+      onAddMargin && /* @__PURE__ */ jsx23(
+        "button",
+        {
+          onClick: onAddMargin,
+          style: {
+            padding: "8px 16px",
+            borderRadius: "6px",
+            border: `1px solid ${bgColor}`,
+            backgroundColor: "transparent",
+            color: bgColor,
+            fontWeight: "500",
+            cursor: "pointer",
+            fontSize: "13px"
+          },
+          children: "Add Margin"
+        }
+      )
+    ] })
+  ] }) });
+}
+
+// src/components/PoolStats.tsx
+import { jsx as jsx24, jsxs as jsxs24 } from "react/jsx-runtime";
+function formatBigInt3(value, decimals = 6) {
+  if (value === 0n) return "0.00";
+  const divisor = BigInt(10 ** decimals);
+  const intPart = value / divisor;
+  const fracPart = Math.abs(Number(value % divisor * 100n / divisor));
+  return `${intPart.toLocaleString()}.${fracPart.toString().padStart(2, "0")}`;
+}
+function formatCompact(value, decimals = 6) {
+  const num = Number(value) / 10 ** decimals;
+  if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
+  if (num >= 1e3) return `$${(num / 1e3).toFixed(2)}K`;
+  return `$${num.toFixed(2)}`;
+}
+function formatPercent(bps) {
+  return `${(bps / 100).toFixed(2)}%`;
+}
+function PoolStats({
+  poolName,
+  poolAddress,
+  tvl,
+  totalOpenInterest,
+  numPositions,
+  maxLeverage,
+  maxUtilization,
+  baseBorrowRate,
+  tokens,
+  lpSupply,
+  lpPrice,
+  tokenDecimals = 6,
+  tokenSymbol = "USDC",
+  onAddLiquidity,
+  onRemoveLiquidity
+}) {
+  return /* @__PURE__ */ jsxs24("div", { style: styles.card, children: [
+    /* @__PURE__ */ jsxs24("div", { style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "flex-start",
+      marginBottom: "20px"
+    }, children: [
+      /* @__PURE__ */ jsxs24("div", { children: [
+        /* @__PURE__ */ jsx24("h3", { style: { fontSize: "18px", fontWeight: "600", marginBottom: "4px" }, children: poolName }),
+        poolAddress && /* @__PURE__ */ jsxs24("div", { style: { fontSize: "11px", color: colors.textMuted, fontFamily: "monospace" }, children: [
+          poolAddress.slice(0, 8),
+          "...",
+          poolAddress.slice(-8)
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs24("div", { style: { textAlign: "right" }, children: [
+        /* @__PURE__ */ jsx24("div", { style: { fontSize: "12px", color: colors.textMuted }, children: "TVL" }),
+        /* @__PURE__ */ jsx24("div", { style: { fontSize: "20px", fontWeight: "600" }, children: formatCompact(tvl, tokenDecimals) })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs24("div", { style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, 1fr)",
+      gap: "16px",
+      marginBottom: "20px"
+    }, children: [
+      /* @__PURE__ */ jsxs24("div", { style: {
+        padding: "12px",
+        borderRadius: "8px",
+        backgroundColor: colors.border + "30"
+      }, children: [
+        /* @__PURE__ */ jsx24("div", { style: { fontSize: "11px", color: colors.textMuted, marginBottom: "4px" }, children: "Open Interest" }),
+        /* @__PURE__ */ jsx24("div", { style: { fontSize: "16px", fontWeight: "600" }, children: formatCompact(totalOpenInterest, tokenDecimals) })
+      ] }),
+      /* @__PURE__ */ jsxs24("div", { style: {
+        padding: "12px",
+        borderRadius: "8px",
+        backgroundColor: colors.border + "30"
+      }, children: [
+        /* @__PURE__ */ jsx24("div", { style: { fontSize: "11px", color: colors.textMuted, marginBottom: "4px" }, children: "Positions" }),
+        /* @__PURE__ */ jsx24("div", { style: { fontSize: "16px", fontWeight: "600" }, children: numPositions.toLocaleString() })
+      ] }),
+      /* @__PURE__ */ jsxs24("div", { style: {
+        padding: "12px",
+        borderRadius: "8px",
+        backgroundColor: colors.border + "30"
+      }, children: [
+        /* @__PURE__ */ jsx24("div", { style: { fontSize: "11px", color: colors.textMuted, marginBottom: "4px" }, children: "Max Leverage" }),
+        /* @__PURE__ */ jsxs24("div", { style: { fontSize: "16px", fontWeight: "600" }, children: [
+          maxLeverage,
+          "x"
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs24("div", { style: { marginBottom: "20px" }, children: [
+      /* @__PURE__ */ jsx24("h4", { style: { fontSize: "14px", fontWeight: "600", marginBottom: "12px", color: colors.textMuted }, children: "Token Utilization" }),
+      /* @__PURE__ */ jsx24("div", { style: { display: "flex", flexDirection: "column", gap: "12px" }, children: tokens.map((token) => /* @__PURE__ */ jsxs24("div", { style: {
+        padding: "12px",
+        borderRadius: "8px",
+        border: `1px solid ${colors.border}`
+      }, children: [
+        /* @__PURE__ */ jsxs24("div", { style: {
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "8px"
+        }, children: [
+          /* @__PURE__ */ jsx24("span", { style: { fontWeight: "500" }, children: token.symbol }),
+          /* @__PURE__ */ jsxs24("span", { style: { fontSize: "13px", color: colors.textMuted }, children: [
+            formatBigInt3(token.balance, tokenDecimals),
+            " available"
+          ] })
+        ] }),
+        /* @__PURE__ */ jsx24("div", { style: {
+          height: "8px",
+          borderRadius: "4px",
+          backgroundColor: colors.border,
+          overflow: "hidden",
+          marginBottom: "8px"
+        }, children: /* @__PURE__ */ jsx24("div", { style: {
+          height: "100%",
+          width: `${token.utilization}%`,
+          backgroundColor: token.utilization > 80 ? colors.error : token.utilization > 60 ? colors.warning : colors.primary,
+          transition: "width 0.3s, background-color 0.3s"
+        } }) }),
+        /* @__PURE__ */ jsxs24("div", { style: {
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: "11px",
+          color: colors.textMuted
+        }, children: [
+          /* @__PURE__ */ jsxs24("span", { children: [
+            "Utilization: ",
+            token.utilization.toFixed(1),
+            "%"
+          ] }),
+          /* @__PURE__ */ jsxs24("span", { children: [
+            "Borrow Rate: ",
+            formatPercent(token.borrowRate),
+            " APR"
+          ] })
+        ] })
+      ] }, token.tokenIndex)) })
+    ] }),
+    lpSupply !== void 0 && lpPrice !== void 0 && /* @__PURE__ */ jsx24("div", { style: {
+      padding: "12px",
+      borderRadius: "8px",
+      backgroundColor: colors.primary + "10",
+      marginBottom: "16px"
+    }, children: /* @__PURE__ */ jsxs24("div", { style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center"
+    }, children: [
+      /* @__PURE__ */ jsxs24("div", { children: [
+        /* @__PURE__ */ jsx24("div", { style: { fontSize: "11px", color: colors.textMuted, marginBottom: "2px" }, children: "LP Token Price" }),
+        /* @__PURE__ */ jsxs24("div", { style: { fontWeight: "600" }, children: [
+          "$",
+          formatBigInt3(lpPrice, 6)
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs24("div", { style: { textAlign: "right" }, children: [
+        /* @__PURE__ */ jsx24("div", { style: { fontSize: "11px", color: colors.textMuted, marginBottom: "2px" }, children: "LP Supply" }),
+        /* @__PURE__ */ jsx24("div", { style: { fontWeight: "600" }, children: formatBigInt3(lpSupply, tokenDecimals) })
+      ] })
+    ] }) }),
+    /* @__PURE__ */ jsxs24("div", { style: {
+      display: "flex",
+      justifyContent: "space-between",
+      fontSize: "12px",
+      color: colors.textMuted,
+      marginBottom: "16px"
+    }, children: [
+      /* @__PURE__ */ jsxs24("span", { children: [
+        "Max Utilization: ",
+        formatPercent(maxUtilization)
+      ] }),
+      /* @__PURE__ */ jsxs24("span", { children: [
+        "Base Borrow Rate: ",
+        formatPercent(baseBorrowRate)
+      ] })
+    ] }),
+    (onAddLiquidity || onRemoveLiquidity) && /* @__PURE__ */ jsxs24("div", { style: { display: "flex", gap: "8px" }, children: [
+      onAddLiquidity && /* @__PURE__ */ jsx24(
+        "button",
+        {
+          onClick: onAddLiquidity,
+          style: {
+            ...styles.buttonPrimary,
+            flex: 1
+          },
+          children: "Add Liquidity"
+        }
+      ),
+      onRemoveLiquidity && /* @__PURE__ */ jsx24(
+        "button",
+        {
+          onClick: onRemoveLiquidity,
+          style: {
+            ...styles.buttonSecondary,
+            flex: 1
+          },
+          children: "Remove Liquidity"
+        }
+      )
+    ] })
+  ] });
+}
+
+// src/components/BallotCard.tsx
+import { jsx as jsx25, jsxs as jsxs25 } from "react/jsx-runtime";
+function formatBigInt4(value, decimals = 6) {
+  if (value === 0n) return "0";
+  const divisor = BigInt(10 ** decimals);
+  const intPart = value / divisor;
+  const fracPart = Math.abs(Number(value % divisor * 100n / divisor));
+  if (fracPart === 0) return intPart.toLocaleString();
+  return `${intPart.toLocaleString()}.${fracPart.toString().padStart(2, "0")}`;
+}
+function formatTimeRemaining(seconds) {
+  if (seconds <= 0) return "Ended";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
+  return `${Math.floor(seconds / 86400)}d ${Math.floor(seconds % 86400 / 3600)}h`;
+}
+function formatDate(timestamp) {
+  return new Date(timestamp * 1e3).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+var statusColors = {
+  pending: colors.textMuted,
+  active: colors.success,
+  closed: colors.warning,
+  resolved: colors.primary,
+  finalized: colors.textMuted
+};
+var statusLabels = {
+  pending: "Pending",
+  active: "Active",
+  closed: "Closed",
+  resolved: "Resolved",
+  finalized: "Finalized"
+};
+function BallotCard({
+  ballotId,
+  title,
+  description,
+  status,
+  bindingMode,
+  revealMode,
+  tokenSymbol,
+  options,
+  totalVotes,
+  totalWeight,
+  quorumThreshold,
+  hasQuorum,
+  startTime,
+  endTime,
+  outcome,
+  userVote,
+  userWeight,
+  compact = false,
+  onClick
+}) {
+  const now = Math.floor(Date.now() / 1e3);
+  const timeRemaining = endTime - now;
+  const isActive = status === "active";
+  const hasOutcome = typeof outcome === "number";
+  const hasUserVoted = typeof userVote === "number";
+  const quorumProgress = quorumThreshold > 0n ? Math.min(100, Number(totalWeight * 100n / quorumThreshold)) : 100;
+  if (compact) {
+    return /* @__PURE__ */ jsxs25(
+      "div",
+      {
+        style: {
+          ...styles.card,
+          padding: "12px 16px",
+          cursor: onClick ? "pointer" : "default",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "12px"
+        },
+        onClick,
+        children: [
+          /* @__PURE__ */ jsxs25("div", { style: { flex: 1, minWidth: 0 }, children: [
+            /* @__PURE__ */ jsxs25("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "2px" }, children: [
+              /* @__PURE__ */ jsx25("span", { style: {
+                padding: "2px 6px",
+                borderRadius: "4px",
+                fontSize: "10px",
+                fontWeight: "600",
+                backgroundColor: `${statusColors[status]}20`,
+                color: statusColors[status],
+                textTransform: "uppercase"
+              }, children: statusLabels[status] }),
+              /* @__PURE__ */ jsx25("span", { style: {
+                fontWeight: "500",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap"
+              }, children: title })
+            ] }),
+            /* @__PURE__ */ jsxs25("div", { style: { fontSize: "12px", color: colors.textMuted }, children: [
+              totalVotes,
+              " votes \u2022 ",
+              isActive ? formatTimeRemaining(timeRemaining) : formatDate(endTime)
+            ] })
+          ] }),
+          hasUserVoted && /* @__PURE__ */ jsx25("span", { style: { fontSize: "12px", color: colors.success }, children: "\u2713 Voted" })
+        ]
+      }
+    );
+  }
+  return /* @__PURE__ */ jsxs25(
+    "div",
+    {
+      style: {
+        ...styles.card,
+        cursor: onClick ? "pointer" : "default"
+      },
+      onClick,
+      children: [
+        /* @__PURE__ */ jsxs25("div", { style: { marginBottom: "16px" }, children: [
+          /* @__PURE__ */ jsxs25("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", marginBottom: "8px" }, children: [
+            /* @__PURE__ */ jsx25("h3", { style: { fontSize: "18px", fontWeight: "600", margin: 0 }, children: title }),
+            /* @__PURE__ */ jsx25("span", { style: {
+              padding: "4px 8px",
+              borderRadius: "4px",
+              fontSize: "11px",
+              fontWeight: "600",
+              backgroundColor: `${statusColors[status]}20`,
+              color: statusColors[status],
+              textTransform: "uppercase",
+              flexShrink: 0
+            }, children: statusLabels[status] })
+          ] }),
+          description && /* @__PURE__ */ jsx25("p", { style: { fontSize: "14px", color: colors.textMuted, margin: 0 }, children: description })
+        ] }),
+        /* @__PURE__ */ jsxs25("div", { style: { display: "flex", gap: "8px", marginBottom: "16px" }, children: [
+          /* @__PURE__ */ jsx25("span", { style: {
+            padding: "3px 8px",
+            borderRadius: "4px",
+            fontSize: "10px",
+            fontWeight: "500",
+            backgroundColor: colors.border,
+            color: colors.textMuted,
+            textTransform: "uppercase"
+          }, children: bindingMode === "snapshot" ? "\u{1F4F8} Snapshot" : "\u{1F512} Spend-to-Vote" }),
+          /* @__PURE__ */ jsx25("span", { style: {
+            padding: "3px 8px",
+            borderRadius: "4px",
+            fontSize: "10px",
+            fontWeight: "500",
+            backgroundColor: colors.border,
+            color: colors.textMuted,
+            textTransform: "uppercase"
+          }, children: revealMode === "public" ? "\u{1F441}\uFE0F Public" : revealMode === "time-locked" ? "\u23F0 Time-Locked" : "\u{1F510} Private" }),
+          /* @__PURE__ */ jsx25("span", { style: {
+            padding: "3px 8px",
+            borderRadius: "4px",
+            fontSize: "10px",
+            fontWeight: "500",
+            backgroundColor: colors.border,
+            color: colors.textMuted
+          }, children: tokenSymbol })
+        ] }),
+        /* @__PURE__ */ jsx25("div", { style: { marginBottom: "16px" }, children: options.map((option) => /* @__PURE__ */ jsxs25("div", { style: { marginBottom: "10px" }, children: [
+          /* @__PURE__ */ jsxs25("div", { style: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "4px"
+          }, children: [
+            /* @__PURE__ */ jsxs25("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
+              /* @__PURE__ */ jsx25("span", { style: { fontWeight: "500" }, children: option.label }),
+              option.isWinner && /* @__PURE__ */ jsx25("span", { style: { fontSize: "12px" }, children: "\u{1F3C6}" }),
+              userVote === option.index && /* @__PURE__ */ jsx25("span", { style: {
+                fontSize: "10px",
+                padding: "2px 6px",
+                borderRadius: "4px",
+                backgroundColor: colors.primary + "20",
+                color: colors.primary
+              }, children: "Your vote" })
+            ] }),
+            /* @__PURE__ */ jsxs25("span", { style: { fontSize: "13px", color: colors.textMuted }, children: [
+              option.percentage.toFixed(1),
+              "%"
+            ] })
+          ] }),
+          /* @__PURE__ */ jsx25("div", { style: {
+            height: "8px",
+            borderRadius: "4px",
+            backgroundColor: colors.border,
+            overflow: "hidden"
+          }, children: /* @__PURE__ */ jsx25("div", { style: {
+            height: "100%",
+            width: `${option.percentage}%`,
+            backgroundColor: option.isWinner ? colors.success : userVote === option.index ? colors.primary : colors.textMuted,
+            transition: "width 0.3s"
+          } }) }),
+          /* @__PURE__ */ jsxs25("div", { style: { fontSize: "11px", color: colors.textMuted, marginTop: "2px" }, children: [
+            formatBigInt4(option.weight),
+            " ",
+            tokenSymbol,
+            " weight"
+          ] })
+        ] }, option.index)) }),
+        /* @__PURE__ */ jsxs25("div", { style: {
+          padding: "10px 12px",
+          borderRadius: "6px",
+          backgroundColor: colors.border + "30",
+          marginBottom: "16px"
+        }, children: [
+          /* @__PURE__ */ jsxs25("div", { style: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "6px",
+            fontSize: "12px"
+          }, children: [
+            /* @__PURE__ */ jsx25("span", { style: { color: colors.textMuted }, children: "Quorum" }),
+            /* @__PURE__ */ jsx25("span", { style: { color: hasQuorum ? colors.success : colors.textMuted }, children: hasQuorum ? "\u2713 Reached" : `${quorumProgress.toFixed(0)}%` })
+          ] }),
+          /* @__PURE__ */ jsx25("div", { style: {
+            height: "4px",
+            borderRadius: "2px",
+            backgroundColor: colors.border,
+            overflow: "hidden"
+          }, children: /* @__PURE__ */ jsx25("div", { style: {
+            height: "100%",
+            width: `${quorumProgress}%`,
+            backgroundColor: hasQuorum ? colors.success : colors.primary
+          } }) }),
+          /* @__PURE__ */ jsxs25("div", { style: {
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: "10px",
+            color: colors.textMuted,
+            marginTop: "4px"
+          }, children: [
+            /* @__PURE__ */ jsxs25("span", { children: [
+              formatBigInt4(totalWeight),
+              " ",
+              tokenSymbol
+            ] }),
+            /* @__PURE__ */ jsxs25("span", { children: [
+              formatBigInt4(quorumThreshold),
+              " ",
+              tokenSymbol,
+              " required"
+            ] })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs25("div", { style: {
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: "12px",
+          color: colors.textMuted
+        }, children: [
+          /* @__PURE__ */ jsxs25("span", { children: [
+            totalVotes,
+            " total votes"
+          ] }),
+          /* @__PURE__ */ jsx25("span", { children: isActive ? `Ends in ${formatTimeRemaining(timeRemaining)}` : `Ended ${formatDate(endTime)}` })
+        ] }),
+        hasUserVoted && userWeight !== void 0 && userWeight > 0n && /* @__PURE__ */ jsxs25("div", { style: {
+          marginTop: "12px",
+          padding: "8px 12px",
+          borderRadius: "6px",
+          backgroundColor: colors.primary + "10",
+          fontSize: "12px"
+        }, children: [
+          /* @__PURE__ */ jsx25("span", { style: { color: colors.textMuted }, children: "You voted for " }),
+          /* @__PURE__ */ jsx25("strong", { children: options[userVote]?.label || `Option ${userVote}` }),
+          /* @__PURE__ */ jsxs25("span", { style: { color: colors.textMuted }, children: [
+            " with ",
+            formatBigInt4(userWeight),
+            " ",
+            tokenSymbol
+          ] })
+        ] })
+      ]
+    }
+  );
+}
+
+// src/components/VoteForm.tsx
+import { useState as useState15, useMemo as useMemo7, useCallback as useCallback4 } from "react";
+import { jsx as jsx26, jsxs as jsxs26 } from "react/jsx-runtime";
+function formatBigInt5(value, decimals = 6) {
+  if (value === 0n) return "0";
+  const divisor = BigInt(10 ** decimals);
+  const intPart = value / divisor;
+  const fracPart = Math.abs(Number(value % divisor * 100n / divisor));
+  if (fracPart === 0) return intPart.toLocaleString();
+  return `${intPart.toLocaleString()}.${fracPart.toString().padStart(2, "0")}`;
+}
+function VoteForm({
+  ballotTitle,
+  options,
+  notes,
+  tokenSymbol,
+  tokenDecimals = 6,
+  bindingMode,
+  isSubmitting = false,
+  onSubmit,
+  onCancel
+}) {
+  const [selectedOption, setSelectedOption] = useState15(null);
+  const [selectedNote, setSelectedNote] = useState15(notes[0]?.commitment || "");
+  const selectedNoteData = useMemo7(() => {
+    return notes.find((n) => n.commitment === selectedNote);
+  }, [notes, selectedNote]);
+  const votingWeight = selectedNoteData?.amount || 0n;
+  const validation = useMemo7(() => {
+    if (selectedOption === null) {
+      return { isValid: false, error: "Select an option to vote for" };
+    }
+    if (!selectedNoteData) {
+      return { isValid: false, error: "Select a note" };
+    }
+    if (votingWeight <= 0n) {
+      return { isValid: false, error: "Note has no balance" };
+    }
+    return { isValid: true, error: null };
+  }, [selectedOption, selectedNoteData, votingWeight]);
+  const handleSubmit = useCallback4((e) => {
+    e.preventDefault();
+    if (!validation.isValid || selectedOption === null) return;
+    onSubmit({
+      noteCommitment: selectedNote,
+      voteChoice: selectedOption
+    });
+  }, [validation.isValid, selectedOption, selectedNote, onSubmit]);
+  const projectedPercentages = useMemo7(() => {
+    if (selectedOption === null || votingWeight <= 0n) return null;
+    const totalWithVote = options.reduce((sum, o) => sum + o.currentWeight, 0n) + votingWeight;
+    return options.map((opt) => {
+      const newWeight = opt.index === selectedOption ? opt.currentWeight + votingWeight : opt.currentWeight;
+      return {
+        index: opt.index,
+        newPercentage: totalWithVote > 0n ? Number(newWeight * 10000n / totalWithVote) / 100 : 0
+      };
+    });
+  }, [options, selectedOption, votingWeight]);
+  return /* @__PURE__ */ jsxs26("form", { onSubmit: handleSubmit, style: styles.card, children: [
+    /* @__PURE__ */ jsxs26("div", { style: { marginBottom: "20px" }, children: [
+      /* @__PURE__ */ jsx26("h3", { style: { fontSize: "18px", fontWeight: "600", marginBottom: "4px" }, children: "Cast Your Vote" }),
+      /* @__PURE__ */ jsx26("p", { style: { fontSize: "14px", color: colors.textMuted, margin: 0 }, children: ballotTitle })
+    ] }),
+    bindingMode === "spend-to-vote" && /* @__PURE__ */ jsx26("div", { style: {
+      padding: "12px",
+      borderRadius: "6px",
+      backgroundColor: colors.warning + "15",
+      border: `1px solid ${colors.warning}40`,
+      marginBottom: "16px",
+      fontSize: "13px"
+    }, children: /* @__PURE__ */ jsxs26("div", { style: { display: "flex", alignItems: "flex-start", gap: "10px" }, children: [
+      /* @__PURE__ */ jsx26("span", { style: { fontSize: "16px" }, children: "\u{1F512}" }),
+      /* @__PURE__ */ jsxs26("div", { children: [
+        /* @__PURE__ */ jsx26("strong", { style: { color: colors.warning }, children: "Spend-to-Vote Mode" }),
+        /* @__PURE__ */ jsx26("p", { style: { margin: "4px 0 0", color: colors.textMuted }, children: "Your tokens will be locked until the ballot is resolved. If you vote for the winning option, you can claim proportional winnings." })
+      ] })
+    ] }) }),
+    /* @__PURE__ */ jsxs26("div", { style: { marginBottom: "16px" }, children: [
+      /* @__PURE__ */ jsx26("label", { style: { display: "block", fontSize: "12px", color: colors.textMuted, marginBottom: "4px" }, children: "Voting with" }),
+      /* @__PURE__ */ jsxs26(
+        "select",
+        {
+          value: selectedNote,
+          onChange: (e) => setSelectedNote(e.target.value),
+          style: styles.input,
+          disabled: isSubmitting,
+          children: [
+            notes.length === 0 && /* @__PURE__ */ jsx26("option", { value: "", children: "No eligible notes" }),
+            notes.map((note) => /* @__PURE__ */ jsxs26("option", { value: note.commitment, children: [
+              formatBigInt5(note.amount, tokenDecimals),
+              " ",
+              tokenSymbol,
+              note.label ? ` (${note.label})` : ""
+            ] }, note.commitment))
+          ]
+        }
+      ),
+      /* @__PURE__ */ jsxs26("div", { style: { fontSize: "11px", color: colors.textMuted, marginTop: "4px" }, children: [
+        "Your voting weight: ",
+        /* @__PURE__ */ jsxs26("strong", { children: [
+          formatBigInt5(votingWeight, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs26("div", { style: { marginBottom: "20px" }, children: [
+      /* @__PURE__ */ jsx26("label", { style: { display: "block", fontSize: "12px", color: colors.textMuted, marginBottom: "8px" }, children: "Select your choice" }),
+      /* @__PURE__ */ jsx26("div", { style: { display: "flex", flexDirection: "column", gap: "8px" }, children: options.map((option) => {
+        const isSelected = selectedOption === option.index;
+        const projected = projectedPercentages?.find((p) => p.index === option.index);
+        return /* @__PURE__ */ jsxs26(
+          "button",
+          {
+            type: "button",
+            onClick: () => setSelectedOption(option.index),
+            disabled: isSubmitting,
+            style: {
+              padding: "12px 16px",
+              borderRadius: "8px",
+              border: `2px solid ${isSelected ? colors.primary : colors.border}`,
+              backgroundColor: isSelected ? colors.primary + "10" : "transparent",
+              cursor: "pointer",
+              textAlign: "left",
+              transition: "all 0.2s"
+            },
+            children: [
+              /* @__PURE__ */ jsxs26("div", { style: {
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "4px"
+              }, children: [
+                /* @__PURE__ */ jsx26("span", { style: {
+                  fontWeight: "500",
+                  color: isSelected ? colors.primary : colors.text
+                }, children: option.label }),
+                /* @__PURE__ */ jsxs26("span", { style: {
+                  fontSize: "12px",
+                  color: isSelected ? colors.primary : colors.textMuted
+                }, children: [
+                  option.currentPercentage.toFixed(1),
+                  "%",
+                  isSelected && projected && /* @__PURE__ */ jsxs26("span", { style: { marginLeft: "4px" }, children: [
+                    "\u2192 ",
+                    projected.newPercentage.toFixed(1),
+                    "%"
+                  ] })
+                ] })
+              ] }),
+              option.description && /* @__PURE__ */ jsx26("p", { style: {
+                fontSize: "12px",
+                color: colors.textMuted,
+                margin: "4px 0 8px"
+              }, children: option.description }),
+              /* @__PURE__ */ jsx26("div", { style: {
+                height: "4px",
+                borderRadius: "2px",
+                backgroundColor: colors.border,
+                overflow: "hidden"
+              }, children: /* @__PURE__ */ jsx26("div", { style: {
+                height: "100%",
+                width: `${isSelected && projected ? projected.newPercentage : option.currentPercentage}%`,
+                backgroundColor: isSelected ? colors.primary : colors.textMuted + "60",
+                transition: "width 0.3s, background-color 0.3s"
+              } }) })
+            ]
+          },
+          option.index
+        );
+      }) })
+    ] }),
+    selectedOption !== null && selectedNoteData && /* @__PURE__ */ jsxs26("div", { style: {
+      padding: "12px",
+      borderRadius: "6px",
+      backgroundColor: colors.primary + "10",
+      marginBottom: "16px",
+      fontSize: "13px"
+    }, children: [
+      /* @__PURE__ */ jsxs26("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: "4px" }, children: [
+        /* @__PURE__ */ jsx26("span", { style: { color: colors.textMuted }, children: "Voting for" }),
+        /* @__PURE__ */ jsx26("strong", { children: options[selectedOption]?.label })
+      ] }),
+      /* @__PURE__ */ jsxs26("div", { style: { display: "flex", justifyContent: "space-between" }, children: [
+        /* @__PURE__ */ jsx26("span", { style: { color: colors.textMuted }, children: "Weight" }),
+        /* @__PURE__ */ jsxs26("strong", { children: [
+          formatBigInt5(votingWeight, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] })
+      ] })
+    ] }),
+    validation.error && selectedNote && /* @__PURE__ */ jsx26("div", { style: {
+      padding: "10px 12px",
+      borderRadius: "6px",
+      backgroundColor: colors.error + "15",
+      color: colors.error,
+      fontSize: "12px",
+      marginBottom: "16px"
+    }, children: validation.error }),
+    /* @__PURE__ */ jsxs26("div", { style: { display: "flex", gap: "8px" }, children: [
+      onCancel && /* @__PURE__ */ jsx26(
+        "button",
+        {
+          type: "button",
+          onClick: onCancel,
+          disabled: isSubmitting,
+          style: {
+            ...styles.buttonSecondary,
+            flex: 1
+          },
+          children: "Cancel"
+        }
+      ),
+      /* @__PURE__ */ jsx26(
+        "button",
+        {
+          type: "submit",
+          disabled: !validation.isValid || isSubmitting,
+          style: {
+            ...styles.buttonPrimary,
+            flex: 1,
+            opacity: !validation.isValid || isSubmitting ? 0.6 : 1
+          },
+          children: isSubmitting ? "Submitting Vote..." : "Cast Vote"
+        }
+      )
+    ] })
+  ] });
+}
+
+// src/components/ClaimButton.tsx
+import { useMemo as useMemo8 } from "react";
+import { jsx as jsx27, jsxs as jsxs27 } from "react/jsx-runtime";
+function formatBigInt6(value, decimals = 6) {
+  if (value === 0n) return "0";
+  const divisor = BigInt(10 ** decimals);
+  const intPart = value / divisor;
+  const fracPart = Math.abs(Number(value % divisor * 100n / divisor));
+  if (fracPart === 0) return intPart.toLocaleString();
+  return `${intPart.toLocaleString()}.${fracPart.toString().padStart(2, "0")}`;
+}
+function formatTimeRemaining2(seconds) {
+  if (seconds <= 0) return "Expired";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
+  return `${Math.floor(seconds / 86400)}d ${Math.floor(seconds % 86400 / 3600)}h`;
+}
+function ClaimButton({
+  voteChoice,
+  outcome,
+  userWeight,
+  totalPool,
+  winnerWeight,
+  protocolFeeBps,
+  tokenSymbol,
+  tokenDecimals = 6,
+  claimDeadline,
+  isClaiming = false,
+  hasClaimed = false,
+  onClaim
+}) {
+  const now = Math.floor(Date.now() / 1e3);
+  const timeRemaining = claimDeadline - now;
+  const isExpired = timeRemaining <= 0;
+  const isWinner = voteChoice === outcome;
+  const payout = useMemo8(() => {
+    if (!isWinner || winnerWeight === 0n) {
+      return { gross: 0n, net: 0n, fee: 0n, multiplier: 0 };
+    }
+    const gross = userWeight * totalPool / winnerWeight;
+    const fee = gross * BigInt(protocolFeeBps) / 10000n;
+    const net = gross - fee;
+    const multiplier = userWeight > 0n ? Number(gross * 1000n / userWeight) / 1e3 : 0;
+    return { gross, net, fee, multiplier };
+  }, [isWinner, userWeight, totalPool, winnerWeight, protocolFeeBps]);
+  if (hasClaimed) {
+    return /* @__PURE__ */ jsx27("div", { style: {
+      ...styles.card,
+      padding: "16px",
+      backgroundColor: colors.success + "10",
+      border: `1px solid ${colors.success}40`
+    }, children: /* @__PURE__ */ jsxs27("div", { style: { display: "flex", alignItems: "center", gap: "10px" }, children: [
+      /* @__PURE__ */ jsx27("span", { style: { fontSize: "24px" }, children: "\u2705" }),
+      /* @__PURE__ */ jsxs27("div", { children: [
+        /* @__PURE__ */ jsx27("div", { style: { fontWeight: "600", color: colors.success }, children: "Claimed Successfully" }),
+        /* @__PURE__ */ jsxs27("div", { style: { fontSize: "12px", color: colors.textMuted }, children: [
+          "You received ",
+          formatBigInt6(payout.net, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] })
+      ] })
+    ] }) });
+  }
+  if (!isWinner) {
+    return /* @__PURE__ */ jsx27("div", { style: {
+      ...styles.card,
+      padding: "16px",
+      backgroundColor: colors.textMuted + "10"
+    }, children: /* @__PURE__ */ jsxs27("div", { style: { display: "flex", alignItems: "center", gap: "10px" }, children: [
+      /* @__PURE__ */ jsx27("span", { style: { fontSize: "24px" }, children: "\u{1F614}" }),
+      /* @__PURE__ */ jsxs27("div", { children: [
+        /* @__PURE__ */ jsx27("div", { style: { fontWeight: "500" }, children: "No Claim Available" }),
+        /* @__PURE__ */ jsx27("div", { style: { fontSize: "12px", color: colors.textMuted }, children: "Your vote did not match the winning outcome." })
+      ] })
+    ] }) });
+  }
+  if (isExpired) {
+    return /* @__PURE__ */ jsx27("div", { style: {
+      ...styles.card,
+      padding: "16px",
+      backgroundColor: colors.error + "10",
+      border: `1px solid ${colors.error}40`
+    }, children: /* @__PURE__ */ jsxs27("div", { style: { display: "flex", alignItems: "center", gap: "10px" }, children: [
+      /* @__PURE__ */ jsx27("span", { style: { fontSize: "24px" }, children: "\u23F0" }),
+      /* @__PURE__ */ jsxs27("div", { children: [
+        /* @__PURE__ */ jsx27("div", { style: { fontWeight: "500", color: colors.error }, children: "Claim Deadline Passed" }),
+        /* @__PURE__ */ jsx27("div", { style: { fontSize: "12px", color: colors.textMuted }, children: "The claim window has expired." })
+      ] })
+    ] }) });
+  }
+  return /* @__PURE__ */ jsxs27("div", { style: {
+    ...styles.card,
+    padding: "20px",
+    backgroundColor: colors.success + "08",
+    border: `1px solid ${colors.success}30`
+  }, children: [
+    /* @__PURE__ */ jsxs27("div", { style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "8px",
+      marginBottom: "16px"
+    }, children: [
+      /* @__PURE__ */ jsx27("span", { style: { fontSize: "24px" }, children: "\u{1F389}" }),
+      /* @__PURE__ */ jsx27("span", { style: { fontWeight: "600", fontSize: "18px", color: colors.success }, children: "You Won!" }),
+      /* @__PURE__ */ jsx27("span", { style: { fontSize: "24px" }, children: "\u{1F389}" })
+    ] }),
+    /* @__PURE__ */ jsxs27("div", { style: {
+      padding: "16px",
+      borderRadius: "8px",
+      backgroundColor: colors.background,
+      marginBottom: "16px"
+    }, children: [
+      /* @__PURE__ */ jsxs27("div", { style: { textAlign: "center", marginBottom: "12px" }, children: [
+        /* @__PURE__ */ jsx27("div", { style: { fontSize: "12px", color: colors.textMuted, marginBottom: "4px" }, children: "Your Payout" }),
+        /* @__PURE__ */ jsxs27("div", { style: { fontSize: "28px", fontWeight: "700", color: colors.success }, children: [
+          formatBigInt6(payout.net, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] }),
+        payout.multiplier > 1 && /* @__PURE__ */ jsxs27("div", { style: { fontSize: "12px", color: colors.success, marginTop: "4px" }, children: [
+          payout.multiplier.toFixed(2),
+          "x return"
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs27("div", { style: { borderTop: `1px solid ${colors.border}`, paddingTop: "12px" }, children: [
+        /* @__PURE__ */ jsxs27("div", { style: {
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: "12px",
+          marginBottom: "4px"
+        }, children: [
+          /* @__PURE__ */ jsx27("span", { style: { color: colors.textMuted }, children: "Gross payout" }),
+          /* @__PURE__ */ jsxs27("span", { children: [
+            formatBigInt6(payout.gross, tokenDecimals),
+            " ",
+            tokenSymbol
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs27("div", { style: {
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: "12px",
+          marginBottom: "4px"
+        }, children: [
+          /* @__PURE__ */ jsxs27("span", { style: { color: colors.textMuted }, children: [
+            "Protocol fee (",
+            (protocolFeeBps / 100).toFixed(1),
+            "%)"
+          ] }),
+          /* @__PURE__ */ jsxs27("span", { style: { color: colors.textMuted }, children: [
+            "-",
+            formatBigInt6(payout.fee, tokenDecimals),
+            " ",
+            tokenSymbol
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs27("div", { style: {
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: "12px",
+          fontWeight: "500",
+          paddingTop: "8px",
+          borderTop: `1px dashed ${colors.border}`
+        }, children: [
+          /* @__PURE__ */ jsx27("span", { children: "Net payout" }),
+          /* @__PURE__ */ jsxs27("span", { style: { color: colors.success }, children: [
+            formatBigInt6(payout.net, tokenDecimals),
+            " ",
+            tokenSymbol
+          ] })
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs27("div", { style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "6px",
+      fontSize: "12px",
+      color: timeRemaining < 86400 ? colors.warning : colors.textMuted,
+      marginBottom: "16px"
+    }, children: [
+      /* @__PURE__ */ jsx27("span", { children: "\u23F0" }),
+      /* @__PURE__ */ jsxs27("span", { children: [
+        "Claim within ",
+        formatTimeRemaining2(timeRemaining)
+      ] })
+    ] }),
+    /* @__PURE__ */ jsx27(
+      "button",
+      {
+        onClick: onClaim,
+        disabled: isClaiming,
+        style: {
+          ...styles.buttonPrimary,
+          width: "100%",
+          padding: "14px",
+          fontSize: "16px",
+          backgroundColor: colors.success,
+          opacity: isClaiming ? 0.6 : 1
+        },
+        children: isClaiming ? "Claiming..." : `Claim ${formatBigInt6(payout.net, tokenDecimals)} ${tokenSymbol}`
+      }
+    )
+  ] });
+}
+
+// src/components/TallyDisplay.tsx
+import { jsx as jsx28, jsxs as jsxs28 } from "react/jsx-runtime";
+function formatBigInt7(value, decimals = 6) {
+  if (value === 0n) return "0";
+  const divisor = BigInt(10 ** decimals);
+  const intPart = value / divisor;
+  const fracPart = Math.abs(Number(value % divisor * 100n / divisor));
+  if (fracPart === 0) return intPart.toLocaleString();
+  return `${intPart.toLocaleString()}.${fracPart.toString().padStart(2, "0")}`;
+}
+function formatCompact2(value, decimals = 6) {
+  const num = Number(value) / 10 ** decimals;
+  if (num >= 1e6) return `${(num / 1e6).toFixed(1)}M`;
+  if (num >= 1e3) return `${(num / 1e3).toFixed(1)}K`;
+  return num.toFixed(1);
+}
+function formatTimeRemaining3(seconds) {
+  if (seconds <= 0) return "Now";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+var optionColors = [
+  "#3B82F6",
+  // blue
+  "#10B981",
+  // green
+  "#F59E0B",
+  // amber
+  "#EF4444",
+  // red
+  "#8B5CF6",
+  // purple
+  "#EC4899",
+  // pink
+  "#06B6D4",
+  // cyan
+  "#F97316"
+  // orange
+];
+function TallyDisplay({
+  options,
+  totalVotes,
+  totalWeight,
+  totalAmount,
+  quorumThreshold,
+  hasQuorum,
+  tokenSymbol,
+  tokenDecimals = 6,
+  revealMode,
+  isRevealed = true,
+  unlockTime,
+  outcome,
+  showVoteCounts = true,
+  showAmounts = false,
+  compact = false
+}) {
+  const now = Math.floor(Date.now() / 1e3);
+  const timeUntilReveal = unlockTime ? unlockTime - now : 0;
+  const hasOutcome = typeof outcome === "number";
+  const sortedOptions = [...options].sort(
+    (a, b) => Number(b.weight - a.weight)
+  );
+  const quorumProgress = quorumThreshold > 0n ? Math.min(100, Number(totalWeight * 100n / quorumThreshold)) : 100;
+  if (revealMode !== "public" && !isRevealed) {
+    return /* @__PURE__ */ jsx28("div", { style: styles.card, children: /* @__PURE__ */ jsxs28("div", { style: { textAlign: "center", padding: "20px" }, children: [
+      /* @__PURE__ */ jsx28("span", { style: { fontSize: "48px", marginBottom: "12px", display: "block" }, children: "\u{1F510}" }),
+      /* @__PURE__ */ jsx28("h3", { style: { fontSize: "18px", fontWeight: "600", marginBottom: "8px" }, children: revealMode === "time-locked" ? "Time-Locked Results" : "Private Results" }),
+      /* @__PURE__ */ jsx28("p", { style: { fontSize: "14px", color: colors.textMuted, marginBottom: "16px" }, children: revealMode === "time-locked" ? `Results will be revealed in ${formatTimeRemaining3(timeUntilReveal)}` : "Results are permanently private" }),
+      /* @__PURE__ */ jsxs28("div", { style: {
+        display: "flex",
+        justifyContent: "center",
+        gap: "24px",
+        padding: "16px",
+        borderRadius: "8px",
+        backgroundColor: colors.border + "30"
+      }, children: [
+        /* @__PURE__ */ jsxs28("div", { children: [
+          /* @__PURE__ */ jsx28("div", { style: { fontSize: "20px", fontWeight: "600" }, children: totalVotes }),
+          /* @__PURE__ */ jsx28("div", { style: { fontSize: "11px", color: colors.textMuted }, children: "Total Votes" })
+        ] }),
+        /* @__PURE__ */ jsxs28("div", { children: [
+          /* @__PURE__ */ jsx28("div", { style: { fontSize: "20px", fontWeight: "600" }, children: formatCompact2(totalWeight, tokenDecimals) }),
+          /* @__PURE__ */ jsx28("div", { style: { fontSize: "11px", color: colors.textMuted }, children: "Total Weight" })
+        ] })
+      ] })
+    ] }) });
+  }
+  if (compact) {
+    return /* @__PURE__ */ jsxs28("div", { style: styles.card, children: [
+      /* @__PURE__ */ jsx28("div", { style: { display: "flex", gap: "4px", marginBottom: "8px" }, children: sortedOptions.map((option, i) => /* @__PURE__ */ jsx28(
+        "div",
+        {
+          style: {
+            height: "6px",
+            borderRadius: "3px",
+            flex: option.percentage,
+            backgroundColor: option.isWinner ? colors.success : optionColors[i % optionColors.length],
+            transition: "flex 0.3s"
+          }
+        },
+        option.index
+      )) }),
+      /* @__PURE__ */ jsxs28("div", { style: {
+        display: "flex",
+        justifyContent: "space-between",
+        fontSize: "11px",
+        color: colors.textMuted
+      }, children: [
+        /* @__PURE__ */ jsxs28("span", { children: [
+          totalVotes,
+          " votes"
+        ] }),
+        /* @__PURE__ */ jsxs28("span", { children: [
+          formatCompact2(totalWeight, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] })
+      ] })
+    ] });
+  }
+  return /* @__PURE__ */ jsxs28("div", { style: styles.card, children: [
+    /* @__PURE__ */ jsxs28("div", { style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: "16px"
+    }, children: [
+      /* @__PURE__ */ jsx28("h3", { style: { fontSize: "16px", fontWeight: "600", margin: 0 }, children: "Vote Results" }),
+      hasOutcome && /* @__PURE__ */ jsx28("span", { style: {
+        padding: "4px 10px",
+        borderRadius: "4px",
+        fontSize: "11px",
+        fontWeight: "600",
+        backgroundColor: colors.success + "20",
+        color: colors.success
+      }, children: "\u2713 Resolved" })
+    ] }),
+    /* @__PURE__ */ jsx28("div", { style: { marginBottom: "16px" }, children: sortedOptions.map((option, i) => {
+      const isWinner = hasOutcome && option.index === outcome;
+      const barColor = isWinner ? colors.success : optionColors[i % optionColors.length];
+      return /* @__PURE__ */ jsxs28("div", { style: { marginBottom: "12px" }, children: [
+        /* @__PURE__ */ jsxs28("div", { style: {
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "4px"
+        }, children: [
+          /* @__PURE__ */ jsxs28("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
+            /* @__PURE__ */ jsx28("div", { style: {
+              width: "12px",
+              height: "12px",
+              borderRadius: "3px",
+              backgroundColor: barColor
+            } }),
+            /* @__PURE__ */ jsx28("span", { style: {
+              fontWeight: isWinner ? "600" : "500",
+              color: isWinner ? colors.success : colors.text
+            }, children: option.label }),
+            isWinner && /* @__PURE__ */ jsx28("span", { style: { fontSize: "12px" }, children: "\u{1F3C6}" })
+          ] }),
+          /* @__PURE__ */ jsxs28("span", { style: {
+            fontSize: "14px",
+            fontWeight: "600",
+            color: isWinner ? colors.success : colors.textMuted
+          }, children: [
+            option.percentage.toFixed(1),
+            "%"
+          ] })
+        ] }),
+        /* @__PURE__ */ jsx28("div", { style: {
+          height: "10px",
+          borderRadius: "5px",
+          backgroundColor: colors.border,
+          overflow: "hidden"
+        }, children: /* @__PURE__ */ jsx28("div", { style: {
+          height: "100%",
+          width: `${option.percentage}%`,
+          backgroundColor: barColor,
+          transition: "width 0.5s ease-out"
+        } }) }),
+        /* @__PURE__ */ jsxs28("div", { style: {
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: "11px",
+          color: colors.textMuted,
+          marginTop: "4px"
+        }, children: [
+          /* @__PURE__ */ jsxs28("span", { children: [
+            formatBigInt7(option.weight, tokenDecimals),
+            " ",
+            tokenSymbol
+          ] }),
+          showVoteCounts && /* @__PURE__ */ jsxs28("span", { children: [
+            option.voteCount,
+            " votes"
+          ] }),
+          showAmounts && /* @__PURE__ */ jsxs28("span", { children: [
+            formatBigInt7(option.amount, tokenDecimals),
+            " locked"
+          ] })
+        ] })
+      ] }, option.index);
+    }) }),
+    /* @__PURE__ */ jsxs28("div", { style: {
+      padding: "12px",
+      borderRadius: "8px",
+      backgroundColor: hasQuorum ? colors.success + "10" : colors.warning + "10",
+      marginBottom: "16px"
+    }, children: [
+      /* @__PURE__ */ jsxs28("div", { style: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: "6px"
+      }, children: [
+        /* @__PURE__ */ jsx28("span", { style: {
+          fontSize: "12px",
+          color: hasQuorum ? colors.success : colors.warning,
+          fontWeight: "500"
+        }, children: hasQuorum ? "\u2713 Quorum Reached" : "\u23F3 Quorum Progress" }),
+        /* @__PURE__ */ jsxs28("span", { style: { fontSize: "12px", color: colors.textMuted }, children: [
+          quorumProgress.toFixed(0),
+          "%"
+        ] })
+      ] }),
+      /* @__PURE__ */ jsx28("div", { style: {
+        height: "4px",
+        borderRadius: "2px",
+        backgroundColor: colors.border,
+        overflow: "hidden"
+      }, children: /* @__PURE__ */ jsx28("div", { style: {
+        height: "100%",
+        width: `${quorumProgress}%`,
+        backgroundColor: hasQuorum ? colors.success : colors.warning,
+        transition: "width 0.3s"
+      } }) }),
+      /* @__PURE__ */ jsxs28("div", { style: {
+        display: "flex",
+        justifyContent: "space-between",
+        fontSize: "10px",
+        color: colors.textMuted,
+        marginTop: "4px"
+      }, children: [
+        /* @__PURE__ */ jsxs28("span", { children: [
+          formatCompact2(totalWeight, tokenDecimals),
+          " ",
+          tokenSymbol
+        ] }),
+        /* @__PURE__ */ jsxs28("span", { children: [
+          formatCompact2(quorumThreshold, tokenDecimals),
+          " ",
+          tokenSymbol,
+          " required"
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs28("div", { style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, 1fr)",
+      gap: "8px",
+      textAlign: "center"
+    }, children: [
+      /* @__PURE__ */ jsxs28("div", { style: {
+        padding: "10px",
+        borderRadius: "6px",
+        backgroundColor: colors.border + "30"
+      }, children: [
+        /* @__PURE__ */ jsx28("div", { style: { fontSize: "16px", fontWeight: "600" }, children: totalVotes }),
+        /* @__PURE__ */ jsx28("div", { style: { fontSize: "10px", color: colors.textMuted }, children: "Votes" })
+      ] }),
+      /* @__PURE__ */ jsxs28("div", { style: {
+        padding: "10px",
+        borderRadius: "6px",
+        backgroundColor: colors.border + "30"
+      }, children: [
+        /* @__PURE__ */ jsx28("div", { style: { fontSize: "16px", fontWeight: "600" }, children: formatCompact2(totalWeight, tokenDecimals) }),
+        /* @__PURE__ */ jsx28("div", { style: { fontSize: "10px", color: colors.textMuted }, children: "Weight" })
+      ] }),
+      showAmounts && /* @__PURE__ */ jsxs28("div", { style: {
+        padding: "10px",
+        borderRadius: "6px",
+        backgroundColor: colors.border + "30"
+      }, children: [
+        /* @__PURE__ */ jsx28("div", { style: { fontSize: "16px", fontWeight: "600" }, children: formatCompact2(totalAmount, tokenDecimals) }),
+        /* @__PURE__ */ jsx28("div", { style: { fontSize: "10px", color: colors.textMuted }, children: "Locked" })
+      ] })
+    ] })
+  ] });
+}
 export {
   AddLiquidityForm,
   AmmPoolDetails,
   BalanceDisplay,
   BalanceInline,
   BalanceSummary,
+  BallotCard,
+  ClaimButton,
   CloakCraftProvider,
   CreatePoolForm,
   DEVNET_TOKENS,
   InitializePoolForm,
+  LiquidationWarning,
   MAINNET_TOKENS,
   MultiPrivateBalanceDisplay,
   MultiTokenBalanceDisplay,
   NotesList,
   OrderBook,
   PoolInfo,
+  PoolStats,
   PoolStatusBadge,
+  PositionCard,
   PublicBalanceDisplay,
   RemoveLiquidityForm,
   ShieldForm,
   SwapForm,
   SwapPanel,
+  TallyDisplay,
   TokenSelector,
+  TradeForm,
   TransactionHistory,
   TransferForm,
   UnshieldForm,
+  VoteForm,
   WalletBackup,
   WalletButton,
   WalletImport,

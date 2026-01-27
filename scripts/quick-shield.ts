@@ -42,7 +42,7 @@ async function main() {
   const client = new CloakCraftClient({
     rpcUrl,
     heliusApiKey: apiKey,
-    programId: 'CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj',
+    programId: '2VWF9TxMFgzHwbd5WPpYKoqHvtzk3fN66Ka3tVV82nZG',
   });
 
   // Set program

@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-cloakcraft = "CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj"
+cloakcraft = "2VWF9TxMFgzHwbd5WPpYKoqHvtzk3fN66Ka3tVV82nZG"
 
 [programs.devnet]
-cloakcraft = "CfnaNVqgny7vkvonyy4yQRohQvM6tCZdmgYuLK1jjqj"
+cloakcraft = "2VWF9TxMFgzHwbd5WPpYKoqHvtzk3fN66Ka3tVV82nZG"
 
 [registry]
 url = "https://api.apr.dev"

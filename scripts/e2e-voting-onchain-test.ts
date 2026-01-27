@@ -302,6 +302,10 @@ async function main() {
     amount: bigint;
     weight: bigint;
     tokenMintBigInt: bigint;
+    positionAccountHash: string | null;
+    positionAddress: string;
+    positionTreePubkey: PublicKey;
+    positionQueuePubkey: PublicKey;
   } | null = null;
 
   // Store change_vote_spend new position data from Test 4d for close_position test
@@ -318,6 +322,8 @@ async function main() {
     amount: bigint;
     weight: bigint;
     tokenMintBigInt: bigint;
+    positionAccountHash: string | null;
+    positionAddress: string;
   } | null = null;
 
   // =========================================================================
@@ -1977,6 +1983,42 @@ async function main() {
 
           logPass("FULL VOTE_SPEND FLOW COMPLETE", "All 6 phases executed successfully!");
 
+          // Wait for Light Protocol indexer to index the new position commitment
+          logInfo("Waiting 10 seconds for Light Protocol indexer to catch up...");
+          await sleep(10000);
+
+          // Query Light Protocol to get the position's accountHash for use in change_vote_spend
+          logInfo("Querying Light Protocol for position accountHash...");
+          let positionAccountHash: string | null = null;
+          let positionLeafIndex: number = 0;
+          let positionTreePubkey: PublicKey = addressTreeInfo.tree;
+          let positionQueuePubkey: PublicKey = addressTreeInfo.queue;
+
+          try {
+            // Query by address to get the compressed account info
+            const positionAccountResponse = await fetch(RPC_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'getCompressedAccount',
+                params: {
+                  address: positionAddress.toBase58(),
+                },
+              }),
+            });
+            const positionAccountResult = await positionAccountResponse.json() as any;
+            if (positionAccountResult.result?.value?.hash) {
+              positionAccountHash = positionAccountResult.result.value.hash;
+              logInfo(`Position accountHash: ${positionAccountHash?.slice(0, 20)}...`);
+            } else {
+              logInfo("Position account not indexed yet - will retry in change_vote_spend");
+            }
+          } catch (queryErr: any) {
+            logInfo(`Note: Could not query position accountHash: ${queryErr.message?.slice(0, 50)}`);
+          }
+
           // Save position data for change_vote_spend and close_position tests
           test4cVoteSpendData = {
             ballotId: ballotIdSpend,
@@ -1991,12 +2033,12 @@ async function main() {
             amount: noteAmount,
             weight: weight,
             tokenMintBigInt: tokenMintBigInt,
+            positionAccountHash: positionAccountHash,
+            positionAddress: positionAddress.toBase58(),
+            positionTreePubkey: positionTreePubkey,
+            positionQueuePubkey: positionQueuePubkey,
           };
           logInfo("Saved position data for change_vote_spend and close_position tests");
-
-          // Wait for Light Protocol indexer to index the new position commitment
-          logInfo("Waiting 10 seconds for Light Protocol indexer to catch up...");
-          await sleep(10000);
 
         } catch (spendErr: any) {
           const errMsg = spendErr.logs?.slice(-5).join('\n      ') || spendErr.message || "";
@@ -2191,57 +2233,109 @@ async function main() {
           // ============================================
           logInfo("Phase 1: Verifying old position commitment exists in Light Protocol...");
 
-          // Get merkle proof for the old position commitment from Light Protocol
-          const { LightProtocol: LightProtocolChangeSpend } = await import("../packages/sdk/src/instructions/light-helpers");
-          const lightProtocolChangeSpend = new LightProtocolChangeSpend(RPC_URL, PROGRAM_ID);
+          // Get the position's accountHash from the saved data
+          const { positionAccountHash, positionAddress, positionTreePubkey, positionQueuePubkey } = test4cVoteSpendData;
 
-          // Look up the old position commitment in Light Protocol
-          const oldPositionCommitmentBn = bn(oldPositionCommitmentBytes);
-          const oldPositionProofResult = await lightProtocolChangeSpend.rpc.getCompressedAccountProof(oldPositionCommitmentBn);
-
-          if (!oldPositionProofResult || !oldPositionProofResult.proof) {
-            throw new Error("Old position commitment not found in Light Protocol - vote_spend may have failed");
+          if (!positionAccountHash) {
+            // Need to query Light Protocol to get the accountHash
+            logInfo("Position accountHash not cached, querying Light Protocol...");
+            const positionAccountResponse = await fetch(RPC_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'getCompressedAccount',
+                params: {
+                  address: positionAddress,
+                },
+              }),
+            });
+            const positionAccountResult = await positionAccountResponse.json() as any;
+            if (!positionAccountResult.result?.value?.hash) {
+              throw new Error("Position commitment not indexed in Light Protocol yet - try waiting longer");
+            }
+            test4cVoteSpendData.positionAccountHash = positionAccountResult.result.value.hash;
           }
 
-          const oldPositionMerkleRoot = BigInt(oldPositionProofResult.proof.root);
-          const oldPositionMerklePath = oldPositionProofResult.proof.merklePath.map((p: string) => BigInt(p));
-          const oldPositionMerklePathIndices = oldPositionProofResult.proof.merklePathIndices;
+          const accountHashToUse = test4cVoteSpendData.positionAccountHash!;
+          logInfo(`Using position accountHash: ${accountHashToUse.slice(0, 20)}...`);
 
-          logInfo(`Old position merkle root: ${oldPositionMerkleRoot.toString().slice(0, 20)}...`);
+          // Get merkle proof using the accountHash (not the commitment value!)
+          const accountHashBytes = new PublicKey(accountHashToUse).toBytes();
+          const accountHashBn = bn(accountHashBytes);
+          const oldPositionProofResult = await lightRpc.getCompressedAccountProof(accountHashBn);
 
-          // Build Light Protocol accounts for Phase 1 (verify exists)
-          const phase1ChangeSpendLightParams = buildLightProtocolParams(
-            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
-            true, // use state tree
-            true, // use nullifier queue
-            true, // use output queue
-            true  // use address tree
-          );
+          if (!oldPositionProofResult) {
+            throw new Error("Failed to get merkle proof for position commitment");
+          }
 
-          const phase1ChangeSpendRemainingAccounts = buildLightRemainingAccounts(
-            phase1ChangeSpendLightParams,
-            PROGRAM_ID,
-            DEVNET_V2_TREES.STATE_TREE,
-            DEVNET_V2_TREES.OUTPUT_QUEUE,
-            DEVNET_V2_TREES.ADDRESS_TREE
-          );
+          logInfo(`Position leaf index: ${oldPositionProofResult.leafIndex}`);
+          logInfo(`Position root index: ${oldPositionProofResult.rootIndex ?? 0}`);
+
+          // Extract tree info from proof
+          let changeSpendTreePubkey: PublicKey;
+          let changeSpendQueuePubkey: PublicKey;
+          if (oldPositionProofResult.treeInfo) {
+            changeSpendTreePubkey = new PublicKey(oldPositionProofResult.treeInfo.tree);
+            changeSpendQueuePubkey = new PublicKey(oldPositionProofResult.treeInfo.queue);
+            logInfo(`  Tree from proof: ${changeSpendTreePubkey.toBase58()}`);
+          } else {
+            // Fallback to current address tree
+            changeSpendTreePubkey = addressTreeInfo.tree;
+            changeSpendQueuePubkey = addressTreeInfo.queue;
+            logInfo(`  Using default tree: ${changeSpendTreePubkey.toBase58()}`);
+          }
+
+          // Build Light Protocol accounts for Phase 1
+          const changeSpendSystemConfig = SystemAccountMetaConfig.new(PROGRAM_ID);
+          const changeSpendPackedAccounts = PackedAccounts.newWithSystemAccountsV2(changeSpendSystemConfig);
+          const changeSpendTreeIndex = changeSpendPackedAccounts.insertOrGet(changeSpendTreePubkey);
+          const changeSpendQueueIndex = changeSpendPackedAccounts.insertOrGet(changeSpendQueuePubkey);
+
+          // Build light params for verify_vote_commitment_exists
+          const phase1ChangeSpendLightParams = {
+            commitmentAccountHash: Array.from(accountHashBytes),
+            commitmentMerkleContext: {
+              merkleTreePubkeyIndex: changeSpendTreeIndex,
+              queuePubkeyIndex: changeSpendQueueIndex,
+              leafIndex: oldPositionProofResult.leafIndex,
+              rootIndex: oldPositionProofResult.rootIndex ?? 0,
+            },
+            commitmentInclusionProof: {
+              a: Array(32).fill(0),
+              b: Array(64).fill(0),
+              c: Array(32).fill(0),
+            },
+            commitmentAddressTreeInfo: {
+              addressMerkleTreePubkeyIndex: changeSpendTreeIndex,
+              addressQueuePubkeyIndex: changeSpendQueueIndex,
+              rootIndex: oldPositionProofResult.rootIndex ?? 0,
+            },
+          };
+
+          const { remainingAccounts: changeSpendPhase1Accounts } = changeSpendPackedAccounts.toAccountMetas();
+          const phase1ChangeSpendRemainingAccounts = changeSpendPhase1Accounts.map((acc: any) => ({
+            pubkey: acc.pubkey,
+            isWritable: Boolean(acc.isWritable),
+            isSigner: Boolean(acc.isSigner),
+          }));
 
           const phase1ChangeSpendTx = await program.methods
             .verifyVoteCommitmentExists(
               Array.from(operationIdChangeSpend),
-              Array.from(oldPositionCommitmentBytes),
-              oldPositionMerkleRoot.toString(),
-              oldPositionMerklePath.map(p => p.toString()),
-              oldPositionMerklePathIndices,
+              Array.from(ballotIdChangeSpend),
+              0, // commitment_index
               phase1ChangeSpendLightParams
             )
             .accounts({
+              ballot: ballotPdaChangeSpend,
               pendingOperation: pendingOpPdaChangeSpend,
               relayer: wallet.publicKey,
             })
             .remainingAccounts(phase1ChangeSpendRemainingAccounts)
             .preInstructions([
-              ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
               ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
             ])
             .rpc();
@@ -2254,37 +2348,70 @@ async function main() {
           // ============================================
           logInfo("Phase 2: Creating old position nullifier...");
 
-          const phase2ChangeSpendLightParams = buildLightProtocolParams(
-            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
-            true,
-            true,
-            true,
-            true
+          // Derive nullifier address for voting (uses "action_nullifier" seed)
+          const changeSpendNullifierSeeds = [
+            Buffer.from("action_nullifier"),
+            Buffer.from(ballotIdChangeSpend),
+            oldPositionNullifierBytes,
+          ];
+          const changeSpendNullifierAddressSeed = deriveAddressSeedV2(changeSpendNullifierSeeds);
+          const changeSpendNullifierAddress = deriveAddressV2(changeSpendNullifierAddressSeed, addressTreeInfo.tree, PROGRAM_ID);
+          logInfo(`Position nullifier address: ${changeSpendNullifierAddress.toBase58().slice(0, 16)}...`);
+
+          // Get validity proof for non-inclusion
+          const changeSpendNullifierProof = await lightRpc.getValidityProofV0(
+            [],
+            [{
+              address: bn(changeSpendNullifierAddress.toBytes()),
+              tree: addressTreeInfo.tree,
+              queue: addressTreeInfo.queue,
+            }]
           );
 
-          const phase2ChangeSpendRemainingAccounts = buildLightRemainingAccounts(
-            phase2ChangeSpendLightParams,
-            PROGRAM_ID,
-            DEVNET_V2_TREES.STATE_TREE,
-            DEVNET_V2_TREES.OUTPUT_QUEUE,
-            DEVNET_V2_TREES.ADDRESS_TREE
-          );
+          // Build accounts for nullifier creation
+          const phase2ChangeSpendPackedAccounts = PackedAccounts.newWithSystemAccountsV2(changeSpendSystemConfig);
+          const phase2ChangeSpendOutputTreeIndex = phase2ChangeSpendPackedAccounts.insertOrGet(V2_OUTPUT_QUEUE);
+          const phase2ChangeSpendAddressTreeIndex = phase2ChangeSpendPackedAccounts.insertOrGet(addressTreeInfo.tree);
+
+          if (!changeSpendNullifierProof.compressedProof) {
+            throw new Error("No validity proof for position nullifier");
+          }
+
+          const phase2ChangeSpendLightParams = {
+            proof: {
+              a: Array.from(changeSpendNullifierProof.compressedProof.a),
+              b: Array.from(changeSpendNullifierProof.compressedProof.b),
+              c: Array.from(changeSpendNullifierProof.compressedProof.c),
+            },
+            addressTreeInfo: {
+              addressMerkleTreePubkeyIndex: phase2ChangeSpendAddressTreeIndex,
+              addressQueuePubkeyIndex: phase2ChangeSpendAddressTreeIndex,
+              rootIndex: changeSpendNullifierProof.rootIndices[0] ?? 0,
+            },
+            outputTreeIndex: phase2ChangeSpendOutputTreeIndex,
+          };
+
+          const { remainingAccounts: phase2ChangeSpendRawAccounts } = phase2ChangeSpendPackedAccounts.toAccountMetas();
+          const phase2ChangeSpendRemainingAccounts = phase2ChangeSpendRawAccounts.map((acc: any) => ({
+            pubkey: acc.pubkey,
+            isWritable: Boolean(acc.isWritable),
+            isSigner: Boolean(acc.isSigner),
+          }));
 
           const phase2ChangeSpendTx = await program.methods
             .createNullifierAndPending(
               Array.from(operationIdChangeSpend),
-              Array.from(oldPositionNullifierBytes),
+              0, // nullifier_index
               phase2ChangeSpendLightParams
             )
             .accounts({
+              pool: poolPdaChangeSpend,
               pendingOperation: pendingOpPdaChangeSpend,
               relayer: wallet.publicKey,
-              payer: wallet.publicKey,
-              systemProgram: SystemProgram.programId,
             })
             .remainingAccounts(phase2ChangeSpendRemainingAccounts)
             .preInstructions([
-              ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+              ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
               ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
             ])
             .rpc();
@@ -2318,26 +2445,67 @@ async function main() {
           // ============================================
           logInfo("Phase 4: Creating new position commitment...");
 
-          const phase4ChangeSpendLightParams = buildLightProtocolParams(
-            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
-            true,
-            true,
-            true,
-            true
+          // Derive new position commitment address
+          const newPositionSeeds = [
+            Buffer.from("vote_commitment"),
+            Buffer.from(ballotIdChangeSpend),
+            newPositionCommitmentBytes,
+          ];
+          const newPositionAddressSeed = deriveAddressSeedV2(newPositionSeeds);
+          const newPositionAddress = deriveAddressV2(newPositionAddressSeed, addressTreeInfo.tree, PROGRAM_ID);
+          logInfo(`New position commitment address: ${newPositionAddress.toBase58().slice(0, 16)}...`);
+
+          // Get validity proof for new commitment
+          const newPositionProof = await lightRpc.getValidityProofV0(
+            [],
+            [{
+              address: bn(newPositionAddress.toBytes()),
+              tree: addressTreeInfo.tree,
+              queue: addressTreeInfo.queue,
+            }]
           );
 
-          const phase4ChangeSpendRemainingAccounts = buildLightRemainingAccounts(
-            phase4ChangeSpendLightParams,
-            PROGRAM_ID,
-            DEVNET_V2_TREES.STATE_TREE,
-            DEVNET_V2_TREES.OUTPUT_QUEUE,
-            DEVNET_V2_TREES.ADDRESS_TREE
-          );
+          // Build accounts
+          const phase4ChangeSpendPackedAccounts = PackedAccounts.newWithSystemAccountsV2(changeSpendSystemConfig);
+          const phase4ChangeSpendOutputTreeIndex = phase4ChangeSpendPackedAccounts.insertOrGet(V2_OUTPUT_QUEUE);
+          const phase4ChangeSpendAddressTreeIndex = phase4ChangeSpendPackedAccounts.insertOrGet(addressTreeInfo.tree);
+
+          if (!newPositionProof.compressedProof) {
+            throw new Error("No validity proof for new position commitment");
+          }
+
+          const phase4ChangeSpendLightParams = {
+            validityProof: {
+              a: Array.from(newPositionProof.compressedProof.a),
+              b: Array.from(newPositionProof.compressedProof.b),
+              c: Array.from(newPositionProof.compressedProof.c),
+            },
+            addressTreeInfo: {
+              addressMerkleTreePubkeyIndex: phase4ChangeSpendAddressTreeIndex,
+              addressQueuePubkeyIndex: phase4ChangeSpendAddressTreeIndex,
+              rootIndex: newPositionProof.rootIndices[0] ?? 0,
+            },
+            outputTreeIndex: phase4ChangeSpendOutputTreeIndex,
+          };
+
+          const { remainingAccounts: phase4ChangeSpendRawAccounts } = phase4ChangeSpendPackedAccounts.toAccountMetas();
+          const phase4ChangeSpendRemainingAccounts = phase4ChangeSpendRawAccounts.map((acc: any) => ({
+            pubkey: acc.pubkey,
+            isWritable: Boolean(acc.isWritable),
+            isSigner: Boolean(acc.isSigner),
+          }));
+
+          // Create encrypted preimage for claim recovery
+          const changeSpendEncryptedPreimage = new Array(128).fill(0);
+          const changeSpendEncryptionType = 0; // 0 = user_key
 
           const phase4ChangeSpendTx = await program.methods
             .createVoteCommitment(
               Array.from(operationIdChangeSpend),
-              Array.from(newPositionCommitmentBytes),
+              Array.from(ballotIdChangeSpend),
+              0, // commitment_index
+              changeSpendEncryptedPreimage,
+              changeSpendEncryptionType,
               phase4ChangeSpendLightParams
             )
             .accounts({
@@ -2374,6 +2542,33 @@ async function main() {
 
           logPass("FULL CHANGE_VOTE_SPEND FLOW COMPLETE", "All 6 phases executed successfully!");
 
+          // Wait for indexer and query for accountHash
+          logInfo("Waiting 5 seconds for Light Protocol indexer...");
+          await sleep(5000);
+
+          let newPositionAccountHash: string | null = null;
+          try {
+            const newPosAccountResponse = await fetch(RPC_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'getCompressedAccount',
+                params: {
+                  address: newPositionAddress.toBase58(),
+                },
+              }),
+            });
+            const newPosAccountResult = await newPosAccountResponse.json() as any;
+            if (newPosAccountResult.result?.value?.hash) {
+              newPositionAccountHash = newPosAccountResult.result.value.hash;
+              logInfo(`New position accountHash: ${newPositionAccountHash?.slice(0, 20)}...`);
+            }
+          } catch (queryErr: any) {
+            logInfo(`Note: Could not query new position accountHash: ${queryErr.message?.slice(0, 50)}`);
+          }
+
           // Save new position data for close_position test
           test4dChangeVoteSpendData = {
             ballotId: ballotIdChangeSpend,
@@ -2388,6 +2583,8 @@ async function main() {
             amount: positionAmount,
             weight: positionWeight,
             tokenMintBigInt,
+            positionAccountHash: newPositionAccountHash,
+            positionAddress: newPositionAddress.toBase58(),
           };
           logInfo("Saved new position data for close_position test");
 
@@ -2579,39 +2776,66 @@ async function main() {
           const positionCommitmentBn = bn(closePositionCommitmentBytes);
           const positionProofResult = await lightProtocolClose.rpc.getCompressedAccountProof(positionCommitmentBn);
 
-          if (!positionProofResult || !positionProofResult.proof) {
+          if (!positionProofResult || !positionProofResult.merkleProof) {
             throw new Error("Position commitment not found in Light Protocol - change_vote_spend may have failed");
           }
 
-          const positionMerkleRoot = BigInt(positionProofResult.proof.root);
-          const positionMerklePath = positionProofResult.proof.merklePath.map((p: string) => BigInt(p));
-          const positionMerklePathIndices = positionProofResult.proof.merklePathIndices;
+          const positionMerkleRoot = BigInt(positionProofResult.root.toString());
+          const positionMerklePath = positionProofResult.merkleProof.map((p: any) => BigInt(p.toString()));
+          // Compute merkle path indices from leaf index
+          const positionMerklePathIndices: number[] = [];
+          for (let i = 0; i < positionMerklePath.length; i++) {
+            positionMerklePathIndices.push((positionProofResult.leafIndex >> i) & 1);
+          }
 
           logInfo(`Position merkle root: ${positionMerkleRoot.toString().slice(0, 20)}...`);
 
           // Build Light Protocol accounts for Phase 1 (verify exists)
-          const phase1CloseLightParams = buildLightProtocolParams(
-            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
-            true,
-            true,
-            true,
-            true
+          // Get validity proof for commitment verification
+          const phase1CloseProof = await lightRpc.getValidityProofV0(
+            [],
+            [{
+              address: positionCommitmentBn,
+              tree: addressTreeInfo.tree,
+              queue: addressTreeInfo.queue,
+            }]
           );
 
-          const phase1CloseRemainingAccounts = buildLightRemainingAccounts(
-            phase1CloseLightParams,
-            PROGRAM_ID,
-            DEVNET_V2_TREES.STATE_TREE,
-            DEVNET_V2_TREES.OUTPUT_QUEUE,
-            DEVNET_V2_TREES.ADDRESS_TREE
-          );
+          const phase1CloseSystemConfig = SystemAccountMetaConfig.new(PROGRAM_ID);
+          const phase1ClosePackedAccounts = PackedAccounts.newWithSystemAccountsV2(phase1CloseSystemConfig);
+          const phase1CloseOutputTreeIndex = phase1ClosePackedAccounts.insertOrGet(V2_OUTPUT_QUEUE);
+          const phase1CloseAddressTreeIndex = phase1ClosePackedAccounts.insertOrGet(addressTreeInfo.tree);
+
+          if (!phase1CloseProof.compressedProof) {
+            throw new Error("No validity proof returned from Light Protocol for Phase 1 close");
+          }
+          const phase1CloseLightParams = {
+            validityProof: {
+              a: Array.from(phase1CloseProof.compressedProof.a),
+              b: Array.from(phase1CloseProof.compressedProof.b),
+              c: Array.from(phase1CloseProof.compressedProof.c),
+            },
+            addressTreeInfo: {
+              addressMerkleTreePubkeyIndex: phase1CloseAddressTreeIndex,
+              addressQueuePubkeyIndex: phase1CloseAddressTreeIndex,
+              rootIndex: phase1CloseProof.rootIndices[0] ?? 0,
+            },
+            outputTreeIndex: phase1CloseOutputTreeIndex,
+          };
+
+          const { remainingAccounts: phase1CloseRawAccounts } = phase1ClosePackedAccounts.toAccountMetas();
+          const phase1CloseRemainingAccounts = phase1CloseRawAccounts.map((acc: any) => ({
+            pubkey: acc.pubkey,
+            isWritable: Boolean(acc.isWritable),
+            isSigner: Boolean(acc.isSigner),
+          }));
 
           const phase1CloseTx = await program.methods
             .verifyVoteCommitmentExists(
               Array.from(operationIdClose),
               Array.from(closePositionCommitmentBytes),
               positionMerkleRoot.toString(),
-              positionMerklePath.map(p => p.toString()),
+              positionMerklePath.map((p: bigint) => p.toString()),
               positionMerklePathIndices,
               phase1CloseLightParams
             )
@@ -2634,21 +2858,52 @@ async function main() {
           // ============================================
           logInfo("Phase 2: Creating position nullifier...");
 
-          const phase2CloseLightParams = buildLightProtocolParams(
-            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
-            true,
-            true,
-            true,
-            true
+          // Derive nullifier address
+          const phase2CloseNullifierSeeds = [
+            Buffer.from("nullifier"),
+            Buffer.from(closePositionNullifierBytes),
+          ];
+          const phase2CloseNullifierAddressSeed = deriveAddressSeedV2(phase2CloseNullifierSeeds);
+          const phase2CloseNullifierAddress = deriveAddressV2(phase2CloseNullifierAddressSeed, addressTreeInfo.tree, PROGRAM_ID);
+
+          // Get validity proof for nullifier creation
+          const phase2CloseProof = await lightRpc.getValidityProofV0(
+            [],
+            [{
+              address: bn(phase2CloseNullifierAddress.toBytes()),
+              tree: addressTreeInfo.tree,
+              queue: addressTreeInfo.queue,
+            }]
           );
 
-          const phase2CloseRemainingAccounts = buildLightRemainingAccounts(
-            phase2CloseLightParams,
-            PROGRAM_ID,
-            DEVNET_V2_TREES.STATE_TREE,
-            DEVNET_V2_TREES.OUTPUT_QUEUE,
-            DEVNET_V2_TREES.ADDRESS_TREE
-          );
+          const phase2CloseSystemConfig = SystemAccountMetaConfig.new(PROGRAM_ID);
+          const phase2ClosePackedAccounts = PackedAccounts.newWithSystemAccountsV2(phase2CloseSystemConfig);
+          const phase2CloseOutputTreeIndex = phase2ClosePackedAccounts.insertOrGet(V2_OUTPUT_QUEUE);
+          const phase2CloseAddressTreeIndex = phase2ClosePackedAccounts.insertOrGet(addressTreeInfo.tree);
+
+          if (!phase2CloseProof.compressedProof) {
+            throw new Error("No validity proof returned from Light Protocol for Phase 2 close");
+          }
+          const phase2CloseLightParams = {
+            validityProof: {
+              a: Array.from(phase2CloseProof.compressedProof.a),
+              b: Array.from(phase2CloseProof.compressedProof.b),
+              c: Array.from(phase2CloseProof.compressedProof.c),
+            },
+            addressTreeInfo: {
+              addressMerkleTreePubkeyIndex: phase2CloseAddressTreeIndex,
+              addressQueuePubkeyIndex: phase2CloseAddressTreeIndex,
+              rootIndex: phase2CloseProof.rootIndices[0] ?? 0,
+            },
+            outputTreeIndex: phase2CloseOutputTreeIndex,
+          };
+
+          const { remainingAccounts: phase2CloseRawAccounts } = phase2ClosePackedAccounts.toAccountMetas();
+          const phase2CloseRemainingAccounts = phase2CloseRawAccounts.map((acc: any) => ({
+            pubkey: acc.pubkey,
+            isWritable: Boolean(acc.isWritable),
+            isSigner: Boolean(acc.isSigner),
+          }));
 
           const phase2CloseTx = await program.methods
             .createNullifierAndPending(
@@ -2698,21 +2953,52 @@ async function main() {
           // ============================================
           logInfo("Phase 4: Creating NEW token commitment...");
 
-          const phase4CloseLightParams = buildLightProtocolParams(
-            { stateTreePubkey: DEVNET_V2_TREES.STATE_TREE, outputQueue: DEVNET_V2_TREES.OUTPUT_QUEUE },
-            true,
-            true,
-            true,
-            true
+          // Derive commitment address
+          const phase4CloseCommitmentSeeds = [
+            Buffer.from("commitment"),
+            Buffer.from(newTokenCommitmentBytes),
+          ];
+          const phase4CloseCommitmentAddressSeed = deriveAddressSeedV2(phase4CloseCommitmentSeeds);
+          const phase4CloseCommitmentAddress = deriveAddressV2(phase4CloseCommitmentAddressSeed, addressTreeInfo.tree, PROGRAM_ID);
+
+          // Get validity proof for commitment creation
+          const phase4CloseProof = await lightRpc.getValidityProofV0(
+            [],
+            [{
+              address: bn(phase4CloseCommitmentAddress.toBytes()),
+              tree: addressTreeInfo.tree,
+              queue: addressTreeInfo.queue,
+            }]
           );
 
-          const phase4CloseRemainingAccounts = buildLightRemainingAccounts(
-            phase4CloseLightParams,
-            PROGRAM_ID,
-            DEVNET_V2_TREES.STATE_TREE,
-            DEVNET_V2_TREES.OUTPUT_QUEUE,
-            DEVNET_V2_TREES.ADDRESS_TREE
-          );
+          const phase4CloseSystemConfig = SystemAccountMetaConfig.new(PROGRAM_ID);
+          const phase4ClosePackedAccounts = PackedAccounts.newWithSystemAccountsV2(phase4CloseSystemConfig);
+          const phase4CloseOutputTreeIndex = phase4ClosePackedAccounts.insertOrGet(V2_OUTPUT_QUEUE);
+          const phase4CloseAddressTreeIndex = phase4ClosePackedAccounts.insertOrGet(addressTreeInfo.tree);
+
+          if (!phase4CloseProof.compressedProof) {
+            throw new Error("No validity proof returned from Light Protocol for Phase 4 close");
+          }
+          const phase4CloseLightParams = {
+            validityProof: {
+              a: Array.from(phase4CloseProof.compressedProof.a),
+              b: Array.from(phase4CloseProof.compressedProof.b),
+              c: Array.from(phase4CloseProof.compressedProof.c),
+            },
+            addressTreeInfo: {
+              addressMerkleTreePubkeyIndex: phase4CloseAddressTreeIndex,
+              addressQueuePubkeyIndex: phase4CloseAddressTreeIndex,
+              rootIndex: phase4CloseProof.rootIndices[0] ?? 0,
+            },
+            outputTreeIndex: phase4CloseOutputTreeIndex,
+          };
+
+          const { remainingAccounts: phase4CloseRawAccounts } = phase4ClosePackedAccounts.toAccountMetas();
+          const phase4CloseRemainingAccounts = phase4CloseRawAccounts.map((acc: any) => ({
+            pubkey: acc.pubkey,
+            isWritable: Boolean(acc.isWritable),
+            isSigner: Boolean(acc.isSigner),
+          }));
 
           const phase4CloseTx = await program.methods
             .createVoteCommitment(

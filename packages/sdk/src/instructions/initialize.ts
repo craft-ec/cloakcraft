@@ -6,16 +6,13 @@
 
 import {
   PublicKey,
-  SystemProgram,
 } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { Program } from '@coral-xyz/anchor';
 
 import {
   derivePoolPda,
   deriveVaultPda,
   deriveCommitmentCounterPda,
-  PROGRAM_ID,
 } from './constants';
 
 /**
@@ -43,17 +40,15 @@ export async function buildInitializePoolWithProgram(
   const [poolPda] = derivePoolPda(params.tokenMint, programId);
   const [vaultPda] = deriveVaultPda(params.tokenMint, programId);
 
-  // Build transaction using Anchor
+  // Build transaction using Anchor (use accountsPartial like scalecraft)
   const tx = await program.methods
     .initializePool()
-    .accounts({
+    .accountsPartial({
       pool: poolPda,
       tokenVault: vaultPda,
       tokenMint: params.tokenMint,
       authority: params.authority,
       payer: params.payer,
-      tokenProgram: TOKEN_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
     });
 
   return tx;
@@ -76,15 +71,14 @@ export async function buildInitializeCommitmentCounterWithProgram(
   const [poolPda] = derivePoolPda(params.tokenMint, programId);
   const [counterPda] = deriveCommitmentCounterPda(poolPda, programId);
 
-  // Build transaction using Anchor
+  // Build transaction using Anchor (use accountsPartial like scalecraft)
   const tx = await program.methods
     .initializeCommitmentCounter()
-    .accounts({
+    .accountsPartial({
       pool: poolPda,
       commitmentCounter: counterPda,
       authority: params.authority,
       payer: params.payer,
-      systemProgram: SystemProgram.programId,
     });
 
   return tx;
@@ -94,6 +88,7 @@ export async function buildInitializeCommitmentCounterWithProgram(
  * Initialize a new pool with commitment counter
  *
  * Combines both initialization instructions
+ * Note: Anchor's .rpc() already handles confirmation - no extra verification needed
  */
 export async function initializePool(
   program: Program,
