@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Shield, LayoutDashboard, ArrowRightLeft, ArrowDownUp, TrendingUp, Settings } from 'lucide-react';
+import { Shield, LayoutDashboard, ArrowRightLeft, ArrowDownUp, TrendingUp, Vote, Settings } from 'lucide-react';
 import { WalletButton } from '@/components/wallet/wallet-button';
 import { StealthWalletButton } from '@/components/wallet/stealth-wallet-button';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +14,7 @@ const navItems = [
   { href: '/transfer', label: 'Transfer', icon: ArrowRightLeft },
   { href: '/swap', label: 'Swap', icon: ArrowDownUp },
   { href: '/perps', label: 'Perps', icon: TrendingUp },
+  { href: '/voting', label: 'Voting', icon: Vote },
   { href: '/admin', label: 'Admin', icon: Settings },
 ];
 
