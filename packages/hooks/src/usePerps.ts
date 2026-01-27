@@ -22,6 +22,9 @@ import {
   wouldExceedUtilization,
   derivePerpsPoolPda,
   derivePerpsMarketPda,
+  fetchPythPriceUsd,
+  PERPS_PYTH_FEED_IDS,
+  getFeedIdBySymbol,
 } from '@cloakcraft/sdk';
 import type {
   DecryptedNote,

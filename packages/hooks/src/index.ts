@@ -94,6 +94,8 @@ export {
   useWithdrawPreview,
   useTokenUtilization,
   usePositionValidation,
+  usePythPrice,
+  usePythPrices,
 } from './usePerps';
 export type { PerpsProgressStage, ScannedPerpsPosition } from './usePerps';
 

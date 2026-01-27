@@ -16,6 +16,8 @@ import {
   useLiquidationPrice,
   useLpValue,
   useTokenUtilization,
+  usePythPrice,
+  usePythPrices,
   type PerpsProgressStage,
   type ScannedPerpsPosition,
 } from '@cloakcraft/hooks';
@@ -228,6 +230,19 @@ function TradeTab({
   // Open position hook
   const { openPosition, isOpening } = useOpenPosition();
 
+  // Fetch oracle price for the base token (e.g., SOL, BTC, ETH)
+  // Default to SOL if no market selected
+  const baseTokenSymbol = useMemo(() => {
+    if (!selectedPool || !selectedMarket) return 'SOL';
+    const baseToken = selectedPool.tokens[selectedMarket.baseTokenIndex];
+    if (!baseToken) return 'SOL';
+    // Try to find matching token in SUPPORTED_TOKENS to get symbol
+    const supportedToken = SUPPORTED_TOKENS.find(t => t.mint.equals(baseToken.mint));
+    return supportedToken?.symbol || 'SOL';
+  }, [selectedPool, selectedMarket]);
+
+  const { price: oraclePrice, isLoading: priceLoading } = usePythPrice(baseTokenSymbol);
+
   // Set default pool
   useEffect(() => {
     if (!poolsLoading && pools.length > 0 && !selectedPool) {
@@ -314,7 +329,7 @@ function TradeTab({
         direction,
         marginAmount: parseAmount(marginAmount, marginToken?.decimals || 6),
         leverage,
-        oraclePrice: 100_000_000n, // TODO: Fetch real oracle price
+        oraclePrice: oraclePrice || 100_000_000n, // Real oracle price from Pyth
         onProgress: (stage: PerpsProgressStage) => {
           setTxSteps(prev => prev.map(step => {
             if (stage === 'preparing' && step.id === 'prepare') {
@@ -855,6 +870,33 @@ function LiquidityTab({
   const { addLiquidity, isAdding } = usePerpsAddLiquidity();
   const { removeLiquidity, isRemoving } = usePerpsRemoveLiquidity();
 
+  // Get token symbols for oracle price fetching
+  const poolTokenSymbols = useMemo(() => {
+    if (!selectedPool) return [];
+    return selectedPool.tokens
+      .filter(t => t?.isActive)
+      .map(token => {
+        const supportedToken = SUPPORTED_TOKENS.find(st => st.mint.equals(token.mint));
+        return supportedToken?.symbol || 'SOL';
+      });
+  }, [selectedPool]);
+
+  // Fetch oracle prices for all pool tokens
+  const { prices: oraclePrices } = usePythPrices(poolTokenSymbols);
+
+  // Convert prices map to array matching pool token order
+  const oraclePricesArray = useMemo(() => {
+    if (!selectedPool || oraclePrices.size === 0) {
+      return selectedPool?.tokens.map(() => 100_000_000n) || [];
+    }
+    return selectedPool.tokens.map((token, i) => {
+      if (!token?.isActive) return 100_000_000n;
+      const supportedToken = SUPPORTED_TOKENS.find(st => st.mint.equals(token.mint));
+      const symbol = supportedToken?.symbol || 'SOL';
+      return oraclePrices.get(symbol) || 100_000_000n;
+    });
+  }, [selectedPool, oraclePrices]);
+
   // Set default pool
   useEffect(() => {
     if (!poolsLoading && pools.length > 0 && !selectedPool) {
@@ -943,7 +985,7 @@ function LiquidityTab({
           pool: selectedPool,
           tokenIndex: selectedTokenIndex,
           depositAmount: amountBigInt,
-          oraclePrices: selectedPool.tokens.map(() => 100_000_000n), // TODO: Real oracle prices
+          oraclePrices: oraclePricesArray,
           onProgress,
         });
       } else {
@@ -952,7 +994,7 @@ function LiquidityTab({
           pool: selectedPool,
           tokenIndex: selectedTokenIndex,
           lpAmount: amountBigInt,
-          oraclePrices: selectedPool.tokens.map(() => 100_000_000n), // TODO: Real oracle prices
+          oraclePrices: oraclePricesArray,
           onProgress,
         });
       }
