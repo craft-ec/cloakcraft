@@ -452,15 +452,17 @@ Sections:
       { name: "vote_snapshot", id: "vote_snapshot" },
       { name: "change_vote_snapshot", id: "change_vote_snapshot" },
       { name: "vote_spend", id: "vote_spend" },
-      { name: "voting_close_position", id: "voting_close_position" },
+      { name: "change_vote_spend", id: "change_vote_spend" },
+      { name: "close_position", id: "close_position" },
       { name: "voting_claim", id: "voting_claim" },
     ];
 
     for (const vk of vkIds) {
       const startTime = performance.now();
       try {
-        const vkIdBuf = Buffer.alloc(32);
-        vkIdBuf.write(vk.id);
+        // Use underscore padding to match registration script
+        const vkIdPadded = vk.id.padEnd(32, '_');
+        const vkIdBuf = Buffer.from(vkIdPadded);
 
         const [vkPda] = PublicKey.findProgramAddressSync(
           [Buffer.from("vk"), vkIdBuf],
