@@ -9,29 +9,23 @@ CLI Target: es2020
 CJS Build start
 ESM Build start
 CJS dist/idl/index.js 322.66 KB
-CJS dist/index.js     896.88 KB
+CJS dist/index.js     904.87 KB
 CJS ⚡️ Build success in 36ms
-ESM dist/light-KJUSHYDO.mjs         370.00 B
-ESM dist/index.mjs                  433.97 KB
-ESM dist/constants-ZW3YX7HL.mjs     545.00 B
-ESM dist/shield-U4E47T3Z.mjs        362.00 B
-ESM dist/chunk-IQYJ7OCA.mjs         39.48 KB
+ESM dist/light-C2KRCIX6.mjs         414.00 B
 ESM dist/idl/index.mjs              134.00 B
-ESM dist/light-helpers-DCAHIINJ.mjs 146.00 B
-ESM dist/chunk-MAO47QW7.mjs         5.60 KB
-ESM dist/swap-ZK5X5ODM.mjs          804.00 B
+ESM dist/index.mjs                  434.01 KB
 ESM dist/chunk-QO6UOFEI.mjs         321.67 KB
-ESM dist/chunk-E6R2YCRL.mjs         5.27 KB
+ESM dist/chunk-FQAUM77X.mjs         46.63 KB
+ESM dist/light-helpers-DCAHIINJ.mjs 146.00 B
+ESM dist/constants-ZW3YX7HL.mjs     545.00 B
+ESM dist/swap-ZK5X5ODM.mjs          804.00 B
+ESM dist/shield-U4E47T3Z.mjs        362.00 B
 ESM dist/fees-BRCRWJSC.mjs          678.00 B
-ESM dist/chunk-CIESM3BP.mjs         1.30 KB
+ESM dist/chunk-Y7AZCOB6.mjs         36.23 KB
+ESM dist/chunk-MAO47QW7.mjs         5.60 KB
+ESM dist/chunk-GZDL4HRF.mjs         22.25 KB
 ESM dist/chunk-JHGCZB7R.mjs         4.53 KB
 ESM dist/chunk-4SXWHU7R.mjs         3.08 KB
-ESM dist/chunk-GZDL4HRF.mjs         22.25 KB
-ESM dist/chunk-Y7AZCOB6.mjs         36.23 KB
-ESM ⚡️ Build success in 35ms
-DTS Build start
-DTS ⚡️ Build success in 1551ms
-DTS dist/index.d.ts      217.72 KB
-DTS dist/idl/index.d.ts  223.49 KB
-DTS dist/index.d.mts     217.72 KB
-DTS dist/idl/index.d.mts 223.49 KB
+ESM dist/chunk-CIESM3BP.mjs         1.30 KB
+ESM dist/chunk-E6R2YCRL.mjs         5.27 KB
+ESM ⚡️ Build success in 36ms

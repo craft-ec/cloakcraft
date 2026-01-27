@@ -26,6 +26,157 @@ import {
   LpNote,
 } from './crypto/commitment';
 
+// =========================================================================
+// Retry Logic with Exponential Backoff
+// =========================================================================
+
+/**
+ * Sleep for a given number of milliseconds
+ */
+export function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Configuration for retry logic
+ */
+export interface RetryConfig {
+  /** Maximum number of retry attempts (default: 5) */
+  maxRetries: number;
+  /** Base delay in ms for exponential backoff (default: 1000) */
+  baseDelayMs: number;
+  /** Maximum delay in ms (default: 30000) */
+  maxDelayMs: number;
+  /** Whether to log retry attempts (default: true) */
+  logRetries: boolean;
+}
+
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 5,
+  baseDelayMs: 1000,
+  maxDelayMs: 30000,
+  logRetries: true,
+};
+
+/**
+ * Check if an error is a rate limit error (HTTP 429)
+ */
+function isRateLimitError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return msg.includes('429') ||
+           msg.includes('rate limit') ||
+           msg.includes('too many requests') ||
+           msg.includes('quota exceeded');
+  }
+  return false;
+}
+
+/**
+ * Check if a response indicates rate limiting
+ */
+function isRateLimitResponse(response: Response): boolean {
+  return response.status === 429;
+}
+
+/**
+ * Execute a function with retry logic and exponential backoff
+ *
+ * Automatically retries on 429 (rate limit) errors with exponential backoff.
+ * Other errors are thrown immediately.
+ *
+ * @param fn - Async function to execute
+ * @param config - Retry configuration
+ * @param operation - Description of the operation (for logging)
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  config: Partial<RetryConfig> = {},
+  operation: string = 'RPC call'
+): Promise<T> {
+  const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
+
+  for (let attempt = 0; attempt <= cfg.maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const isRateLimit = isRateLimitError(error);
+      const isLastAttempt = attempt >= cfg.maxRetries;
+
+      // Only retry rate limit errors
+      if (!isRateLimit || isLastAttempt) {
+        throw error;
+      }
+
+      // Calculate delay with exponential backoff + jitter
+      const exponentialDelay = cfg.baseDelayMs * Math.pow(2, attempt);
+      const jitter = Math.random() * 0.3 * exponentialDelay; // 0-30% jitter
+      const delay = Math.min(exponentialDelay + jitter, cfg.maxDelayMs);
+
+      if (cfg.logRetries) {
+        console.warn(
+          `[Light] Rate limited on ${operation}, attempt ${attempt + 1}/${cfg.maxRetries + 1}. ` +
+          `Retrying in ${Math.round(delay)}ms...`
+        );
+      }
+
+      await sleep(delay);
+    }
+  }
+
+  // Should never reach here, but TypeScript needs this
+  throw new Error(`[Light] ${operation} failed after ${cfg.maxRetries + 1} attempts`);
+}
+
+/**
+ * Fetch with automatic retry on rate limits
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  config: Partial<RetryConfig> = {},
+  operation: string = 'fetch'
+): Promise<Response> {
+  const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
+
+  for (let attempt = 0; attempt <= cfg.maxRetries; attempt++) {
+    const response = await fetch(url, options);
+
+    // Check for rate limiting
+    if (isRateLimitResponse(response)) {
+      const isLastAttempt = attempt >= cfg.maxRetries;
+
+      if (isLastAttempt) {
+        throw new Error(`Rate limit exceeded (429) after ${cfg.maxRetries + 1} attempts for ${operation}`);
+      }
+
+      // Calculate delay
+      const exponentialDelay = cfg.baseDelayMs * Math.pow(2, attempt);
+      const jitter = Math.random() * 0.3 * exponentialDelay;
+      const delay = Math.min(exponentialDelay + jitter, cfg.maxDelayMs);
+
+      // Check for Retry-After header
+      const retryAfter = response.headers.get('Retry-After');
+      const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : delay;
+      const actualDelay = Math.min(retryAfterMs, cfg.maxDelayMs);
+
+      if (cfg.logRetries) {
+        console.warn(
+          `[Light] Rate limited (429) on ${operation}, attempt ${attempt + 1}/${cfg.maxRetries + 1}. ` +
+          `Retrying in ${Math.round(actualDelay)}ms...`
+        );
+      }
+
+      await sleep(actualDelay);
+      continue;
+    }
+
+    return response;
+  }
+
+  throw new Error(`[Light] ${operation} failed after ${cfg.maxRetries + 1} attempts`);
+}
+
 /**
  * Helius RPC endpoint configuration
  */
@@ -95,41 +246,52 @@ export interface CompressedAccountInfo {
 
 /**
  * Light Protocol client for Helius Photon indexer
+ *
+ * All RPC calls include automatic retry with exponential backoff for rate limits.
  */
 export class LightClient {
   protected readonly rpcUrl: string;
   protected readonly lightRpc: Rpc;
+  protected readonly retryConfig: Partial<RetryConfig>;
 
-  constructor(config: HeliusConfig) {
+  constructor(config: HeliusConfig & { retryConfig?: Partial<RetryConfig> }) {
     const baseUrl = config.network === 'mainnet-beta'
       ? 'https://mainnet.helius-rpc.com'
       : 'https://devnet.helius-rpc.com';
     this.rpcUrl = `${baseUrl}/?api-key=${config.apiKey}`;
     // Create Light SDK Rpc client
     this.lightRpc = createRpc(this.rpcUrl, this.rpcUrl, this.rpcUrl);
+    // Store retry config (default: 5 retries with exponential backoff)
+    this.retryConfig = config.retryConfig ?? {};
   }
 
   /**
    * Get compressed account by address
    *
    * Returns null if account doesn't exist (nullifier not spent)
+   * Includes automatic retry with exponential backoff on rate limits.
    */
   async getCompressedAccount(address: Uint8Array): Promise<CompressedAccountInfo | null> {
     // Helius expects base58 encoded address (like Solana public keys)
     const addressBase58 = new PublicKey(address).toBase58();
 
-    const response = await fetch(this.rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getCompressedAccount',
-        params: {
-          address: addressBase58,
-        },
-      }),
-    });
+    const response = await fetchWithRetry(
+      this.rpcUrl,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getCompressedAccount',
+          params: {
+            address: addressBase58,
+          },
+        }),
+      },
+      this.retryConfig,
+      'getCompressedAccount'
+    );
 
     const result = await response.json() as {
       result: { context: { slot: number }; value: CompressedAccountInfo | null };
@@ -165,6 +327,7 @@ export class LightClient {
    *
    * Uses getMultipleCompressedAccounts for efficiency (single API call)
    * Returns a Set of addresses that exist (are spent)
+   * Includes automatic retry with exponential backoff on rate limits.
    */
   async batchCheckNullifiers(addresses: string[]): Promise<Set<string>> {
     if (addresses.length === 0) {
@@ -172,18 +335,23 @@ export class LightClient {
     }
 
     // Helius getMultipleCompressedAccounts
-    const response = await fetch(this.rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getMultipleCompressedAccounts',
-        params: {
-          addresses,
-        },
-      }),
-    });
+    const response = await fetchWithRetry(
+      this.rpcUrl,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getMultipleCompressedAccounts',
+          params: {
+            addresses,
+          },
+        }),
+      },
+      this.retryConfig,
+      'batchCheckNullifiers'
+    );
 
     const result = await response.json() as {
       result: { value: { items: Array<{ address: string } | null> } };
@@ -210,6 +378,7 @@ export class LightClient {
    * Get validity proof for creating a new compressed account
    *
    * This proves that the address doesn't exist yet (non-inclusion proof)
+   * Includes automatic retry with exponential backoff on rate limits.
    *
    * Helius API expects:
    * - hashes: Array of existing account hashes to verify (optional)
@@ -231,20 +400,25 @@ export class LightClient {
       tree: params.addressMerkleTree.toBase58(),
     }));
 
-    const response = await fetch(this.rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getValidityProof',
-        params: {
-          // Helius expects hashes (for inclusion) and newAddressesWithTrees (for non-inclusion)
-          hashes: params.hashes ?? [],
-          newAddressesWithTrees,
-        },
-      }),
-    });
+    const response = await fetchWithRetry(
+      this.rpcUrl,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getValidityProof',
+          params: {
+            // Helius expects hashes (for inclusion) and newAddressesWithTrees (for non-inclusion)
+            hashes: params.hashes ?? [],
+            newAddressesWithTrees,
+          },
+        }),
+      },
+      this.retryConfig,
+      'getValidityProof'
+    );
 
     const result = await response.json() as {
       result: {
@@ -520,17 +694,137 @@ export interface CommitmentMerkleProof {
 }
 
 /**
+ * Scanner statistics for performance tracking
+ */
+export interface ScannerStats {
+  totalAccounts: number;
+  cachedHits: number;
+  decryptAttempts: number;
+  successfulDecrypts: number;
+  scanDurationMs: number;
+  rpcCalls: number;
+}
+
+/**
+ * Incremental scan options
+ */
+export interface IncrementalScanOptions {
+  /** Only scan accounts created after this slot */
+  sinceSlot?: number;
+  /** Maximum accounts to process per scan (for pagination) */
+  maxAccounts?: number;
+  /** Parallel decryption batch size (default: 10) */
+  parallelBatchSize?: number;
+}
+
+/**
  * Extended Light client with commitment operations
  */
 export class LightCommitmentClient extends LightClient {
   // Cache for decrypted notes - keyed by viewing key hash
   private noteCache: Map<string, Map<string, DecryptedNote | null>> = new Map();
 
+  // Track highest slot seen for incremental scanning
+  private lastScannedSlot: Map<string, number> = new Map(); // pool -> slot
+
+  // Scanner statistics (reset each scan)
+  private stats: ScannerStats = {
+    totalAccounts: 0,
+    cachedHits: 0,
+    decryptAttempts: 0,
+    successfulDecrypts: 0,
+    scanDurationMs: 0,
+    rpcCalls: 0,
+  };
+
+  /**
+   * Get scanner statistics from last scan
+   */
+  getLastScanStats(): ScannerStats {
+    return { ...this.stats };
+  }
+
+  /**
+   * Get the last scanned slot for a pool (for incremental scanning)
+   */
+  getLastScannedSlot(pool?: PublicKey): number {
+    const key = pool?.toBase58() ?? 'all';
+    return this.lastScannedSlot.get(key) ?? 0;
+  }
+
+  /**
+   * Set the last scanned slot (for restoring from persistent storage)
+   */
+  setLastScannedSlot(slot: number, pool?: PublicKey): void {
+    const key = pool?.toBase58() ?? 'all';
+    this.lastScannedSlot.set(key, slot);
+  }
+
   /**
    * Clear note cache (call when wallet changes)
    */
   clearCache(): void {
     this.noteCache.clear();
+    this.lastScannedSlot.clear();
+  }
+
+  /**
+   * Export cache state for persistent storage
+   */
+  exportCacheState(): { notes: Record<string, Record<string, any>>; slots: Record<string, number> } {
+    const notes: Record<string, Record<string, any>> = {};
+    for (const [viewKey, cache] of this.noteCache.entries()) {
+      notes[viewKey] = {};
+      for (const [hash, note] of cache.entries()) {
+        if (note) {
+          // Serialize note (convert Uint8Array to hex, PublicKey to base58)
+          notes[viewKey][hash] = {
+            ...note,
+            commitment: Buffer.from(note.commitment).toString('hex'),
+            pool: note.pool.toBase58(),
+            tokenMint: note.tokenMint.toBase58(),
+            stealthPubX: Buffer.from(note.stealthPubX).toString('hex'),
+            randomness: Buffer.from(note.randomness).toString('hex'),
+            amount: note.amount.toString(), // BigInt to string
+          };
+        }
+      }
+    }
+    const slots: Record<string, number> = {};
+    for (const [key, slot] of this.lastScannedSlot.entries()) {
+      slots[key] = slot;
+    }
+    return { notes, slots };
+  }
+
+  /**
+   * Import cache state from persistent storage
+   */
+  importCacheState(state: { notes: Record<string, Record<string, any>>; slots: Record<string, number> }): void {
+    // Import slots
+    for (const [key, slot] of Object.entries(state.slots)) {
+      this.lastScannedSlot.set(key, slot);
+    }
+    // Import notes (deserialize)
+    for (const [viewKey, cache] of Object.entries(state.notes)) {
+      if (!this.noteCache.has(viewKey)) {
+        this.noteCache.set(viewKey, new Map());
+      }
+      const noteMap = this.noteCache.get(viewKey)!;
+      for (const [hash, noteData] of Object.entries(cache)) {
+        if (noteData) {
+          noteMap.set(hash, {
+            ...noteData,
+            commitment: new Uint8Array(Buffer.from(noteData.commitment, 'hex')),
+            pool: new PublicKey(noteData.pool),
+            tokenMint: new PublicKey(noteData.tokenMint),
+            stealthPubX: new Uint8Array(Buffer.from(noteData.stealthPubX, 'hex')),
+            randomness: new Uint8Array(Buffer.from(noteData.randomness, 'hex')),
+            amount: BigInt(noteData.amount),
+          });
+        }
+      }
+    }
   }
 
   /**
@@ -538,6 +832,20 @@ export class LightCommitmentClient extends LightClient {
    */
   private getCacheKey(viewingKey: bigint): string {
     return viewingKey.toString(16).slice(0, 16);
+  }
+
+  /**
+   * Reset scanner stats
+   */
+  private resetStats(): void {
+    this.stats = {
+      totalAccounts: 0,
+      cachedHits: 0,
+      decryptAttempts: 0,
+      successfulDecrypts: 0,
+      scanDurationMs: 0,
+      rpcCalls: 0,
+    };
   }
 
   /**
@@ -816,18 +1124,27 @@ export class LightCommitmentClient extends LightClient {
    * Queries all commitment accounts for a pool and attempts to decrypt
    * the encrypted notes with the user's viewing key.
    *
+   * OPTIMIZED: Uses parallel decryption with configurable batch size.
+   *
    * @param viewingKey - User's viewing private key (for decryption)
    * @param programId - CloakCraft program ID
    * @param pool - Pool to scan (optional, scans all if not provided)
+   * @param options - Incremental scan options
    * @returns Array of decrypted notes owned by the user
    */
   async scanNotes(
     viewingKey: bigint,
     programId: PublicKey,
-    pool?: PublicKey
+    pool?: PublicKey,
+    options?: IncrementalScanOptions
   ): Promise<DecryptedNote[]> {
+    const startTime = performance.now();
+    this.resetStats();
+
     // Query commitment accounts from Helius
+    this.stats.rpcCalls++;
     const accounts = await this.getCommitmentAccounts(programId, pool);
+    this.stats.totalAccounts = accounts.length;
 
     // Get or create cache for this viewing key
     const cacheKey = this.getCacheKey(viewingKey);
@@ -842,9 +1159,31 @@ export class LightCommitmentClient extends LightClient {
     const COMMITMENT_DISCRIMINATOR_APPROX = 15491678376909513000;
 
     const decryptedNotes: DecryptedNote[] = [];
+    const accountsToProcess: CompressedAccountInfo[] = [];
+    let highestSlot = options?.sinceSlot ?? 0;
 
+    // First pass: filter accounts and check cache
     for (const account of accounts) {
       if (!account.data?.data) {
+        continue;
+      }
+
+      // Track highest slot for incremental scanning
+      const accountSlot = (account as any).slotCreated || 0;
+      if (accountSlot > highestSlot) {
+        highestSlot = accountSlot;
+      }
+
+      // Skip if before our scan window (incremental scanning)
+      if (options?.sinceSlot && accountSlot <= options.sinceSlot) {
+        // But still return cached notes
+        if (cache.has(account.hash)) {
+          const cachedNote = cache.get(account.hash);
+          if (cachedNote) {
+            this.stats.cachedHits++;
+            decryptedNotes.push(cachedNote);
+          }
+        }
         continue;
       }
 
@@ -852,6 +1191,7 @@ export class LightCommitmentClient extends LightClient {
       if (cache.has(account.hash)) {
         const cachedNote = cache.get(account.hash);
         if (cachedNote) {
+          this.stats.cachedHits++;
           decryptedNotes.push(cachedNote);
         }
         continue;
@@ -859,9 +1199,7 @@ export class LightCommitmentClient extends LightClient {
 
       // Filter by commitment discriminator (approximate match due to JS number precision)
       const disc = account.data.discriminator;
-      console.log(`[scanNotes] Account ${account.hash.slice(0, 8)}... discriminator: ${disc}`);
       if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1000) {
-        console.log(`[scanNotes] SKIPPED: discriminator mismatch (expected ~${COMMITMENT_DISCRIMINATOR_APPROX})`);
         cache.set(account.hash, null); // Cache as not-ours
         continue;
       }
@@ -870,122 +1208,152 @@ export class LightCommitmentClient extends LightClient {
       // Use atob for browser compatibility (Buffer.from doesn't work in browsers)
       // Layout: pool(32) + commitment(32) + leaf_index(8) + stealth_ephemeral(64) + encrypted_note(250) + len(2) + created_at(8) = 396
       const dataLen = atob(account.data.data).length;
-      console.log(`[scanNotes] Data length: ${dataLen} (need >= 396)`);
       if (dataLen < 396) {
-        console.log(`[scanNotes] SKIPPED: data too short`);
         cache.set(account.hash, null); // Cache as not-ours
         continue;
       }
 
-      try {
-        // Parse commitment account data (discriminator already filtered above)
-        const parsed = this.parseCommitmentAccountData(account.data.data);
-        if (!parsed) {
-          console.log(`[scanNotes] SKIPPED: failed to parse commitment account`);
-          cache.set(account.hash, null);
-          continue;
-        }
+      accountsToProcess.push(account);
 
-        // Deserialize encrypted note
-        const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
-        if (!encryptedNote) {
-          console.log(`[scanNotes] SKIPPED: failed to deserialize encrypted note`);
-          cache.set(account.hash, null);
-          continue;
-        }
-
-        // Derive decryption key:
-        // - If stealthEphemeralPubkey is present, derive stealthPrivateKey from it
-        // - Otherwise (internal ops), use the original viewing key
-        let decryptionKey: bigint;
-        if (parsed.stealthEphemeralPubkey) {
-          // Derive: stealthPrivateKey = spendingKey + H(spendingKey * ephemeralPubkey)
-          decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
-        } else {
-          // Internal operation (swap/remove_liquidity) - use original key
-          decryptionKey = viewingKey;
-        }
-
-        // Try to decrypt with universal decryption (handles all note types)
-        const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
-        console.log(`[scanNotes] Decryption result: ${decryptResult ? `SUCCESS (${decryptResult.type})` : 'failed'}`);
-
-        if (!decryptResult) {
-          cache.set(account.hash, null); // Not our note
-          continue;
-        }
-
-        // Verify decryption was correct by recomputing commitment based on note type
-        let recomputed: Uint8Array;
-        let noteAmount: bigint;
-
-        if (decryptResult.type === 'standard') {
-          recomputed = computeCommitment(decryptResult.note);
-          noteAmount = decryptResult.note.amount;
-        } else if (decryptResult.type === 'position') {
-          recomputed = computePositionCommitment(decryptResult.note);
-          noteAmount = decryptResult.note.margin; // Use margin as the "amount" for positions
-        } else if (decryptResult.type === 'lp') {
-          recomputed = computeLpCommitment(decryptResult.note);
-          noteAmount = decryptResult.note.lpAmount;
-        } else {
-          cache.set(account.hash, null);
-          continue;
-        }
-
-        const matches = Buffer.from(recomputed).toString('hex') === Buffer.from(parsed.commitment).toString('hex');
-        console.log(`[scanNotes] Commitment verification: ${matches ? 'MATCH' : 'MISMATCH'}`);
-        if (!matches) {
-          console.log(`[scanNotes]   Expected: ${Buffer.from(parsed.commitment).toString('hex').slice(0, 16)}...`);
-          console.log(`[scanNotes]   Got: ${Buffer.from(recomputed).toString('hex').slice(0, 16)}...`);
-          // Invalid decryption - commitment mismatch
-          cache.set(account.hash, null);
-          continue;
-        }
-
-        // Skip 0-amount notes (change outputs with no value)
-        if (noteAmount === 0n) {
-          console.log(`[scanNotes] SKIPPED: zero amount`);
-          cache.set(account.hash, null);
-          continue;
-        }
-        console.log(`[scanNotes] FOUND valid note: type=${decryptResult.type}, amount=${noteAmount}`);
-
-        // For non-standard note types, we skip them in this method
-        // (scanNotes only returns standard token notes for backwards compatibility)
-        // Use scanPositionNotes or scanLpNotes for perps notes
-        if (decryptResult.type !== 'standard') {
-          console.log(`[scanNotes] SKIPPED: non-standard note type (use scanPositionNotes or scanLpNotes)`);
-          cache.set(account.hash, null);
-          continue;
-        }
-
-        const note = decryptResult.note;
-
-        // Successfully decrypted - this note belongs to user
-        const decryptedNote: DecryptedNote = {
-          ...note,
-          commitment: parsed.commitment,
-          leafIndex: parsed.leafIndex,
-          pool: new PublicKey(parsed.pool),
-          accountHash: account.hash, // Store for merkle proof fetching
-          stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? undefined, // Store for stealth key derivation
-        };
-
-        cache.set(account.hash, decryptedNote); // Cache our note
-        decryptedNotes.push(decryptedNote);
-      } catch (err) {
-        // Failed to parse or decrypt - cache as not-ours
-        cache.set(account.hash, null);
-        continue;
+      // Respect maxAccounts limit
+      if (options?.maxAccounts && accountsToProcess.length >= options.maxAccounts) {
+        break;
       }
     }
 
+    // OPTIMIZATION: Parallel decryption in batches
+    const batchSize = options?.parallelBatchSize ?? 10;
+    for (let i = 0; i < accountsToProcess.length; i += batchSize) {
+      const batch = accountsToProcess.slice(i, i + batchSize);
+
+      const results = await Promise.all(
+        batch.map(account => this.processAccount(account, viewingKey, cache))
+      );
+
+      for (const result of results) {
+        this.stats.decryptAttempts++;
+        if (result) {
+          this.stats.successfulDecrypts++;
+          decryptedNotes.push(result);
+        }
+      }
+    }
+
+    // Update last scanned slot for incremental scanning
+    const poolKey = pool?.toBase58() ?? 'all';
+    this.lastScannedSlot.set(poolKey, highestSlot);
+
+    this.stats.scanDurationMs = performance.now() - startTime;
     return decryptedNotes;
   }
 
   /**
+   * Process a single account for decryption (extracted for parallelization)
+   */
+  private async processAccount(
+    account: CompressedAccountInfo,
+    viewingKey: bigint,
+    cache: Map<string, DecryptedNote | null>
+  ): Promise<DecryptedNote | null> {
+    try {
+      // Parse commitment account data (discriminator already filtered above)
+      const parsed = this.parseCommitmentAccountData(account.data!.data);
+      if (!parsed) {
+        cache.set(account.hash, null);
+        return null;
+      }
+
+      // Deserialize encrypted note
+      const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
+      if (!encryptedNote) {
+        cache.set(account.hash, null);
+        return null;
+      }
+
+      // Derive decryption key:
+      // - If stealthEphemeralPubkey is present, derive stealthPrivateKey from it
+      // - Otherwise (internal ops), use the original viewing key
+      let decryptionKey: bigint;
+      if (parsed.stealthEphemeralPubkey) {
+        // Derive: stealthPrivateKey = spendingKey + H(spendingKey * ephemeralPubkey)
+        decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
+      } else {
+        // Internal operation (swap/remove_liquidity) - use original key
+        decryptionKey = viewingKey;
+      }
+
+      // Try to decrypt with universal decryption (handles all note types)
+      const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
+
+      if (!decryptResult) {
+        cache.set(account.hash, null); // Not our note
+        return null;
+      }
+
+      // Verify decryption was correct by recomputing commitment based on note type
+      let recomputed: Uint8Array;
+      let noteAmount: bigint;
+
+      if (decryptResult.type === 'standard') {
+        recomputed = computeCommitment(decryptResult.note);
+        noteAmount = decryptResult.note.amount;
+      } else if (decryptResult.type === 'position') {
+        recomputed = computePositionCommitment(decryptResult.note);
+        noteAmount = decryptResult.note.margin; // Use margin as the "amount" for positions
+      } else if (decryptResult.type === 'lp') {
+        recomputed = computeLpCommitment(decryptResult.note);
+        noteAmount = decryptResult.note.lpAmount;
+      } else {
+        cache.set(account.hash, null);
+        return null;
+      }
+
+      const matches = Buffer.from(recomputed).toString('hex') === Buffer.from(parsed.commitment).toString('hex');
+      if (!matches) {
+        // Invalid decryption - commitment mismatch
+        cache.set(account.hash, null);
+        return null;
+      }
+
+      // Skip 0-amount notes (change outputs with no value)
+      if (noteAmount === 0n) {
+        cache.set(account.hash, null);
+        return null;
+      }
+
+      // For non-standard note types, we skip them in this method
+      // (scanNotes only returns standard token notes for backwards compatibility)
+      // Use scanPositionNotes or scanLpNotes for perps notes
+      if (decryptResult.type !== 'standard') {
+        cache.set(account.hash, null);
+        return null;
+      }
+
+      const note = decryptResult.note;
+
+      // Successfully decrypted - this note belongs to user
+      const decryptedNote: DecryptedNote = {
+        ...note,
+        commitment: parsed.commitment,
+        leafIndex: parsed.leafIndex,
+        pool: new PublicKey(parsed.pool),
+        accountHash: account.hash, // Store for merkle proof fetching
+        stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? undefined, // Store for stealth key derivation
+      };
+
+      cache.set(account.hash, decryptedNote); // Cache our note
+      return decryptedNote;
+    } catch (err) {
+      // Failed to parse or decrypt - cache as not-ours
+      cache.set(account.hash, null);
+      return null;
+    }
+  }
+
+  /**
    * Get all commitment compressed accounts
+   *
+   * Includes automatic retry with exponential backoff on rate limits.
    *
    * @param programId - CloakCraft program ID
    * @param poolPda - Pool PDA to filter by (optional). Note: pass the pool PDA, not the token mint.
@@ -998,22 +1366,27 @@ export class LightCommitmentClient extends LightClient {
     // Note: Helius returns discriminator separately, so pool is at offset 0 in data
     console.log(`[getCommitmentAccounts] Querying with pool filter: ${poolPda?.toBase58() ?? 'none'}`);
 
-    const response = await fetch(this['rpcUrl'], {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getCompressedAccountsByOwner',
-        params: {
-          owner: programId.toBase58(),
-          // Pool is first 32 bytes of data (Helius provides discriminator separately)
-          filters: poolPda ? [
-            { memcmp: { offset: 0, bytes: poolPda.toBase58() } }
-          ] : undefined,
-        },
-      }),
-    });
+    const response = await fetchWithRetry(
+      this['rpcUrl'],
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getCompressedAccountsByOwner',
+          params: {
+            owner: programId.toBase58(),
+            // Pool is first 32 bytes of data (Helius provides discriminator separately)
+            filters: poolPda ? [
+              { memcmp: { offset: 0, bytes: poolPda.toBase58() } }
+            ] : undefined,
+          },
+        }),
+      },
+      this.retryConfig,
+      'getCompressedAccountsByOwner'
+    );
 
     const result = await response.json() as {
       result: { value?: { items: CompressedAccountInfo[] }; items?: CompressedAccountInfo[] };
@@ -1030,16 +1403,21 @@ export class LightCommitmentClient extends LightClient {
 
     // Debug: If filtering by pool and no results, try without filter to see total accounts
     if (poolPda && items.length === 0) {
-      const debugResponse = await fetch(this['rpcUrl'], {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'getCompressedAccountsByOwner',
-          params: { owner: programId.toBase58() },
-        }),
-      });
+      const debugResponse = await fetchWithRetry(
+        this['rpcUrl'],
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getCompressedAccountsByOwner',
+            params: { owner: programId.toBase58() },
+          }),
+        },
+        this.retryConfig,
+        'getCompressedAccountsByOwner (debug)'
+      );
       const debugResult = await debugResponse.json() as any;
       const totalItems = debugResult.result?.value?.items ?? debugResult.result?.items ?? [];
       console.log(`[getCommitmentAccounts] DEBUG: Total accounts without filter: ${totalItems.length}`);

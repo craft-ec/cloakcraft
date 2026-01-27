@@ -1,0 +1,122 @@
+{
+  "timestamp": "2026-01-27T09:59:10.493Z",
+  "results": [
+    {
+      "name": "Full Scan (Cold)",
+      "durationMs": 1170.6340410000003,
+      "notesFound": 0,
+      "stats": {
+        "totalAccounts": 243,
+        "cachedHits": 0,
+        "decryptAttempts": 0,
+        "successfulDecrypts": 0,
+        "scanDurationMs": 1170.5492909999998,
+        "rpcCalls": 1
+      }
+    },
+    {
+      "name": "Cached Scan (Warm)",
+      "durationMs": 325.61299999999983,
+      "notesFound": 0,
+      "stats": {
+        "totalAccounts": 243,
+        "cachedHits": 0,
+        "decryptAttempts": 0,
+        "successfulDecrypts": 0,
+        "scanDurationMs": 325.5964999999999,
+        "rpcCalls": 1
+      }
+    },
+    {
+      "name": "Incremental Scan",
+      "durationMs": 342.394417,
+      "notesFound": 0,
+      "stats": {
+        "totalAccounts": 243,
+        "cachedHits": 0,
+        "decryptAttempts": 0,
+        "successfulDecrypts": 0,
+        "scanDurationMs": 342.36987499999987,
+        "rpcCalls": 1
+      }
+    },
+    {
+      "name": "Batch Size 1",
+      "durationMs": 507.15075000000024,
+      "notesFound": 0,
+      "stats": {
+        "totalAccounts": 243,
+        "cachedHits": 0,
+        "decryptAttempts": 0,
+        "successfulDecrypts": 0,
+        "scanDurationMs": 507.09879200000023,
+        "rpcCalls": 1
+      }
+    },
+    {
+      "name": "Batch Size 5",
+      "durationMs": 353.62608299999965,
+      "notesFound": 0,
+      "stats": {
+        "totalAccounts": 243,
+        "cachedHits": 0,
+        "decryptAttempts": 0,
+        "successfulDecrypts": 0,
+        "scanDurationMs": 353.619541,
+        "rpcCalls": 1
+      }
+    },
+    {
+      "name": "Batch Size 10",
+      "durationMs": 472.6700000000001,
+      "notesFound": 0,
+      "stats": {
+        "totalAccounts": 243,
+        "cachedHits": 0,
+        "decryptAttempts": 0,
+        "successfulDecrypts": 0,
+        "scanDurationMs": 472.66329199999973,
+        "rpcCalls": 1
+      }
+    },
+    {
+      "name": "Batch Size 20",
+      "durationMs": 342.48783399999957,
+      "notesFound": 0,
+      "stats": {
+        "totalAccounts": 243,
+        "cachedHits": 0,
+        "decryptAttempts": 0,
+        "successfulDecrypts": 0,
+        "scanDurationMs": 342.47341700000015,
+        "rpcCalls": 1
+      }
+    },
+    {
+      "name": "Scan With Status",
+      "durationMs": 381.99324999999953,
+      "notesFound": 0,
+      "stats": {
+        "totalAccounts": 243,
+        "cachedHits": 0,
+        "decryptAttempts": 0,
+        "successfulDecrypts": 0,
+        "scanDurationMs": 381.58187499999985,
+        "rpcCalls": 1
+      }
+    },
+    {
+      "name": "All Pools Scan",
+      "durationMs": 582.3358749999998,
+      "notesFound": 0,
+      "stats": {
+        "totalAccounts": 734,
+        "cachedHits": 0,
+        "decryptAttempts": 0,
+        "successfulDecrypts": 0,
+        "scanDurationMs": 582.2783750000008,
+        "rpcCalls": 1
+      }
+    }
+  ]
+}

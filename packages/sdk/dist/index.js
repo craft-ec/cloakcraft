@@ -818,8 +818,74 @@ __export(light_exports, {
   LightCommitmentClient: () => LightCommitmentClient,
   MAINNET_LIGHT_TREES: () => MAINNET_LIGHT_TREES,
   getRandomStateTreeSet: () => getRandomStateTreeSet,
-  getStateTreeSet: () => getStateTreeSet
+  getStateTreeSet: () => getStateTreeSet,
+  sleep: () => sleep,
+  withRetry: () => withRetry
 });
+function sleep(ms) {
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
+}
+function isRateLimitError(error) {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return msg.includes("429") || msg.includes("rate limit") || msg.includes("too many requests") || msg.includes("quota exceeded");
+  }
+  return false;
+}
+function isRateLimitResponse(response) {
+  return response.status === 429;
+}
+async function withRetry(fn, config = {}, operation = "RPC call") {
+  const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
+  for (let attempt = 0; attempt <= cfg.maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const isRateLimit = isRateLimitError(error);
+      const isLastAttempt = attempt >= cfg.maxRetries;
+      if (!isRateLimit || isLastAttempt) {
+        throw error;
+      }
+      const exponentialDelay = cfg.baseDelayMs * Math.pow(2, attempt);
+      const jitter = Math.random() * 0.3 * exponentialDelay;
+      const delay = Math.min(exponentialDelay + jitter, cfg.maxDelayMs);
+      if (cfg.logRetries) {
+        console.warn(
+          `[Light] Rate limited on ${operation}, attempt ${attempt + 1}/${cfg.maxRetries + 1}. Retrying in ${Math.round(delay)}ms...`
+        );
+      }
+      await sleep(delay);
+    }
+  }
+  throw new Error(`[Light] ${operation} failed after ${cfg.maxRetries + 1} attempts`);
+}
+async function fetchWithRetry(url, options, config = {}, operation = "fetch") {
+  const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
+  for (let attempt = 0; attempt <= cfg.maxRetries; attempt++) {
+    const response = await fetch(url, options);
+    if (isRateLimitResponse(response)) {
+      const isLastAttempt = attempt >= cfg.maxRetries;
+      if (isLastAttempt) {
+        throw new Error(`Rate limit exceeded (429) after ${cfg.maxRetries + 1} attempts for ${operation}`);
+      }
+      const exponentialDelay = cfg.baseDelayMs * Math.pow(2, attempt);
+      const jitter = Math.random() * 0.3 * exponentialDelay;
+      const delay = Math.min(exponentialDelay + jitter, cfg.maxDelayMs);
+      const retryAfter = response.headers.get("Retry-After");
+      const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1e3 : delay;
+      const actualDelay = Math.min(retryAfterMs, cfg.maxDelayMs);
+      if (cfg.logRetries) {
+        console.warn(
+          `[Light] Rate limited (429) on ${operation}, attempt ${attempt + 1}/${cfg.maxRetries + 1}. Retrying in ${Math.round(actualDelay)}ms...`
+        );
+      }
+      await sleep(actualDelay);
+      continue;
+    }
+    return response;
+  }
+  throw new Error(`[Light] ${operation} failed after ${cfg.maxRetries + 1} attempts`);
+}
 function getRandomStateTreeSet() {
   const index = Math.floor(Math.random() * DEVNET_LIGHT_TREES.stateTrees.length);
   return DEVNET_LIGHT_TREES.stateTrees[index];
@@ -830,7 +896,7 @@ function getStateTreeSet(index) {
   }
   return DEVNET_LIGHT_TREES.stateTrees[index];
 }
-var import_web34, import_stateless, LightClient, DEVNET_LIGHT_TREES, MAINNET_LIGHT_TREES, LightCommitmentClient;
+var import_web34, import_stateless, DEFAULT_RETRY_CONFIG, LightClient, DEVNET_LIGHT_TREES, MAINNET_LIGHT_TREES, LightCommitmentClient;
 var init_light = __esm({
   "src/light.ts"() {
     "use strict";
@@ -841,31 +907,44 @@ var init_light = __esm({
     init_poseidon();
     init_stealth();
     init_commitment();
+    DEFAULT_RETRY_CONFIG = {
+      maxRetries: 5,
+      baseDelayMs: 1e3,
+      maxDelayMs: 3e4,
+      logRetries: true
+    };
     LightClient = class {
       constructor(config) {
         const baseUrl = config.network === "mainnet-beta" ? "https://mainnet.helius-rpc.com" : "https://devnet.helius-rpc.com";
         this.rpcUrl = `${baseUrl}/?api-key=${config.apiKey}`;
         this.lightRpc = (0, import_stateless.createRpc)(this.rpcUrl, this.rpcUrl, this.rpcUrl);
+        this.retryConfig = config.retryConfig ?? {};
       }
       /**
        * Get compressed account by address
        *
        * Returns null if account doesn't exist (nullifier not spent)
+       * Includes automatic retry with exponential backoff on rate limits.
        */
       async getCompressedAccount(address) {
         const addressBase58 = new import_web34.PublicKey(address).toBase58();
-        const response = await fetch(this.rpcUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "getCompressedAccount",
-            params: {
-              address: addressBase58
-            }
-          })
-        });
+        const response = await fetchWithRetry(
+          this.rpcUrl,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "getCompressedAccount",
+              params: {
+                address: addressBase58
+              }
+            })
+          },
+          this.retryConfig,
+          "getCompressedAccount"
+        );
         const result = await response.json();
         if (result.error) {
           throw new Error(`Helius RPC error: ${result.error.message}`);
@@ -887,23 +966,29 @@ var init_light = __esm({
        *
        * Uses getMultipleCompressedAccounts for efficiency (single API call)
        * Returns a Set of addresses that exist (are spent)
+       * Includes automatic retry with exponential backoff on rate limits.
        */
       async batchCheckNullifiers(addresses) {
         if (addresses.length === 0) {
           return /* @__PURE__ */ new Set();
         }
-        const response = await fetch(this.rpcUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "getMultipleCompressedAccounts",
-            params: {
-              addresses
-            }
-          })
-        });
+        const response = await fetchWithRetry(
+          this.rpcUrl,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "getMultipleCompressedAccounts",
+              params: {
+                addresses
+              }
+            })
+          },
+          this.retryConfig,
+          "batchCheckNullifiers"
+        );
         const result = await response.json();
         if (result.error) {
           throw new Error(`Helius RPC error: ${result.error.message}`);
@@ -921,6 +1006,7 @@ var init_light = __esm({
        * Get validity proof for creating a new compressed account
        *
        * This proves that the address doesn't exist yet (non-inclusion proof)
+       * Includes automatic retry with exponential backoff on rate limits.
        *
        * Helius API expects:
        * - hashes: Array of existing account hashes to verify (optional)
@@ -931,20 +1017,25 @@ var init_light = __esm({
           address: new import_web34.PublicKey(addr).toBase58(),
           tree: params.addressMerkleTree.toBase58()
         }));
-        const response = await fetch(this.rpcUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "getValidityProof",
-            params: {
-              // Helius expects hashes (for inclusion) and newAddressesWithTrees (for non-inclusion)
-              hashes: params.hashes ?? [],
-              newAddressesWithTrees
-            }
-          })
-        });
+        const response = await fetchWithRetry(
+          this.rpcUrl,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "getValidityProof",
+              params: {
+                // Helius expects hashes (for inclusion) and newAddressesWithTrees (for non-inclusion)
+                hashes: params.hashes ?? [],
+                newAddressesWithTrees
+              }
+            })
+          },
+          this.retryConfig,
+          "getValidityProof"
+        );
         const result = await response.json();
         if (result.error) {
           throw new Error(`failed to get validity proof for hashes ${params.hashes?.join(", ") ?? "[]"}: ${result.error.message}`);
@@ -1063,18 +1154,123 @@ var init_light = __esm({
         super(...arguments);
         // Cache for decrypted notes - keyed by viewing key hash
         this.noteCache = /* @__PURE__ */ new Map();
+        // Track highest slot seen for incremental scanning
+        this.lastScannedSlot = /* @__PURE__ */ new Map();
+        // pool -> slot
+        // Scanner statistics (reset each scan)
+        this.stats = {
+          totalAccounts: 0,
+          cachedHits: 0,
+          decryptAttempts: 0,
+          successfulDecrypts: 0,
+          scanDurationMs: 0,
+          rpcCalls: 0
+        };
+      }
+      /**
+       * Get scanner statistics from last scan
+       */
+      getLastScanStats() {
+        return { ...this.stats };
+      }
+      /**
+       * Get the last scanned slot for a pool (for incremental scanning)
+       */
+      getLastScannedSlot(pool) {
+        const key = pool?.toBase58() ?? "all";
+        return this.lastScannedSlot.get(key) ?? 0;
+      }
+      /**
+       * Set the last scanned slot (for restoring from persistent storage)
+       */
+      setLastScannedSlot(slot, pool) {
+        const key = pool?.toBase58() ?? "all";
+        this.lastScannedSlot.set(key, slot);
       }
       /**
        * Clear note cache (call when wallet changes)
        */
       clearCache() {
         this.noteCache.clear();
+        this.lastScannedSlot.clear();
+      }
+      /**
+       * Export cache state for persistent storage
+       */
+      exportCacheState() {
+        const notes = {};
+        for (const [viewKey, cache] of this.noteCache.entries()) {
+          notes[viewKey] = {};
+          for (const [hash, note] of cache.entries()) {
+            if (note) {
+              notes[viewKey][hash] = {
+                ...note,
+                commitment: Buffer.from(note.commitment).toString("hex"),
+                pool: note.pool.toBase58(),
+                tokenMint: note.tokenMint.toBase58(),
+                ownerPubkey: {
+                  x: Buffer.from(note.ownerPubkey.x).toString("hex"),
+                  y: Buffer.from(note.ownerPubkey.y).toString("hex")
+                },
+                randomness: Buffer.from(note.randomness).toString("hex")
+              };
+            }
+          }
+        }
+        const slots = {};
+        for (const [key, slot] of this.lastScannedSlot.entries()) {
+          slots[key] = slot;
+        }
+        return { notes, slots };
+      }
+      /**
+       * Import cache state from persistent storage
+       */
+      importCacheState(state) {
+        for (const [key, slot] of Object.entries(state.slots)) {
+          this.lastScannedSlot.set(key, slot);
+        }
+        for (const [viewKey, cache] of Object.entries(state.notes)) {
+          if (!this.noteCache.has(viewKey)) {
+            this.noteCache.set(viewKey, /* @__PURE__ */ new Map());
+          }
+          const noteMap = this.noteCache.get(viewKey);
+          for (const [hash, noteData] of Object.entries(cache)) {
+            if (noteData) {
+              noteMap.set(hash, {
+                ...noteData,
+                commitment: new Uint8Array(Buffer.from(noteData.commitment, "hex")),
+                pool: new import_web34.PublicKey(noteData.pool),
+                tokenMint: new import_web34.PublicKey(noteData.tokenMint),
+                ownerPubkey: {
+                  x: new Uint8Array(Buffer.from(noteData.ownerPubkey.x, "hex")),
+                  y: new Uint8Array(Buffer.from(noteData.ownerPubkey.y, "hex"))
+                },
+                randomness: new Uint8Array(Buffer.from(noteData.randomness, "hex")),
+                amount: BigInt(noteData.amount)
+              });
+            }
+          }
+        }
       }
       /**
        * Get cache key from viewing key
        */
       getCacheKey(viewingKey) {
         return viewingKey.toString(16).slice(0, 16);
+      }
+      /**
+       * Reset scanner stats
+       */
+      resetStats() {
+        this.stats = {
+          totalAccounts: 0,
+          cachedHits: 0,
+          decryptAttempts: 0,
+          successfulDecrypts: 0,
+          scanDurationMs: 0,
+          rpcCalls: 0
+        };
       }
       /**
        * Get commitment by its address
@@ -1260,13 +1456,20 @@ var init_light = __esm({
        * Queries all commitment accounts for a pool and attempts to decrypt
        * the encrypted notes with the user's viewing key.
        *
+       * OPTIMIZED: Uses parallel decryption with configurable batch size.
+       *
        * @param viewingKey - User's viewing private key (for decryption)
        * @param programId - CloakCraft program ID
        * @param pool - Pool to scan (optional, scans all if not provided)
+       * @param options - Incremental scan options
        * @returns Array of decrypted notes owned by the user
        */
-      async scanNotes(viewingKey, programId, pool) {
+      async scanNotes(viewingKey, programId, pool, options) {
+        const startTime = performance.now();
+        this.resetStats();
+        this.stats.rpcCalls++;
         const accounts = await this.getCommitmentAccounts(programId, pool);
+        this.stats.totalAccounts = accounts.length;
         const cacheKey = this.getCacheKey(viewingKey);
         if (!this.noteCache.has(cacheKey)) {
           this.noteCache.set(cacheKey, /* @__PURE__ */ new Map());
@@ -1274,134 +1477,171 @@ var init_light = __esm({
         const cache = this.noteCache.get(cacheKey);
         const COMMITMENT_DISCRIMINATOR_APPROX = 15491678376909513e3;
         const decryptedNotes = [];
+        const accountsToProcess = [];
+        let highestSlot = options?.sinceSlot ?? 0;
         for (const account of accounts) {
           if (!account.data?.data) {
+            continue;
+          }
+          const accountSlot = account.slotCreated || 0;
+          if (accountSlot > highestSlot) {
+            highestSlot = accountSlot;
+          }
+          if (options?.sinceSlot && accountSlot <= options.sinceSlot) {
+            if (cache.has(account.hash)) {
+              const cachedNote = cache.get(account.hash);
+              if (cachedNote) {
+                this.stats.cachedHits++;
+                decryptedNotes.push(cachedNote);
+              }
+            }
             continue;
           }
           if (cache.has(account.hash)) {
             const cachedNote = cache.get(account.hash);
             if (cachedNote) {
+              this.stats.cachedHits++;
               decryptedNotes.push(cachedNote);
             }
             continue;
           }
           const disc = account.data.discriminator;
-          console.log(`[scanNotes] Account ${account.hash.slice(0, 8)}... discriminator: ${disc}`);
           if (!disc || Math.abs(disc - COMMITMENT_DISCRIMINATOR_APPROX) > 1e3) {
-            console.log(`[scanNotes] SKIPPED: discriminator mismatch (expected ~${COMMITMENT_DISCRIMINATOR_APPROX})`);
             cache.set(account.hash, null);
             continue;
           }
           const dataLen = atob(account.data.data).length;
-          console.log(`[scanNotes] Data length: ${dataLen} (need >= 396)`);
           if (dataLen < 396) {
-            console.log(`[scanNotes] SKIPPED: data too short`);
             cache.set(account.hash, null);
             continue;
           }
-          try {
-            const parsed = this.parseCommitmentAccountData(account.data.data);
-            if (!parsed) {
-              console.log(`[scanNotes] SKIPPED: failed to parse commitment account`);
-              cache.set(account.hash, null);
-              continue;
-            }
-            const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
-            if (!encryptedNote) {
-              console.log(`[scanNotes] SKIPPED: failed to deserialize encrypted note`);
-              cache.set(account.hash, null);
-              continue;
-            }
-            let decryptionKey;
-            if (parsed.stealthEphemeralPubkey) {
-              decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
-            } else {
-              decryptionKey = viewingKey;
-            }
-            const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
-            console.log(`[scanNotes] Decryption result: ${decryptResult ? `SUCCESS (${decryptResult.type})` : "failed"}`);
-            if (!decryptResult) {
-              cache.set(account.hash, null);
-              continue;
-            }
-            let recomputed;
-            let noteAmount;
-            if (decryptResult.type === "standard") {
-              recomputed = computeCommitment(decryptResult.note);
-              noteAmount = decryptResult.note.amount;
-            } else if (decryptResult.type === "position") {
-              recomputed = computePositionCommitment(decryptResult.note);
-              noteAmount = decryptResult.note.margin;
-            } else if (decryptResult.type === "lp") {
-              recomputed = computeLpCommitment(decryptResult.note);
-              noteAmount = decryptResult.note.lpAmount;
-            } else {
-              cache.set(account.hash, null);
-              continue;
-            }
-            const matches = Buffer.from(recomputed).toString("hex") === Buffer.from(parsed.commitment).toString("hex");
-            console.log(`[scanNotes] Commitment verification: ${matches ? "MATCH" : "MISMATCH"}`);
-            if (!matches) {
-              console.log(`[scanNotes]   Expected: ${Buffer.from(parsed.commitment).toString("hex").slice(0, 16)}...`);
-              console.log(`[scanNotes]   Got: ${Buffer.from(recomputed).toString("hex").slice(0, 16)}...`);
-              cache.set(account.hash, null);
-              continue;
-            }
-            if (noteAmount === 0n) {
-              console.log(`[scanNotes] SKIPPED: zero amount`);
-              cache.set(account.hash, null);
-              continue;
-            }
-            console.log(`[scanNotes] FOUND valid note: type=${decryptResult.type}, amount=${noteAmount}`);
-            if (decryptResult.type !== "standard") {
-              console.log(`[scanNotes] SKIPPED: non-standard note type (use scanPositionNotes or scanLpNotes)`);
-              cache.set(account.hash, null);
-              continue;
-            }
-            const note = decryptResult.note;
-            const decryptedNote = {
-              ...note,
-              commitment: parsed.commitment,
-              leafIndex: parsed.leafIndex,
-              pool: new import_web34.PublicKey(parsed.pool),
-              accountHash: account.hash,
-              // Store for merkle proof fetching
-              stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? void 0
-              // Store for stealth key derivation
-            };
-            cache.set(account.hash, decryptedNote);
-            decryptedNotes.push(decryptedNote);
-          } catch (err) {
-            cache.set(account.hash, null);
-            continue;
+          accountsToProcess.push(account);
+          if (options?.maxAccounts && accountsToProcess.length >= options.maxAccounts) {
+            break;
           }
         }
+        const batchSize = options?.parallelBatchSize ?? 10;
+        for (let i = 0; i < accountsToProcess.length; i += batchSize) {
+          const batch = accountsToProcess.slice(i, i + batchSize);
+          const results = await Promise.all(
+            batch.map((account) => this.processAccount(account, viewingKey, cache))
+          );
+          for (const result of results) {
+            this.stats.decryptAttempts++;
+            if (result) {
+              this.stats.successfulDecrypts++;
+              decryptedNotes.push(result);
+            }
+          }
+        }
+        const poolKey = pool?.toBase58() ?? "all";
+        this.lastScannedSlot.set(poolKey, highestSlot);
+        this.stats.scanDurationMs = performance.now() - startTime;
         return decryptedNotes;
       }
       /**
+       * Process a single account for decryption (extracted for parallelization)
+       */
+      async processAccount(account, viewingKey, cache) {
+        try {
+          const parsed = this.parseCommitmentAccountData(account.data.data);
+          if (!parsed) {
+            cache.set(account.hash, null);
+            return null;
+          }
+          const encryptedNote = this.deserializeEncryptedNote(parsed.encryptedNote);
+          if (!encryptedNote) {
+            cache.set(account.hash, null);
+            return null;
+          }
+          let decryptionKey;
+          if (parsed.stealthEphemeralPubkey) {
+            decryptionKey = deriveStealthPrivateKey(viewingKey, parsed.stealthEphemeralPubkey);
+          } else {
+            decryptionKey = viewingKey;
+          }
+          const decryptResult = tryDecryptAnyNote(encryptedNote, decryptionKey);
+          if (!decryptResult) {
+            cache.set(account.hash, null);
+            return null;
+          }
+          let recomputed;
+          let noteAmount;
+          if (decryptResult.type === "standard") {
+            recomputed = computeCommitment(decryptResult.note);
+            noteAmount = decryptResult.note.amount;
+          } else if (decryptResult.type === "position") {
+            recomputed = computePositionCommitment(decryptResult.note);
+            noteAmount = decryptResult.note.margin;
+          } else if (decryptResult.type === "lp") {
+            recomputed = computeLpCommitment(decryptResult.note);
+            noteAmount = decryptResult.note.lpAmount;
+          } else {
+            cache.set(account.hash, null);
+            return null;
+          }
+          const matches = Buffer.from(recomputed).toString("hex") === Buffer.from(parsed.commitment).toString("hex");
+          if (!matches) {
+            cache.set(account.hash, null);
+            return null;
+          }
+          if (noteAmount === 0n) {
+            cache.set(account.hash, null);
+            return null;
+          }
+          if (decryptResult.type !== "standard") {
+            cache.set(account.hash, null);
+            return null;
+          }
+          const note = decryptResult.note;
+          const decryptedNote = {
+            ...note,
+            commitment: parsed.commitment,
+            leafIndex: parsed.leafIndex,
+            pool: new import_web34.PublicKey(parsed.pool),
+            accountHash: account.hash,
+            // Store for merkle proof fetching
+            stealthEphemeralPubkey: parsed.stealthEphemeralPubkey ?? void 0
+            // Store for stealth key derivation
+          };
+          cache.set(account.hash, decryptedNote);
+          return decryptedNote;
+        } catch (err) {
+          cache.set(account.hash, null);
+          return null;
+        }
+      }
+      /**
        * Get all commitment compressed accounts
+       *
+       * Includes automatic retry with exponential backoff on rate limits.
        *
        * @param programId - CloakCraft program ID
        * @param poolPda - Pool PDA to filter by (optional). Note: pass the pool PDA, not the token mint.
        */
       async getCommitmentAccounts(programId, poolPda) {
         console.log(`[getCommitmentAccounts] Querying with pool filter: ${poolPda?.toBase58() ?? "none"}`);
-        const response = await fetch(this["rpcUrl"], {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "getCompressedAccountsByOwner",
-            params: {
-              owner: programId.toBase58(),
-              // Pool is first 32 bytes of data (Helius provides discriminator separately)
-              filters: poolPda ? [
-                { memcmp: { offset: 0, bytes: poolPda.toBase58() } }
-              ] : void 0
-            }
-          })
-        });
+        const response = await fetchWithRetry(
+          this["rpcUrl"],
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "getCompressedAccountsByOwner",
+              params: {
+                owner: programId.toBase58(),
+                // Pool is first 32 bytes of data (Helius provides discriminator separately)
+                filters: poolPda ? [
+                  { memcmp: { offset: 0, bytes: poolPda.toBase58() } }
+                ] : void 0
+              }
+            })
+          },
+          this.retryConfig,
+          "getCompressedAccountsByOwner"
+        );
         const result = await response.json();
         if (result.error) {
           throw new Error(`Helius RPC error: ${result.error.message}`);
@@ -1409,16 +1649,21 @@ var init_light = __esm({
         const items = result.result?.value?.items ?? result.result?.items ?? [];
         console.log(`[getCommitmentAccounts] Helius returned ${items.length} accounts`);
         if (poolPda && items.length === 0) {
-          const debugResponse = await fetch(this["rpcUrl"], {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              id: 1,
-              method: "getCompressedAccountsByOwner",
-              params: { owner: programId.toBase58() }
-            })
-          });
+          const debugResponse = await fetchWithRetry(
+            this["rpcUrl"],
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "getCompressedAccountsByOwner",
+                params: { owner: programId.toBase58() }
+              })
+            },
+            this.retryConfig,
+            "getCompressedAccountsByOwner (debug)"
+          );
           const debugResult = await debugResponse.json();
           const totalItems = debugResult.result?.value?.items ?? debugResult.result?.items ?? [];
           console.log(`[getCommitmentAccounts] DEBUG: Total accounts without filter: ${totalItems.length}`);
@@ -3481,6 +3726,7 @@ __export(index_exports, {
   serializeGroth16Proof: () => serializeGroth16Proof,
   serializeLpNote: () => serializeLpNote,
   serializePositionNote: () => serializePositionNote,
+  sleep: () => sleep,
   storeCommitments: () => storeCommitments,
   tryDecryptAnyNote: () => tryDecryptAnyNote,
   tryDecryptLpNote: () => tryDecryptLpNote,
@@ -3495,6 +3741,7 @@ __export(index_exports, {
   verifyInvariant: () => verifyInvariant,
   verifyLpCommitment: () => verifyLpCommitment,
   verifyPositionCommitment: () => verifyPositionCommitment,
+  withRetry: () => withRetry,
   wouldExceedUtilization: () => wouldExceedUtilization
 });
 module.exports = __toCommonJS(index_exports);
@@ -30688,6 +30935,7 @@ var VotingClient = class {
   serializeGroth16Proof,
   serializeLpNote,
   serializePositionNote,
+  sleep,
   storeCommitments,
   tryDecryptAnyNote,
   tryDecryptLpNote,
@@ -30702,6 +30950,7 @@ var VotingClient = class {
   verifyInvariant,
   verifyLpCommitment,
   verifyPositionCommitment,
+  withRetry,
   wouldExceedUtilization,
   ...require("@cloakcraft/types")
 });

@@ -979,3 +979,121 @@ export function usePerpsPositions(positionPool: PublicKey | null) {
     refresh,
   };
 }
+
+// =============================================================================
+// Oracle Price Hooks
+// =============================================================================
+
+/**
+ * Hook for fetching Pyth oracle price
+ *
+ * @param symbol - Token symbol (e.g., 'SOL', 'BTC', 'ETH')
+ * @param refreshInterval - Auto-refresh interval in ms (default: 10000)
+ */
+export function usePythPrice(symbol: string | null, refreshInterval: number = 10000) {
+  const [price, setPrice] = useState<bigint | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!symbol) {
+      setPrice(null);
+      return;
+    }
+
+    const feedId = getFeedIdBySymbol(symbol);
+    if (!feedId) {
+      setError(`Unknown symbol: ${symbol}`);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // Fetch price with 9 decimals (standard for Solana)
+      const priceUsd = await fetchPythPriceUsd(feedId, 9);
+      setPrice(priceUsd);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch price');
+      setPrice(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [symbol]);
+
+  useEffect(() => {
+    refresh();
+
+    // Auto-refresh at specified interval
+    if (refreshInterval > 0) {
+      const interval = setInterval(refresh, refreshInterval);
+      return () => clearInterval(interval);
+    }
+  }, [refresh, refreshInterval]);
+
+  return {
+    price,
+    isLoading,
+    error,
+    refresh,
+  };
+}
+
+/**
+ * Hook for fetching multiple Pyth oracle prices
+ *
+ * @param symbols - Array of token symbols
+ * @param refreshInterval - Auto-refresh interval in ms (default: 10000)
+ */
+export function usePythPrices(symbols: string[], refreshInterval: number = 10000) {
+  const [prices, setPrices] = useState<Map<string, bigint>>(new Map());
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!symbols.length) {
+      setPrices(new Map());
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const priceMap = new Map<string, bigint>();
+
+      await Promise.all(
+        symbols.map(async (symbol) => {
+          const feedId = getFeedIdBySymbol(symbol);
+          if (feedId) {
+            const priceUsd = await fetchPythPriceUsd(feedId, 9);
+            priceMap.set(symbol, priceUsd);
+          }
+        })
+      );
+
+      setPrices(priceMap);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch prices');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [symbols]);
+
+  useEffect(() => {
+    refresh();
+
+    if (refreshInterval > 0) {
+      const interval = setInterval(refresh, refreshInterval);
+      return () => clearInterval(interval);
+    }
+  }, [refresh, refreshInterval]);
+
+  return {
+    prices,
+    isLoading,
+    error,
+    refresh,
+  };
+}

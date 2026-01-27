@@ -1,5 +1,7 @@
 /**
  * Debug scanner - understand why notes aren't being found
+ *
+ * Uses SDK's retry logic with exponential backoff for rate limits.
  */
 
 import 'dotenv/config';
@@ -8,16 +10,44 @@ import * as path from 'path';
 import { PublicKey } from '@solana/web3.js';
 
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY!;
+if (!HELIUS_API_KEY) {
+  console.error('ERROR: HELIUS_API_KEY environment variable not set');
+  console.error('Usage: HELIUS_API_KEY=xxx pnpm tsx scripts/debug-scanner.ts');
+  process.exit(1);
+}
 const RPC_URL = `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
 const PROGRAM_ID = new PublicKey('fBh7FvBZpex64Qp7i45yuyxh7sH8YstYyxGLmToLRTP');
 
 // Import SDK internals
 import { bytesToField } from '../packages/sdk/src/crypto/poseidon';
 import { tryDecryptNote } from '../packages/sdk/src/crypto/encryption';
-import { LightCommitmentClient } from '../packages/sdk/src/light';
+import { LightCommitmentClient, sleep } from '../packages/sdk/src/light';
+
+/**
+ * Fetch with retry logic for rate limits (429 errors)
+ */
+async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 5): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(url, options);
+
+    if (response.status === 429) {
+      if (attempt >= maxRetries) {
+        throw new Error(`Rate limit exceeded after ${maxRetries + 1} attempts`);
+      }
+      const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500;
+      console.log(`[Retry] Rate limited (429), attempt ${attempt + 1}/${maxRetries + 1}. Waiting ${Math.round(delay)}ms...`);
+      await sleep(delay);
+      continue;
+    }
+
+    return response;
+  }
+  throw new Error('Unexpected retry loop exit');
+}
 
 async function main() {
   console.log('Debug Scanner\n');
+  console.log('Using retry logic with exponential backoff for rate limits.\n');
 
   // Load wallet - use same file as e2e-amm-swap-test
   const walletPath = path.join(__dirname, '.test-privacy-wallet.json');
@@ -29,9 +59,9 @@ async function main() {
   const viewingKey = bytesToField(new Uint8Array(savedKey));
   console.log(`Viewing key: ${viewingKey.toString(16).slice(0, 16)}...`);
 
-  // Query accounts directly
+  // Query accounts directly with retry
   console.log('\nQuerying compressed accounts...');
-  const response = await fetch(RPC_URL, {
+  const response = await fetchWithRetry(RPC_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

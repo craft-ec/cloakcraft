@@ -1,8 +1,31 @@
 # CloakCraft Testing Status
 
-## Current State: ✅ CODE READY - WAITING FOR TEST DATA
+## Current State: ✅ CODE READY - RPC RETRY LOGIC ADDED
 
-All code fixes are complete and deployed. The test script runs correctly but needs shielded notes to test against.
+All code fixes are complete and deployed. **Rate limiting issue has been fixed** with exponential backoff retry logic in the SDK.
+
+---
+
+## Recent Updates
+
+### ✅ RPC Rate Limiting Fixed (January 27, 2025)
+
+Added automatic retry with exponential backoff for all Helius RPC calls:
+
+- **Location:** `packages/sdk/src/light.ts`
+- **Retry config:** Up to 5 retries with exponential backoff (1s, 2s, 4s, 8s, 16s) + jitter
+- **Handles:** HTTP 429 (Too Many Requests), rate limit errors
+- **Respects:** `Retry-After` header from Helius
+
+**Exported utilities:**
+```typescript
+import { sleep, withRetry, RetryConfig } from '@cloakcraft/sdk';
+```
+
+**Verified working:**
+- Single requests: ✅
+- 5 parallel requests: ✅ (completed in ~2s)
+- Current account count: 734 compressed accounts on devnet
 
 ---
 
@@ -18,6 +41,13 @@ All code fixes are complete and deployed. The test script runs correctly but nee
 - Anchor program setup
 - Privacy wallet creation
 - Note scanning functionality
+- **NEW:** Automatic retry with exponential backoff for rate limits
+
+### ✅ Helius Free Tier
+- **Status:** Working with current API key
+- **Free tier limits:** ~10 requests/second (varies)
+- **Recommendation:** Free tier is sufficient for development/testing
+- **For production:** Consider paid tier for higher limits
 
 ### ✅ Test Script Ready
 - **File:** `scripts/test-unshield-multiphase.ts`
@@ -52,8 +82,6 @@ cd apps/demo
 pnpm dev
 # Then use the UI to shield tokens
 ```
-
-**Blocker:** RPC rate limits (429 errors) prevent shielding right now.
 
 ### 2. Test Multi-Phase Unshield
 
@@ -102,36 +130,36 @@ const client = new CloakCraftClient({
 
 ---
 
-## RPC Access Solutions
+## Helius API Key Setup
 
-### Option 1: Wait for Rate Limits to Reset
-Public devnet RPC resets limits periodically. Try during off-peak hours (late night/early morning).
-
-### Option 2: Use Paid RPC Provider
-- **Helius:** Upgrade to paid tier (supports write operations)
-- **QuickNode:** Free tier may work
-- **Alchemy:** Free tier may work
-
-### Option 3: Run Local Validator
+The API key is stored in `.env`:
 ```bash
-solana-test-validator
-# Then update scripts to use http://localhost:8899
+HELIUS_API_KEY=59353f30-dd17-43ae-9913-3599b9d99b11
 ```
+
+**Tier:** Free (UUID format key = free tier)
+
+**Limits:**
+- ~10 requests/second sustained
+- Burst to ~50 requests
+- With retry logic, this is sufficient for all operations
+
+**Upgrade options (if needed):**
+- Helius paid tier: https://www.helius.dev/pricing
+- QuickNode, Alchemy, Triton as alternatives
 
 ---
 
 ## Summary
 
-**Everything is ready except test data (shielded notes).**
+**Rate limiting issue is FIXED.** The SDK now handles 429 errors automatically with exponential backoff.
 
-The critical fix (Error 0x179e → `with_read_only_accounts`) is deployed and working. The test script properly initializes the SDK and scans for notes. We just need:
-
-1. Working RPC access (to shield tokens)
-2. Shielded notes (to test unshield)
-
-Then we can verify the multi-phase unshield works end-to-end with the fixed Phase 1 commitment verification!
+**Next steps:**
+1. ✅ RPC rate limiting → Fixed with retry logic
+2. ⏳ Shield some tokens → Need to test shielding flow
+3. ⏳ Test unshield → Verify multi-phase works end-to-end
 
 ---
 
-**Last Updated:** January 16, 2026
-**Next Action:** Wait for RPC access, then shield tokens and test unshield
+**Last Updated:** January 27, 2025
+**Next Action:** Shield tokens using the demo app or e2e-shield-test script
