@@ -243,13 +243,15 @@ async function main() {
     "vote_snapshot",
     "change_vote_snapshot",
     "vote_spend",
-    "voting_close_position",
+    "change_vote_spend",
+    "close_position",
     "voting_claim",
   ];
 
   for (const vkId of vkSeeds) {
-    const vkIdBuf = Buffer.alloc(32);
-    vkIdBuf.write(vkId);
+    // Use underscore padding to match registration script
+    const vkIdPadded = vkId.padEnd(32, '_');
+    const vkIdBuf = Buffer.from(vkIdPadded);
 
     const [vkPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("vk"), vkIdBuf],
