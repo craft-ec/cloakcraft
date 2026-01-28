@@ -70,11 +70,14 @@ function CloakCraftProvider({
       });
     }
   }, [autoInitialize, isInitialized, isInitializing]);
+  const restorationAttemptedRef = useRef(null);
   useEffect(() => {
-    if (isInitialized && !wallet && solanaWalletPubkey) {
+    if (isInitialized && solanaWalletPubkey && restorationAttemptedRef.current !== solanaWalletPubkey) {
+      restorationAttemptedRef.current = solanaWalletPubkey;
       try {
         const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) {
+        console.log("[CloakCraft] Checking localStorage for:", STORAGE_KEY, "| Found:", !!stored);
+        if (stored && !wallet) {
           console.log("[CloakCraft] Restoring stealth wallet from localStorage...");
           const spendingKey = new Uint8Array(JSON.parse(stored));
           client.loadWallet(spendingKey).then((restoredWallet) => {
@@ -84,8 +87,11 @@ function CloakCraftProvider({
             console.error("[CloakCraft] Failed to restore wallet:", err);
             localStorage.removeItem(STORAGE_KEY);
           });
+        } else if (!stored) {
+          console.log("[CloakCraft] No stored stealth wallet found for this Solana wallet");
         }
-      } catch {
+      } catch (e) {
+        console.error("[CloakCraft] localStorage error:", e);
       }
     }
   }, [isInitialized, wallet, client, solanaWalletPubkey, STORAGE_KEY]);
@@ -118,8 +124,10 @@ function CloakCraftProvider({
         const newWallet = await client.loadWallet(spendingKey);
         setWallet(newWallet);
         try {
+          console.log("[CloakCraft] Persisting stealth wallet to:", STORAGE_KEY);
           localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(spendingKey)));
-        } catch {
+        } catch (e) {
+          console.error("[CloakCraft] Failed to persist wallet:", e);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to connect wallet";
@@ -127,7 +135,7 @@ function CloakCraftProvider({
         throw err;
       }
     },
-    [client]
+    [client, STORAGE_KEY]
   );
   const disconnect = useCallback(() => {
     setWallet(null);
@@ -217,9 +225,18 @@ function CloakCraftProvider({
       setIsInitializing(false);
     }
   }, [client]);
+  const solanaPublicKey = useMemo(() => {
+    if (!solanaWalletPubkey) return null;
+    try {
+      return new PublicKey(solanaWalletPubkey);
+    } catch {
+      return null;
+    }
+  }, [solanaWalletPubkey]);
   const value = {
     client,
     wallet,
+    solanaPublicKey,
     isConnected: wallet !== null,
     isInitialized,
     isInitializing,
@@ -3507,6 +3524,148 @@ function useLiquidate() {
   }, [client, wallet]);
   return { liquidate, isLiquidating };
 }
+function useInitializePerpsPool() {
+  const { client, solanaPublicKey } = useCloakCraft();
+  const [isInitializing, setIsInitializing] = useState19(false);
+  const [error, setError] = useState19(null);
+  const initialize = useCallback19(async (options) => {
+    const program = client?.getProgram();
+    if (!program || !solanaPublicKey) {
+      setError("Program or Solana wallet not available");
+      return null;
+    }
+    setIsInitializing(true);
+    setError(null);
+    try {
+      const { buildInitializePerpsPoolWithProgram } = await import("@cloakcraft/sdk");
+      const { tx } = await buildInitializePerpsPoolWithProgram(program, {
+        poolId: options.poolId,
+        authority: solanaPublicKey,
+        payer: solanaPublicKey,
+        maxLeverage: options.maxLeverage,
+        positionFeeBps: options.positionFeeBps,
+        maxUtilizationBps: options.maxUtilizationBps,
+        liquidationThresholdBps: options.liquidationThresholdBps,
+        liquidationPenaltyBps: options.liquidationPenaltyBps,
+        baseBorrowRateBps: options.baseBorrowRateBps
+      });
+      const signature = await tx.rpc();
+      return { signature, slot: 0 };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to initialize pool";
+      setError(message);
+      throw err;
+    } finally {
+      setIsInitializing(false);
+    }
+  }, [client, solanaPublicKey]);
+  return { initialize, isInitializing, error };
+}
+function useAddPerpsToken() {
+  const { client, solanaPublicKey } = useCloakCraft();
+  const [isAdding, setIsAdding] = useState19(false);
+  const [error, setError] = useState19(null);
+  const addToken = useCallback19(async (options) => {
+    const program = client?.getProgram();
+    if (!program || !solanaPublicKey) {
+      setError("Program or Solana wallet not available");
+      return null;
+    }
+    setIsAdding(true);
+    setError(null);
+    try {
+      const { buildAddTokenToPoolWithProgram } = await import("@cloakcraft/sdk");
+      const { tx } = await buildAddTokenToPoolWithProgram(program, {
+        perpsPool: options.perpsPool,
+        tokenMint: options.tokenMint,
+        pythFeedId: options.pythFeedId,
+        authority: solanaPublicKey,
+        payer: solanaPublicKey
+      });
+      const signature = await tx.rpc();
+      return { signature, slot: 0 };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to add token";
+      setError(message);
+      throw err;
+    } finally {
+      setIsAdding(false);
+    }
+  }, [client, solanaPublicKey]);
+  return { addToken, isAdding, error };
+}
+function useAddPerpsMarket() {
+  const { client, solanaPublicKey } = useCloakCraft();
+  const [isAdding, setIsAdding] = useState19(false);
+  const [error, setError] = useState19(null);
+  const addMarket = useCallback19(async (options) => {
+    const program = client?.getProgram();
+    if (!program || !solanaPublicKey) {
+      setError("Program or Solana wallet not available");
+      return null;
+    }
+    setIsAdding(true);
+    setError(null);
+    try {
+      const { buildAddMarketWithProgram } = await import("@cloakcraft/sdk");
+      const { tx } = await buildAddMarketWithProgram(program, {
+        perpsPool: options.perpsPool,
+        marketId: options.marketId,
+        baseTokenIndex: options.baseTokenIndex,
+        quoteTokenIndex: options.quoteTokenIndex,
+        maxPositionSize: options.maxPositionSize,
+        authority: solanaPublicKey,
+        payer: solanaPublicKey
+      });
+      const signature = await tx.rpc();
+      return { signature, slot: 0 };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to add market";
+      setError(message);
+      throw err;
+    } finally {
+      setIsAdding(false);
+    }
+  }, [client, solanaPublicKey]);
+  return { addMarket, isAdding, error };
+}
+function useUpdatePerpsPoolConfig() {
+  const { client, solanaPublicKey } = useCloakCraft();
+  const [isUpdating, setIsUpdating] = useState19(false);
+  const [error, setError] = useState19(null);
+  const updateConfig = useCallback19(async (options) => {
+    const program = client?.getProgram();
+    if (!program || !solanaPublicKey) {
+      setError("Program or Solana wallet not available");
+      return null;
+    }
+    setIsUpdating(true);
+    setError(null);
+    try {
+      const { buildUpdatePoolConfigWithProgram } = await import("@cloakcraft/sdk");
+      const { tx } = await buildUpdatePoolConfigWithProgram(program, {
+        perpsPool: options.perpsPool,
+        authority: solanaPublicKey,
+        maxLeverage: options.maxLeverage,
+        positionFeeBps: options.positionFeeBps,
+        maxUtilizationBps: options.maxUtilizationBps,
+        liquidationThresholdBps: options.liquidationThresholdBps,
+        liquidationPenaltyBps: options.liquidationPenaltyBps,
+        baseBorrowRateBps: options.baseBorrowRateBps,
+        isActive: options.isActive
+      });
+      const signature = await tx.rpc();
+      return { signature, slot: 0 };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update config";
+      setError(message);
+      throw err;
+    } finally {
+      setIsUpdating(false);
+    }
+  }, [client, solanaPublicKey]);
+  return { updateConfig, isUpdating, error };
+}
 
 // src/useVoting.ts
 import { useState as useState20, useCallback as useCallback20, useEffect as useEffect14, useMemo as useMemo14 } from "react";
@@ -4218,6 +4377,8 @@ export {
   formatTvl2 as formatTvl,
   useActiveBallots,
   useAddLiquidity,
+  useAddPerpsMarket,
+  useAddPerpsToken,
   useAllBalances,
   useAmmPools,
   useAutoConsolidation,
@@ -4238,6 +4399,7 @@ export {
   useFragmentationScore,
   useImpermanentLoss,
   useInitializeAmmPool,
+  useInitializePerpsPool,
   useInitializePool,
   useIsBallotAuthority,
   useIsConsolidationRecommended,
@@ -4289,6 +4451,7 @@ export {
   useTransactionHistory,
   useTransfer,
   useUnshield,
+  useUpdatePerpsPoolConfig,
   useUserPosition,
   useVoteSnapshot,
   useVoteSpend,

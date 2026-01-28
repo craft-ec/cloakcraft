@@ -10,6 +10,8 @@ import { SyncStatus, DecryptedNote, TransactionResult, StealthAddress, PoolState
 interface CloakCraftContextValue {
     client: CloakCraftClient | null;
     wallet: Wallet | null;
+    /** Solana wallet public key (for admin/signing operations) */
+    solanaPublicKey: PublicKey | null;
     isConnected: boolean;
     isInitialized: boolean;
     isInitializing: boolean;
@@ -1197,6 +1199,65 @@ declare function useLiquidate(): {
     } | null>;
     isLiquidating: boolean;
 };
+/**
+ * Hook for initializing a new perps pool (admin only)
+ */
+declare function useInitializePerpsPool(): {
+    initialize: (options: {
+        poolId: PublicKey;
+        maxLeverage?: number;
+        positionFeeBps?: number;
+        maxUtilizationBps?: number;
+        liquidationThresholdBps?: number;
+        liquidationPenaltyBps?: number;
+        baseBorrowRateBps?: number;
+    }) => Promise<TransactionResult | null>;
+    isInitializing: boolean;
+    error: string | null;
+};
+/**
+ * Hook for adding a token to a perps pool (admin only)
+ */
+declare function useAddPerpsToken(): {
+    addToken: (options: {
+        perpsPool: PublicKey;
+        tokenMint: PublicKey;
+        pythFeedId: Uint8Array;
+    }) => Promise<TransactionResult | null>;
+    isAdding: boolean;
+    error: string | null;
+};
+/**
+ * Hook for adding a market to a perps pool (admin only)
+ */
+declare function useAddPerpsMarket(): {
+    addMarket: (options: {
+        perpsPool: PublicKey;
+        marketId: Uint8Array;
+        baseTokenIndex: number;
+        quoteTokenIndex: number;
+        maxPositionSize: bigint;
+    }) => Promise<TransactionResult | null>;
+    isAdding: boolean;
+    error: string | null;
+};
+/**
+ * Hook for updating perps pool config (admin only)
+ */
+declare function useUpdatePerpsPoolConfig(): {
+    updateConfig: (options: {
+        perpsPool: PublicKey;
+        maxLeverage?: number;
+        positionFeeBps?: number;
+        maxUtilizationBps?: number;
+        liquidationThresholdBps?: number;
+        liquidationPenaltyBps?: number;
+        baseBorrowRateBps?: number;
+        isActive?: boolean;
+    }) => Promise<TransactionResult | null>;
+    isUpdating: boolean;
+    error: string | null;
+};
 
 /**
  * Voting hooks
@@ -1505,4 +1566,4 @@ declare function useDecryptTally(): {
  */
 declare function useIsBallotAuthority(ballot: Ballot | null, walletPubkey: PublicKey | null): boolean;
 
-export { type AddLiquidityProgressStage, type BallotWithAddress, type ChangeVoteOptions, type ClaimOptions, type ClaimResult, CloakCraftProvider, type ClosePositionOptions, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type LiquidatablePosition, type PerpsProgressStage, type PositionMetaStatus, type ProtocolFeeConfig, type RemoveLiquidityProgressStage, type ScannedPerpsPosition, type SpendResult, type SwapProgressStage, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, type VoteResult, type VoteSnapshotOptions, type VoteSpendOptions, type VotingProgressStage, WALLET_DERIVATION_MESSAGE, useActiveBallots, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useBallot, useBallotTally, useBallotTimeStatus, useBallots, useCanClaim, useChangeVote, useClaim, useCloakCraft, useClosePosition, useCloseVotePosition, useConsolidation, useDecryptTally, useFinalizeBallot, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsBallotAuthority, useIsConsolidationRecommended, useIsFreeOperation, useKeeperMonitor, useLiquidate, useLiquidationPrice, useLpMintPreview, useLpValue, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOpenPosition, useOrders, usePayoutPreview, usePerpsAddLiquidity, usePerpsMarkets, usePerpsPool, usePerpsPools, usePerpsPositions, usePerpsRemoveLiquidity, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePositionPnL, usePositionValidation, usePrivateBalance, useProtocolFees, usePublicBalance, usePythPrice, usePythPrices, useRecentTransactions, useRemoveLiquidity, useResolveBallot, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTokenUtilization, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useVoteSnapshot, useVoteSpend, useVoteValidation, useWallet, useWithdrawPreview };
+export { type AddLiquidityProgressStage, type BallotWithAddress, type ChangeVoteOptions, type ClaimOptions, type ClaimResult, CloakCraftProvider, type ClosePositionOptions, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type LiquidatablePosition, type PerpsProgressStage, type PositionMetaStatus, type ProtocolFeeConfig, type RemoveLiquidityProgressStage, type ScannedPerpsPosition, type SpendResult, type SwapProgressStage, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, type VoteResult, type VoteSnapshotOptions, type VoteSpendOptions, type VotingProgressStage, WALLET_DERIVATION_MESSAGE, useActiveBallots, useAddLiquidity, useAddPerpsMarket, useAddPerpsToken, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useBallot, useBallotTally, useBallotTimeStatus, useBallots, useCanClaim, useChangeVote, useClaim, useCloakCraft, useClosePosition, useCloseVotePosition, useConsolidation, useDecryptTally, useFinalizeBallot, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePerpsPool, useInitializePool, useIsBallotAuthority, useIsConsolidationRecommended, useIsFreeOperation, useKeeperMonitor, useLiquidate, useLiquidationPrice, useLpMintPreview, useLpValue, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOpenPosition, useOrders, usePayoutPreview, usePerpsAddLiquidity, usePerpsMarkets, usePerpsPool, usePerpsPools, usePerpsPositions, usePerpsRemoveLiquidity, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePositionPnL, usePositionValidation, usePrivateBalance, useProtocolFees, usePublicBalance, usePythPrice, usePythPrices, useRecentTransactions, useRemoveLiquidity, useResolveBallot, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTokenUtilization, useTransactionHistory, useTransfer, useUnshield, useUpdatePerpsPoolConfig, useUserPosition, useVoteSnapshot, useVoteSpend, useVoteValidation, useWallet, useWithdrawPreview };

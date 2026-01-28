@@ -99,6 +99,11 @@ export {
   // Keeper
   useKeeperMonitor,
   useLiquidate,
+  // Admin
+  useInitializePerpsPool,
+  useAddPerpsToken,
+  useAddPerpsMarket,
+  useUpdatePerpsPoolConfig,
 } from './usePerps';
 export type { PerpsProgressStage, ScannedPerpsPosition, LiquidatablePosition, PositionMetaStatus } from './usePerps';
 

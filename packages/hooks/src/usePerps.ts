@@ -1401,3 +1401,216 @@ export function useLiquidate() {
 
   return { liquidate, isLiquidating };
 }
+
+// =============================================================================
+// Admin Hooks
+// =============================================================================
+
+/**
+ * Hook for initializing a new perps pool (admin only)
+ */
+export function useInitializePerpsPool() {
+  const { client, solanaPublicKey } = useCloakCraft();
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const initialize = useCallback(async (options: {
+    poolId: PublicKey;
+    maxLeverage?: number;
+    positionFeeBps?: number;
+    maxUtilizationBps?: number;
+    liquidationThresholdBps?: number;
+    liquidationPenaltyBps?: number;
+    baseBorrowRateBps?: number;
+  }): Promise<TransactionResult | null> => {
+    const program = client?.getProgram();
+    if (!program || !solanaPublicKey) {
+      setError('Program or Solana wallet not available');
+      return null;
+    }
+
+    setIsInitializing(true);
+    setError(null);
+
+    try {
+      const { buildInitializePerpsPoolWithProgram } = await import('@cloakcraft/sdk');
+      
+      const { tx } = await buildInitializePerpsPoolWithProgram(program, {
+        poolId: options.poolId,
+        authority: solanaPublicKey,
+        payer: solanaPublicKey,
+        maxLeverage: options.maxLeverage,
+        positionFeeBps: options.positionFeeBps,
+        maxUtilizationBps: options.maxUtilizationBps,
+        liquidationThresholdBps: options.liquidationThresholdBps,
+        liquidationPenaltyBps: options.liquidationPenaltyBps,
+        baseBorrowRateBps: options.baseBorrowRateBps,
+      });
+
+      const signature = await tx.rpc();
+      return { signature, slot: 0 };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to initialize pool';
+      setError(message);
+      throw err;
+    } finally {
+      setIsInitializing(false);
+    }
+  }, [client, solanaPublicKey]);
+
+  return { initialize, isInitializing, error };
+}
+
+/**
+ * Hook for adding a token to a perps pool (admin only)
+ */
+export function useAddPerpsToken() {
+  const { client, solanaPublicKey } = useCloakCraft();
+  const [isAdding, setIsAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const addToken = useCallback(async (options: {
+    perpsPool: PublicKey;
+    tokenMint: PublicKey;
+    pythFeedId: Uint8Array;
+  }): Promise<TransactionResult | null> => {
+    const program = client?.getProgram();
+    if (!program || !solanaPublicKey) {
+      setError('Program or Solana wallet not available');
+      return null;
+    }
+
+    setIsAdding(true);
+    setError(null);
+
+    try {
+      const { buildAddTokenToPoolWithProgram } = await import('@cloakcraft/sdk');
+      
+      const { tx } = await buildAddTokenToPoolWithProgram(program, {
+        perpsPool: options.perpsPool,
+        tokenMint: options.tokenMint,
+        pythFeedId: options.pythFeedId,
+        authority: solanaPublicKey,
+        payer: solanaPublicKey,
+      });
+
+      const signature = await tx.rpc();
+      return { signature, slot: 0 };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to add token';
+      setError(message);
+      throw err;
+    } finally {
+      setIsAdding(false);
+    }
+  }, [client, solanaPublicKey]);
+
+  return { addToken, isAdding, error };
+}
+
+/**
+ * Hook for adding a market to a perps pool (admin only)
+ */
+export function useAddPerpsMarket() {
+  const { client, solanaPublicKey } = useCloakCraft();
+  const [isAdding, setIsAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const addMarket = useCallback(async (options: {
+    perpsPool: PublicKey;
+    marketId: Uint8Array;
+    baseTokenIndex: number;
+    quoteTokenIndex: number;
+    maxPositionSize: bigint;
+  }): Promise<TransactionResult | null> => {
+    const program = client?.getProgram();
+    if (!program || !solanaPublicKey) {
+      setError('Program or Solana wallet not available');
+      return null;
+    }
+
+    setIsAdding(true);
+    setError(null);
+
+    try {
+      const { buildAddMarketWithProgram } = await import('@cloakcraft/sdk');
+      
+      const { tx } = await buildAddMarketWithProgram(program, {
+        perpsPool: options.perpsPool,
+        marketId: options.marketId,
+        baseTokenIndex: options.baseTokenIndex,
+        quoteTokenIndex: options.quoteTokenIndex,
+        maxPositionSize: options.maxPositionSize,
+        authority: solanaPublicKey,
+        payer: solanaPublicKey,
+      });
+
+      const signature = await tx.rpc();
+      return { signature, slot: 0 };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to add market';
+      setError(message);
+      throw err;
+    } finally {
+      setIsAdding(false);
+    }
+  }, [client, solanaPublicKey]);
+
+  return { addMarket, isAdding, error };
+}
+
+/**
+ * Hook for updating perps pool config (admin only)
+ */
+export function useUpdatePerpsPoolConfig() {
+  const { client, solanaPublicKey } = useCloakCraft();
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const updateConfig = useCallback(async (options: {
+    perpsPool: PublicKey;
+    maxLeverage?: number;
+    positionFeeBps?: number;
+    maxUtilizationBps?: number;
+    liquidationThresholdBps?: number;
+    liquidationPenaltyBps?: number;
+    baseBorrowRateBps?: number;
+    isActive?: boolean;
+  }): Promise<TransactionResult | null> => {
+    const program = client?.getProgram();
+    if (!program || !solanaPublicKey) {
+      setError('Program or Solana wallet not available');
+      return null;
+    }
+
+    setIsUpdating(true);
+    setError(null);
+
+    try {
+      const { buildUpdatePoolConfigWithProgram } = await import('@cloakcraft/sdk');
+      
+      const { tx } = await buildUpdatePoolConfigWithProgram(program, {
+        perpsPool: options.perpsPool,
+        authority: solanaPublicKey,
+        maxLeverage: options.maxLeverage,
+        positionFeeBps: options.positionFeeBps,
+        maxUtilizationBps: options.maxUtilizationBps,
+        liquidationThresholdBps: options.liquidationThresholdBps,
+        liquidationPenaltyBps: options.liquidationPenaltyBps,
+        baseBorrowRateBps: options.baseBorrowRateBps,
+        isActive: options.isActive,
+      });
+
+      const signature = await tx.rpc();
+      return { signature, slot: 0 };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update config';
+      setError(message);
+      throw err;
+    } finally {
+      setIsUpdating(false);
+    }
+  }, [client, solanaPublicKey]);
+
+  return { updateConfig, isUpdating, error };
+}

@@ -10,6 +10,8 @@ import type { DecryptedNote, SyncStatus } from '@cloakcraft/types';
 interface CloakCraftContextValue {
   client: CloakCraftClient | null;
   wallet: Wallet | null;
+  /** Solana wallet public key (for admin/signing operations) */
+  solanaPublicKey: PublicKey | null;
   isConnected: boolean;
   isInitialized: boolean;
   isInitializing: boolean;
@@ -141,12 +143,20 @@ export function CloakCraftProvider({
     }
   }, [autoInitialize, isInitialized, isInitializing]);
 
+  // Track restoration attempts to prevent double-restore
+  const restorationAttemptedRef = useRef<string | null>(null);
+
   // Restore wallet from localStorage on init (only when solanaWalletPubkey is known)
   useEffect(() => {
-    if (isInitialized && !wallet && solanaWalletPubkey) {
+    // Only attempt restoration once per pubkey
+    if (isInitialized && solanaWalletPubkey && restorationAttemptedRef.current !== solanaWalletPubkey) {
+      restorationAttemptedRef.current = solanaWalletPubkey;
+      
       try {
         const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) {
+        console.log('[CloakCraft] Checking localStorage for:', STORAGE_KEY, '| Found:', !!stored);
+        
+        if (stored && !wallet) {
           console.log('[CloakCraft] Restoring stealth wallet from localStorage...');
           const spendingKey = new Uint8Array(JSON.parse(stored));
           client.loadWallet(spendingKey).then((restoredWallet) => {
@@ -157,9 +167,11 @@ export function CloakCraftProvider({
             // Invalid stored key, clear it
             localStorage.removeItem(STORAGE_KEY);
           });
+        } else if (!stored) {
+          console.log('[CloakCraft] No stored stealth wallet found for this Solana wallet');
         }
-      } catch {
-        // Ignore localStorage errors
+      } catch (e) {
+        console.error('[CloakCraft] localStorage error:', e);
       }
     }
   }, [isInitialized, wallet, client, solanaWalletPubkey, STORAGE_KEY]);
@@ -202,11 +214,12 @@ export function CloakCraftProvider({
         setError(null);
         const newWallet = await client.loadWallet(spendingKey);
         setWallet(newWallet);
-        // Persist to localStorage
+        // Persist to localStorage with the current STORAGE_KEY
         try {
+          console.log('[CloakCraft] Persisting stealth wallet to:', STORAGE_KEY);
           localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(spendingKey)));
-        } catch {
-          // Ignore localStorage errors
+        } catch (e) {
+          console.error('[CloakCraft] Failed to persist wallet:', e);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to connect wallet';
@@ -214,7 +227,7 @@ export function CloakCraftProvider({
         throw err;
       }
     },
-    [client]
+    [client, STORAGE_KEY]
   );
 
   const disconnect = useCallback(() => {
@@ -330,9 +343,20 @@ export function CloakCraftProvider({
     }
   }, [client]);
 
+  // Parse Solana wallet pubkey from prop
+  const solanaPublicKey = useMemo(() => {
+    if (!solanaWalletPubkey) return null;
+    try {
+      return new PublicKey(solanaWalletPubkey);
+    } catch {
+      return null;
+    }
+  }, [solanaWalletPubkey]);
+
   const value: CloakCraftContextValue = {
     client,
     wallet,
+    solanaPublicKey,
     isConnected: wallet !== null,
     isInitialized,
     isInitializing,
