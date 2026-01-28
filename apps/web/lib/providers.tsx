@@ -7,6 +7,7 @@ import { WalletError } from '@solana/wallet-adapter-base';
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
 import { useCloakCraft, CloakCraftProvider } from '@cloakcraft/hooks';
 import { DIRECT_RPC_URL, WSS_URL, INDEXER_URL, NETWORK, HELIUS_API_KEY, ADDRESS_LOOKUP_TABLES, PROGRAM_ID } from './constants';
+import { DevWalletAdapter } from './dev-wallet-adapter';
 
 import '@solana/wallet-adapter-react-ui/styles.css';
 

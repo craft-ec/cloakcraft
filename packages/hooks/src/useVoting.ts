@@ -289,19 +289,30 @@ export function useBallot(ballotAddress: PublicKey | string | null) {
 /**
  * Hook for ballot tally information
  */
+// Helper to convert BN or bigint to native bigint
+function toBigInt(value: bigint | { toString(): string } | number | null | undefined): bigint {
+  if (value === null || value === undefined) return 0n;
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number') return BigInt(value);
+  // Handle BN objects from Anchor
+  return BigInt(value.toString());
+}
+
 export function useBallotTally(ballot: Ballot | null) {
   return useMemo(() => {
     if (!ballot) {
       return null;
     }
 
-    const totalVotes = Number(ballot.voteCount);
-    const totalWeight = ballot.totalWeight;
-    const totalAmount = ballot.totalAmount;
+    const totalVotes = Number(toBigInt(ballot.voteCount));
+    const totalWeight = toBigInt(ballot.totalWeight);
+    const totalAmount = toBigInt(ballot.totalAmount);
+    const quorumThreshold = toBigInt(ballot.quorumThreshold);
 
     // Calculate percentages for each option
-    const optionStats = ballot.optionWeights.map((weight, index) => {
-      const amount = ballot.optionAmounts[index] || 0n;
+    const optionStats = (ballot.optionWeights || []).map((w, index) => {
+      const weight = toBigInt(w);
+      const amount = toBigInt(ballot.optionAmounts?.[index]);
       const percentage = totalWeight > 0n
         ? Number((weight * 10000n) / totalWeight) / 100
         : 0;
@@ -326,9 +337,9 @@ export function useBallotTally(ballot: Ballot | null) {
       totalAmount,
       optionStats,
       leadingOption,
-      hasQuorum: totalWeight >= ballot.quorumThreshold,
-      quorumProgress: ballot.quorumThreshold > 0n
-        ? Number((totalWeight * 10000n) / ballot.quorumThreshold) / 100
+      hasQuorum: totalWeight >= quorumThreshold,
+      quorumProgress: quorumThreshold > 0n
+        ? Number((totalWeight * 10000n) / quorumThreshold) / 100
         : 100,
     };
   }, [ballot]);
@@ -352,9 +363,19 @@ export function useBallotTimeStatus(ballot: Ballot | null) {
       return null;
     }
 
-    const startTime = ballot.startTime;
-    const endTime = ballot.endTime;
-    const claimDeadline = ballot.claimDeadline;
+    // Convert potential BN to number for time fields
+    const toNumber = (val: number | { toNumber?(): number; toString(): string } | null | undefined): number => {
+      if (val === null || val === undefined) return 0;
+      if (typeof val === 'number') return val;
+      if (typeof val === 'object' && 'toNumber' in val && typeof val.toNumber === 'function') {
+        return val.toNumber();
+      }
+      return Number(val.toString());
+    };
+
+    const startTime = toNumber(ballot.startTime);
+    const endTime = toNumber(ballot.endTime);
+    const claimDeadline = toNumber(ballot.claimDeadline);
 
     const hasStarted = now >= startTime;
     const hasEnded = now >= endTime;
@@ -833,28 +854,30 @@ export function useClaim() {
 export function usePayoutPreview(
   ballot: Ballot | null,
   voteChoice: number,
-  weight: bigint
+  weight: bigint | { toString(): string }
 ): { grossPayout: bigint; netPayout: bigint; multiplier: number } | null {
   return useMemo(() => {
     if (!ballot || !ballot.hasOutcome || voteChoice !== ballot.outcome) {
       return null;
     }
 
-    if (ballot.winnerWeight === 0n) {
+    const winnerWeight = toBigInt(ballot.winnerWeight);
+    if (winnerWeight === 0n) {
       return null;
     }
 
     // Calculate share of winning pool
-    const totalPool = ballot.poolBalance;
-    const grossPayout = (weight * totalPool) / ballot.winnerWeight;
+    const totalPool = toBigInt(ballot.poolBalance);
+    const userWeight = toBigInt(weight);
+    const grossPayout = (userWeight * totalPool) / winnerWeight;
 
     // Deduct protocol fee
     const feeAmount = (grossPayout * BigInt(ballot.protocolFeeBps)) / 10000n;
     const netPayout = grossPayout - feeAmount;
 
     // Calculate multiplier (return on investment)
-    const multiplier = weight > 0n
-      ? Number(grossPayout * 1000n / weight) / 1000
+    const multiplier = userWeight > 0n
+      ? Number(grossPayout * 1000n / userWeight) / 1000
       : 0;
 
     return {
@@ -941,4 +964,221 @@ export function useCanClaim(
 
     return { canClaim: true, reason: null };
   }, [ballot, voteChoice]);
+}
+
+// =============================================================================
+// Admin Operations
+// =============================================================================
+
+/**
+ * Hook for resolving a ballot
+ */
+export function useResolveBallot() {
+  const { client } = useCloakCraft();
+  const [isResolving, setIsResolving] = useState(false);
+
+  const resolve = useCallback(async (options: {
+    ballot: BallotWithAddress;
+    outcome?: number; // Required for Authority mode, optional for TallyBased
+    onProgress?: (stage: 'building' | 'approving' | 'confirming') => void;
+  }): Promise<{ signature: string } | null> => {
+    const { ballot, outcome, onProgress } = options;
+    const program = client?.getProgram();
+
+    if (!program) {
+      throw new Error('Program not available');
+    }
+
+    setIsResolving(true);
+    try {
+      onProgress?.('building');
+
+      // Import SDK function
+      const { buildResolveBallotInstruction } = await import('@cloakcraft/sdk');
+      const { Transaction, ComputeBudgetProgram } = await import('@solana/web3.js');
+
+      const payer = (program.provider as any).wallet;
+      
+      // Build instruction
+      const ix = await buildResolveBallotInstruction(
+        program as any,
+        ballot.ballotId,
+        outcome ?? null,
+        payer.publicKey,
+        ballot.resolutionMode === 2 ? payer.publicKey : undefined, // Authority mode needs resolver
+      );
+
+      // Build transaction
+      const tx = new Transaction();
+      tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }));
+      tx.add(ix);
+
+      onProgress?.('approving');
+
+      // Send transaction
+      const connection = (program.provider as any).connection;
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = payer.publicKey;
+
+      const signed = await payer.signTransaction(tx);
+      const signature = await connection.sendRawTransaction(signed.serialize());
+
+      onProgress?.('confirming');
+
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight,
+      });
+
+      return { signature };
+    } finally {
+      setIsResolving(false);
+    }
+  }, [client]);
+
+  return { resolve, isResolving };
+}
+
+/**
+ * Hook for finalizing a ballot
+ */
+export function useFinalizeBallot() {
+  const { client } = useCloakCraft();
+  const [isFinalizing, setIsFinalizing] = useState(false);
+
+  const finalize = useCallback(async (options: {
+    ballot: BallotWithAddress;
+    onProgress?: (stage: 'building' | 'approving' | 'confirming') => void;
+  }): Promise<{ signature: string } | null> => {
+    const { ballot, onProgress } = options;
+    const program = client?.getProgram();
+
+    if (!program) {
+      throw new Error('Program not available');
+    }
+
+    setIsFinalizing(true);
+    try {
+      onProgress?.('building');
+
+      const { buildFinalizeBallotInstruction } = await import('@cloakcraft/sdk');
+      const { Transaction, ComputeBudgetProgram } = await import('@solana/web3.js');
+
+      const payer = (program.provider as any).wallet;
+      
+      const ix = await buildFinalizeBallotInstruction(
+        program as any,
+        ballot.ballotId,
+        ballot.tokenMint,
+        ballot.protocolTreasury,
+        payer.publicKey,
+      );
+
+      const tx = new Transaction();
+      tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }));
+      tx.add(ix);
+
+      onProgress?.('approving');
+
+      const connection = (program.provider as any).connection;
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = payer.publicKey;
+
+      const signed = await payer.signTransaction(tx);
+      const signature = await connection.sendRawTransaction(signed.serialize());
+
+      onProgress?.('confirming');
+
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight,
+      });
+
+      return { signature };
+    } finally {
+      setIsFinalizing(false);
+    }
+  }, [client]);
+
+  return { finalize, isFinalizing };
+}
+
+/**
+ * Hook for decrypting time-locked tally
+ */
+export function useDecryptTally() {
+  const { client } = useCloakCraft();
+  const [isDecrypting, setIsDecrypting] = useState(false);
+
+  const decrypt = useCallback(async (options: {
+    ballot: BallotWithAddress;
+    decryptionKey: Uint8Array;
+    onProgress?: (stage: 'building' | 'approving' | 'confirming') => void;
+  }): Promise<{ signature: string } | null> => {
+    const { ballot, decryptionKey, onProgress } = options;
+    const program = client?.getProgram();
+
+    if (!program) {
+      throw new Error('Program not available');
+    }
+
+    setIsDecrypting(true);
+    try {
+      onProgress?.('building');
+
+      const { buildDecryptTallyInstruction } = await import('@cloakcraft/sdk');
+      const { Transaction, ComputeBudgetProgram } = await import('@solana/web3.js');
+
+      const payer = (program.provider as any).wallet;
+      
+      const ix = await buildDecryptTallyInstruction(
+        program as any,
+        ballot.ballotId,
+        decryptionKey,
+        payer.publicKey,
+      );
+
+      const tx = new Transaction();
+      tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }));
+      tx.add(ix);
+
+      onProgress?.('approving');
+
+      const connection = (program.provider as any).connection;
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = payer.publicKey;
+
+      const signed = await payer.signTransaction(tx);
+      const signature = await connection.sendRawTransaction(signed.serialize());
+
+      onProgress?.('confirming');
+
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight,
+      });
+
+      return { signature };
+    } finally {
+      setIsDecrypting(false);
+    }
+  }, [client]);
+
+  return { decrypt, isDecrypting };
+}
+
+/**
+ * Hook to check if current user is ballot authority
+ */
+export function useIsBallotAuthority(ballot: Ballot | null, walletPubkey: PublicKey | null) {
+  return useMemo(() => {
+    if (!ballot || !walletPubkey) return false;
+    return ballot.authority.equals(walletPubkey);
+  }, [ballot, walletPubkey]);
 }

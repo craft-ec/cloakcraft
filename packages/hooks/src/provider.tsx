@@ -89,15 +89,21 @@ export function CloakCraftProvider({
     ? `cloakcraft_spending_key_${solanaWalletPubkey}`
     : 'cloakcraft_spending_key';
 
-  // Clear stealth wallet when Solana wallet changes
+  // Track previous wallet pubkey to detect actual wallet changes (not just initial connection)
+  const prevWalletPubkeyRef = useRef<string | undefined>(undefined);
+
+  // Clear stealth wallet when Solana wallet CHANGES (not on initial connection)
   useEffect(() => {
     if (solanaWalletPubkey) {
-      // Reset state when Solana wallet changes
-      setWallet(null);
-      setNotes([]);
-      setIsProverReady(false);
-      // Reset auto-sync flag so new wallet can sync
-      hasAutoSyncedRef.current = false;
+      // Only reset if this is an actual wallet change, not initial connection
+      if (prevWalletPubkeyRef.current && prevWalletPubkeyRef.current !== solanaWalletPubkey) {
+        console.log('[CloakCraft] Wallet changed, clearing stealth wallet...');
+        setWallet(null);
+        setNotes([]);
+        setIsProverReady(false);
+        hasAutoSyncedRef.current = false;
+      }
+      prevWalletPubkeyRef.current = solanaWalletPubkey;
     }
   }, [solanaWalletPubkey]);
 
@@ -135,14 +141,19 @@ export function CloakCraftProvider({
     }
   }, [autoInitialize, isInitialized, isInitializing]);
 
-  // Restore wallet from localStorage on init
+  // Restore wallet from localStorage on init (only when solanaWalletPubkey is known)
   useEffect(() => {
-    if (isInitialized && !wallet) {
+    if (isInitialized && !wallet && solanaWalletPubkey) {
       try {
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
+          console.log('[CloakCraft] Restoring stealth wallet from localStorage...');
           const spendingKey = new Uint8Array(JSON.parse(stored));
-          client.loadWallet(spendingKey).then(setWallet).catch(() => {
+          client.loadWallet(spendingKey).then((restoredWallet) => {
+            console.log('[CloakCraft] Stealth wallet restored successfully');
+            setWallet(restoredWallet);
+          }).catch((err) => {
+            console.error('[CloakCraft] Failed to restore wallet:', err);
             // Invalid stored key, clear it
             localStorage.removeItem(STORAGE_KEY);
           });
@@ -151,7 +162,7 @@ export function CloakCraftProvider({
         // Ignore localStorage errors
       }
     }
-  }, [isInitialized, wallet, client]);
+  }, [isInitialized, wallet, client, solanaWalletPubkey, STORAGE_KEY]);
 
   // Auto-sync notes when wallet connects and program is ready
   // Use ref to prevent double-sync (React Strict Mode can cause double effect runs)

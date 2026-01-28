@@ -22,7 +22,8 @@ var index_exports = {};
 __export(index_exports, {
   AggregationStatus: () => AggregationStatus,
   OrderStatus: () => OrderStatus,
-  PoolType: () => PoolType
+  PoolType: () => PoolType,
+  PositionStatus: () => PositionStatus
 });
 module.exports = __toCommonJS(index_exports);
 var PoolType = /* @__PURE__ */ ((PoolType2) => {
@@ -42,9 +43,16 @@ var AggregationStatus = /* @__PURE__ */ ((AggregationStatus2) => {
   AggregationStatus2[AggregationStatus2["Finalized"] = 2] = "Finalized";
   return AggregationStatus2;
 })(AggregationStatus || {});
+var PositionStatus = /* @__PURE__ */ ((PositionStatus2) => {
+  PositionStatus2[PositionStatus2["Active"] = 0] = "Active";
+  PositionStatus2[PositionStatus2["Liquidated"] = 1] = "Liquidated";
+  PositionStatus2[PositionStatus2["Closed"] = 2] = "Closed";
+  return PositionStatus2;
+})(PositionStatus || {});
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   AggregationStatus,
   OrderStatus,
-  PoolType
+  PoolType,
+  PositionStatus
 });

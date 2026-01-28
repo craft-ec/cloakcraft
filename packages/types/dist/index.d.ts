@@ -807,6 +807,44 @@ interface PerpsAddLiquidityClientParams {
     /** Progress callback */
     onProgress?: (stage: PerpsProgressStage) => void;
 }
+/** Position status for lifecycle tracking */
+declare enum PositionStatus {
+    /** Position is active and can be modified/closed by owner */
+    Active = 0,
+    /** Position was liquidated - commitment is now unspendable */
+    Liquidated = 1,
+    /** Position was closed normally by owner */
+    Closed = 2
+}
+/** Public position metadata - stored as compressed account for permissionless liquidation */
+interface PositionMeta {
+    /** Unique position identifier (hash of pool_id, market_id, nullifier_key, randomness) */
+    positionId: Uint8Array;
+    /** Pool this position belongs to */
+    poolId: Uint8Array;
+    /** Market being traded (e.g., SOL-PERP) */
+    marketId: Uint8Array;
+    /** Margin amount locked for this position */
+    marginAmount: bigint;
+    /** Price at which position becomes liquidatable */
+    liquidationPrice: bigint;
+    /** Position direction */
+    isLong: boolean;
+    /** Position size (margin * leverage) */
+    positionSize: bigint;
+    /** Entry price */
+    entryPrice: bigint;
+    /** Pre-committed nullifier hash for liquidation */
+    nullifierHash: Uint8Array;
+    /** Current position status */
+    status: PositionStatus;
+    /** Timestamp when position was opened */
+    createdAt: number;
+    /** Timestamp of last status update */
+    updatedAt: number;
+    /** Owner's stealth address (for notifications) */
+    ownerStealthPubkey: Uint8Array;
+}
 /** Remove perps liquidity client parameters */
 interface PerpsRemoveLiquidityClientParams {
     /** LP token note to burn */
@@ -845,4 +883,4 @@ interface PerpsRemoveLiquidityClientParams {
     onProgress?: (stage: PerpsProgressStage) => void;
 }
 
-export { type AdapterProofInputs, type AdapterSwapParams, type AddLiquidityParams, type AggregationState, AggregationStatus, type AmmPoolState, type AmmSwapParams, type CancelOrderParams, type ClosePerpsPositionParams, type Commitment, type ConsolidationParams, type CreateAggregationParams, type DecryptedLpNote, type DecryptedNote, type DecryptedPositionNote, type DecryptionShare, type ElGamalCiphertext, type EncryptedNote, type EncryptedVote, type FieldElement, type FillOrderParams, type FinalizeVotingParams, type Groth16Proof, type Keypair, type LpNoteData, type MerkleProof, type MerkleRoot, type Note, type NoteCreatedEvent, type NoteSpentEvent, type Nullifier, type OpenPerpsPositionParams, type OrderCreatedEvent, type OrderFilledEvent, type OrderParams, type OrderState, OrderStatus, type OrderTerms, type PerpsAddLiquidityClientParams, type PerpsProgressStage, type PerpsRemoveLiquidityClientParams, type Point, type PoolState, PoolType, type PoseidonHash, type PositionNoteData, type PreparedInput, type RemoveLiquidityParams, type ShieldParams, type SpendingKey, type StealthAddress, type SubmitDecryptionShareParams, type SubmitVoteParams, type SyncStatus, type TransactionResult, type TransferOutput, type TransferParams, type TransferProgressStage, type TransferProofInputs, type ViewingKey, type VoteParams, type VoteProofInputs, type VoteSubmittedEvent };
+export { type AdapterProofInputs, type AdapterSwapParams, type AddLiquidityParams, type AggregationState, AggregationStatus, type AmmPoolState, type AmmSwapParams, type CancelOrderParams, type ClosePerpsPositionParams, type Commitment, type ConsolidationParams, type CreateAggregationParams, type DecryptedLpNote, type DecryptedNote, type DecryptedPositionNote, type DecryptionShare, type ElGamalCiphertext, type EncryptedNote, type EncryptedVote, type FieldElement, type FillOrderParams, type FinalizeVotingParams, type Groth16Proof, type Keypair, type LpNoteData, type MerkleProof, type MerkleRoot, type Note, type NoteCreatedEvent, type NoteSpentEvent, type Nullifier, type OpenPerpsPositionParams, type OrderCreatedEvent, type OrderFilledEvent, type OrderParams, type OrderState, OrderStatus, type OrderTerms, type PerpsAddLiquidityClientParams, type PerpsProgressStage, type PerpsRemoveLiquidityClientParams, type Point, type PoolState, PoolType, type PoseidonHash, type PositionMeta, type PositionNoteData, PositionStatus, type PreparedInput, type RemoveLiquidityParams, type ShieldParams, type SpendingKey, type StealthAddress, type SubmitDecryptionShareParams, type SubmitVoteParams, type SyncStatus, type TransactionResult, type TransferOutput, type TransferParams, type TransferProgressStage, type TransferProofInputs, type ViewingKey, type VoteParams, type VoteProofInputs, type VoteSubmittedEvent };

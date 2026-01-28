@@ -96,8 +96,11 @@ export {
   usePositionValidation,
   usePythPrice,
   usePythPrices,
+  // Keeper
+  useKeeperMonitor,
+  useLiquidate,
 } from './usePerps';
-export type { PerpsProgressStage, ScannedPerpsPosition } from './usePerps';
+export type { PerpsProgressStage, ScannedPerpsPosition, LiquidatablePosition, PositionMetaStatus } from './usePerps';
 
 // Voting / Governance
 export {
@@ -113,6 +116,11 @@ export {
   useChangeVote,
   useCloseVotePosition,
   useClaim,
+  // Admin operations
+  useResolveBallot,
+  useFinalizeBallot,
+  useDecryptTally,
+  useIsBallotAuthority,
   // Calculations
   usePayoutPreview,
   useVoteValidation,

@@ -179,6 +179,34 @@ declare function detectNoteType(data: Uint8Array): number;
  */
 
 /**
+ * Sleep for a given number of milliseconds
+ */
+declare function sleep(ms: number): Promise<void>;
+/**
+ * Configuration for retry logic
+ */
+interface RetryConfig {
+    /** Maximum number of retry attempts (default: 5) */
+    maxRetries: number;
+    /** Base delay in ms for exponential backoff (default: 1000) */
+    baseDelayMs: number;
+    /** Maximum delay in ms (default: 30000) */
+    maxDelayMs: number;
+    /** Whether to log retry attempts (default: true) */
+    logRetries: boolean;
+}
+/**
+ * Execute a function with retry logic and exponential backoff
+ *
+ * Automatically retries on 429 (rate limit) errors with exponential backoff.
+ * Other errors are thrown immediately.
+ *
+ * @param fn - Async function to execute
+ * @param config - Retry configuration
+ * @param operation - Description of the operation (for logging)
+ */
+declare function withRetry<T>(fn: () => Promise<T>, config?: Partial<RetryConfig>, operation?: string): Promise<T>;
+/**
  * Helius RPC endpoint configuration
  */
 interface HeliusConfig {
@@ -242,15 +270,21 @@ interface CompressedAccountInfo {
 }
 /**
  * Light Protocol client for Helius Photon indexer
+ *
+ * All RPC calls include automatic retry with exponential backoff for rate limits.
  */
 declare class LightClient {
     protected readonly rpcUrl: string;
     protected readonly lightRpc: Rpc;
-    constructor(config: HeliusConfig);
+    protected readonly retryConfig: Partial<RetryConfig>;
+    constructor(config: HeliusConfig & {
+        retryConfig?: Partial<RetryConfig>;
+    });
     /**
      * Get compressed account by address
      *
      * Returns null if account doesn't exist (nullifier not spent)
+     * Includes automatic retry with exponential backoff on rate limits.
      */
     getCompressedAccount(address: Uint8Array): Promise<CompressedAccountInfo | null>;
     /**
@@ -264,12 +298,14 @@ declare class LightClient {
      *
      * Uses getMultipleCompressedAccounts for efficiency (single API call)
      * Returns a Set of addresses that exist (are spent)
+     * Includes automatic retry with exponential backoff on rate limits.
      */
     batchCheckNullifiers(addresses: string[]): Promise<Set<string>>;
     /**
      * Get validity proof for creating a new compressed account
      *
      * This proves that the address doesn't exist yet (non-inclusion proof)
+     * Includes automatic retry with exponential backoff on rate limits.
      *
      * Helius API expects:
      * - hashes: Array of existing account hashes to verify (optional)
@@ -428,18 +464,72 @@ interface CommitmentMerkleProof {
     leafIndex: number;
 }
 /**
+ * Scanner statistics for performance tracking
+ */
+interface ScannerStats {
+    totalAccounts: number;
+    cachedHits: number;
+    decryptAttempts: number;
+    successfulDecrypts: number;
+    scanDurationMs: number;
+    rpcCalls: number;
+}
+/**
+ * Incremental scan options
+ */
+interface IncrementalScanOptions {
+    /** Only scan accounts created after this slot */
+    sinceSlot?: number;
+    /** Maximum accounts to process per scan (for pagination) */
+    maxAccounts?: number;
+    /** Parallel decryption batch size (default: 10) */
+    parallelBatchSize?: number;
+}
+/**
  * Extended Light client with commitment operations
  */
 declare class LightCommitmentClient extends LightClient {
     private noteCache;
+    private lastScannedSlot;
+    private stats;
+    /**
+     * Get scanner statistics from last scan
+     */
+    getLastScanStats(): ScannerStats;
+    /**
+     * Get the last scanned slot for a pool (for incremental scanning)
+     */
+    getLastScannedSlot(pool?: PublicKey): number;
+    /**
+     * Set the last scanned slot (for restoring from persistent storage)
+     */
+    setLastScannedSlot(slot: number, pool?: PublicKey): void;
     /**
      * Clear note cache (call when wallet changes)
      */
     clearCache(): void;
     /**
+     * Export cache state for persistent storage
+     */
+    exportCacheState(): {
+        notes: Record<string, Record<string, any>>;
+        slots: Record<string, number>;
+    };
+    /**
+     * Import cache state from persistent storage
+     */
+    importCacheState(state: {
+        notes: Record<string, Record<string, any>>;
+        slots: Record<string, number>;
+    }): void;
+    /**
      * Get cache key from viewing key
      */
     private getCacheKey;
+    /**
+     * Reset scanner stats
+     */
+    private resetStats;
     /**
      * Get commitment by its address
      */
@@ -512,14 +602,23 @@ declare class LightCommitmentClient extends LightClient {
      * Queries all commitment accounts for a pool and attempts to decrypt
      * the encrypted notes with the user's viewing key.
      *
+     * OPTIMIZED: Uses parallel decryption with configurable batch size.
+     *
      * @param viewingKey - User's viewing private key (for decryption)
      * @param programId - CloakCraft program ID
      * @param pool - Pool to scan (optional, scans all if not provided)
+     * @param options - Incremental scan options
      * @returns Array of decrypted notes owned by the user
      */
-    scanNotes(viewingKey: bigint, programId: PublicKey, pool?: PublicKey): Promise<DecryptedNote[]>;
+    scanNotes(viewingKey: bigint, programId: PublicKey, pool?: PublicKey, options?: IncrementalScanOptions): Promise<DecryptedNote[]>;
+    /**
+     * Process a single account for decryption (extracted for parallelization)
+     */
+    private processAccount;
     /**
      * Get all commitment compressed accounts
+     *
+     * Includes automatic retry with exponential backoff on rate limits.
      *
      * @param programId - CloakCraft program ID
      * @param poolPda - Pool PDA to filter by (optional). Note: pass the pool PDA, not the token mint.
@@ -592,6 +691,48 @@ declare class LightCommitmentClient extends LightClient {
      * Get unspent LP notes
      */
     getUnspentLpNotes(viewingKey: bigint, nullifierKey: Uint8Array, programId: PublicKey, lpPool: PublicKey): Promise<ScannedLpNote[]>;
+    /**
+     * Fetch position metadata for given position IDs
+     *
+     * Queries compressed PositionMeta accounts via Photon API.
+     * These accounts are public and enable permissionless liquidation monitoring.
+     *
+     * @param programId - CloakCraft program ID
+     * @param poolId - Pool ID (32 bytes)
+     * @param positionIds - Array of position IDs to fetch metadata for
+     * @returns Map of position ID (hex) to PositionMeta
+     */
+    fetchPositionMetas(programId: PublicKey, poolId: Uint8Array, positionIds: Uint8Array[]): Promise<Map<string, PositionMetaData>>;
+    /**
+     * Parse PositionMeta from base64-encoded compressed account data
+     */
+    private parsePositionMetaData;
+    /**
+     * Fetch all active position metas for a pool
+     *
+     * Useful for keepers to monitor all positions for liquidation.
+     *
+     * @param programId - CloakCraft program ID
+     * @param poolId - Pool ID to scan
+     * @returns Array of active PositionMeta
+     */
+    fetchActivePositionMetas(programId: PublicKey, poolId: Uint8Array): Promise<PositionMetaData[]>;
+}
+/** Position metadata data structure (matches on-chain PositionMeta) */
+interface PositionMetaData {
+    positionId: Uint8Array;
+    poolId: Uint8Array;
+    marketId: Uint8Array;
+    marginAmount: bigint;
+    liquidationPrice: bigint;
+    isLong: boolean;
+    positionSize: bigint;
+    entryPrice: bigint;
+    nullifierHash: Uint8Array;
+    status: 0 | 1 | 2;
+    createdAt: number;
+    updatedAt: number;
+    ownerStealthPubkey: Uint8Array;
 }
 
 /**
@@ -1619,6 +1760,26 @@ declare class CloakCraftClient {
      * @returns Array of LP notes with spent status
      */
     scanLpNotesWithStatus(lpMint: PublicKey): Promise<ScannedLpNote[]>;
+    /**
+     * Fetch position metadata for given position IDs
+     *
+     * Queries public PositionMeta compressed accounts to get status,
+     * liquidation price, and other metadata for positions.
+     *
+     * @param poolId - Pool address (will be converted to bytes)
+     * @param positionIds - Array of position IDs to fetch
+     * @returns Map of position ID (hex) to PositionMeta
+     */
+    fetchPositionMetas(poolId: PublicKey, positionIds: Uint8Array[]): Promise<Map<string, PositionMetaData>>;
+    /**
+     * Fetch all active position metas for a pool
+     *
+     * Useful for keepers to monitor all positions for liquidation.
+     *
+     * @param poolId - Pool address to scan
+     * @returns Array of active PositionMeta
+     */
+    fetchActivePositionMetas(poolId: PublicKey): Promise<PositionMetaData[]>;
 }
 
 /**
@@ -5491,12 +5652,217 @@ interface AddMarketParams {
 declare function buildAddMarketWithProgram(program: Program, params: AddMarketParams): Promise<{
     tx: any;
 }>;
+/** Parameters that can be updated on a perps pool */
+interface UpdatePoolConfigParams {
+    perpsPool: PublicKey;
+    authority: PublicKey;
+    /** Maximum leverage (1-100), undefined to keep current */
+    maxLeverage?: number;
+    /** Position fee in basis points, undefined to keep current */
+    positionFeeBps?: number;
+    /** Maximum utilization per token in basis points, undefined to keep current */
+    maxUtilizationBps?: number;
+    /** Liquidation threshold in basis points, undefined to keep current */
+    liquidationThresholdBps?: number;
+    /** Liquidation penalty in basis points, undefined to keep current */
+    liquidationPenaltyBps?: number;
+    /** Base borrow rate per hour in basis points, undefined to keep current */
+    baseBorrowRateBps?: number;
+    /** Maximum imbalance fee in basis points, undefined to keep current */
+    maxImbalanceFeeBps?: number;
+    /** Pool active status (true = active, false = paused), undefined to keep current */
+    isActive?: boolean;
+}
+/**
+ * Build update pool config instruction
+ *
+ * Allows admin to update pool parameters such as fees, leverage limits, etc.
+ * Pass undefined for any parameter to keep its current value.
+ *
+ * @example
+ * ```ts
+ * // Pause the pool
+ * const { tx } = await buildUpdatePoolConfigWithProgram(program, {
+ *   perpsPool,
+ *   authority: wallet.publicKey,
+ *   isActive: false,
+ * });
+ *
+ * // Update fees and leverage
+ * const { tx } = await buildUpdatePoolConfigWithProgram(program, {
+ *   perpsPool,
+ *   authority: wallet.publicKey,
+ *   maxLeverage: 50,
+ *   positionFeeBps: 10,
+ * });
+ * ```
+ */
+declare function buildUpdatePoolConfigWithProgram(program: Program, params: UpdatePoolConfigParams): Promise<{
+    tx: any;
+}>;
+interface UpdateTokenStatusParams {
+    perpsPool: PublicKey;
+    authority: PublicKey;
+    /** Token index in the pool (0-7) */
+    tokenIndex: number;
+    /** Whether the token should be active */
+    isActive: boolean;
+}
+/**
+ * Build update token status instruction
+ *
+ * Allows admin to pause/unpause a specific token in the pool.
+ * Paused tokens cannot be used for new positions or liquidity operations.
+ *
+ * @example
+ * ```ts
+ * // Pause token at index 1
+ * const { tx } = await buildUpdateTokenStatusWithProgram(program, {
+ *   perpsPool,
+ *   authority: wallet.publicKey,
+ *   tokenIndex: 1,
+ *   isActive: false,
+ * });
+ * ```
+ */
+declare function buildUpdateTokenStatusWithProgram(program: Program, params: UpdateTokenStatusParams): Promise<{
+    tx: any;
+}>;
+interface UpdateMarketStatusParams {
+    perpsPool: PublicKey;
+    market: PublicKey;
+    authority: PublicKey;
+    /** Whether the market should be active */
+    isActive: boolean;
+}
+/**
+ * Build update market status instruction
+ *
+ * Allows admin to pause/unpause a specific market.
+ * Paused markets cannot accept new positions but existing positions can still be closed.
+ *
+ * @example
+ * ```ts
+ * // Pause the SOL-PERP market
+ * const { tx } = await buildUpdateMarketStatusWithProgram(program, {
+ *   perpsPool,
+ *   market: solPerpMarket,
+ *   authority: wallet.publicKey,
+ *   isActive: false,
+ * });
+ * ```
+ */
+declare function buildUpdateMarketStatusWithProgram(program: Program, params: UpdateMarketStatusParams): Promise<{
+    tx: any;
+}>;
 /**
  * Build update borrow fees instruction
  */
 declare function buildUpdateBorrowFeesWithProgram(program: Program, perpsPool: PublicKey, keeper: PublicKey): Promise<{
     tx: any;
 }>;
+interface LiquidatePositionInstructionParams {
+    /** Settlement pool (where position margin comes from) */
+    settlementPool: PublicKey;
+    /** Perps pool */
+    perpsPool: PublicKey;
+    /** Market */
+    market: PublicKey;
+    /** Oracle for current price */
+    oracle: PublicKey;
+    /** ZK proof */
+    proof: Uint8Array;
+    /** Merkle root */
+    merkleRoot: Uint8Array;
+    /** Position commitment being liquidated */
+    positionCommitment: Uint8Array;
+    /** Position nullifier */
+    positionNullifier: Uint8Array;
+    /** Owner's remainder commitment (margin - loss - penalty) */
+    ownerCommitment: Uint8Array;
+    /** Liquidator's reward commitment */
+    liquidatorCommitment: Uint8Array;
+    /** Current price from oracle */
+    currentPrice: bigint;
+    /** Liquidator reward amount */
+    liquidatorReward: bigint;
+    /** Owner remainder amount */
+    ownerRemainder: bigint;
+    /** Position margin */
+    positionMargin: bigint;
+    /** Position size */
+    positionSize: bigint;
+    /** Is long position */
+    isLong: boolean;
+    /** Keeper/liquidator */
+    keeper: PublicKey;
+    /** Owner stealth address (for remainder commitment) */
+    ownerRecipient: StealthAddress;
+    /** Liquidator stealth address (for reward commitment) */
+    liquidatorRecipient: StealthAddress;
+    /** Owner randomness */
+    ownerRandomness: Uint8Array;
+    /** Liquidator randomness */
+    liquidatorRandomness: Uint8Array;
+    /** Token mint */
+    tokenMint: PublicKey;
+    /** Light verify params */
+    lightVerifyParams: LightVerifyParams;
+    /** Light nullifier params */
+    lightNullifierParams: LightNullifierParams;
+    /** Remaining accounts */
+    remainingAccounts: {
+        pubkey: PublicKey;
+        isSigner: boolean;
+        isWritable: boolean;
+    }[];
+}
+/**
+ * Build liquidate position multi-phase instructions
+ *
+ * Liquidation can happen when:
+ * 1. Position is underwater (effective margin < liquidation threshold)
+ * 2. Position hit profit bound (PnL >= margin, 100% gain)
+ *
+ * Liquidator receives penalty as reward, owner receives remainder.
+ */
+declare function buildLiquidatePositionWithProgram(program: Program, params: LiquidatePositionInstructionParams): Promise<{
+    tx: any;
+    phase1Tx: any;
+    phase2Tx: any;
+    phase3Tx: any;
+    operationId: Uint8Array;
+    pendingCommitments: PendingCommitmentData[];
+}>;
+/**
+ * Check if a position should be liquidated
+ *
+ * Returns true if:
+ * 1. Underwater: effectiveMargin < liquidationThreshold
+ * 2. At profit bound: PnL >= margin (100% gain)
+ */
+declare function shouldLiquidate(position: {
+    margin: bigint;
+    size: bigint;
+    entryPrice: bigint;
+    direction: 'long' | 'short';
+}, currentPrice: bigint, pool: {
+    liquidationThresholdBps: number;
+}): {
+    shouldLiquidate: boolean;
+    reason: 'underwater' | 'profit_bound' | null;
+    pnl: bigint;
+    isProfit: boolean;
+};
+/**
+ * Calculate liquidation amounts
+ *
+ * @returns Owner remainder and liquidator reward
+ */
+declare function calculateLiquidationAmounts(margin: bigint, pnl: bigint, isProfit: boolean, liquidationPenaltyBps: number): {
+    ownerRemainder: bigint;
+    liquidatorReward: bigint;
+};
 
 /**
  * CloakCraft Perps Oracle Integration
@@ -6484,4 +6850,4 @@ declare class VotingClient {
     private waitForConfirmation;
 }
 
-export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, type AddMarketParams, type AddPerpsLiquidityInstructionParams, type AddPerpsLiquidityParams, type AddPerpsLiquidityProofResult, type AddTokenToPoolParams, type AnchorWallet, type AutoConsolidationConfig, type AutoConsolidationState, AutoConsolidator, BPS_DIVISOR, type Ballot, BallotStatus, CIRCUIT_IDS$1 as CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type ChangeVoteResult, type ChangeVoteSnapshotInstructionParams, type ChangeVoteSnapshotParams, type CircomArtifacts, type CircuitType, type ClaimInstructionParams, type ClaimResult, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type ClosePositionInstructionParams, type ClosePositionParams$1 as ClosePositionParams, type ClosePositionProofResult, type ClosePositionResult, type CloseVotePositionInstructionParams, type CommitmentMerkleProof, type CompressedAccountInfo, type ConsolidationBatch, type ConsolidationInput, type ConsolidationInstructionParams, type ConsolidationOptions, type ConsolidationResult, ConsolidationService, type ConsolidationSuggestion, type CreateBallotInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEFAULT_FEE_CONFIG, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptedNoteResult, type DecryptedPerpsPosition, type DecryptedVotePreimage, type DecryptionShareData, type DleqProof, type EncryptedBallot, type EncryptedContributions, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FeeCalculation, type FeeableOperation, type FillOrderInstructionParams, type FillOrderResult, type FragmentationReport, type FreeOperation, GENERATOR, type HeliusConfig, IDENTITY, type InitializeAmmPoolParams, type InitializePerpsPoolParams, type InitializePoolParams, LP_COMMITMENT_DOMAIN, LightClient, LightCommitmentClient, type LightNullifierParams$1 as LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, type LightVerifyVoteCommitmentParams, type LiquidatePositionParams, type LiquidateProofResult, type LiquidationPriceResult, type LpNote, type LpValueResult, MAINNET_LIGHT_TREES, MAX_FEE_BPS, MAX_PERPS_TOKENS, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NOTE_TYPE_LP, NOTE_TYPE_POSITION, NOTE_TYPE_STANDARD, NoteManager, type NoteSelectionOptions, type NoteSelectionResult, type OpenPositionInstructionParams, type OpenPositionParams, type OpenPositionProofResult, type OperationType, PERPS_CIRCUIT_IDS, PERPS_PYTH_FEED_IDS, PERPS_SEEDS, POSITION_COMMITMENT_DOMAIN, PROGRAM_ID, PYTH_FEED_IDS, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, type PerpsMarketState, type PerpsPoolState, type PerpsPosition, type PerpsToken, type PnLResult, type PoolAnalytics, PoolAnalyticsCalculator, type PoolStats, type PoolTypeParam, type PositionDirection, type PositionNote, type PriceUpdateResult, ProofGenerator, type ProtocolFeeConfig, type PythPrice, type PythPriceData, PythPriceService, type RecoveredClaim, type RecoveredVote, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, type RemovePerpsLiquidityInstructionParams, type RemovePerpsLiquidityParams, type RemovePerpsLiquidityProofResult, ResolutionMode, RevealMode, SEEDS, type ScannedLpNote, type ScannedNote, type ScannedPositionNote, type SelectionStrategy, type ShieldInstructionParams, type ShieldResult, SmartNoteSelector, type StateTreeSet, type StoreCommitmentParams, type SwapInstructionParams, type SwapPhase2Params, type TokenPrice, TokenPriceFetcher, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type TransactionFilter, TransactionHistory, type TransactionRecord, TransactionStatus, TransactionType, type UserPoolPosition, CIRCUIT_IDS as VOTING_CIRCUIT_IDS, VOTING_SEEDS, type ValidityProof, type VersionedTransactionConfig, VoteBindingMode, type VoteCommitmentMerkleContext, VoteOption, type VotePreimage, type VoteRecoveryConfig, VoteRecoveryManager, type VoteSnapshotInstructionParams, type VoteSnapshotParams, type VoteSnapshotProofInputs, type VoteSnapshotResult, type VoteSpendInstructionParams, type VoteSpendParams, type VoteSpendResult, type VoteStatus, VoteType, type BalanceAttestation as VotingBalanceAttestation, type BallotConfig as VotingBallotConfig, type ClaimParams as VotingClaimParams, type ClaimProofInputs as VotingClaimProofInputs, VotingClient, type VotingClientConfig, type ClosePositionParams as VotingClosePositionParams, type MerkleProof as VotingMerkleProof, type Position as VotingPosition, WALLET_DERIVATION_MESSAGE, Wallet, WeightOp, type WithdrawableResult, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAddMarketWithProgram, buildAddPerpsLiquidityWithProgram, buildAddTokenToPoolWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildChangeVoteSnapshotExecuteInstruction, buildChangeVoteSnapshotInstructions, buildChangeVoteSnapshotPhase0Instruction, buildClaimExecuteInstruction, buildClaimPhase0Instruction, buildClosePendingOperationWithProgram, buildClosePositionWithProgram, buildCloseVotePositionExecuteInstruction, buildCloseVotePositionPhase0Instruction, buildClosePositionInstructions as buildCloseVotingPositionInstructions, buildConsolidationWithProgram, buildCreateBallotInstruction, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildDecryptTallyInstruction, buildFillOrderWithProgram, buildFinalizeBallotInstruction, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePerpsPoolWithProgram, buildInitializePoolWithProgram, buildOpenPositionWithProgram, buildRemoveLiquidityWithProgram, buildRemovePerpsLiquidityWithProgram, buildResolveBallotInstruction, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildUpdateBorrowFeesWithProgram, buildVerifyVoteCommitmentExistsInstruction, buildVersionedTransaction, buildVoteSnapshotExecuteInstruction, buildVoteSnapshotInstructions, buildVoteSnapshotPhase0Instruction, buildVoteSpendExecuteInstruction, buildVoteSpendInstructions, buildVoteSpendPhase0Instruction, buildClaimInstructions as buildVotingClaimInstructions, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateBorrowFees, calculateBorrowRate, calculateImbalanceFee, calculateInvariant, calculateLiquidationPrice, calculateLpMintAmount, calculateLpValue, calculateMaxWithdrawable, calculateMinOutput, calculateMinimumFee, calculatePnL, calculatePositionFee, calculatePositionPrice, calculatePriceImpact, calculatePriceRatio, calculateProtocolFee, calculateRemoveLiquidityOutput, calculateSlippage, calculateStableSwapOutput, calculateSwapOutputUnified, calculateSwapProtocolFee, calculateTotalLiquidity, calculateUsdPriceImpact, calculateUtilization, calculateWithdrawAmount, canFitInSingleTransaction, canonicalTokenOrder, checkNullifierSpent, checkStealthOwnership, clearCircomCache, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, computeLpCommitment, computePositionCommitment, consolidationService, convertInputsToSnarkjs, createAddressLookupTable, createCloakCraftALT, createLpNote, createNote, createPendingTransaction, createPositionNote, createWallet, createWatchOnlyWallet, decryptLpNote, decryptNote, decryptPositionNote, deriveActionNullifier, deriveAmmPoolPda, deriveBallotPda, deriveBallotVaultPda, deriveCommitmentCounterPda, deriveLpMintPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda$1 as derivePendingOperationPda, derivePerpsLpMintPda, derivePerpsMarketPda, derivePerpsPoolPda, derivePerpsVaultPda, derivePoolPda, deriveProtocolConfigPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda$1 as deriveVerificationKeyPda, derivePendingOperationPda as deriveVotingPendingOperationPda, deriveVerificationKeyPda as deriveVotingVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, deserializeLpNote, deserializePositionNote, detectNoteType, disableAutoConsolidation, elgamalEncrypt, enableAutoConsolidation, encryptLpNote, encryptNote, encryptPositionNote, encryptPreimage, encryptVote, estimateTotalCost, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, feedIdToHex, fetchAddressLookupTable, fetchAmmPool, fetchProtocolFeeConfig, fetchPythPrice, fetchPythPriceUsd, fetchPythPrices, fetchPythVaa, fieldToBytes, formatAmmPool, formatApy, formatFeeAmount, formatFeeRate, formatPrice, formatPriceChange, formatShare, formatTvl, generateChangeVoteSnapshotInputs, generateDleqProof, generateEncryptedContributions, generateNegatedEncryptedContributions, generateOperationId$1 as generateOperationId, generateRandomness, generateSnarkjsProof, generateSnarkjsProofFromCircuit, generateStealthAddress, generateVoteRandomness, generateVoteSnapshotInputs, generateVoteSpendInputs, generateClaimInputs as generateVotingClaimInputs, generateOperationId as generateVotingOperationId, getAmmPool, getAutoConsolidator, getFeeBps, getFeedIdBySymbol, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getPoolOraclePrices, getPriceUpdateAccountAddress, getPythService, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isFeeableOperation, isFreeOperation, isInSubgroup, isOnCurve, isPriceUpdateValid, isValidLeverage, isValidPositionSize, lagrangeCoefficient, loadCircomArtifacts, loadWallet, noteSelector, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, serializeLpNote, serializePositionNote, storeCommitments, tryDecryptAnyNote, tryDecryptLpNote, tryDecryptNote, tryDecryptPositionNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof, verifyFeeAmount, verifyInvariant, verifyLpCommitment, verifyPositionCommitment, wouldExceedUtilization };
+export { ALTManager, type AddLiquidityInstructionParams, type AddLiquidityPhase2Params, type AddMarketParams, type AddPerpsLiquidityInstructionParams, type AddPerpsLiquidityParams, type AddPerpsLiquidityProofResult, type AddTokenToPoolParams, type AnchorWallet, type AutoConsolidationConfig, type AutoConsolidationState, AutoConsolidator, BPS_DIVISOR, type Ballot, BallotStatus, CIRCUIT_IDS$1 as CIRCUIT_IDS, type CancelOrderInstructionParams, type CancelOrderResult, type ChangeVoteResult, type ChangeVoteSnapshotInstructionParams, type ChangeVoteSnapshotParams, type CircomArtifacts, type CircuitType, type ClaimInstructionParams, type ClaimResult, type CloakCraftALTAccounts, CloakCraftClient, type CloakCraftClientConfig, type ClosePositionInstructionParams, type ClosePositionParams$1 as ClosePositionParams, type ClosePositionProofResult, type ClosePositionResult, type CloseVotePositionInstructionParams, type CommitmentMerkleProof, type CompressedAccountInfo, type ConsolidationBatch, type ConsolidationInput, type ConsolidationInstructionParams, type ConsolidationOptions, type ConsolidationResult, ConsolidationService, type ConsolidationSuggestion, type CreateBallotInstructionParams, type CreateCommitmentParams, type CreateNullifierParams, DEFAULT_FEE_CONFIG, DEVNET_LIGHT_TREES, DEVNET_V2_TREES, DOMAIN_ACTION_NULLIFIER, DOMAIN_COMMITMENT, DOMAIN_EMPTY_LEAF, DOMAIN_MERKLE, DOMAIN_NULLIFIER_KEY, DOMAIN_SPENDING_NULLIFIER, DOMAIN_STEALTH, type DecryptedNoteResult, type DecryptedPerpsPosition, type DecryptedVotePreimage, type DecryptionShareData, type DleqProof, type EncryptedBallot, type EncryptedContributions, FIELD_MODULUS_FQ, FIELD_MODULUS_FR, type FeeCalculation, type FeeableOperation, type FillOrderInstructionParams, type FillOrderResult, type FragmentationReport, type FreeOperation, GENERATOR, type HeliusConfig, IDENTITY, type IncrementalScanOptions, type InitializeAmmPoolParams, type InitializePerpsPoolParams, type InitializePoolParams, LP_COMMITMENT_DOMAIN, LightClient, LightCommitmentClient, type LightNullifierParams$1 as LightNullifierParams, LightProtocol, type LightShieldParams, type LightStoreCommitmentParams, type LightTransactParams, type LightVerifyVoteCommitmentParams, type LiquidatePositionInstructionParams, type LiquidatePositionParams, type LiquidateProofResult, type LiquidationPriceResult, type LpNote, type LpValueResult, MAINNET_LIGHT_TREES, MAX_FEE_BPS, MAX_PERPS_TOKENS, MAX_TRANSACTION_SIZE, type MultiPhaseInstructions, NOTE_TYPE_LP, NOTE_TYPE_POSITION, NOTE_TYPE_STANDARD, NoteManager, type NoteSelectionOptions, type NoteSelectionResult, type OpenPositionInstructionParams, type OpenPositionParams, type OpenPositionProofResult, type OperationType, PERPS_CIRCUIT_IDS, PERPS_PYTH_FEED_IDS, PERPS_SEEDS, POSITION_COMMITMENT_DOMAIN, PROGRAM_ID, PYTH_FEED_IDS, type PackedAddressTreeInfo, type PendingCommitmentData, type PendingNullifierData, type PerpsMarketState, type PerpsPoolState, type PerpsPosition, type PerpsToken, type PnLResult, type PoolAnalytics, PoolAnalyticsCalculator, type PoolStats, type PoolTypeParam, type PositionDirection, type PositionMetaData, type PositionNote, type PriceUpdateResult, ProofGenerator, type ProtocolFeeConfig, type PythPrice, type PythPriceData, PythPriceService, type RecoveredClaim, type RecoveredVote, type RemoveLiquidityInstructionParams, type RemoveLiquidityPhase2Params, type RemovePerpsLiquidityInstructionParams, type RemovePerpsLiquidityParams, type RemovePerpsLiquidityProofResult, ResolutionMode, type RetryConfig, RevealMode, SEEDS, type ScannedLpNote, type ScannedNote, type ScannedPositionNote, type ScannerStats, type SelectionStrategy, type ShieldInstructionParams, type ShieldResult, SmartNoteSelector, type StateTreeSet, type StoreCommitmentParams, type SwapInstructionParams, type SwapPhase2Params, type TokenPrice, TokenPriceFetcher, type TransactInput, type TransactInstructionParams, type TransactOutput, type TransactResult, type TransactionFilter, TransactionHistory, type TransactionRecord, TransactionStatus, TransactionType, type UpdateMarketStatusParams, type UpdatePoolConfigParams, type UpdateTokenStatusParams, type UserPoolPosition, CIRCUIT_IDS as VOTING_CIRCUIT_IDS, VOTING_SEEDS, type ValidityProof, type VersionedTransactionConfig, VoteBindingMode, type VoteCommitmentMerkleContext, VoteOption, type VotePreimage, type VoteRecoveryConfig, VoteRecoveryManager, type VoteSnapshotInstructionParams, type VoteSnapshotParams, type VoteSnapshotProofInputs, type VoteSnapshotResult, type VoteSpendInstructionParams, type VoteSpendParams, type VoteSpendResult, type VoteStatus, VoteType, type BalanceAttestation as VotingBalanceAttestation, type BallotConfig as VotingBallotConfig, type ClaimParams as VotingClaimParams, type ClaimProofInputs as VotingClaimProofInputs, VotingClient, type VotingClientConfig, type ClosePositionParams as VotingClosePositionParams, type MerkleProof as VotingMerkleProof, type Position as VotingPosition, WALLET_DERIVATION_MESSAGE, Wallet, WeightOp, type WithdrawableResult, addCiphertexts, ammPoolExists, bigintToFieldString, buildAddLiquidityWithProgram, buildAddMarketWithProgram, buildAddPerpsLiquidityWithProgram, buildAddTokenToPoolWithProgram, buildAtomicMultiPhaseTransaction, buildCancelOrderWithProgram, buildChangeVoteSnapshotExecuteInstruction, buildChangeVoteSnapshotInstructions, buildChangeVoteSnapshotPhase0Instruction, buildClaimExecuteInstruction, buildClaimPhase0Instruction, buildClosePendingOperationWithProgram, buildClosePositionWithProgram, buildCloseVotePositionExecuteInstruction, buildCloseVotePositionPhase0Instruction, buildClosePositionInstructions as buildCloseVotingPositionInstructions, buildConsolidationWithProgram, buildCreateBallotInstruction, buildCreateCommitmentWithProgram, buildCreateNullifierWithProgram, buildDecryptTallyInstruction, buildFillOrderWithProgram, buildFinalizeBallotInstruction, buildInitializeAmmPoolWithProgram, buildInitializeCommitmentCounterWithProgram, buildInitializePerpsPoolWithProgram, buildInitializePoolWithProgram, buildLiquidatePositionWithProgram, buildOpenPositionWithProgram, buildRemoveLiquidityWithProgram, buildRemovePerpsLiquidityWithProgram, buildResolveBallotInstruction, buildShieldInstructions, buildShieldInstructionsForVersionedTx, buildShieldWithProgram, buildStoreCommitmentWithProgram, buildSwapWithProgram, buildTransactWithProgram, buildUpdateBorrowFeesWithProgram, buildUpdateMarketStatusWithProgram, buildUpdatePoolConfigWithProgram, buildUpdateTokenStatusWithProgram, buildVerifyVoteCommitmentExistsInstruction, buildVersionedTransaction, buildVoteSnapshotExecuteInstruction, buildVoteSnapshotInstructions, buildVoteSnapshotPhase0Instruction, buildVoteSpendExecuteInstruction, buildVoteSpendInstructions, buildVoteSpendPhase0Instruction, buildClaimInstructions as buildVotingClaimInstructions, bytesToField, bytesToFieldString, calculateAddLiquidityAmounts, calculateBorrowFees, calculateBorrowRate, calculateImbalanceFee, calculateInvariant, calculateLiquidationAmounts, calculateLiquidationPrice, calculateLpMintAmount, calculateLpValue, calculateMaxWithdrawable, calculateMinOutput, calculateMinimumFee, calculatePnL, calculatePositionFee, calculatePositionPrice, calculatePriceImpact, calculatePriceRatio, calculateProtocolFee, calculateRemoveLiquidityOutput, calculateSlippage, calculateStableSwapOutput, calculateSwapOutputUnified, calculateSwapProtocolFee, calculateTotalLiquidity, calculateUsdPriceImpact, calculateUtilization, calculateWithdrawAmount, canFitInSingleTransaction, canonicalTokenOrder, checkNullifierSpent, checkStealthOwnership, clearCircomCache, combineShares, computeAmmStateHash, computeCircuitInputs, computeCommitment, computeDecryptionShare, computeLpCommitment, computePositionCommitment, consolidationService, convertInputsToSnarkjs, createAddressLookupTable, createCloakCraftALT, createLpNote, createNote, createPendingTransaction, createPositionNote, createWallet, createWatchOnlyWallet, decryptLpNote, decryptNote, decryptPositionNote, deriveActionNullifier, deriveAmmPoolPda, deriveBallotPda, deriveBallotVaultPda, deriveCommitmentCounterPda, deriveLpMintPda, deriveNullifierKey, deriveOrderPda, derivePendingOperationPda$1 as derivePendingOperationPda, derivePerpsLpMintPda, derivePerpsMarketPda, derivePerpsPoolPda, derivePerpsVaultPda, derivePoolPda, deriveProtocolConfigPda, derivePublicKey, deriveSpendingNullifier, deriveStealthPrivateKey, deriveVaultPda, deriveVerificationKeyPda$1 as deriveVerificationKeyPda, derivePendingOperationPda as deriveVotingPendingOperationPda, deriveVerificationKeyPda as deriveVotingVerificationKeyPda, deriveWalletFromSeed, deriveWalletFromSignature, deserializeAmmPool, deserializeEncryptedNote, deserializeLpNote, deserializePositionNote, detectNoteType, disableAutoConsolidation, elgamalEncrypt, enableAutoConsolidation, encryptLpNote, encryptNote, encryptPositionNote, encryptPreimage, encryptVote, estimateTotalCost, estimateTransactionSize, executeVersionedTransaction, extendAddressLookupTable, feedIdToHex, fetchAddressLookupTable, fetchAmmPool, fetchProtocolFeeConfig, fetchPythPrice, fetchPythPriceUsd, fetchPythPrices, fetchPythVaa, fieldToBytes, formatAmmPool, formatApy, formatFeeAmount, formatFeeRate, formatPrice, formatPriceChange, formatShare, formatTvl, generateChangeVoteSnapshotInputs, generateDleqProof, generateEncryptedContributions, generateNegatedEncryptedContributions, generateOperationId$1 as generateOperationId, generateRandomness, generateSnarkjsProof, generateSnarkjsProofFromCircuit, generateStealthAddress, generateVoteRandomness, generateVoteSnapshotInputs, generateVoteSpendInputs, generateClaimInputs as generateVotingClaimInputs, generateOperationId as generateVotingOperationId, getAmmPool, getAutoConsolidator, getFeeBps, getFeedIdBySymbol, getInstructionFromAnchorMethod, getLightProtocolCommonAccounts, getPoolOraclePrices, getPriceUpdateAccountAddress, getPythService, getRandomStateTreeSet, getStateTreeSet, initPoseidon, initializePool, isFeeableOperation, isFreeOperation, isInSubgroup, isOnCurve, isPriceUpdateValid, isValidLeverage, isValidPositionSize, lagrangeCoefficient, loadCircomArtifacts, loadWallet, noteSelector, padCircuitId, parseGroth16Proof, pointAdd, poseidonHash, poseidonHash2, poseidonHashAsync, poseidonHashDomain, poseidonHashDomainAsync, pubkeyToField, refreshAmmPool, scalarMul, serializeCiphertext, serializeCiphertextFull, serializeEncryptedNote, serializeEncryptedVote, serializeGroth16Proof, serializeLpNote, serializePositionNote, shouldLiquidate, sleep, storeCommitments, tryDecryptAnyNote, tryDecryptLpNote, tryDecryptNote, tryDecryptPositionNote, validateLiquidityAmounts, validateSwapAmount, verifyAmmStateHash, verifyCommitment, verifyDleqProof, verifyFeeAmount, verifyInvariant, verifyLpCommitment, verifyPositionCommitment, withRetry, wouldExceedUtilization };

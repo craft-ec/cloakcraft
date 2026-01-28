@@ -1935,4 +1935,246 @@ export class LightCommitmentClient extends LightClient {
     const notes = await this.scanLpNotesWithStatus(viewingKey, nullifierKey, programId, lpPool);
     return notes.filter(n => !n.spent);
   }
+
+  // =========================================================================
+  // Position Metadata Operations
+  // =========================================================================
+
+  /**
+   * Fetch position metadata for given position IDs
+   *
+   * Queries compressed PositionMeta accounts via Photon API.
+   * These accounts are public and enable permissionless liquidation monitoring.
+   *
+   * @param programId - CloakCraft program ID
+   * @param poolId - Pool ID (32 bytes)
+   * @param positionIds - Array of position IDs to fetch metadata for
+   * @returns Map of position ID (hex) to PositionMeta
+   */
+  async fetchPositionMetas(
+    programId: PublicKey,
+    poolId: Uint8Array,
+    positionIds: Uint8Array[]
+  ): Promise<Map<string, PositionMetaData>> {
+    if (positionIds.length === 0) {
+      return new Map();
+    }
+
+    // Derive addresses for each position_id
+    // Seeds: ["position_meta", pool_id, position_id]
+    const addressTree = DEVNET_LIGHT_TREES.addressTree;
+    const addresses: string[] = [];
+    const positionIdMap: Map<string, string> = new Map(); // address -> positionId hex
+
+    for (const positionId of positionIds) {
+      const seeds = [
+        Buffer.from('position_meta'),
+        Buffer.from(poolId),
+        Buffer.from(positionId),
+      ];
+
+      const seed = deriveAddressSeedV2(seeds);
+      const address = deriveAddressV2(
+        seed,
+        new PublicKey(addressTree),
+        programId
+      );
+
+      const addressStr = new PublicKey(address).toBase58();
+      addresses.push(addressStr);
+      positionIdMap.set(addressStr, Buffer.from(positionId).toString('hex'));
+    }
+
+    // Batch fetch compressed accounts
+    const response = await fetchWithRetry(
+      this.rpcUrl,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getMultipleCompressedAccounts',
+          params: { addresses },
+        }),
+      },
+      this.retryConfig,
+      'fetchPositionMetas'
+    );
+
+    const result = await response.json() as {
+      result: { value: { items: Array<CompressedAccountInfo | null> } };
+      error?: { message: string };
+    };
+
+    if (result.error) {
+      throw new Error(`Helius RPC error: ${result.error.message}`);
+    }
+
+    const metas = new Map<string, PositionMetaData>();
+    const items = result.result?.value?.items ?? [];
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item || !item.data?.data) continue;
+
+      const positionIdHex = positionIdMap.get(addresses[i]);
+      if (!positionIdHex) continue;
+
+      try {
+        const meta = this.parsePositionMetaData(item.data.data);
+        if (meta) {
+          metas.set(positionIdHex, meta);
+        }
+      } catch {
+        // Skip malformed accounts
+        continue;
+      }
+    }
+
+    return metas;
+  }
+
+  /**
+   * Parse PositionMeta from base64-encoded compressed account data
+   */
+  private parsePositionMetaData(base64Data: string): PositionMetaData | null {
+    try {
+      const data = Buffer.from(base64Data, 'base64');
+
+      // PositionMeta layout:
+      // position_id: [u8; 32]      offset 0
+      // pool_id: [u8; 32]          offset 32
+      // market_id: [u8; 32]        offset 64
+      // margin_amount: u64         offset 96
+      // liquidation_price: u64     offset 104
+      // is_long: bool              offset 112
+      // position_size: u64         offset 113
+      // entry_price: u64           offset 121
+      // nullifier_hash: [u8; 32]   offset 129
+      // status: u8                 offset 161
+      // created_at: i64            offset 162
+      // updated_at: i64            offset 170
+      // owner_stealth_pubkey: [u8; 32]  offset 178
+      // Total: 210 bytes
+
+      if (data.length < 210) {
+        return null;
+      }
+
+      const positionId = new Uint8Array(data.subarray(0, 32));
+      const poolId = new Uint8Array(data.subarray(32, 64));
+      const marketId = new Uint8Array(data.subarray(64, 96));
+      const marginAmount = data.readBigUInt64LE(96);
+      const liquidationPrice = data.readBigUInt64LE(104);
+      const isLong = data[112] === 1;
+      const positionSize = data.readBigUInt64LE(113);
+      const entryPrice = data.readBigUInt64LE(121);
+      const nullifierHash = new Uint8Array(data.subarray(129, 161));
+      const status = data[161] as 0 | 1 | 2;
+      const createdAt = Number(data.readBigInt64LE(162));
+      const updatedAt = Number(data.readBigInt64LE(170));
+      const ownerStealthPubkey = new Uint8Array(data.subarray(178, 210));
+
+      return {
+        positionId,
+        poolId,
+        marketId,
+        marginAmount,
+        liquidationPrice,
+        isLong,
+        positionSize,
+        entryPrice,
+        nullifierHash,
+        status,
+        createdAt,
+        updatedAt,
+        ownerStealthPubkey,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Fetch all active position metas for a pool
+   *
+   * Useful for keepers to monitor all positions for liquidation.
+   *
+   * @param programId - CloakCraft program ID
+   * @param poolId - Pool ID to scan
+   * @returns Array of active PositionMeta
+   */
+  async fetchActivePositionMetas(
+    programId: PublicKey,
+    poolId: Uint8Array
+  ): Promise<PositionMetaData[]> {
+    // Query all PositionMeta accounts owned by program with pool filter
+    const response = await fetchWithRetry(
+      this.rpcUrl,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getCompressedAccountsByOwner',
+          params: {
+            owner: programId.toBase58(),
+            filters: [
+              // Filter by pool_id at offset 32 (after position_id)
+              { memcmp: { offset: 32, bytes: Buffer.from(poolId).toString('base64') } }
+            ],
+          },
+        }),
+      },
+      this.retryConfig,
+      'fetchActivePositionMetas'
+    );
+
+    const result = await response.json() as {
+      result: { value?: { items: CompressedAccountInfo[] }; items?: CompressedAccountInfo[] };
+      error?: { message: string };
+    };
+
+    if (result.error) {
+      throw new Error(`Helius RPC error: ${result.error.message}`);
+    }
+
+    const items = result.result?.value?.items ?? result.result?.items ?? [];
+    const metas: PositionMetaData[] = [];
+
+    for (const item of items) {
+      if (!item.data?.data) continue;
+
+      try {
+        const meta = this.parsePositionMetaData(item.data.data);
+        // Only include active positions
+        if (meta && meta.status === 0) {
+          metas.push(meta);
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return metas;
+  }
+}
+
+/** Position metadata data structure (matches on-chain PositionMeta) */
+export interface PositionMetaData {
+  positionId: Uint8Array;
+  poolId: Uint8Array;
+  marketId: Uint8Array;
+  marginAmount: bigint;
+  liquidationPrice: bigint;
+  isLong: boolean;
+  positionSize: bigint;
+  entryPrice: bigint;
+  nullifierHash: Uint8Array;
+  status: 0 | 1 | 2; // Active = 0, Liquidated = 1, Closed = 2
+  createdAt: number;
+  updatedAt: number;
+  ownerStealthPubkey: Uint8Array;
 }

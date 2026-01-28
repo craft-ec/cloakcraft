@@ -5,7 +5,7 @@ import * as _cloakcraft_sdk from '@cloakcraft/sdk';
 import { CloakCraftClient, Wallet, AnchorWallet, SelectionStrategy, TransactionFilter, TransactionRecord, TransactionType, TransactionStatus, TokenPrice, PoolAnalytics, PoolStats, UserPoolPosition, FragmentationReport, ConsolidationSuggestion, ConsolidationBatch, AutoConsolidationState, PerpsPoolState, PerpsMarketState, DecryptedPerpsPosition, PerpsPosition, PnLResult, LiquidationPriceResult, LpValueResult, WithdrawableResult, Ballot } from '@cloakcraft/sdk';
 export { PoolAnalytics, PoolStats, TokenPrice, TransactionFilter, TransactionRecord, TransactionStatus, TransactionType, UserPoolPosition, formatApy, formatPrice, formatPriceChange, formatShare, formatTvl } from '@cloakcraft/sdk';
 import * as _cloakcraft_types from '@cloakcraft/types';
-import { SyncStatus, DecryptedNote, TransactionResult, StealthAddress, PoolState, OrderState, AmmPoolState } from '@cloakcraft/types';
+import { SyncStatus, DecryptedNote, TransactionResult, StealthAddress, PoolState, OrderState, AmmPoolState, DecryptedLpNote } from '@cloakcraft/types';
 
 interface CloakCraftContextValue {
     client: CloakCraftClient | null;
@@ -242,8 +242,21 @@ declare function useUnshield(): {
  * Scanner hook for automatic note detection
  *
  * Uses Light Protocol to scan for notes and track balances in real-time.
+ *
+ * OPTIMIZED: Includes debouncing and caching support.
  */
 
+/**
+ * Scanner statistics for performance monitoring
+ */
+interface ScannerStats {
+    totalAccounts: number;
+    cachedHits: number;
+    decryptAttempts: number;
+    successfulDecrypts: number;
+    scanDurationMs: number;
+    rpcCalls: number;
+}
 interface UsePrivateBalanceResult {
     balance: bigint;
     noteCount: number;
@@ -260,12 +273,20 @@ interface UsePrivateBalanceResult {
 declare function usePrivateBalance(tokenMint?: PublicKey): UsePrivateBalanceResult;
 /**
  * Hook for scanning notes with auto-refresh
+ *
+ * OPTIMIZED: Includes debouncing to prevent rapid scans
+ *
+ * @param tokenMint - Filter to specific token (optional)
+ * @param autoRefreshMs - Auto-refresh interval in ms (optional)
+ * @param debounceMs - Debounce rapid scan calls (default: 500ms)
  */
-declare function useScanner(tokenMint?: PublicKey, autoRefreshMs?: number): {
+declare function useScanner(tokenMint?: PublicKey, autoRefreshMs?: number, debounceMs?: number): {
     notes: DecryptedNote[];
     totalAmount: bigint;
     noteCount: number;
     scan: () => Promise<void>;
+    scanNow: () => Promise<void>;
+    stats: ScannerStats | null;
     isScanning: boolean;
     lastScanned: Date | null;
     error: string | null;
@@ -929,7 +950,7 @@ interface AddPerpsLiquidityOptions {
 }
 interface RemovePerpsLiquidityOptions {
     /** LP token note to burn */
-    lpInput: DecryptedNote;
+    lpInput: DecryptedLpNote;
     /** Perps pool */
     pool: PerpsPoolState & {
         address: PublicKey;
@@ -1057,6 +1078,8 @@ declare function usePositionValidation(pool: PerpsPoolState | null, market: Perp
     error: null;
     positionSize: bigint;
 };
+/** Position status from PositionMeta */
+type PositionMetaStatus = 'active' | 'liquidated' | 'closed' | 'unknown';
 /** Scanned position data for UI display */
 interface ScannedPerpsPosition {
     /** Position commitment hash */
@@ -1079,14 +1102,23 @@ interface ScannedPerpsPosition {
     randomness: Uint8Array;
     /** Pool this position belongs to */
     pool: PublicKey;
-    /** Whether position is closed/spent */
+    /** Whether position is closed/spent (from nullifier check) */
     spent: boolean;
+    /** Position status from metadata (Active/Liquidated/Closed) */
+    status: PositionMetaStatus;
+    /** Liquidation price from metadata */
+    liquidationPrice?: bigint;
+    /** Timestamp when position was opened */
+    createdAt?: number;
+    /** Whether PositionMeta was found for this position */
+    hasMetadata: boolean;
 }
 /**
  * Hook for scanning user's perps positions
  *
  * Scans Light Protocol compressed accounts for position notes
  * belonging to the current user's stealth wallet.
+ * Also fetches public PositionMeta for status/liquidation info.
  *
  * @param positionPool - Position pool address (perps pool's position commitment pool)
  */
@@ -1095,6 +1127,75 @@ declare function usePerpsPositions(positionPool: PublicKey | null): {
     isLoading: boolean;
     error: string | null;
     refresh: () => Promise<void>;
+};
+/**
+ * Hook for fetching Pyth oracle price
+ *
+ * @param symbol - Token symbol (e.g., 'SOL', 'BTC', 'ETH')
+ * @param refreshInterval - Auto-refresh interval in ms (default: 10000)
+ */
+declare function usePythPrice(symbol: string | null, refreshInterval?: number): {
+    price: bigint | null;
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
+/**
+ * Hook for fetching multiple Pyth oracle prices
+ *
+ * @param symbols - Array of token symbols
+ * @param refreshInterval - Auto-refresh interval in ms (default: 10000)
+ */
+declare function usePythPrices(symbols: string[], refreshInterval?: number): {
+    prices: Map<string, bigint>;
+    isLoading: boolean;
+    error: string | null;
+    refresh: () => Promise<void>;
+};
+interface LiquidatablePosition {
+    position: ScannedPerpsPosition;
+    reason: 'underwater' | 'profit_bound';
+    currentPrice: bigint;
+    pnl: bigint;
+    isProfit: boolean;
+    ownerRemainder: bigint;
+    liquidatorReward: bigint;
+}
+/**
+ * Hook for keeper to monitor positions for liquidation
+ *
+ * Polls positions and prices, identifies liquidatable positions.
+ *
+ * @param pool - Perps pool state
+ * @param positionPool - Position pool address (Light Protocol)
+ * @param pollInterval - Polling interval in ms (default: 5000)
+ */
+declare function useKeeperMonitor(pool: PerpsPoolState | null, positionPool: PublicKey | null, pollInterval?: number): {
+    /** All scanned positions */
+    positions: ScannedPerpsPosition[];
+    /** Positions ready for liquidation */
+    liquidatable: LiquidatablePosition[];
+    /** Is currently scanning/checking */
+    isLoading: boolean;
+    /** Last check timestamp */
+    lastCheck: number;
+    /** Manual refresh */
+    refresh: () => Promise<void>;
+};
+/**
+ * Hook for executing liquidation
+ */
+declare function useLiquidate(): {
+    liquidate: (options: {
+        position: LiquidatablePosition;
+        pool: PerpsPoolState;
+        market: PerpsMarketState;
+        liquidatorRecipient: any;
+        onProgress?: (stage: PerpsProgressStage, phase?: number) => void;
+    }) => Promise<{
+        signature: string;
+    } | null>;
+    isLiquidating: boolean;
 };
 
 /**
@@ -1243,9 +1344,6 @@ declare function useBallot(ballotAddress: PublicKey | string | null): {
     error: string | null;
     refresh: () => Promise<void>;
 };
-/**
- * Hook for ballot tally information
- */
 declare function useBallotTally(ballot: Ballot | null): {
     totalVotes: number;
     totalWeight: bigint;
@@ -1335,7 +1433,9 @@ declare function useClaim(): {
 /**
  * Hook for calculating potential payout from a position
  */
-declare function usePayoutPreview(ballot: Ballot | null, voteChoice: number, weight: bigint): {
+declare function usePayoutPreview(ballot: Ballot | null, voteChoice: number, weight: bigint | {
+    toString(): string;
+}): {
     grossPayout: bigint;
     netPayout: bigint;
     multiplier: number;
@@ -1362,5 +1462,47 @@ declare function useCanClaim(ballot: Ballot | null, voteChoice: number | null): 
     canClaim: boolean;
     reason: null;
 };
+/**
+ * Hook for resolving a ballot
+ */
+declare function useResolveBallot(): {
+    resolve: (options: {
+        ballot: BallotWithAddress;
+        outcome?: number;
+        onProgress?: (stage: "building" | "approving" | "confirming") => void;
+    }) => Promise<{
+        signature: string;
+    } | null>;
+    isResolving: boolean;
+};
+/**
+ * Hook for finalizing a ballot
+ */
+declare function useFinalizeBallot(): {
+    finalize: (options: {
+        ballot: BallotWithAddress;
+        onProgress?: (stage: "building" | "approving" | "confirming") => void;
+    }) => Promise<{
+        signature: string;
+    } | null>;
+    isFinalizing: boolean;
+};
+/**
+ * Hook for decrypting time-locked tally
+ */
+declare function useDecryptTally(): {
+    decrypt: (options: {
+        ballot: BallotWithAddress;
+        decryptionKey: Uint8Array;
+        onProgress?: (stage: "building" | "approving" | "confirming") => void;
+    }) => Promise<{
+        signature: string;
+    } | null>;
+    isDecrypting: boolean;
+};
+/**
+ * Hook to check if current user is ballot authority
+ */
+declare function useIsBallotAuthority(ballot: Ballot | null, walletPubkey: PublicKey | null): boolean;
 
-export { type AddLiquidityProgressStage, type BallotWithAddress, type ChangeVoteOptions, type ClaimOptions, type ClaimResult, CloakCraftProvider, type ClosePositionOptions, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type PerpsProgressStage, type ProtocolFeeConfig, type RemoveLiquidityProgressStage, type ScannedPerpsPosition, type SpendResult, type SwapProgressStage, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, type VoteResult, type VoteSnapshotOptions, type VoteSpendOptions, type VotingProgressStage, WALLET_DERIVATION_MESSAGE, useActiveBallots, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useBallot, useBallotTally, useBallotTimeStatus, useBallots, useCanClaim, useChangeVote, useClaim, useCloakCraft, useClosePosition, useCloseVotePosition, useConsolidation, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsConsolidationRecommended, useIsFreeOperation, useLiquidationPrice, useLpMintPreview, useLpValue, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOpenPosition, useOrders, usePayoutPreview, usePerpsAddLiquidity, usePerpsMarkets, usePerpsPool, usePerpsPools, usePerpsPositions, usePerpsRemoveLiquidity, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePositionPnL, usePositionValidation, usePrivateBalance, useProtocolFees, usePublicBalance, useRecentTransactions, useRemoveLiquidity, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTokenUtilization, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useVoteSnapshot, useVoteSpend, useVoteValidation, useWallet, useWithdrawPreview };
+export { type AddLiquidityProgressStage, type BallotWithAddress, type ChangeVoteOptions, type ClaimOptions, type ClaimResult, CloakCraftProvider, type ClosePositionOptions, type ConsolidationBatchInfo, type ConsolidationProgressCallback, type ConsolidationProgressStage, type ConsolidationState, type LiquidatablePosition, type PerpsProgressStage, type PositionMetaStatus, type ProtocolFeeConfig, type RemoveLiquidityProgressStage, type ScannedPerpsPosition, type SpendResult, type SwapProgressStage, type TransferProgressStage, type UnshieldProgressStage, type UseAutoConsolidationOptions, type UseAutoConsolidationResult, type UseConsolidationOptions, type UseProtocolFeesResult, type VoteResult, type VoteSnapshotOptions, type VoteSpendOptions, type VotingProgressStage, WALLET_DERIVATION_MESSAGE, useActiveBallots, useAddLiquidity, useAllBalances, useAmmPools, useAutoConsolidation, useBalance, useBallot, useBallotTally, useBallotTimeStatus, useBallots, useCanClaim, useChangeVote, useClaim, useCloakCraft, useClosePosition, useCloseVotePosition, useConsolidation, useDecryptTally, useFinalizeBallot, useFragmentationScore, useImpermanentLoss, useInitializeAmmPool, useInitializePool, useIsBallotAuthority, useIsConsolidationRecommended, useIsFreeOperation, useKeeperMonitor, useLiquidate, useLiquidationPrice, useLpMintPreview, useLpValue, useNoteSelection, useNoteSelector, useNotes, useNullifierStatus, useOpenPosition, useOrders, usePayoutPreview, usePerpsAddLiquidity, usePerpsMarkets, usePerpsPool, usePerpsPools, usePerpsPositions, usePerpsRemoveLiquidity, usePool, usePoolAnalytics, usePoolList, usePoolStats, usePortfolioValue, usePositionPnL, usePositionValidation, usePrivateBalance, useProtocolFees, usePublicBalance, usePythPrice, usePythPrices, useRecentTransactions, useRemoveLiquidity, useResolveBallot, useScanner, useShield, useShouldConsolidate, useSolBalance, useSolPrice, useSwap, useSwapQuote, useTokenBalances, useTokenPrice, useTokenPrices, useTokenUtilization, useTransactionHistory, useTransfer, useUnshield, useUserPosition, useVoteSnapshot, useVoteSpend, useVoteValidation, useWallet, useWithdrawPreview };

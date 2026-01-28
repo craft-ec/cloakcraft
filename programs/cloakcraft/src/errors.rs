@@ -375,6 +375,34 @@ pub enum CloakCraftError {
     #[msg("Invalid token index")]
     InvalidTokenIndex,
 
+    // ============ Position Metadata Errors ============
+    #[msg("Position metadata not found")]
+    PositionMetaNotFound,
+
+    #[msg("Failed to create position metadata")]
+    PositionMetaCreationFailed,
+
+    #[msg("Failed to update position metadata")]
+    PositionMetaUpdateFailed,
+
+    #[msg("Position is not active - may be liquidated or closed")]
+    PositionNotActive,
+
+    #[msg("Position has already been liquidated")]
+    PositionAlreadyLiquidated,
+
+    #[msg("Position has already been closed")]
+    PositionAlreadyClosed,
+
+    #[msg("Failed to create liquidation nullifier")]
+    LiquidationNullifierFailed,
+
+    #[msg("Position ID mismatch between commitment and metadata")]
+    PositionIdMismatch,
+
+    #[msg("Nullifier hash mismatch")]
+    NullifierHashMismatch,
+
     // ============ Voting/Ballot Errors ============
     #[msg("Ballot not found")]
     BallotNotFound,

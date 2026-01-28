@@ -30,6 +30,7 @@ import {
   TrendingUp,
   TrendingDown,
   AlertCircle,
+  AlertTriangle,
   Loader2,
   CheckCircle,
   XCircle,
@@ -37,6 +38,8 @@ import {
   BarChart3,
   Droplets,
   Info,
+  Skull,
+  Activity,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -763,7 +766,9 @@ function PositionsTab({
             {positions.map((position, index) => (
               <div
                 key={`${position.accountHash}-${index}`}
-                className="rounded-lg border p-4 space-y-3"
+                className={`rounded-lg border p-4 space-y-3 ${
+                  position.status === 'liquidated' ? 'border-red-500/50 bg-red-500/5' : ''
+                }`}
               >
                 {/* Position header */}
                 <div className="flex items-center justify-between">
@@ -780,11 +785,40 @@ function PositionsTab({
                       </Badge>
                     )}
                     <span className="text-sm font-medium">{position.leverage}x</span>
+                    {/* Status badge */}
+                    {position.status === 'active' && (
+                      <Badge variant="outline" className="text-green-600 border-green-600/50">
+                        <Activity className="h-3 w-3 mr-1" />
+                        Active
+                      </Badge>
+                    )}
+                    {position.status === 'liquidated' && (
+                      <Badge variant="destructive">
+                        <Skull className="h-3 w-3 mr-1" />
+                        Liquidated
+                      </Badge>
+                    )}
+                    {position.status === 'closed' && (
+                      <Badge variant="secondary">
+                        <XCircle className="h-3 w-3 mr-1" />
+                        Closed
+                      </Badge>
+                    )}
                   </div>
                   <span className="text-xs text-muted-foreground font-mono">
                     {position.accountHash.slice(0, 8)}...
                   </span>
                 </div>
+
+                {/* Liquidation warning */}
+                {position.liquidationPrice && position.status === 'active' && (
+                  <div className="flex items-center gap-2 rounded-md bg-amber-500/10 border border-amber-500/30 p-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
+                    <span className="text-xs text-amber-600 dark:text-amber-400">
+                      Liquidation at ${formatPrice(position.liquidationPrice)}
+                    </span>
+                  </div>
+                )}
 
                 {/* Position details */}
                 <div className="grid grid-cols-2 gap-3 text-sm">
@@ -801,14 +835,36 @@ function PositionsTab({
                     <p className="font-medium">${formatPrice(position.entryPrice)}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">Leverage</p>
-                    <p className="font-medium">{position.leverage}x</p>
+                    <p className="text-xs text-muted-foreground">
+                      {position.liquidationPrice ? 'Liq. Price' : 'Leverage'}
+                    </p>
+                    <p className="font-medium">
+                      {position.liquidationPrice
+                        ? `$${formatPrice(position.liquidationPrice)}`
+                        : `${position.leverage}x`}
+                    </p>
                   </div>
                 </div>
 
-                {/* Close position button (placeholder) */}
-                <Button variant="outline" size="sm" className="w-full" disabled>
-                  Close Position (Coming Soon)
+                {/* Position opened time */}
+                {position.createdAt && (
+                  <p className="text-xs text-muted-foreground">
+                    Opened {new Date(position.createdAt * 1000).toLocaleDateString()}
+                  </p>
+                )}
+
+                {/* Close position button */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  disabled={position.status !== 'active'}
+                >
+                  {position.status === 'liquidated'
+                    ? 'Position Liquidated'
+                    : position.status === 'closed'
+                    ? 'Position Closed'
+                    : 'Close Position (Coming Soon)'}
                 </Button>
               </div>
             ))}
@@ -990,7 +1046,7 @@ function LiquidityTab({
         });
       } else {
         result = await removeLiquidity({
-          lpInput: selectedNote,
+          lpInput: selectedNote as any, // LP note type cast - hook handles validation
           pool: selectedPool,
           tokenIndex: selectedTokenIndex,
           lpAmount: amountBigInt,

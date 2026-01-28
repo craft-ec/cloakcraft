@@ -1208,11 +1208,10 @@ var init_light = __esm({
                 commitment: Buffer.from(note.commitment).toString("hex"),
                 pool: note.pool.toBase58(),
                 tokenMint: note.tokenMint.toBase58(),
-                ownerPubkey: {
-                  x: Buffer.from(note.ownerPubkey.x).toString("hex"),
-                  y: Buffer.from(note.ownerPubkey.y).toString("hex")
-                },
-                randomness: Buffer.from(note.randomness).toString("hex")
+                stealthPubX: Buffer.from(note.stealthPubX).toString("hex"),
+                randomness: Buffer.from(note.randomness).toString("hex"),
+                amount: note.amount.toString()
+                // BigInt to string
               };
             }
           }
@@ -1242,10 +1241,7 @@ var init_light = __esm({
                 commitment: new Uint8Array(Buffer.from(noteData.commitment, "hex")),
                 pool: new import_web34.PublicKey(noteData.pool),
                 tokenMint: new import_web34.PublicKey(noteData.tokenMint),
-                ownerPubkey: {
-                  x: new Uint8Array(Buffer.from(noteData.ownerPubkey.x, "hex")),
-                  y: new Uint8Array(Buffer.from(noteData.ownerPubkey.y, "hex"))
-                },
+                stealthPubX: new Uint8Array(Buffer.from(noteData.stealthPubX, "hex")),
                 randomness: new Uint8Array(Buffer.from(noteData.randomness, "hex")),
                 amount: BigInt(noteData.amount)
               });
@@ -2022,6 +2018,171 @@ var init_light = __esm({
       async getUnspentLpNotes(viewingKey, nullifierKey, programId, lpPool) {
         const notes = await this.scanLpNotesWithStatus(viewingKey, nullifierKey, programId, lpPool);
         return notes.filter((n) => !n.spent);
+      }
+      // =========================================================================
+      // Position Metadata Operations
+      // =========================================================================
+      /**
+       * Fetch position metadata for given position IDs
+       *
+       * Queries compressed PositionMeta accounts via Photon API.
+       * These accounts are public and enable permissionless liquidation monitoring.
+       *
+       * @param programId - CloakCraft program ID
+       * @param poolId - Pool ID (32 bytes)
+       * @param positionIds - Array of position IDs to fetch metadata for
+       * @returns Map of position ID (hex) to PositionMeta
+       */
+      async fetchPositionMetas(programId, poolId, positionIds) {
+        if (positionIds.length === 0) {
+          return /* @__PURE__ */ new Map();
+        }
+        const addressTree = DEVNET_LIGHT_TREES.addressTree;
+        const addresses = [];
+        const positionIdMap = /* @__PURE__ */ new Map();
+        for (const positionId of positionIds) {
+          const seeds = [
+            Buffer.from("position_meta"),
+            Buffer.from(poolId),
+            Buffer.from(positionId)
+          ];
+          const seed = (0, import_stateless.deriveAddressSeedV2)(seeds);
+          const address = (0, import_stateless.deriveAddressV2)(
+            seed,
+            new import_web34.PublicKey(addressTree),
+            programId
+          );
+          const addressStr = new import_web34.PublicKey(address).toBase58();
+          addresses.push(addressStr);
+          positionIdMap.set(addressStr, Buffer.from(positionId).toString("hex"));
+        }
+        const response = await fetchWithRetry(
+          this.rpcUrl,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "getMultipleCompressedAccounts",
+              params: { addresses }
+            })
+          },
+          this.retryConfig,
+          "fetchPositionMetas"
+        );
+        const result = await response.json();
+        if (result.error) {
+          throw new Error(`Helius RPC error: ${result.error.message}`);
+        }
+        const metas = /* @__PURE__ */ new Map();
+        const items = result.result?.value?.items ?? [];
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (!item || !item.data?.data) continue;
+          const positionIdHex = positionIdMap.get(addresses[i]);
+          if (!positionIdHex) continue;
+          try {
+            const meta = this.parsePositionMetaData(item.data.data);
+            if (meta) {
+              metas.set(positionIdHex, meta);
+            }
+          } catch {
+            continue;
+          }
+        }
+        return metas;
+      }
+      /**
+       * Parse PositionMeta from base64-encoded compressed account data
+       */
+      parsePositionMetaData(base64Data) {
+        try {
+          const data = Buffer.from(base64Data, "base64");
+          if (data.length < 210) {
+            return null;
+          }
+          const positionId = new Uint8Array(data.subarray(0, 32));
+          const poolId = new Uint8Array(data.subarray(32, 64));
+          const marketId = new Uint8Array(data.subarray(64, 96));
+          const marginAmount = data.readBigUInt64LE(96);
+          const liquidationPrice = data.readBigUInt64LE(104);
+          const isLong = data[112] === 1;
+          const positionSize = data.readBigUInt64LE(113);
+          const entryPrice = data.readBigUInt64LE(121);
+          const nullifierHash = new Uint8Array(data.subarray(129, 161));
+          const status = data[161];
+          const createdAt = Number(data.readBigInt64LE(162));
+          const updatedAt = Number(data.readBigInt64LE(170));
+          const ownerStealthPubkey = new Uint8Array(data.subarray(178, 210));
+          return {
+            positionId,
+            poolId,
+            marketId,
+            marginAmount,
+            liquidationPrice,
+            isLong,
+            positionSize,
+            entryPrice,
+            nullifierHash,
+            status,
+            createdAt,
+            updatedAt,
+            ownerStealthPubkey
+          };
+        } catch {
+          return null;
+        }
+      }
+      /**
+       * Fetch all active position metas for a pool
+       *
+       * Useful for keepers to monitor all positions for liquidation.
+       *
+       * @param programId - CloakCraft program ID
+       * @param poolId - Pool ID to scan
+       * @returns Array of active PositionMeta
+       */
+      async fetchActivePositionMetas(programId, poolId) {
+        const response = await fetchWithRetry(
+          this.rpcUrl,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "getCompressedAccountsByOwner",
+              params: {
+                owner: programId.toBase58(),
+                filters: [
+                  // Filter by pool_id at offset 32 (after position_id)
+                  { memcmp: { offset: 32, bytes: Buffer.from(poolId).toString("base64") } }
+                ]
+              }
+            })
+          },
+          this.retryConfig,
+          "fetchActivePositionMetas"
+        );
+        const result = await response.json();
+        if (result.error) {
+          throw new Error(`Helius RPC error: ${result.error.message}`);
+        }
+        const items = result.result?.value?.items ?? result.result?.items ?? [];
+        const metas = [];
+        for (const item of items) {
+          if (!item.data?.data) continue;
+          try {
+            const meta = this.parsePositionMetaData(item.data.data);
+            if (meta && meta.status === 0) {
+              metas.push(meta);
+            }
+          } catch {
+            continue;
+          }
+        }
+        return metas;
       }
     };
   }
@@ -3539,6 +3700,7 @@ __export(index_exports, {
   buildInitializeCommitmentCounterWithProgram: () => buildInitializeCommitmentCounterWithProgram,
   buildInitializePerpsPoolWithProgram: () => buildInitializePerpsPoolWithProgram,
   buildInitializePoolWithProgram: () => buildInitializePoolWithProgram,
+  buildLiquidatePositionWithProgram: () => buildLiquidatePositionWithProgram,
   buildOpenPositionWithProgram: () => buildOpenPositionWithProgram,
   buildRemoveLiquidityWithProgram: () => buildRemoveLiquidityWithProgram,
   buildRemovePerpsLiquidityWithProgram: () => buildRemovePerpsLiquidityWithProgram,
@@ -3550,6 +3712,9 @@ __export(index_exports, {
   buildSwapWithProgram: () => buildSwapWithProgram,
   buildTransactWithProgram: () => buildTransactWithProgram,
   buildUpdateBorrowFeesWithProgram: () => buildUpdateBorrowFeesWithProgram,
+  buildUpdateMarketStatusWithProgram: () => buildUpdateMarketStatusWithProgram,
+  buildUpdatePoolConfigWithProgram: () => buildUpdatePoolConfigWithProgram,
+  buildUpdateTokenStatusWithProgram: () => buildUpdateTokenStatusWithProgram,
   buildVerifyVoteCommitmentExistsInstruction: () => buildVerifyVoteCommitmentExistsInstruction,
   buildVersionedTransaction: () => buildVersionedTransaction,
   buildVoteSnapshotExecuteInstruction: () => buildVoteSnapshotExecuteInstruction,
@@ -3566,6 +3731,7 @@ __export(index_exports, {
   calculateBorrowRate: () => calculateBorrowRate,
   calculateImbalanceFee: () => calculateImbalanceFee,
   calculateInvariant: () => calculateInvariant,
+  calculateLiquidationAmounts: () => calculateLiquidationAmounts,
   calculateLiquidationPrice: () => calculateLiquidationPrice,
   calculateLpMintAmount: () => calculateLpMintAmount,
   calculateLpValue: () => calculateLpValue,
@@ -3726,6 +3892,7 @@ __export(index_exports, {
   serializeGroth16Proof: () => serializeGroth16Proof,
   serializeLpNote: () => serializeLpNote,
   serializePositionNote: () => serializePositionNote,
+  shouldLiquidate: () => shouldLiquidate,
   sleep: () => sleep,
   storeCommitments: () => storeCommitments,
   tryDecryptAnyNote: () => tryDecryptAnyNote,
@@ -22712,12 +22879,187 @@ async function buildAddMarketWithProgram(program, params) {
   });
   return { tx };
 }
+async function buildUpdatePoolConfigWithProgram(program, params) {
+  const updateParams = {
+    maxLeverage: params.maxLeverage ?? null,
+    positionFeeBps: params.positionFeeBps ?? null,
+    maxUtilizationBps: params.maxUtilizationBps ?? null,
+    liquidationThresholdBps: params.liquidationThresholdBps ?? null,
+    liquidationPenaltyBps: params.liquidationPenaltyBps ?? null,
+    baseBorrowRateBps: params.baseBorrowRateBps ?? null,
+    maxImbalanceFeeBps: params.maxImbalanceFeeBps ?? null,
+    isActive: params.isActive ?? null
+  };
+  const tx = await program.methods.updatePerpsPoolConfig(updateParams).accountsStrict({
+    perpsPool: params.perpsPool,
+    authority: params.authority
+  });
+  return { tx };
+}
+async function buildUpdateTokenStatusWithProgram(program, params) {
+  const tx = await program.methods.updatePerpsTokenStatus(params.tokenIndex, params.isActive).accountsStrict({
+    perpsPool: params.perpsPool,
+    authority: params.authority
+  });
+  return { tx };
+}
+async function buildUpdateMarketStatusWithProgram(program, params) {
+  const tx = await program.methods.updatePerpsMarketStatus(params.isActive).accountsStrict({
+    perpsPool: params.perpsPool,
+    perpsMarket: params.market,
+    authority: params.authority
+  });
+  return { tx };
+}
 async function buildUpdateBorrowFeesWithProgram(program, perpsPool, keeper) {
   const tx = await program.methods.updatePerpsBorrowFees().accountsStrict({
     perpsPool,
     keeper
   });
   return { tx };
+}
+async function buildLiquidatePositionWithProgram(program, params) {
+  const programId = program.programId;
+  const operationId = generateOperationId(
+    params.positionNullifier,
+    params.ownerCommitment,
+    Date.now()
+  );
+  const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
+  const [vkPda] = deriveVerificationKeyPda("perps_liquidate", programId);
+  const phase0Tx = await program.methods.createPendingWithProofLiquidate(
+    Array.from(operationId),
+    Buffer.from(params.proof),
+    Array.from(params.merkleRoot),
+    Array.from(params.positionCommitment),
+    Array.from(params.positionNullifier),
+    Array.from(params.ownerCommitment),
+    Array.from(params.liquidatorCommitment),
+    new import_bn5.default(params.currentPrice.toString()),
+    new import_bn5.default(params.liquidatorReward.toString()),
+    new import_bn5.default(params.ownerRemainder.toString())
+  ).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    perpsMarket: params.market,
+    verificationKey: vkPda,
+    pendingOperation: pendingOpPda,
+    keeper: params.keeper,
+    systemProgram: import_web312.SystemProgram.programId
+  }).preInstructions([
+    import_web312.ComputeBudgetProgram.setComputeUnitLimit({ units: 8e5 })
+  ]);
+  const phase1Tx = await program.methods.verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.keeper
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    import_web312.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase2Tx = await program.methods.createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.keeper
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    import_web312.ComputeBudgetProgram.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase3Tx = await program.methods.executeLiquidate(
+    Array.from(operationId),
+    new import_bn5.default(params.positionMargin.toString()),
+    new import_bn5.default(params.positionSize.toString()),
+    params.isLong
+  ).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    perpsMarket: params.market,
+    pendingOperation: pendingOpPda,
+    keeper: params.keeper,
+    oracle: params.oracle
+  }).preInstructions([
+    import_web312.ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 })
+  ]);
+  const pendingCommitments = [];
+  if (params.ownerRemainder > 0n) {
+    const ownerNote = {
+      stealthPubX: params.ownerRecipient.stealthPubkey.x,
+      tokenMint: params.tokenMint,
+      amount: params.ownerRemainder,
+      randomness: params.ownerRandomness
+    };
+    const ownerEncrypted = encryptNote(ownerNote, params.ownerRecipient.stealthPubkey);
+    pendingCommitments.push({
+      pool: params.settlementPool,
+      commitment: params.ownerCommitment,
+      stealthEphemeralPubkey: new Uint8Array([
+        ...params.ownerRecipient.ephemeralPubkey.x,
+        ...params.ownerRecipient.ephemeralPubkey.y
+      ]),
+      encryptedNote: serializeEncryptedNote(ownerEncrypted)
+    });
+  }
+  if (params.liquidatorReward > 0n) {
+    const liquidatorNote = {
+      stealthPubX: params.liquidatorRecipient.stealthPubkey.x,
+      tokenMint: params.tokenMint,
+      amount: params.liquidatorReward,
+      randomness: params.liquidatorRandomness
+    };
+    const liquidatorEncrypted = encryptNote(liquidatorNote, params.liquidatorRecipient.stealthPubkey);
+    pendingCommitments.push({
+      pool: params.settlementPool,
+      commitment: params.liquidatorCommitment,
+      stealthEphemeralPubkey: new Uint8Array([
+        ...params.liquidatorRecipient.ephemeralPubkey.x,
+        ...params.liquidatorRecipient.ephemeralPubkey.y
+      ]),
+      encryptedNote: serializeEncryptedNote(liquidatorEncrypted)
+    });
+  }
+  return {
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
+    operationId,
+    pendingCommitments
+  };
+}
+function shouldLiquidate(position, currentPrice, pool) {
+  const { margin, size, entryPrice, direction } = position;
+  let pnl;
+  let isProfit;
+  if (direction === "long") {
+    if (currentPrice > entryPrice) {
+      pnl = (currentPrice - entryPrice) * size / entryPrice;
+      isProfit = true;
+    } else {
+      pnl = (entryPrice - currentPrice) * size / entryPrice;
+      isProfit = false;
+    }
+  } else {
+    if (currentPrice < entryPrice) {
+      pnl = (entryPrice - currentPrice) * size / entryPrice;
+      isProfit = true;
+    } else {
+      pnl = (currentPrice - entryPrice) * size / entryPrice;
+      isProfit = false;
+    }
+  }
+  if (isProfit && pnl >= margin) {
+    return { shouldLiquidate: true, reason: "profit_bound", pnl, isProfit };
+  }
+  const effectiveMargin = isProfit ? margin + pnl : margin - pnl;
+  const liquidationThreshold = margin * BigInt(pool.liquidationThresholdBps) / 10000n;
+  if (effectiveMargin < liquidationThreshold) {
+    return { shouldLiquidate: true, reason: "underwater", pnl, isProfit };
+  }
+  return { shouldLiquidate: false, reason: null, pnl, isProfit };
+}
+function calculateLiquidationAmounts(margin, pnl, isProfit, liquidationPenaltyBps) {
+  const effectiveMargin = isProfit ? margin + pnl : margin > pnl ? margin - pnl : 0n;
+  const liquidatorReward = margin * BigInt(liquidationPenaltyBps) / 10000n;
+  const ownerRemainder = effectiveMargin > liquidatorReward ? effectiveMargin - liquidatorReward : 0n;
+  return { ownerRemainder, liquidatorReward };
 }
 
 // src/perps/oracle.ts
@@ -26573,6 +26915,43 @@ var CloakCraftClient = class {
       this.programId
     );
     return this.lightClient.scanLpNotesWithStatus(viewingKey, nullifierKey, this.programId, lpPoolPda);
+  }
+  /**
+   * Fetch position metadata for given position IDs
+   *
+   * Queries public PositionMeta compressed accounts to get status,
+   * liquidation price, and other metadata for positions.
+   *
+   * @param poolId - Pool address (will be converted to bytes)
+   * @param positionIds - Array of position IDs to fetch
+   * @returns Map of position ID (hex) to PositionMeta
+   */
+  async fetchPositionMetas(poolId, positionIds) {
+    if (!this.lightClient) {
+      throw new Error("Light client not initialized");
+    }
+    return this.lightClient.fetchPositionMetas(
+      this.programId,
+      poolId.toBytes(),
+      positionIds
+    );
+  }
+  /**
+   * Fetch all active position metas for a pool
+   *
+   * Useful for keepers to monitor all positions for liquidation.
+   *
+   * @param poolId - Pool address to scan
+   * @returns Array of active PositionMeta
+   */
+  async fetchActivePositionMetas(poolId) {
+    if (!this.lightClient) {
+      throw new Error("Light client not initialized");
+    }
+    return this.lightClient.fetchActivePositionMetas(
+      this.programId,
+      poolId.toBytes()
+    );
   }
 };
 
@@ -30748,6 +31127,7 @@ var VotingClient = class {
   buildInitializeCommitmentCounterWithProgram,
   buildInitializePerpsPoolWithProgram,
   buildInitializePoolWithProgram,
+  buildLiquidatePositionWithProgram,
   buildOpenPositionWithProgram,
   buildRemoveLiquidityWithProgram,
   buildRemovePerpsLiquidityWithProgram,
@@ -30759,6 +31139,9 @@ var VotingClient = class {
   buildSwapWithProgram,
   buildTransactWithProgram,
   buildUpdateBorrowFeesWithProgram,
+  buildUpdateMarketStatusWithProgram,
+  buildUpdatePoolConfigWithProgram,
+  buildUpdateTokenStatusWithProgram,
   buildVerifyVoteCommitmentExistsInstruction,
   buildVersionedTransaction,
   buildVoteSnapshotExecuteInstruction,
@@ -30775,6 +31158,7 @@ var VotingClient = class {
   calculateBorrowRate,
   calculateImbalanceFee,
   calculateInvariant,
+  calculateLiquidationAmounts,
   calculateLiquidationPrice,
   calculateLpMintAmount,
   calculateLpValue,
@@ -30935,6 +31319,7 @@ var VotingClient = class {
   serializeGroth16Proof,
   serializeLpNote,
   serializePositionNote,
+  shouldLiquidate,
   sleep,
   storeCommitments,
   tryDecryptAnyNote,

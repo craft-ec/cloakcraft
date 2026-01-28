@@ -56,12 +56,17 @@ __export(index_exports, {
   useClosePosition: () => useClosePosition,
   useCloseVotePosition: () => useCloseVotePosition,
   useConsolidation: () => useConsolidation,
+  useDecryptTally: () => useDecryptTally,
+  useFinalizeBallot: () => useFinalizeBallot,
   useFragmentationScore: () => useFragmentationScore,
   useImpermanentLoss: () => useImpermanentLoss,
   useInitializeAmmPool: () => useInitializeAmmPool,
   useInitializePool: () => useInitializePool,
+  useIsBallotAuthority: () => useIsBallotAuthority,
   useIsConsolidationRecommended: () => useIsConsolidationRecommended,
   useIsFreeOperation: () => useIsFreeOperation,
+  useKeeperMonitor: () => useKeeperMonitor,
+  useLiquidate: () => useLiquidate,
   useLiquidationPrice: () => useLiquidationPrice,
   useLpMintPreview: () => useLpMintPreview,
   useLpValue: () => useLpValue,
@@ -88,8 +93,11 @@ __export(index_exports, {
   usePrivateBalance: () => usePrivateBalance,
   useProtocolFees: () => useProtocolFees,
   usePublicBalance: () => usePublicBalance,
+  usePythPrice: () => usePythPrice,
+  usePythPrices: () => usePythPrices,
   useRecentTransactions: () => useRecentTransactions,
   useRemoveLiquidity: () => useRemoveLiquidity,
+  useResolveBallot: () => useResolveBallot,
   useScanner: () => useScanner,
   useShield: () => useShield,
   useShouldConsolidate: () => useShouldConsolidate,
@@ -144,12 +152,17 @@ function CloakCraftProvider({
   const hasAutoSyncedRef = (0, import_react.useRef)(false);
   const syncRef = (0, import_react.useRef)(null);
   const STORAGE_KEY = solanaWalletPubkey ? `cloakcraft_spending_key_${solanaWalletPubkey}` : "cloakcraft_spending_key";
+  const prevWalletPubkeyRef = (0, import_react.useRef)(void 0);
   (0, import_react.useEffect)(() => {
     if (solanaWalletPubkey) {
-      setWallet(null);
-      setNotes([]);
-      setIsProverReady(false);
-      hasAutoSyncedRef.current = false;
+      if (prevWalletPubkeyRef.current && prevWalletPubkeyRef.current !== solanaWalletPubkey) {
+        console.log("[CloakCraft] Wallet changed, clearing stealth wallet...");
+        setWallet(null);
+        setNotes([]);
+        setIsProverReady(false);
+        hasAutoSyncedRef.current = false;
+      }
+      prevWalletPubkeyRef.current = solanaWalletPubkey;
     }
   }, [solanaWalletPubkey]);
   const client = (0, import_react.useMemo)(
@@ -181,19 +194,24 @@ function CloakCraftProvider({
     }
   }, [autoInitialize, isInitialized, isInitializing]);
   (0, import_react.useEffect)(() => {
-    if (isInitialized && !wallet) {
+    if (isInitialized && !wallet && solanaWalletPubkey) {
       try {
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
+          console.log("[CloakCraft] Restoring stealth wallet from localStorage...");
           const spendingKey = new Uint8Array(JSON.parse(stored));
-          client.loadWallet(spendingKey).then(setWallet).catch(() => {
+          client.loadWallet(spendingKey).then((restoredWallet) => {
+            console.log("[CloakCraft] Stealth wallet restored successfully");
+            setWallet(restoredWallet);
+          }).catch((err) => {
+            console.error("[CloakCraft] Failed to restore wallet:", err);
             localStorage.removeItem(STORAGE_KEY);
           });
         }
       } catch {
       }
     }
-  }, [isInitialized, wallet, client]);
+  }, [isInitialized, wallet, client, solanaWalletPubkey, STORAGE_KEY]);
   (0, import_react.useEffect)(() => {
     if (wallet && isProgramReady && !hasAutoSyncedRef.current && !syncLockRef.current && syncRef.current) {
       hasAutoSyncedRef.current = true;
@@ -954,6 +972,22 @@ function useUnshield() {
 
 // src/useScanner.ts
 var import_react8 = require("react");
+function useDebounce(fn, delayMs) {
+  const timeoutRef = (0, import_react8.useRef)(null);
+  const fnRef = (0, import_react8.useRef)(fn);
+  fnRef.current = fn;
+  return (0, import_react8.useCallback)(
+    ((...args) => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => {
+        fnRef.current(...args);
+      }, delayMs);
+    }),
+    [delayMs]
+  );
+}
 function usePrivateBalance(tokenMint) {
   const { client, wallet } = useCloakCraft();
   const [balance, setBalance] = (0, import_react8.useState)(0n);
@@ -996,22 +1030,35 @@ function usePrivateBalance(tokenMint) {
     refresh
   };
 }
-function useScanner(tokenMint, autoRefreshMs) {
+function useScanner(tokenMint, autoRefreshMs, debounceMs = 500) {
   const { client, wallet, notes, sync } = useCloakCraft();
   const [state, setState] = (0, import_react8.useState)({
     isScanning: false,
     lastScanned: null,
     error: null
   });
+  const [stats, setStats] = (0, import_react8.useState)(null);
   const intervalRef = (0, import_react8.useRef)(null);
-  const scan = (0, import_react8.useCallback)(async () => {
+  const isScanningRef = (0, import_react8.useRef)(false);
+  const scanImpl = (0, import_react8.useCallback)(async () => {
     if (!client || !wallet) {
       setState((s) => ({ ...s, error: "Wallet not connected" }));
       return;
     }
+    if (isScanningRef.current) {
+      return;
+    }
+    isScanningRef.current = true;
     setState((s) => ({ ...s, isScanning: true, error: null }));
     try {
       await sync(tokenMint);
+      try {
+        const lightClient = client.lightClient;
+        if (lightClient?.getLastScanStats) {
+          setStats(lightClient.getLastScanStats());
+        }
+      } catch {
+      }
       setState({
         isScanning: false,
         lastScanned: /* @__PURE__ */ new Date(),
@@ -1020,27 +1067,40 @@ function useScanner(tokenMint, autoRefreshMs) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Scan failed";
       setState((s) => ({ ...s, isScanning: false, error: message }));
+    } finally {
+      isScanningRef.current = false;
     }
   }, [client, wallet, sync, tokenMint]);
+  const scan = useDebounce(scanImpl, debounceMs);
+  const scanNow = scanImpl;
   (0, import_react8.useEffect)(() => {
     if (autoRefreshMs && autoRefreshMs > 0 && client && wallet) {
-      scan();
-      intervalRef.current = setInterval(scan, autoRefreshMs);
+      scanNow();
+      intervalRef.current = setInterval(scanNow, autoRefreshMs);
       return () => {
         if (intervalRef.current) {
           clearInterval(intervalRef.current);
         }
       };
     }
-  }, [autoRefreshMs, client, wallet, scan]);
-  const filteredNotes = tokenMint ? notes.filter((n) => n.tokenMint && n.tokenMint.equals(tokenMint)) : notes;
-  const totalAmount = filteredNotes.reduce((sum, n) => sum + n.amount, 0n);
+  }, [autoRefreshMs, client, wallet, scanNow]);
+  const filteredNotes = (0, import_react8.useMemo)(() => {
+    return tokenMint ? notes.filter((n) => n.tokenMint && n.tokenMint.equals(tokenMint)) : notes;
+  }, [notes, tokenMint]);
+  const totalAmount = (0, import_react8.useMemo)(() => {
+    return filteredNotes.reduce((sum, n) => sum + n.amount, 0n);
+  }, [filteredNotes]);
   return {
     ...state,
     notes: filteredNotes,
     totalAmount,
     noteCount: filteredNotes.length,
-    scan
+    scan,
+    // Debounced
+    scanNow,
+    // Immediate
+    stats
+    // Performance stats
   };
 }
 function useNullifierStatus(note, pool) {
@@ -2884,14 +2944,25 @@ function useOpenPosition() {
           throw new Error("Margin note not found. It may have been spent.");
         }
         onProgress?.("generating");
-        onProgress?.("building");
-        onProgress?.("approving");
-        onProgress?.("executing");
-        const result = {
-          signature: "pending_implementation",
-          slot: 0
-        };
-        onProgress?.("confirming");
+        const marketId = market.marketId || new Uint8Array(32);
+        const merkleRoot = freshInput.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
+        const result = await client.openPerpsPosition({
+          input: freshInput,
+          poolId: pool.address,
+          marketId,
+          direction,
+          marginAmount,
+          leverage,
+          oraclePrice,
+          positionRecipient,
+          changeRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress
+        });
         await new Promise((resolve) => setTimeout(resolve, 2e3));
         await sync(marginInput.tokenMint, true);
         setState({ isOpening: false, error: null, result });
@@ -2938,17 +3009,28 @@ function useClosePosition() {
         const pnlResult = (0, import_sdk14.calculatePnL)(position, oraclePrice, pool, currentTimestamp);
         const { stealthAddress: settlementRecipient } = (0, import_sdk14.generateStealthAddress)(wallet.publicKey);
         onProgress?.("generating");
-        onProgress?.("building");
-        onProgress?.("approving");
-        onProgress?.("executing");
-        const result = {
-          signature: "pending_implementation",
-          slot: 0
-        };
-        onProgress?.("confirming");
-        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        const marketId = market.marketId || new Uint8Array(32);
         const settlementTokenIndex = position.direction === "long" ? market.quoteTokenIndex : market.baseTokenIndex;
         const settlementToken = pool.tokens[settlementTokenIndex];
+        if (!settlementToken) {
+          throw new Error("Settlement token not found in pool");
+        }
+        const merkleRoot = position.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
+        const result = await client.closePerpsPosition({
+          positionInput: position,
+          poolId: pool.address,
+          marketId,
+          settlementTokenMint: settlementToken.mint,
+          oraclePrice,
+          settlementRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress
+        });
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
         if (settlementToken) {
           await sync(settlementToken.mint, true);
         }
@@ -3011,14 +3093,23 @@ function usePerpsAddLiquidity() {
           throw new Error("Token note not found. It may have been spent.");
         }
         onProgress?.("generating");
-        onProgress?.("building");
-        onProgress?.("approving");
-        onProgress?.("executing");
-        const result = {
-          signature: "pending_implementation",
-          slot: 0
-        };
-        onProgress?.("confirming");
+        const merkleRoot = freshInput.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
+        const result = await client.addPerpsLiquidity({
+          input: freshInput,
+          poolId: pool.address,
+          tokenIndex,
+          depositAmount,
+          lpAmount,
+          oraclePrices,
+          lpRecipient,
+          changeRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress
+        });
         await new Promise((resolve) => setTimeout(resolve, 2e3));
         await sync(tokenInput.tokenMint, true);
         await sync(pool.lpMint, true);
@@ -3090,14 +3181,23 @@ function usePerpsRemoveLiquidity() {
           throw new Error("LP note not found. It may have been spent.");
         }
         onProgress?.("generating");
-        onProgress?.("building");
-        onProgress?.("approving");
-        onProgress?.("executing");
-        const result = {
-          signature: "pending_implementation",
-          slot: 0
-        };
-        onProgress?.("confirming");
+        const merkleRoot = freshInput.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
+        const result = await client.removePerpsLiquidity({
+          lpInput: freshInput,
+          poolId: pool.address,
+          tokenIndex,
+          lpAmount,
+          withdrawAmount,
+          oraclePrices,
+          withdrawRecipient,
+          lpChangeRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress
+        });
         await new Promise((resolve) => setTimeout(resolve, 2e3));
         await sync(pool.lpMint, true);
         await sync(token.mint, true);
@@ -3218,6 +3318,21 @@ function usePositionValidation(pool, market, marginAmount, leverage, direction) 
     return { isValid: true, error: null, positionSize };
   }, [pool, market, marginAmount, leverage, direction]);
 }
+function toPositionStatus(status) {
+  switch (status) {
+    case 0:
+      return "active";
+    case 1:
+      return "liquidated";
+    case 2:
+      return "closed";
+    default:
+      return "unknown";
+  }
+}
+function derivePositionId(commitment, randomness) {
+  return commitment;
+}
 function usePerpsPositions(positionPool) {
   const { client, wallet } = useCloakCraft();
   const [positions, setPositions] = (0, import_react19.useState)([]);
@@ -3232,20 +3347,42 @@ function usePerpsPositions(positionPool) {
     setError(null);
     try {
       const scannedPositions = await client.scanPositionNotes(positionPool);
-      const uiPositions = scannedPositions.map((pos) => ({
-        commitment: pos.commitment,
-        accountHash: pos.accountHash,
-        marketId: pos.marketId,
-        isLong: pos.isLong,
-        margin: pos.margin,
-        size: pos.size,
-        leverage: pos.leverage,
-        entryPrice: pos.entryPrice,
-        randomness: pos.randomness,
-        pool: pos.pool,
-        spent: pos.spent
-      }));
-      setPositions(uiPositions.filter((p) => !p.spent));
+      if (scannedPositions.length === 0) {
+        setPositions([]);
+        return;
+      }
+      const positionIds = scannedPositions.map(
+        (pos) => derivePositionId(pos.commitment, pos.randomness)
+      );
+      let metadataMap = /* @__PURE__ */ new Map();
+      try {
+        metadataMap = await client.fetchPositionMetas(positionPool, positionIds);
+      } catch (metaErr) {
+        console.warn("[usePerpsPositions] Failed to fetch position metadata:", metaErr);
+      }
+      const uiPositions = scannedPositions.map((pos) => {
+        const positionIdHex = Buffer.from(derivePositionId(pos.commitment, pos.randomness)).toString("hex");
+        const meta = metadataMap.get(positionIdHex);
+        return {
+          commitment: pos.commitment,
+          accountHash: pos.accountHash,
+          marketId: pos.marketId,
+          isLong: pos.isLong,
+          margin: pos.margin,
+          size: pos.size,
+          leverage: pos.leverage,
+          entryPrice: pos.entryPrice,
+          randomness: pos.randomness,
+          pool: pos.pool,
+          spent: pos.spent,
+          // Metadata fields
+          status: meta ? toPositionStatus(meta.status) : pos.spent ? "closed" : "active",
+          liquidationPrice: meta?.liquidationPrice,
+          createdAt: meta?.createdAt,
+          hasMetadata: !!meta
+        };
+      });
+      setPositions(uiPositions.filter((p) => !p.spent && p.status !== "closed"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to scan positions");
       setPositions([]);
@@ -3262,6 +3399,201 @@ function usePerpsPositions(positionPool) {
     error,
     refresh
   };
+}
+function usePythPrice(symbol, refreshInterval = 1e4) {
+  const [price, setPrice] = (0, import_react19.useState)(null);
+  const [isLoading, setIsLoading] = (0, import_react19.useState)(false);
+  const [error, setError] = (0, import_react19.useState)(null);
+  const refresh = (0, import_react19.useCallback)(async () => {
+    if (!symbol) {
+      setPrice(null);
+      return;
+    }
+    const feedId = (0, import_sdk14.getFeedIdBySymbol)(symbol);
+    if (!feedId) {
+      setError(`Unknown symbol: ${symbol}`);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const priceUsd = await (0, import_sdk14.fetchPythPriceUsd)(feedId, 9);
+      setPrice(priceUsd);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch price");
+      setPrice(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [symbol]);
+  (0, import_react19.useEffect)(() => {
+    refresh();
+    if (refreshInterval > 0) {
+      const interval = setInterval(refresh, refreshInterval);
+      return () => clearInterval(interval);
+    }
+  }, [refresh, refreshInterval]);
+  return {
+    price,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function usePythPrices(symbols, refreshInterval = 1e4) {
+  const [prices, setPrices] = (0, import_react19.useState)(/* @__PURE__ */ new Map());
+  const [isLoading, setIsLoading] = (0, import_react19.useState)(false);
+  const [error, setError] = (0, import_react19.useState)(null);
+  const refresh = (0, import_react19.useCallback)(async () => {
+    if (!symbols.length) {
+      setPrices(/* @__PURE__ */ new Map());
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const priceMap = /* @__PURE__ */ new Map();
+      await Promise.all(
+        symbols.map(async (symbol) => {
+          const feedId = (0, import_sdk14.getFeedIdBySymbol)(symbol);
+          if (feedId) {
+            const priceUsd = await (0, import_sdk14.fetchPythPriceUsd)(feedId, 9);
+            priceMap.set(symbol, priceUsd);
+          }
+        })
+      );
+      setPrices(priceMap);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch prices");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [symbols]);
+  (0, import_react19.useEffect)(() => {
+    refresh();
+    if (refreshInterval > 0) {
+      const interval = setInterval(refresh, refreshInterval);
+      return () => clearInterval(interval);
+    }
+  }, [refresh, refreshInterval]);
+  return {
+    prices,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function useKeeperMonitor(pool, positionPool, pollInterval = 5e3) {
+  const { positions, isLoading: isScanning, refresh: refreshPositions } = usePerpsPositions(positionPool);
+  const [liquidatable, setLiquidatable] = (0, import_react19.useState)([]);
+  const [isChecking, setIsChecking] = (0, import_react19.useState)(false);
+  const [lastCheck, setLastCheck] = (0, import_react19.useState)(0);
+  const tokenSymbols = (0, import_react19.useMemo)(() => {
+    if (!pool) return [];
+    return pool.tokens.filter((t) => t.isActive).map((t) => {
+      const mintStr = t.mint.toBase58();
+      if (mintStr.includes("So1")) return "SOL";
+      if (mintStr.includes("USDC") || mintStr.includes("EPj")) return "USDC";
+      return "SOL";
+    });
+  }, [pool]);
+  const { prices, refresh: refreshPrices } = usePythPrices(tokenSymbols, pollInterval);
+  const checkPositions = (0, import_react19.useCallback)(async () => {
+    if (!pool || !positions.length || !prices.size) {
+      setLiquidatable([]);
+      return;
+    }
+    setIsChecking(true);
+    try {
+      const sdk = await import("@cloakcraft/sdk");
+      const shouldLiquidateFn = sdk.shouldLiquidate;
+      const calculateLiquidationAmountsFn = sdk.calculateLiquidationAmounts;
+      if (!shouldLiquidateFn || !calculateLiquidationAmountsFn) {
+        console.warn("Liquidation functions not available in SDK");
+        setLiquidatable([]);
+        return;
+      }
+      const liquidatablePositions = [];
+      for (const position of positions) {
+        if (position.spent) continue;
+        const currentPrice = prices.values().next().value || 0n;
+        if (currentPrice === 0n) continue;
+        const result = shouldLiquidateFn(
+          {
+            margin: position.margin,
+            size: position.size,
+            entryPrice: position.entryPrice,
+            direction: position.isLong ? "long" : "short"
+          },
+          currentPrice,
+          { liquidationThresholdBps: pool.liquidationThresholdBps }
+        );
+        if (result.shouldLiquidate && result.reason) {
+          const amounts = calculateLiquidationAmountsFn(
+            position.margin,
+            result.pnl,
+            result.isProfit,
+            pool.liquidationPenaltyBps
+          );
+          liquidatablePositions.push({
+            position,
+            reason: result.reason,
+            currentPrice,
+            pnl: result.pnl,
+            isProfit: result.isProfit,
+            ownerRemainder: amounts.ownerRemainder,
+            liquidatorReward: amounts.liquidatorReward
+          });
+        }
+      }
+      setLiquidatable(liquidatablePositions);
+      setLastCheck(Date.now());
+    } finally {
+      setIsChecking(false);
+    }
+  }, [pool, positions, prices]);
+  (0, import_react19.useEffect)(() => {
+    checkPositions();
+    if (pollInterval > 0) {
+      const interval = setInterval(() => {
+        refreshPositions();
+        refreshPrices();
+        checkPositions();
+      }, pollInterval);
+      return () => clearInterval(interval);
+    }
+  }, [checkPositions, pollInterval, refreshPositions, refreshPrices]);
+  return {
+    /** All scanned positions */
+    positions,
+    /** Positions ready for liquidation */
+    liquidatable,
+    /** Is currently scanning/checking */
+    isLoading: isScanning || isChecking,
+    /** Last check timestamp */
+    lastCheck,
+    /** Manual refresh */
+    refresh: checkPositions
+  };
+}
+function useLiquidate() {
+  const { client, wallet } = useCloakCraft();
+  const [isLiquidating, setIsLiquidating] = (0, import_react19.useState)(false);
+  const liquidate = (0, import_react19.useCallback)(async (options) => {
+    const { position, pool, market, liquidatorRecipient, onProgress } = options;
+    const program = client?.getProgram();
+    if (!program || !wallet) {
+      throw new Error("Program or wallet not available");
+    }
+    setIsLiquidating(true);
+    try {
+      onProgress?.("building");
+      throw new Error("Liquidation proof generation not yet implemented");
+    } finally {
+      setIsLiquidating(false);
+    }
+  }, [client, wallet]);
+  return { liquidate, isLiquidating };
 }
 
 // src/useVoting.ts
@@ -3369,16 +3701,24 @@ function useBallot(ballotAddress) {
     refresh
   };
 }
+function toBigInt(value) {
+  if (value === null || value === void 0) return 0n;
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") return BigInt(value);
+  return BigInt(value.toString());
+}
 function useBallotTally(ballot) {
   return (0, import_react20.useMemo)(() => {
     if (!ballot) {
       return null;
     }
-    const totalVotes = Number(ballot.voteCount);
-    const totalWeight = ballot.totalWeight;
-    const totalAmount = ballot.totalAmount;
-    const optionStats = ballot.optionWeights.map((weight, index) => {
-      const amount = ballot.optionAmounts[index] || 0n;
+    const totalVotes = Number(toBigInt(ballot.voteCount));
+    const totalWeight = toBigInt(ballot.totalWeight);
+    const totalAmount = toBigInt(ballot.totalAmount);
+    const quorumThreshold = toBigInt(ballot.quorumThreshold);
+    const optionStats = (ballot.optionWeights || []).map((w, index) => {
+      const weight = toBigInt(w);
+      const amount = toBigInt(ballot.optionAmounts?.[index]);
       const percentage = totalWeight > 0n ? Number(weight * 10000n / totalWeight) / 100 : 0;
       return {
         index,
@@ -3397,8 +3737,8 @@ function useBallotTally(ballot) {
       totalAmount,
       optionStats,
       leadingOption,
-      hasQuorum: totalWeight >= ballot.quorumThreshold,
-      quorumProgress: ballot.quorumThreshold > 0n ? Number(totalWeight * 10000n / ballot.quorumThreshold) / 100 : 100
+      hasQuorum: totalWeight >= quorumThreshold,
+      quorumProgress: quorumThreshold > 0n ? Number(totalWeight * 10000n / quorumThreshold) / 100 : 100
     };
   }, [ballot]);
 }
@@ -3414,9 +3754,17 @@ function useBallotTimeStatus(ballot) {
     if (!ballot) {
       return null;
     }
-    const startTime = ballot.startTime;
-    const endTime = ballot.endTime;
-    const claimDeadline = ballot.claimDeadline;
+    const toNumber = (val) => {
+      if (val === null || val === void 0) return 0;
+      if (typeof val === "number") return val;
+      if (typeof val === "object" && "toNumber" in val && typeof val.toNumber === "function") {
+        return val.toNumber();
+      }
+      return Number(val.toString());
+    };
+    const startTime = toNumber(ballot.startTime);
+    const endTime = toNumber(ballot.endTime);
+    const claimDeadline = toNumber(ballot.claimDeadline);
     const hasStarted = now >= startTime;
     const hasEnded = now >= endTime;
     const canClaim = ballot.hasOutcome && now < claimDeadline;
@@ -3741,14 +4089,16 @@ function usePayoutPreview(ballot, voteChoice, weight) {
     if (!ballot || !ballot.hasOutcome || voteChoice !== ballot.outcome) {
       return null;
     }
-    if (ballot.winnerWeight === 0n) {
+    const winnerWeight = toBigInt(ballot.winnerWeight);
+    if (winnerWeight === 0n) {
       return null;
     }
-    const totalPool = ballot.poolBalance;
-    const grossPayout = weight * totalPool / ballot.winnerWeight;
+    const totalPool = toBigInt(ballot.poolBalance);
+    const userWeight = toBigInt(weight);
+    const grossPayout = userWeight * totalPool / winnerWeight;
     const feeAmount = grossPayout * BigInt(ballot.protocolFeeBps) / 10000n;
     const netPayout = grossPayout - feeAmount;
-    const multiplier = weight > 0n ? Number(grossPayout * 1000n / weight) / 1e3 : 0;
+    const multiplier = userWeight > 0n ? Number(grossPayout * 1000n / userWeight) / 1e3 : 0;
     return {
       grossPayout,
       netPayout,
@@ -3803,6 +4153,147 @@ function useCanClaim(ballot, voteChoice) {
     return { canClaim: true, reason: null };
   }, [ballot, voteChoice]);
 }
+function useResolveBallot() {
+  const { client } = useCloakCraft();
+  const [isResolving, setIsResolving] = (0, import_react20.useState)(false);
+  const resolve = (0, import_react20.useCallback)(async (options) => {
+    const { ballot, outcome, onProgress } = options;
+    const program = client?.getProgram();
+    if (!program) {
+      throw new Error("Program not available");
+    }
+    setIsResolving(true);
+    try {
+      onProgress?.("building");
+      const { buildResolveBallotInstruction } = await import("@cloakcraft/sdk");
+      const { Transaction: Transaction2, ComputeBudgetProgram } = await import("@solana/web3.js");
+      const payer = program.provider.wallet;
+      const ix = await buildResolveBallotInstruction(
+        program,
+        ballot.ballotId,
+        outcome ?? null,
+        payer.publicKey,
+        ballot.resolutionMode === 2 ? payer.publicKey : void 0
+        // Authority mode needs resolver
+      );
+      const tx = new Transaction2();
+      tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }));
+      tx.add(ix);
+      onProgress?.("approving");
+      const connection = program.provider.connection;
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = payer.publicKey;
+      const signed = await payer.signTransaction(tx);
+      const signature = await connection.sendRawTransaction(signed.serialize());
+      onProgress?.("confirming");
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight
+      });
+      return { signature };
+    } finally {
+      setIsResolving(false);
+    }
+  }, [client]);
+  return { resolve, isResolving };
+}
+function useFinalizeBallot() {
+  const { client } = useCloakCraft();
+  const [isFinalizing, setIsFinalizing] = (0, import_react20.useState)(false);
+  const finalize = (0, import_react20.useCallback)(async (options) => {
+    const { ballot, onProgress } = options;
+    const program = client?.getProgram();
+    if (!program) {
+      throw new Error("Program not available");
+    }
+    setIsFinalizing(true);
+    try {
+      onProgress?.("building");
+      const { buildFinalizeBallotInstruction } = await import("@cloakcraft/sdk");
+      const { Transaction: Transaction2, ComputeBudgetProgram } = await import("@solana/web3.js");
+      const payer = program.provider.wallet;
+      const ix = await buildFinalizeBallotInstruction(
+        program,
+        ballot.ballotId,
+        ballot.tokenMint,
+        ballot.protocolTreasury,
+        payer.publicKey
+      );
+      const tx = new Transaction2();
+      tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }));
+      tx.add(ix);
+      onProgress?.("approving");
+      const connection = program.provider.connection;
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = payer.publicKey;
+      const signed = await payer.signTransaction(tx);
+      const signature = await connection.sendRawTransaction(signed.serialize());
+      onProgress?.("confirming");
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight
+      });
+      return { signature };
+    } finally {
+      setIsFinalizing(false);
+    }
+  }, [client]);
+  return { finalize, isFinalizing };
+}
+function useDecryptTally() {
+  const { client } = useCloakCraft();
+  const [isDecrypting, setIsDecrypting] = (0, import_react20.useState)(false);
+  const decrypt = (0, import_react20.useCallback)(async (options) => {
+    const { ballot, decryptionKey, onProgress } = options;
+    const program = client?.getProgram();
+    if (!program) {
+      throw new Error("Program not available");
+    }
+    setIsDecrypting(true);
+    try {
+      onProgress?.("building");
+      const { buildDecryptTallyInstruction } = await import("@cloakcraft/sdk");
+      const { Transaction: Transaction2, ComputeBudgetProgram } = await import("@solana/web3.js");
+      const payer = program.provider.wallet;
+      const ix = await buildDecryptTallyInstruction(
+        program,
+        ballot.ballotId,
+        decryptionKey,
+        payer.publicKey
+      );
+      const tx = new Transaction2();
+      tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 }));
+      tx.add(ix);
+      onProgress?.("approving");
+      const connection = program.provider.connection;
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = payer.publicKey;
+      const signed = await payer.signTransaction(tx);
+      const signature = await connection.sendRawTransaction(signed.serialize());
+      onProgress?.("confirming");
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight
+      });
+      return { signature };
+    } finally {
+      setIsDecrypting(false);
+    }
+  }, [client]);
+  return { decrypt, isDecrypting };
+}
+function useIsBallotAuthority(ballot, walletPubkey) {
+  return (0, import_react20.useMemo)(() => {
+    if (!ballot || !walletPubkey) return false;
+    return ballot.authority.equals(walletPubkey);
+  }, [ballot, walletPubkey]);
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   CloakCraftProvider,
@@ -3831,12 +4322,17 @@ function useCanClaim(ballot, voteChoice) {
   useClosePosition,
   useCloseVotePosition,
   useConsolidation,
+  useDecryptTally,
+  useFinalizeBallot,
   useFragmentationScore,
   useImpermanentLoss,
   useInitializeAmmPool,
   useInitializePool,
+  useIsBallotAuthority,
   useIsConsolidationRecommended,
   useIsFreeOperation,
+  useKeeperMonitor,
+  useLiquidate,
   useLiquidationPrice,
   useLpMintPreview,
   useLpValue,
@@ -3863,8 +4359,11 @@ function useCanClaim(ballot, voteChoice) {
   usePrivateBalance,
   useProtocolFees,
   usePublicBalance,
+  usePythPrice,
+  usePythPrices,
   useRecentTransactions,
   useRemoveLiquidity,
+  useResolveBallot,
   useScanner,
   useShield,
   useShouldConsolidate,

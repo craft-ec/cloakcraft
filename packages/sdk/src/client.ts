@@ -4692,4 +4692,48 @@ export class CloakCraftClient {
 
     return this.lightClient.scanLpNotesWithStatus(viewingKey, nullifierKey, this.programId, lpPoolPda);
   }
+
+  /**
+   * Fetch position metadata for given position IDs
+   *
+   * Queries public PositionMeta compressed accounts to get status,
+   * liquidation price, and other metadata for positions.
+   *
+   * @param poolId - Pool address (will be converted to bytes)
+   * @param positionIds - Array of position IDs to fetch
+   * @returns Map of position ID (hex) to PositionMeta
+   */
+  async fetchPositionMetas(
+    poolId: PublicKey,
+    positionIds: Uint8Array[]
+  ): Promise<Map<string, import('./light').PositionMetaData>> {
+    if (!this.lightClient) {
+      throw new Error('Light client not initialized');
+    }
+    return this.lightClient.fetchPositionMetas(
+      this.programId,
+      poolId.toBytes(),
+      positionIds
+    );
+  }
+
+  /**
+   * Fetch all active position metas for a pool
+   *
+   * Useful for keepers to monitor all positions for liquidation.
+   *
+   * @param poolId - Pool address to scan
+   * @returns Array of active PositionMeta
+   */
+  async fetchActivePositionMetas(
+    poolId: PublicKey
+  ): Promise<import('./light').PositionMetaData[]> {
+    if (!this.lightClient) {
+      throw new Error('Light client not initialized');
+    }
+    return this.lightClient.fetchActivePositionMetas(
+      this.programId,
+      poolId.toBytes()
+    );
+  }
 }

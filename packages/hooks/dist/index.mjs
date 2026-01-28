@@ -29,12 +29,17 @@ function CloakCraftProvider({
   const hasAutoSyncedRef = useRef(false);
   const syncRef = useRef(null);
   const STORAGE_KEY = solanaWalletPubkey ? `cloakcraft_spending_key_${solanaWalletPubkey}` : "cloakcraft_spending_key";
+  const prevWalletPubkeyRef = useRef(void 0);
   useEffect(() => {
     if (solanaWalletPubkey) {
-      setWallet(null);
-      setNotes([]);
-      setIsProverReady(false);
-      hasAutoSyncedRef.current = false;
+      if (prevWalletPubkeyRef.current && prevWalletPubkeyRef.current !== solanaWalletPubkey) {
+        console.log("[CloakCraft] Wallet changed, clearing stealth wallet...");
+        setWallet(null);
+        setNotes([]);
+        setIsProverReady(false);
+        hasAutoSyncedRef.current = false;
+      }
+      prevWalletPubkeyRef.current = solanaWalletPubkey;
     }
   }, [solanaWalletPubkey]);
   const client = useMemo(
@@ -66,19 +71,24 @@ function CloakCraftProvider({
     }
   }, [autoInitialize, isInitialized, isInitializing]);
   useEffect(() => {
-    if (isInitialized && !wallet) {
+    if (isInitialized && !wallet && solanaWalletPubkey) {
       try {
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
+          console.log("[CloakCraft] Restoring stealth wallet from localStorage...");
           const spendingKey = new Uint8Array(JSON.parse(stored));
-          client.loadWallet(spendingKey).then(setWallet).catch(() => {
+          client.loadWallet(spendingKey).then((restoredWallet) => {
+            console.log("[CloakCraft] Stealth wallet restored successfully");
+            setWallet(restoredWallet);
+          }).catch((err) => {
+            console.error("[CloakCraft] Failed to restore wallet:", err);
             localStorage.removeItem(STORAGE_KEY);
           });
         }
       } catch {
       }
     }
-  }, [isInitialized, wallet, client]);
+  }, [isInitialized, wallet, client, solanaWalletPubkey, STORAGE_KEY]);
   useEffect(() => {
     if (wallet && isProgramReady && !hasAutoSyncedRef.current && !syncLockRef.current && syncRef.current) {
       hasAutoSyncedRef.current = true;
@@ -838,7 +848,23 @@ function useUnshield() {
 }
 
 // src/useScanner.ts
-import { useState as useState8, useCallback as useCallback8, useEffect as useEffect3, useRef as useRef2 } from "react";
+import { useState as useState8, useCallback as useCallback8, useEffect as useEffect3, useRef as useRef2, useMemo as useMemo5 } from "react";
+function useDebounce(fn, delayMs) {
+  const timeoutRef = useRef2(null);
+  const fnRef = useRef2(fn);
+  fnRef.current = fn;
+  return useCallback8(
+    ((...args) => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => {
+        fnRef.current(...args);
+      }, delayMs);
+    }),
+    [delayMs]
+  );
+}
 function usePrivateBalance(tokenMint) {
   const { client, wallet } = useCloakCraft();
   const [balance, setBalance] = useState8(0n);
@@ -881,22 +907,35 @@ function usePrivateBalance(tokenMint) {
     refresh
   };
 }
-function useScanner(tokenMint, autoRefreshMs) {
+function useScanner(tokenMint, autoRefreshMs, debounceMs = 500) {
   const { client, wallet, notes, sync } = useCloakCraft();
   const [state, setState] = useState8({
     isScanning: false,
     lastScanned: null,
     error: null
   });
+  const [stats, setStats] = useState8(null);
   const intervalRef = useRef2(null);
-  const scan = useCallback8(async () => {
+  const isScanningRef = useRef2(false);
+  const scanImpl = useCallback8(async () => {
     if (!client || !wallet) {
       setState((s) => ({ ...s, error: "Wallet not connected" }));
       return;
     }
+    if (isScanningRef.current) {
+      return;
+    }
+    isScanningRef.current = true;
     setState((s) => ({ ...s, isScanning: true, error: null }));
     try {
       await sync(tokenMint);
+      try {
+        const lightClient = client.lightClient;
+        if (lightClient?.getLastScanStats) {
+          setStats(lightClient.getLastScanStats());
+        }
+      } catch {
+      }
       setState({
         isScanning: false,
         lastScanned: /* @__PURE__ */ new Date(),
@@ -905,27 +944,40 @@ function useScanner(tokenMint, autoRefreshMs) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Scan failed";
       setState((s) => ({ ...s, isScanning: false, error: message }));
+    } finally {
+      isScanningRef.current = false;
     }
   }, [client, wallet, sync, tokenMint]);
+  const scan = useDebounce(scanImpl, debounceMs);
+  const scanNow = scanImpl;
   useEffect3(() => {
     if (autoRefreshMs && autoRefreshMs > 0 && client && wallet) {
-      scan();
-      intervalRef.current = setInterval(scan, autoRefreshMs);
+      scanNow();
+      intervalRef.current = setInterval(scanNow, autoRefreshMs);
       return () => {
         if (intervalRef.current) {
           clearInterval(intervalRef.current);
         }
       };
     }
-  }, [autoRefreshMs, client, wallet, scan]);
-  const filteredNotes = tokenMint ? notes.filter((n) => n.tokenMint && n.tokenMint.equals(tokenMint)) : notes;
-  const totalAmount = filteredNotes.reduce((sum, n) => sum + n.amount, 0n);
+  }, [autoRefreshMs, client, wallet, scanNow]);
+  const filteredNotes = useMemo5(() => {
+    return tokenMint ? notes.filter((n) => n.tokenMint && n.tokenMint.equals(tokenMint)) : notes;
+  }, [notes, tokenMint]);
+  const totalAmount = useMemo5(() => {
+    return filteredNotes.reduce((sum, n) => sum + n.amount, 0n);
+  }, [filteredNotes]);
   return {
     ...state,
     notes: filteredNotes,
     totalAmount,
     noteCount: filteredNotes.length,
-    scan
+    scan,
+    // Debounced
+    scanNow,
+    // Immediate
+    stats
+    // Performance stats
   };
 }
 function useNullifierStatus(note, pool) {
@@ -1108,7 +1160,7 @@ function usePoolList() {
 }
 
 // src/usePublicBalance.ts
-import { useState as useState10, useCallback as useCallback10, useEffect as useEffect5, useMemo as useMemo5 } from "react";
+import { useState as useState10, useCallback as useCallback10, useEffect as useEffect5, useMemo as useMemo6 } from "react";
 import { getAssociatedTokenAddressSync as getAssociatedTokenAddressSync2 } from "@solana/spl-token";
 function usePublicBalance(tokenMint, owner) {
   const { client } = useCloakCraft();
@@ -1197,7 +1249,7 @@ function useTokenBalances(tokenMints, owner) {
   const [balances, setBalances] = useState10(/* @__PURE__ */ new Map());
   const [isLoading, setIsLoading] = useState10(false);
   const [error, setError] = useState10(null);
-  const mintsKey = useMemo5(
+  const mintsKey = useMemo6(
     () => tokenMints.map((m) => m.toBase58()).join(","),
     [tokenMints]
   );
@@ -1655,7 +1707,7 @@ function useRemoveLiquidity() {
 }
 
 // src/useTransactionHistory.ts
-import { useState as useState13, useEffect as useEffect8, useCallback as useCallback13, useMemo as useMemo6, useRef as useRef3 } from "react";
+import { useState as useState13, useEffect as useEffect8, useCallback as useCallback13, useMemo as useMemo7, useRef as useRef3 } from "react";
 import {
   TransactionHistory,
   TransactionStatus,
@@ -1668,7 +1720,7 @@ function useTransactionHistory(filter) {
   const [isLoading, setIsLoading] = useState13(true);
   const [error, setError] = useState13(null);
   const [history, setHistory] = useState13(null);
-  const filterKey = useMemo6(
+  const filterKey = useMemo7(
     () => JSON.stringify(filter ?? {}),
     [filter?.type, filter?.status, filter?.limit, filter?.tokenMint, filter?.after?.getTime(), filter?.before?.getTime()]
   );
@@ -1782,7 +1834,7 @@ function useTransactionHistory(filter) {
       setError(err instanceof Error ? err.message : "Failed to clear history");
     }
   }, [history]);
-  const summary = useMemo6(() => {
+  const summary = useMemo7(() => {
     let pending = 0;
     let confirmed = 0;
     let failed = 0;
@@ -1825,7 +1877,7 @@ function useRecentTransactions(limit = 5) {
 }
 
 // src/useTokenPrices.ts
-import { useState as useState14, useEffect as useEffect9, useCallback as useCallback14, useMemo as useMemo7, useRef as useRef4 } from "react";
+import { useState as useState14, useEffect as useEffect9, useCallback as useCallback14, useMemo as useMemo8, useRef as useRef4 } from "react";
 import {
   TokenPriceFetcher
 } from "@cloakcraft/sdk";
@@ -1844,7 +1896,7 @@ function useTokenPrices(mints, refreshInterval) {
   const [lastUpdated, setLastUpdated] = useState14(null);
   const [isAvailable, setIsAvailable] = useState14(true);
   const fetcher = useRef4(getPriceFetcher());
-  const mintStrings = useMemo7(
+  const mintStrings = useMemo8(
     () => mints.map((m) => typeof m === "string" ? m : m.toBase58()),
     [mints]
   );
@@ -1896,7 +1948,7 @@ function useTokenPrices(mints, refreshInterval) {
     },
     [getPrice]
   );
-  const solPrice = useMemo7(() => {
+  const solPrice = useMemo8(() => {
     const sol = prices.get("So11111111111111111111111111111111111111112");
     return sol?.priceUsd ?? 0;
   }, [prices]);
@@ -1914,12 +1966,12 @@ function useTokenPrices(mints, refreshInterval) {
   };
 }
 function useTokenPrice(mint) {
-  const mints = useMemo7(
+  const mints = useMemo8(
     () => mint ? [mint] : [],
     [mint]
   );
   const { prices, isLoading, error, refresh } = useTokenPrices(mints);
-  const price = useMemo7(() => {
+  const price = useMemo8(() => {
     if (!mint) return null;
     const mintStr = typeof mint === "string" ? mint : mint.toBase58();
     return prices.get(mintStr) ?? null;
@@ -1945,12 +1997,12 @@ function useSolPrice(refreshInterval = 6e4) {
   };
 }
 function usePortfolioValue(balances) {
-  const mints = useMemo7(
+  const mints = useMemo8(
     () => balances.map((b) => b.mint),
     [balances]
   );
   const { prices, isLoading, error } = useTokenPrices(mints);
-  const totalValue = useMemo7(() => {
+  const totalValue = useMemo8(() => {
     let total = 0;
     for (const balance of balances) {
       const mintStr = typeof balance.mint === "string" ? balance.mint : balance.mint.toBase58();
@@ -1962,7 +2014,7 @@ function usePortfolioValue(balances) {
     }
     return total;
   }, [balances, prices]);
-  const breakdown = useMemo7(() => {
+  const breakdown = useMemo8(() => {
     return balances.map((balance) => {
       const mintStr = typeof balance.mint === "string" ? balance.mint : balance.mint.toBase58();
       const price = prices.get(mintStr);
@@ -1988,7 +2040,7 @@ function usePortfolioValue(balances) {
 }
 
 // src/usePoolAnalytics.ts
-import { useState as useState15, useEffect as useEffect10, useCallback as useCallback15, useMemo as useMemo8, useRef as useRef5 } from "react";
+import { useState as useState15, useEffect as useEffect10, useCallback as useCallback15, useMemo as useMemo9, useRef as useRef5 } from "react";
 import {
   PoolAnalyticsCalculator,
   formatTvl
@@ -2133,13 +2185,13 @@ function useUserPosition(pool, lpBalance, tokenADecimals = 9, tokenBDecimals = 9
 }
 function useImpermanentLoss(initialPriceRatio, currentPriceRatio) {
   const calculator = useRef5(getCalculator());
-  const impermanentLoss = useMemo8(() => {
+  const impermanentLoss = useMemo9(() => {
     return calculator.current.calculateImpermanentLoss(
       initialPriceRatio,
       currentPriceRatio
     );
   }, [initialPriceRatio, currentPriceRatio]);
-  const formattedLoss = useMemo8(() => {
+  const formattedLoss = useMemo9(() => {
     return `${impermanentLoss.toFixed(2)}%`;
   }, [impermanentLoss]);
   return {
@@ -2149,7 +2201,7 @@ function useImpermanentLoss(initialPriceRatio, currentPriceRatio) {
 }
 
 // src/useConsolidation.ts
-import { useState as useState16, useCallback as useCallback16, useMemo as useMemo9, useRef as useRef6 } from "react";
+import { useState as useState16, useCallback as useCallback16, useMemo as useMemo10, useRef as useRef6 } from "react";
 import {
   ConsolidationService
 } from "@cloakcraft/sdk";
@@ -2164,27 +2216,27 @@ function useConsolidation(options) {
     error: null
   });
   const isConsolidatingRef = useRef6(false);
-  const service = useMemo9(
+  const service = useMemo10(
     () => new ConsolidationService(dustThreshold),
     [dustThreshold]
   );
-  const tokenNotes = useMemo9(
+  const tokenNotes = useMemo10(
     () => notes.filter((n) => n.tokenMint.equals(tokenMint)),
     [notes, tokenMint]
   );
-  const fragmentationReport = useMemo9(
+  const fragmentationReport = useMemo10(
     () => service.analyzeNotes(tokenNotes),
     [service, tokenNotes]
   );
-  const suggestions = useMemo9(
+  const suggestions = useMemo10(
     () => service.suggestConsolidation(tokenNotes, { maxNotesPerBatch }),
     [service, tokenNotes, maxNotesPerBatch]
   );
-  const consolidationPlan = useMemo9(
+  const consolidationPlan = useMemo10(
     () => service.planConsolidation(tokenNotes, { maxNotesPerBatch }),
     [service, tokenNotes, maxNotesPerBatch]
   );
-  const summary = useMemo9(
+  const summary = useMemo10(
     () => service.getConsolidationSummary(tokenNotes),
     [service, tokenNotes]
   );
@@ -2364,7 +2416,7 @@ function useConsolidation(options) {
       }));
     }
   }, [wallet, client, isProverReady, consolidationPlan, tokenMint, sync]);
-  const estimatedCost = useMemo9(() => {
+  const estimatedCost = useMemo10(() => {
     return service.estimateConsolidationCost(
       consolidationPlan.reduce((sum, batch) => sum + batch.notes.length, 0)
     );
@@ -2392,16 +2444,16 @@ function useConsolidation(options) {
 }
 function useShouldConsolidate(tokenMint) {
   const { notes } = useCloakCraft();
-  const service = useMemo9(() => new ConsolidationService(), []);
-  return useMemo9(() => {
+  const service = useMemo10(() => new ConsolidationService(), []);
+  return useMemo10(() => {
     const tokenNotes = notes.filter((n) => n.tokenMint.equals(tokenMint));
     return service.shouldConsolidate(tokenNotes);
   }, [notes, tokenMint, service]);
 }
 function useFragmentationScore(tokenMint) {
   const { notes } = useCloakCraft();
-  const service = useMemo9(() => new ConsolidationService(), []);
-  return useMemo9(() => {
+  const service = useMemo10(() => new ConsolidationService(), []);
+  return useMemo10(() => {
     const tokenNotes = notes.filter((n) => n.tokenMint.equals(tokenMint));
     const report = service.analyzeNotes(tokenNotes);
     return report.fragmentationScore;
@@ -2409,7 +2461,7 @@ function useFragmentationScore(tokenMint) {
 }
 
 // src/useAutoConsolidation.ts
-import { useState as useState17, useEffect as useEffect11, useCallback as useCallback17, useMemo as useMemo10 } from "react";
+import { useState as useState17, useEffect as useEffect11, useCallback as useCallback17, useMemo as useMemo11 } from "react";
 import {
   AutoConsolidator
 } from "@cloakcraft/sdk";
@@ -2424,7 +2476,7 @@ function useAutoConsolidation(options) {
     dustThreshold = 1000n,
     checkIntervalMs = 6e4
   } = options;
-  const tokenNotes = useMemo10(
+  const tokenNotes = useMemo11(
     () => notes.filter((n) => n.tokenMint.equals(tokenMint)),
     [notes, tokenMint]
   );
@@ -2498,7 +2550,7 @@ function useAutoConsolidation(options) {
 function useIsConsolidationRecommended(tokenMint) {
   const { notes } = useCloakCraft();
   const [consolidator] = useState17(() => new AutoConsolidator());
-  const tokenNotes = useMemo10(
+  const tokenNotes = useMemo11(
     () => notes.filter((n) => n.tokenMint.equals(tokenMint)),
     [notes, tokenMint]
   );
@@ -2514,7 +2566,7 @@ function useIsConsolidationRecommended(tokenMint) {
 }
 
 // src/useProtocolFees.ts
-import { useState as useState18, useEffect as useEffect12, useCallback as useCallback18, useMemo as useMemo11 } from "react";
+import { useState as useState18, useEffect as useEffect12, useCallback as useCallback18, useMemo as useMemo12 } from "react";
 import { PublicKey as PublicKey3 } from "@solana/web3.js";
 import { deriveProtocolConfigPda, PROGRAM_ID } from "@cloakcraft/sdk";
 var DEFAULT_FEES = {
@@ -2612,14 +2664,14 @@ function useProtocolFees() {
   };
 }
 function useIsFreeOperation(operation) {
-  return useMemo11(() => {
+  return useMemo12(() => {
     const freeOperations = ["shield", "add_liquidity", "consolidate"];
     return freeOperations.includes(operation);
   }, [operation]);
 }
 
 // src/usePerps.ts
-import { useState as useState19, useCallback as useCallback19, useEffect as useEffect13, useMemo as useMemo12 } from "react";
+import { useState as useState19, useCallback as useCallback19, useEffect as useEffect13, useMemo as useMemo13 } from "react";
 import {
   generateStealthAddress as generateStealthAddress3,
   calculatePnL,
@@ -2631,7 +2683,9 @@ import {
   calculateUtilization,
   calculateBorrowRate,
   isValidLeverage,
-  wouldExceedUtilization
+  wouldExceedUtilization,
+  fetchPythPriceUsd,
+  getFeedIdBySymbol
 } from "@cloakcraft/sdk";
 function usePerpsPools() {
   const { client } = useCloakCraft();
@@ -2802,14 +2856,25 @@ function useOpenPosition() {
           throw new Error("Margin note not found. It may have been spent.");
         }
         onProgress?.("generating");
-        onProgress?.("building");
-        onProgress?.("approving");
-        onProgress?.("executing");
-        const result = {
-          signature: "pending_implementation",
-          slot: 0
-        };
-        onProgress?.("confirming");
+        const marketId = market.marketId || new Uint8Array(32);
+        const merkleRoot = freshInput.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
+        const result = await client.openPerpsPosition({
+          input: freshInput,
+          poolId: pool.address,
+          marketId,
+          direction,
+          marginAmount,
+          leverage,
+          oraclePrice,
+          positionRecipient,
+          changeRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress
+        });
         await new Promise((resolve) => setTimeout(resolve, 2e3));
         await sync(marginInput.tokenMint, true);
         setState({ isOpening: false, error: null, result });
@@ -2856,17 +2921,28 @@ function useClosePosition() {
         const pnlResult = calculatePnL(position, oraclePrice, pool, currentTimestamp);
         const { stealthAddress: settlementRecipient } = generateStealthAddress3(wallet.publicKey);
         onProgress?.("generating");
-        onProgress?.("building");
-        onProgress?.("approving");
-        onProgress?.("executing");
-        const result = {
-          signature: "pending_implementation",
-          slot: 0
-        };
-        onProgress?.("confirming");
-        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        const marketId = market.marketId || new Uint8Array(32);
         const settlementTokenIndex = position.direction === "long" ? market.quoteTokenIndex : market.baseTokenIndex;
         const settlementToken = pool.tokens[settlementTokenIndex];
+        if (!settlementToken) {
+          throw new Error("Settlement token not found in pool");
+        }
+        const merkleRoot = position.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
+        const result = await client.closePerpsPosition({
+          positionInput: position,
+          poolId: pool.address,
+          marketId,
+          settlementTokenMint: settlementToken.mint,
+          oraclePrice,
+          settlementRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress
+        });
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
         if (settlementToken) {
           await sync(settlementToken.mint, true);
         }
@@ -2929,14 +3005,23 @@ function usePerpsAddLiquidity() {
           throw new Error("Token note not found. It may have been spent.");
         }
         onProgress?.("generating");
-        onProgress?.("building");
-        onProgress?.("approving");
-        onProgress?.("executing");
-        const result = {
-          signature: "pending_implementation",
-          slot: 0
-        };
-        onProgress?.("confirming");
+        const merkleRoot = freshInput.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
+        const result = await client.addPerpsLiquidity({
+          input: freshInput,
+          poolId: pool.address,
+          tokenIndex,
+          depositAmount,
+          lpAmount,
+          oraclePrices,
+          lpRecipient,
+          changeRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress
+        });
         await new Promise((resolve) => setTimeout(resolve, 2e3));
         await sync(tokenInput.tokenMint, true);
         await sync(pool.lpMint, true);
@@ -3008,14 +3093,23 @@ function usePerpsRemoveLiquidity() {
           throw new Error("LP note not found. It may have been spent.");
         }
         onProgress?.("generating");
-        onProgress?.("building");
-        onProgress?.("approving");
-        onProgress?.("executing");
-        const result = {
-          signature: "pending_implementation",
-          slot: 0
-        };
-        onProgress?.("confirming");
+        const merkleRoot = freshInput.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
+        const result = await client.removePerpsLiquidity({
+          lpInput: freshInput,
+          poolId: pool.address,
+          tokenIndex,
+          lpAmount,
+          withdrawAmount,
+          oraclePrices,
+          withdrawRecipient,
+          lpChangeRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress
+        });
         await new Promise((resolve) => setTimeout(resolve, 2e3));
         await sync(pool.lpMint, true);
         await sync(token.mint, true);
@@ -3039,7 +3133,7 @@ function usePerpsRemoveLiquidity() {
   };
 }
 function usePositionPnL(position, currentPrice, pool) {
-  return useMemo12(() => {
+  return useMemo13(() => {
     if (!position || !pool || currentPrice <= 0n) {
       return null;
     }
@@ -3052,7 +3146,7 @@ function usePositionPnL(position, currentPrice, pool) {
   }, [position, currentPrice, pool]);
 }
 function useLiquidationPrice(position, pool) {
-  return useMemo12(() => {
+  return useMemo13(() => {
     if (!position || !pool) {
       return null;
     }
@@ -3065,7 +3159,7 @@ function useLiquidationPrice(position, pool) {
   }, [position, pool]);
 }
 function useLpValue(pool, oraclePrices) {
-  return useMemo12(() => {
+  return useMemo13(() => {
     if (!pool || oraclePrices.length === 0) {
       return null;
     }
@@ -3077,7 +3171,7 @@ function useLpValue(pool, oraclePrices) {
   }, [pool, oraclePrices]);
 }
 function useLpMintPreview(pool, depositAmount, tokenIndex, oraclePrices) {
-  return useMemo12(() => {
+  return useMemo13(() => {
     if (!pool || depositAmount <= 0n || oraclePrices.length === 0) {
       return null;
     }
@@ -3089,7 +3183,7 @@ function useLpMintPreview(pool, depositAmount, tokenIndex, oraclePrices) {
   }, [pool, depositAmount, tokenIndex, oraclePrices]);
 }
 function useWithdrawPreview(pool, lpAmount, tokenIndex, oraclePrices) {
-  return useMemo12(() => {
+  return useMemo13(() => {
     if (!pool || lpAmount <= 0n || oraclePrices.length === 0) {
       return null;
     }
@@ -3101,7 +3195,7 @@ function useWithdrawPreview(pool, lpAmount, tokenIndex, oraclePrices) {
   }, [pool, lpAmount, tokenIndex, oraclePrices]);
 }
 function useTokenUtilization(pool) {
-  return useMemo12(() => {
+  return useMemo13(() => {
     if (!pool) {
       return [];
     }
@@ -3117,7 +3211,7 @@ function useTokenUtilization(pool) {
   }, [pool]);
 }
 function usePositionValidation(pool, market, marginAmount, leverage, direction) {
-  return useMemo12(() => {
+  return useMemo13(() => {
     if (!pool || !market) {
       return { isValid: false, error: "Pool or market not loaded" };
     }
@@ -3136,6 +3230,21 @@ function usePositionValidation(pool, market, marginAmount, leverage, direction) 
     return { isValid: true, error: null, positionSize };
   }, [pool, market, marginAmount, leverage, direction]);
 }
+function toPositionStatus(status) {
+  switch (status) {
+    case 0:
+      return "active";
+    case 1:
+      return "liquidated";
+    case 2:
+      return "closed";
+    default:
+      return "unknown";
+  }
+}
+function derivePositionId(commitment, randomness) {
+  return commitment;
+}
 function usePerpsPositions(positionPool) {
   const { client, wallet } = useCloakCraft();
   const [positions, setPositions] = useState19([]);
@@ -3150,20 +3259,42 @@ function usePerpsPositions(positionPool) {
     setError(null);
     try {
       const scannedPositions = await client.scanPositionNotes(positionPool);
-      const uiPositions = scannedPositions.map((pos) => ({
-        commitment: pos.commitment,
-        accountHash: pos.accountHash,
-        marketId: pos.marketId,
-        isLong: pos.isLong,
-        margin: pos.margin,
-        size: pos.size,
-        leverage: pos.leverage,
-        entryPrice: pos.entryPrice,
-        randomness: pos.randomness,
-        pool: pos.pool,
-        spent: pos.spent
-      }));
-      setPositions(uiPositions.filter((p) => !p.spent));
+      if (scannedPositions.length === 0) {
+        setPositions([]);
+        return;
+      }
+      const positionIds = scannedPositions.map(
+        (pos) => derivePositionId(pos.commitment, pos.randomness)
+      );
+      let metadataMap = /* @__PURE__ */ new Map();
+      try {
+        metadataMap = await client.fetchPositionMetas(positionPool, positionIds);
+      } catch (metaErr) {
+        console.warn("[usePerpsPositions] Failed to fetch position metadata:", metaErr);
+      }
+      const uiPositions = scannedPositions.map((pos) => {
+        const positionIdHex = Buffer.from(derivePositionId(pos.commitment, pos.randomness)).toString("hex");
+        const meta = metadataMap.get(positionIdHex);
+        return {
+          commitment: pos.commitment,
+          accountHash: pos.accountHash,
+          marketId: pos.marketId,
+          isLong: pos.isLong,
+          margin: pos.margin,
+          size: pos.size,
+          leverage: pos.leverage,
+          entryPrice: pos.entryPrice,
+          randomness: pos.randomness,
+          pool: pos.pool,
+          spent: pos.spent,
+          // Metadata fields
+          status: meta ? toPositionStatus(meta.status) : pos.spent ? "closed" : "active",
+          liquidationPrice: meta?.liquidationPrice,
+          createdAt: meta?.createdAt,
+          hasMetadata: !!meta
+        };
+      });
+      setPositions(uiPositions.filter((p) => !p.spent && p.status !== "closed"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to scan positions");
       setPositions([]);
@@ -3181,9 +3312,204 @@ function usePerpsPositions(positionPool) {
     refresh
   };
 }
+function usePythPrice(symbol, refreshInterval = 1e4) {
+  const [price, setPrice] = useState19(null);
+  const [isLoading, setIsLoading] = useState19(false);
+  const [error, setError] = useState19(null);
+  const refresh = useCallback19(async () => {
+    if (!symbol) {
+      setPrice(null);
+      return;
+    }
+    const feedId = getFeedIdBySymbol(symbol);
+    if (!feedId) {
+      setError(`Unknown symbol: ${symbol}`);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const priceUsd = await fetchPythPriceUsd(feedId, 9);
+      setPrice(priceUsd);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch price");
+      setPrice(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [symbol]);
+  useEffect13(() => {
+    refresh();
+    if (refreshInterval > 0) {
+      const interval = setInterval(refresh, refreshInterval);
+      return () => clearInterval(interval);
+    }
+  }, [refresh, refreshInterval]);
+  return {
+    price,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function usePythPrices(symbols, refreshInterval = 1e4) {
+  const [prices, setPrices] = useState19(/* @__PURE__ */ new Map());
+  const [isLoading, setIsLoading] = useState19(false);
+  const [error, setError] = useState19(null);
+  const refresh = useCallback19(async () => {
+    if (!symbols.length) {
+      setPrices(/* @__PURE__ */ new Map());
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const priceMap = /* @__PURE__ */ new Map();
+      await Promise.all(
+        symbols.map(async (symbol) => {
+          const feedId = getFeedIdBySymbol(symbol);
+          if (feedId) {
+            const priceUsd = await fetchPythPriceUsd(feedId, 9);
+            priceMap.set(symbol, priceUsd);
+          }
+        })
+      );
+      setPrices(priceMap);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch prices");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [symbols]);
+  useEffect13(() => {
+    refresh();
+    if (refreshInterval > 0) {
+      const interval = setInterval(refresh, refreshInterval);
+      return () => clearInterval(interval);
+    }
+  }, [refresh, refreshInterval]);
+  return {
+    prices,
+    isLoading,
+    error,
+    refresh
+  };
+}
+function useKeeperMonitor(pool, positionPool, pollInterval = 5e3) {
+  const { positions, isLoading: isScanning, refresh: refreshPositions } = usePerpsPositions(positionPool);
+  const [liquidatable, setLiquidatable] = useState19([]);
+  const [isChecking, setIsChecking] = useState19(false);
+  const [lastCheck, setLastCheck] = useState19(0);
+  const tokenSymbols = useMemo13(() => {
+    if (!pool) return [];
+    return pool.tokens.filter((t) => t.isActive).map((t) => {
+      const mintStr = t.mint.toBase58();
+      if (mintStr.includes("So1")) return "SOL";
+      if (mintStr.includes("USDC") || mintStr.includes("EPj")) return "USDC";
+      return "SOL";
+    });
+  }, [pool]);
+  const { prices, refresh: refreshPrices } = usePythPrices(tokenSymbols, pollInterval);
+  const checkPositions = useCallback19(async () => {
+    if (!pool || !positions.length || !prices.size) {
+      setLiquidatable([]);
+      return;
+    }
+    setIsChecking(true);
+    try {
+      const sdk = await import("@cloakcraft/sdk");
+      const shouldLiquidateFn = sdk.shouldLiquidate;
+      const calculateLiquidationAmountsFn = sdk.calculateLiquidationAmounts;
+      if (!shouldLiquidateFn || !calculateLiquidationAmountsFn) {
+        console.warn("Liquidation functions not available in SDK");
+        setLiquidatable([]);
+        return;
+      }
+      const liquidatablePositions = [];
+      for (const position of positions) {
+        if (position.spent) continue;
+        const currentPrice = prices.values().next().value || 0n;
+        if (currentPrice === 0n) continue;
+        const result = shouldLiquidateFn(
+          {
+            margin: position.margin,
+            size: position.size,
+            entryPrice: position.entryPrice,
+            direction: position.isLong ? "long" : "short"
+          },
+          currentPrice,
+          { liquidationThresholdBps: pool.liquidationThresholdBps }
+        );
+        if (result.shouldLiquidate && result.reason) {
+          const amounts = calculateLiquidationAmountsFn(
+            position.margin,
+            result.pnl,
+            result.isProfit,
+            pool.liquidationPenaltyBps
+          );
+          liquidatablePositions.push({
+            position,
+            reason: result.reason,
+            currentPrice,
+            pnl: result.pnl,
+            isProfit: result.isProfit,
+            ownerRemainder: amounts.ownerRemainder,
+            liquidatorReward: amounts.liquidatorReward
+          });
+        }
+      }
+      setLiquidatable(liquidatablePositions);
+      setLastCheck(Date.now());
+    } finally {
+      setIsChecking(false);
+    }
+  }, [pool, positions, prices]);
+  useEffect13(() => {
+    checkPositions();
+    if (pollInterval > 0) {
+      const interval = setInterval(() => {
+        refreshPositions();
+        refreshPrices();
+        checkPositions();
+      }, pollInterval);
+      return () => clearInterval(interval);
+    }
+  }, [checkPositions, pollInterval, refreshPositions, refreshPrices]);
+  return {
+    /** All scanned positions */
+    positions,
+    /** Positions ready for liquidation */
+    liquidatable,
+    /** Is currently scanning/checking */
+    isLoading: isScanning || isChecking,
+    /** Last check timestamp */
+    lastCheck,
+    /** Manual refresh */
+    refresh: checkPositions
+  };
+}
+function useLiquidate() {
+  const { client, wallet } = useCloakCraft();
+  const [isLiquidating, setIsLiquidating] = useState19(false);
+  const liquidate = useCallback19(async (options) => {
+    const { position, pool, market, liquidatorRecipient, onProgress } = options;
+    const program = client?.getProgram();
+    if (!program || !wallet) {
+      throw new Error("Program or wallet not available");
+    }
+    setIsLiquidating(true);
+    try {
+      onProgress?.("building");
+      throw new Error("Liquidation proof generation not yet implemented");
+    } finally {
+      setIsLiquidating(false);
+    }
+  }, [client, wallet]);
+  return { liquidate, isLiquidating };
+}
 
 // src/useVoting.ts
-import { useState as useState20, useCallback as useCallback20, useEffect as useEffect14, useMemo as useMemo13 } from "react";
+import { useState as useState20, useCallback as useCallback20, useEffect as useEffect14, useMemo as useMemo14 } from "react";
 import { PublicKey as PublicKey4 } from "@solana/web3.js";
 function useBallots() {
   const { client } = useCloakCraft();
@@ -3227,7 +3553,7 @@ function useBallots() {
 }
 function useActiveBallots() {
   const { ballots, isLoading, error, refresh } = useBallots();
-  const activeBallots = useMemo13(() => {
+  const activeBallots = useMemo14(() => {
     return ballots.filter(
       (b) => b.status === 1
       // BallotStatus.Active
@@ -3245,7 +3571,7 @@ function useBallot(ballotAddress) {
   const [ballot, setBallot] = useState20(null);
   const [isLoading, setIsLoading] = useState20(false);
   const [error, setError] = useState20(null);
-  const address = useMemo13(() => {
+  const address = useMemo14(() => {
     if (!ballotAddress) return null;
     if (typeof ballotAddress === "string") {
       try {
@@ -3287,16 +3613,24 @@ function useBallot(ballotAddress) {
     refresh
   };
 }
+function toBigInt(value) {
+  if (value === null || value === void 0) return 0n;
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") return BigInt(value);
+  return BigInt(value.toString());
+}
 function useBallotTally(ballot) {
-  return useMemo13(() => {
+  return useMemo14(() => {
     if (!ballot) {
       return null;
     }
-    const totalVotes = Number(ballot.voteCount);
-    const totalWeight = ballot.totalWeight;
-    const totalAmount = ballot.totalAmount;
-    const optionStats = ballot.optionWeights.map((weight, index) => {
-      const amount = ballot.optionAmounts[index] || 0n;
+    const totalVotes = Number(toBigInt(ballot.voteCount));
+    const totalWeight = toBigInt(ballot.totalWeight);
+    const totalAmount = toBigInt(ballot.totalAmount);
+    const quorumThreshold = toBigInt(ballot.quorumThreshold);
+    const optionStats = (ballot.optionWeights || []).map((w, index) => {
+      const weight = toBigInt(w);
+      const amount = toBigInt(ballot.optionAmounts?.[index]);
       const percentage = totalWeight > 0n ? Number(weight * 10000n / totalWeight) / 100 : 0;
       return {
         index,
@@ -3315,8 +3649,8 @@ function useBallotTally(ballot) {
       totalAmount,
       optionStats,
       leadingOption,
-      hasQuorum: totalWeight >= ballot.quorumThreshold,
-      quorumProgress: ballot.quorumThreshold > 0n ? Number(totalWeight * 10000n / ballot.quorumThreshold) / 100 : 100
+      hasQuorum: totalWeight >= quorumThreshold,
+      quorumProgress: quorumThreshold > 0n ? Number(totalWeight * 10000n / quorumThreshold) / 100 : 100
     };
   }, [ballot]);
 }
@@ -3328,13 +3662,21 @@ function useBallotTimeStatus(ballot) {
     }, 1e3);
     return () => clearInterval(interval);
   }, []);
-  return useMemo13(() => {
+  return useMemo14(() => {
     if (!ballot) {
       return null;
     }
-    const startTime = ballot.startTime;
-    const endTime = ballot.endTime;
-    const claimDeadline = ballot.claimDeadline;
+    const toNumber = (val) => {
+      if (val === null || val === void 0) return 0;
+      if (typeof val === "number") return val;
+      if (typeof val === "object" && "toNumber" in val && typeof val.toNumber === "function") {
+        return val.toNumber();
+      }
+      return Number(val.toString());
+    };
+    const startTime = toNumber(ballot.startTime);
+    const endTime = toNumber(ballot.endTime);
+    const claimDeadline = toNumber(ballot.claimDeadline);
     const hasStarted = now >= startTime;
     const hasEnded = now >= endTime;
     const canClaim = ballot.hasOutcome && now < claimDeadline;
@@ -3655,18 +3997,20 @@ function useClaim() {
   };
 }
 function usePayoutPreview(ballot, voteChoice, weight) {
-  return useMemo13(() => {
+  return useMemo14(() => {
     if (!ballot || !ballot.hasOutcome || voteChoice !== ballot.outcome) {
       return null;
     }
-    if (ballot.winnerWeight === 0n) {
+    const winnerWeight = toBigInt(ballot.winnerWeight);
+    if (winnerWeight === 0n) {
       return null;
     }
-    const totalPool = ballot.poolBalance;
-    const grossPayout = weight * totalPool / ballot.winnerWeight;
+    const totalPool = toBigInt(ballot.poolBalance);
+    const userWeight = toBigInt(weight);
+    const grossPayout = userWeight * totalPool / winnerWeight;
     const feeAmount = grossPayout * BigInt(ballot.protocolFeeBps) / 10000n;
     const netPayout = grossPayout - feeAmount;
-    const multiplier = weight > 0n ? Number(grossPayout * 1000n / weight) / 1e3 : 0;
+    const multiplier = userWeight > 0n ? Number(grossPayout * 1000n / userWeight) / 1e3 : 0;
     return {
       grossPayout,
       netPayout,
@@ -3675,7 +4019,7 @@ function usePayoutPreview(ballot, voteChoice, weight) {
   }, [ballot, voteChoice, weight]);
 }
 function useVoteValidation(ballot, note, voteChoice) {
-  return useMemo13(() => {
+  return useMemo14(() => {
     if (!ballot) {
       return { isValid: false, error: "Ballot not loaded" };
     }
@@ -3698,7 +4042,7 @@ function useVoteValidation(ballot, note, voteChoice) {
   }, [ballot, note, voteChoice]);
 }
 function useCanClaim(ballot, voteChoice) {
-  return useMemo13(() => {
+  return useMemo14(() => {
     if (!ballot) {
       return { canClaim: false, reason: "Ballot not loaded" };
     }
@@ -3720,6 +4064,147 @@ function useCanClaim(ballot, voteChoice) {
     }
     return { canClaim: true, reason: null };
   }, [ballot, voteChoice]);
+}
+function useResolveBallot() {
+  const { client } = useCloakCraft();
+  const [isResolving, setIsResolving] = useState20(false);
+  const resolve = useCallback20(async (options) => {
+    const { ballot, outcome, onProgress } = options;
+    const program = client?.getProgram();
+    if (!program) {
+      throw new Error("Program not available");
+    }
+    setIsResolving(true);
+    try {
+      onProgress?.("building");
+      const { buildResolveBallotInstruction } = await import("@cloakcraft/sdk");
+      const { Transaction: Transaction2, ComputeBudgetProgram } = await import("@solana/web3.js");
+      const payer = program.provider.wallet;
+      const ix = await buildResolveBallotInstruction(
+        program,
+        ballot.ballotId,
+        outcome ?? null,
+        payer.publicKey,
+        ballot.resolutionMode === 2 ? payer.publicKey : void 0
+        // Authority mode needs resolver
+      );
+      const tx = new Transaction2();
+      tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }));
+      tx.add(ix);
+      onProgress?.("approving");
+      const connection = program.provider.connection;
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = payer.publicKey;
+      const signed = await payer.signTransaction(tx);
+      const signature = await connection.sendRawTransaction(signed.serialize());
+      onProgress?.("confirming");
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight
+      });
+      return { signature };
+    } finally {
+      setIsResolving(false);
+    }
+  }, [client]);
+  return { resolve, isResolving };
+}
+function useFinalizeBallot() {
+  const { client } = useCloakCraft();
+  const [isFinalizing, setIsFinalizing] = useState20(false);
+  const finalize = useCallback20(async (options) => {
+    const { ballot, onProgress } = options;
+    const program = client?.getProgram();
+    if (!program) {
+      throw new Error("Program not available");
+    }
+    setIsFinalizing(true);
+    try {
+      onProgress?.("building");
+      const { buildFinalizeBallotInstruction } = await import("@cloakcraft/sdk");
+      const { Transaction: Transaction2, ComputeBudgetProgram } = await import("@solana/web3.js");
+      const payer = program.provider.wallet;
+      const ix = await buildFinalizeBallotInstruction(
+        program,
+        ballot.ballotId,
+        ballot.tokenMint,
+        ballot.protocolTreasury,
+        payer.publicKey
+      );
+      const tx = new Transaction2();
+      tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 2e5 }));
+      tx.add(ix);
+      onProgress?.("approving");
+      const connection = program.provider.connection;
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = payer.publicKey;
+      const signed = await payer.signTransaction(tx);
+      const signature = await connection.sendRawTransaction(signed.serialize());
+      onProgress?.("confirming");
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight
+      });
+      return { signature };
+    } finally {
+      setIsFinalizing(false);
+    }
+  }, [client]);
+  return { finalize, isFinalizing };
+}
+function useDecryptTally() {
+  const { client } = useCloakCraft();
+  const [isDecrypting, setIsDecrypting] = useState20(false);
+  const decrypt = useCallback20(async (options) => {
+    const { ballot, decryptionKey, onProgress } = options;
+    const program = client?.getProgram();
+    if (!program) {
+      throw new Error("Program not available");
+    }
+    setIsDecrypting(true);
+    try {
+      onProgress?.("building");
+      const { buildDecryptTallyInstruction } = await import("@cloakcraft/sdk");
+      const { Transaction: Transaction2, ComputeBudgetProgram } = await import("@solana/web3.js");
+      const payer = program.provider.wallet;
+      const ix = await buildDecryptTallyInstruction(
+        program,
+        ballot.ballotId,
+        decryptionKey,
+        payer.publicKey
+      );
+      const tx = new Transaction2();
+      tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 3e5 }));
+      tx.add(ix);
+      onProgress?.("approving");
+      const connection = program.provider.connection;
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = payer.publicKey;
+      const signed = await payer.signTransaction(tx);
+      const signature = await connection.sendRawTransaction(signed.serialize());
+      onProgress?.("confirming");
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight
+      });
+      return { signature };
+    } finally {
+      setIsDecrypting(false);
+    }
+  }, [client]);
+  return { decrypt, isDecrypting };
+}
+function useIsBallotAuthority(ballot, walletPubkey) {
+  return useMemo14(() => {
+    if (!ballot || !walletPubkey) return false;
+    return ballot.authority.equals(walletPubkey);
+  }, [ballot, walletPubkey]);
 }
 export {
   CloakCraftProvider,
@@ -3748,12 +4233,17 @@ export {
   useClosePosition,
   useCloseVotePosition,
   useConsolidation,
+  useDecryptTally,
+  useFinalizeBallot,
   useFragmentationScore,
   useImpermanentLoss,
   useInitializeAmmPool,
   useInitializePool,
+  useIsBallotAuthority,
   useIsConsolidationRecommended,
   useIsFreeOperation,
+  useKeeperMonitor,
+  useLiquidate,
   useLiquidationPrice,
   useLpMintPreview,
   useLpValue,
@@ -3780,8 +4270,11 @@ export {
   usePrivateBalance,
   useProtocolFees,
   usePublicBalance,
+  usePythPrice,
+  usePythPrices,
   useRecentTransactions,
   useRemoveLiquidity,
+  useResolveBallot,
   useScanner,
   useShield,
   useShouldConsolidate,

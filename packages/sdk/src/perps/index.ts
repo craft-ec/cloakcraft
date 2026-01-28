@@ -70,26 +70,41 @@ export {
   derivePerpsMarketPda,
   derivePerpsVaultPda,
   derivePerpsLpMintPda,
-  // Instruction builders
+  // Instruction builders - Trading
   buildOpenPositionWithProgram,
   buildClosePositionWithProgram,
   buildAddPerpsLiquidityWithProgram,
   buildRemovePerpsLiquidityWithProgram,
+  // Instruction builders - Admin
   buildInitializePerpsPoolWithProgram,
   buildAddTokenToPoolWithProgram,
   buildAddMarketWithProgram,
+  buildUpdatePoolConfigWithProgram,
+  buildUpdateTokenStatusWithProgram,
+  buildUpdateMarketStatusWithProgram,
+  // Instruction builders - Keeper
   buildUpdateBorrowFeesWithProgram,
+  buildLiquidatePositionWithProgram,
+  // Keeper helpers
+  shouldLiquidate,
+  calculateLiquidationAmounts,
 } from './instructions';
 
 export type {
-  // Instruction params
+  // Instruction params - Trading
   OpenPositionInstructionParams,
   ClosePositionInstructionParams,
   AddPerpsLiquidityInstructionParams,
   RemovePerpsLiquidityInstructionParams,
+  // Instruction params - Admin
   InitializePerpsPoolParams,
   AddTokenToPoolParams,
   AddMarketParams,
+  UpdatePoolConfigParams,
+  UpdateTokenStatusParams,
+  UpdateMarketStatusParams,
+  // Instruction params - Keeper
+  LiquidatePositionInstructionParams,
 } from './instructions';
 
 // Oracle Integration

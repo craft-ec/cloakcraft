@@ -1139,6 +1139,169 @@ export async function buildAddMarketWithProgram(
 }
 
 // =============================================================================
+// Pool Config Update Instructions
+// =============================================================================
+
+/** Parameters that can be updated on a perps pool */
+export interface UpdatePoolConfigParams {
+  perpsPool: PublicKey;
+  authority: PublicKey;
+  /** Maximum leverage (1-100), undefined to keep current */
+  maxLeverage?: number;
+  /** Position fee in basis points, undefined to keep current */
+  positionFeeBps?: number;
+  /** Maximum utilization per token in basis points, undefined to keep current */
+  maxUtilizationBps?: number;
+  /** Liquidation threshold in basis points, undefined to keep current */
+  liquidationThresholdBps?: number;
+  /** Liquidation penalty in basis points, undefined to keep current */
+  liquidationPenaltyBps?: number;
+  /** Base borrow rate per hour in basis points, undefined to keep current */
+  baseBorrowRateBps?: number;
+  /** Maximum imbalance fee in basis points, undefined to keep current */
+  maxImbalanceFeeBps?: number;
+  /** Pool active status (true = active, false = paused), undefined to keep current */
+  isActive?: boolean;
+}
+
+/**
+ * Build update pool config instruction
+ *
+ * Allows admin to update pool parameters such as fees, leverage limits, etc.
+ * Pass undefined for any parameter to keep its current value.
+ *
+ * @example
+ * ```ts
+ * // Pause the pool
+ * const { tx } = await buildUpdatePoolConfigWithProgram(program, {
+ *   perpsPool,
+ *   authority: wallet.publicKey,
+ *   isActive: false,
+ * });
+ *
+ * // Update fees and leverage
+ * const { tx } = await buildUpdatePoolConfigWithProgram(program, {
+ *   perpsPool,
+ *   authority: wallet.publicKey,
+ *   maxLeverage: 50,
+ *   positionFeeBps: 10,
+ * });
+ * ```
+ */
+export async function buildUpdatePoolConfigWithProgram(
+  program: Program,
+  params: UpdatePoolConfigParams
+): Promise<{ tx: any }> {
+  const updateParams = {
+    maxLeverage: params.maxLeverage ?? null,
+    positionFeeBps: params.positionFeeBps ?? null,
+    maxUtilizationBps: params.maxUtilizationBps ?? null,
+    liquidationThresholdBps: params.liquidationThresholdBps ?? null,
+    liquidationPenaltyBps: params.liquidationPenaltyBps ?? null,
+    baseBorrowRateBps: params.baseBorrowRateBps ?? null,
+    maxImbalanceFeeBps: params.maxImbalanceFeeBps ?? null,
+    isActive: params.isActive ?? null,
+  };
+
+  const tx = await program.methods
+    .updatePerpsPoolConfig(updateParams)
+    .accountsStrict({
+      perpsPool: params.perpsPool,
+      authority: params.authority,
+    });
+
+  return { tx };
+}
+
+// =============================================================================
+// Token Status Update Instructions
+// =============================================================================
+
+export interface UpdateTokenStatusParams {
+  perpsPool: PublicKey;
+  authority: PublicKey;
+  /** Token index in the pool (0-7) */
+  tokenIndex: number;
+  /** Whether the token should be active */
+  isActive: boolean;
+}
+
+/**
+ * Build update token status instruction
+ *
+ * Allows admin to pause/unpause a specific token in the pool.
+ * Paused tokens cannot be used for new positions or liquidity operations.
+ *
+ * @example
+ * ```ts
+ * // Pause token at index 1
+ * const { tx } = await buildUpdateTokenStatusWithProgram(program, {
+ *   perpsPool,
+ *   authority: wallet.publicKey,
+ *   tokenIndex: 1,
+ *   isActive: false,
+ * });
+ * ```
+ */
+export async function buildUpdateTokenStatusWithProgram(
+  program: Program,
+  params: UpdateTokenStatusParams
+): Promise<{ tx: any }> {
+  const tx = await program.methods
+    .updatePerpsTokenStatus(params.tokenIndex, params.isActive)
+    .accountsStrict({
+      perpsPool: params.perpsPool,
+      authority: params.authority,
+    });
+
+  return { tx };
+}
+
+// =============================================================================
+// Market Status Update Instructions
+// =============================================================================
+
+export interface UpdateMarketStatusParams {
+  perpsPool: PublicKey;
+  market: PublicKey;
+  authority: PublicKey;
+  /** Whether the market should be active */
+  isActive: boolean;
+}
+
+/**
+ * Build update market status instruction
+ *
+ * Allows admin to pause/unpause a specific market.
+ * Paused markets cannot accept new positions but existing positions can still be closed.
+ *
+ * @example
+ * ```ts
+ * // Pause the SOL-PERP market
+ * const { tx } = await buildUpdateMarketStatusWithProgram(program, {
+ *   perpsPool,
+ *   market: solPerpMarket,
+ *   authority: wallet.publicKey,
+ *   isActive: false,
+ * });
+ * ```
+ */
+export async function buildUpdateMarketStatusWithProgram(
+  program: Program,
+  params: UpdateMarketStatusParams
+): Promise<{ tx: any }> {
+  const tx = await program.methods
+    .updatePerpsMarketStatus(params.isActive)
+    .accountsStrict({
+      perpsPool: params.perpsPool,
+      perpsMarket: params.market,
+      authority: params.authority,
+    });
+
+  return { tx };
+}
+
+// =============================================================================
 // Keeper Instructions
 // =============================================================================
 
@@ -1158,4 +1321,302 @@ export async function buildUpdateBorrowFeesWithProgram(
     });
 
   return { tx };
+}
+
+// =============================================================================
+// Liquidation Instructions (Keeper)
+// =============================================================================
+
+export interface LiquidatePositionInstructionParams {
+  /** Settlement pool (where position margin comes from) */
+  settlementPool: PublicKey;
+  /** Perps pool */
+  perpsPool: PublicKey;
+  /** Market */
+  market: PublicKey;
+  /** Oracle for current price */
+  oracle: PublicKey;
+  /** ZK proof */
+  proof: Uint8Array;
+  /** Merkle root */
+  merkleRoot: Uint8Array;
+  /** Position commitment being liquidated */
+  positionCommitment: Uint8Array;
+  /** Position nullifier */
+  positionNullifier: Uint8Array;
+  /** Owner's remainder commitment (margin - loss - penalty) */
+  ownerCommitment: Uint8Array;
+  /** Liquidator's reward commitment */
+  liquidatorCommitment: Uint8Array;
+  /** Current price from oracle */
+  currentPrice: bigint;
+  /** Liquidator reward amount */
+  liquidatorReward: bigint;
+  /** Owner remainder amount */
+  ownerRemainder: bigint;
+  /** Position margin */
+  positionMargin: bigint;
+  /** Position size */
+  positionSize: bigint;
+  /** Is long position */
+  isLong: boolean;
+  /** Keeper/liquidator */
+  keeper: PublicKey;
+  /** Owner stealth address (for remainder commitment) */
+  ownerRecipient: StealthAddress;
+  /** Liquidator stealth address (for reward commitment) */
+  liquidatorRecipient: StealthAddress;
+  /** Owner randomness */
+  ownerRandomness: Uint8Array;
+  /** Liquidator randomness */
+  liquidatorRandomness: Uint8Array;
+  /** Token mint */
+  tokenMint: PublicKey;
+  /** Light verify params */
+  lightVerifyParams: LightVerifyParams;
+  /** Light nullifier params */
+  lightNullifierParams: LightNullifierParams;
+  /** Remaining accounts */
+  remainingAccounts: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[];
+}
+
+/**
+ * Build liquidate position multi-phase instructions
+ *
+ * Liquidation can happen when:
+ * 1. Position is underwater (effective margin < liquidation threshold)
+ * 2. Position hit profit bound (PnL >= margin, 100% gain)
+ *
+ * Liquidator receives penalty as reward, owner receives remainder.
+ */
+export async function buildLiquidatePositionWithProgram(
+  program: Program,
+  params: LiquidatePositionInstructionParams
+): Promise<{
+  tx: any;
+  phase1Tx: any;
+  phase2Tx: any;
+  phase3Tx: any;
+  operationId: Uint8Array;
+  pendingCommitments: PendingCommitmentData[];
+}> {
+  const programId = program.programId;
+
+  const operationId = generateOperationId(
+    params.positionNullifier,
+    params.ownerCommitment,
+    Date.now()
+  );
+
+  const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
+  const [vkPda] = deriveVerificationKeyPda('perps_liquidate', programId);
+
+  // Phase 0: Create pending with proof
+  const phase0Tx = await program.methods
+    .createPendingWithProofLiquidate(
+      Array.from(operationId),
+      Buffer.from(params.proof),
+      Array.from(params.merkleRoot),
+      Array.from(params.positionCommitment),
+      Array.from(params.positionNullifier),
+      Array.from(params.ownerCommitment),
+      Array.from(params.liquidatorCommitment),
+      new BN(params.currentPrice.toString()),
+      new BN(params.liquidatorReward.toString()),
+      new BN(params.ownerRemainder.toString())
+    )
+    .accountsStrict({
+      settlementPool: params.settlementPool,
+      perpsPool: params.perpsPool,
+      perpsMarket: params.market,
+      verificationKey: vkPda,
+      pendingOperation: pendingOpPda,
+      keeper: params.keeper,
+      systemProgram: SystemProgram.programId,
+    })
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
+    ]);
+
+  // Phase 1: Verify position commitment exists
+  const phase1Tx = await program.methods
+    .verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams)
+    .accountsStrict({
+      pool: params.settlementPool,
+      pendingOperation: pendingOpPda,
+      relayer: params.keeper,
+    })
+    .remainingAccounts(params.remainingAccounts)
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+    ]);
+
+  // Phase 2: Create nullifier for position
+  const phase2Tx = await program.methods
+    .createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams)
+    .accountsStrict({
+      pool: params.settlementPool,
+      pendingOperation: pendingOpPda,
+      relayer: params.keeper,
+    })
+    .remainingAccounts(params.remainingAccounts)
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+    ]);
+
+  // Phase 3: Execute liquidation
+  const phase3Tx = await program.methods
+    .executeLiquidate(
+      Array.from(operationId),
+      new BN(params.positionMargin.toString()),
+      new BN(params.positionSize.toString()),
+      params.isLong
+    )
+    .accountsStrict({
+      settlementPool: params.settlementPool,
+      perpsPool: params.perpsPool,
+      perpsMarket: params.market,
+      pendingOperation: pendingOpPda,
+      keeper: params.keeper,
+      oracle: params.oracle,
+    })
+    .preInstructions([
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
+    ]);
+
+  // Prepare output commitments (owner remainder + liquidator reward)
+  const pendingCommitments: PendingCommitmentData[] = [];
+
+  // Owner remainder note (if any)
+  if (params.ownerRemainder > 0n) {
+    const ownerNote = {
+      stealthPubX: params.ownerRecipient.stealthPubkey.x,
+      tokenMint: params.tokenMint,
+      amount: params.ownerRemainder,
+      randomness: params.ownerRandomness,
+    };
+    const ownerEncrypted = encryptNote(ownerNote as any, params.ownerRecipient.stealthPubkey);
+
+    pendingCommitments.push({
+      pool: params.settlementPool,
+      commitment: params.ownerCommitment,
+      stealthEphemeralPubkey: new Uint8Array([
+        ...params.ownerRecipient.ephemeralPubkey.x,
+        ...params.ownerRecipient.ephemeralPubkey.y,
+      ]),
+      encryptedNote: serializeEncryptedNote(ownerEncrypted),
+    });
+  }
+
+  // Liquidator reward note
+  if (params.liquidatorReward > 0n) {
+    const liquidatorNote = {
+      stealthPubX: params.liquidatorRecipient.stealthPubkey.x,
+      tokenMint: params.tokenMint,
+      amount: params.liquidatorReward,
+      randomness: params.liquidatorRandomness,
+    };
+    const liquidatorEncrypted = encryptNote(liquidatorNote as any, params.liquidatorRecipient.stealthPubkey);
+
+    pendingCommitments.push({
+      pool: params.settlementPool,
+      commitment: params.liquidatorCommitment,
+      stealthEphemeralPubkey: new Uint8Array([
+        ...params.liquidatorRecipient.ephemeralPubkey.x,
+        ...params.liquidatorRecipient.ephemeralPubkey.y,
+      ]),
+      encryptedNote: serializeEncryptedNote(liquidatorEncrypted),
+    });
+  }
+
+  return {
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
+    operationId,
+    pendingCommitments,
+  };
+}
+
+/**
+ * Check if a position should be liquidated
+ *
+ * Returns true if:
+ * 1. Underwater: effectiveMargin < liquidationThreshold
+ * 2. At profit bound: PnL >= margin (100% gain)
+ */
+export function shouldLiquidate(
+  position: {
+    margin: bigint;
+    size: bigint;
+    entryPrice: bigint;
+    direction: 'long' | 'short';
+  },
+  currentPrice: bigint,
+  pool: {
+    liquidationThresholdBps: number;
+  }
+): { shouldLiquidate: boolean; reason: 'underwater' | 'profit_bound' | null; pnl: bigint; isProfit: boolean } {
+  const { margin, size, entryPrice, direction } = position;
+
+  // Calculate PnL
+  let pnl: bigint;
+  let isProfit: boolean;
+
+  if (direction === 'long') {
+    if (currentPrice > entryPrice) {
+      pnl = (currentPrice - entryPrice) * size / entryPrice;
+      isProfit = true;
+    } else {
+      pnl = (entryPrice - currentPrice) * size / entryPrice;
+      isProfit = false;
+    }
+  } else {
+    if (currentPrice < entryPrice) {
+      pnl = (entryPrice - currentPrice) * size / entryPrice;
+      isProfit = true;
+    } else {
+      pnl = (currentPrice - entryPrice) * size / entryPrice;
+      isProfit = false;
+    }
+  }
+
+  // Check profit bound (PnL >= margin = 100% gain)
+  if (isProfit && pnl >= margin) {
+    return { shouldLiquidate: true, reason: 'profit_bound', pnl, isProfit };
+  }
+
+  // Check underwater (effective margin < threshold)
+  const effectiveMargin = isProfit ? margin + pnl : margin - pnl;
+  const liquidationThreshold = margin * BigInt(pool.liquidationThresholdBps) / 10000n;
+
+  if (effectiveMargin < liquidationThreshold) {
+    return { shouldLiquidate: true, reason: 'underwater', pnl, isProfit };
+  }
+
+  return { shouldLiquidate: false, reason: null, pnl, isProfit };
+}
+
+/**
+ * Calculate liquidation amounts
+ *
+ * @returns Owner remainder and liquidator reward
+ */
+export function calculateLiquidationAmounts(
+  margin: bigint,
+  pnl: bigint,
+  isProfit: boolean,
+  liquidationPenaltyBps: number
+): { ownerRemainder: bigint; liquidatorReward: bigint } {
+  // Effective margin after PnL
+  const effectiveMargin = isProfit ? margin + pnl : margin > pnl ? margin - pnl : 0n;
+
+  // Liquidator reward = penalty % of original margin
+  const liquidatorReward = margin * BigInt(liquidationPenaltyBps) / 10000n;
+
+  // Owner gets remainder after penalty
+  const ownerRemainder = effectiveMargin > liquidatorReward ? effectiveMargin - liquidatorReward : 0n;
+
+  return { ownerRemainder, liquidatorReward };
 }

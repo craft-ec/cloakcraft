@@ -16,8 +16,15 @@ var AggregationStatus = /* @__PURE__ */ ((AggregationStatus2) => {
   AggregationStatus2[AggregationStatus2["Finalized"] = 2] = "Finalized";
   return AggregationStatus2;
 })(AggregationStatus || {});
+var PositionStatus = /* @__PURE__ */ ((PositionStatus2) => {
+  PositionStatus2[PositionStatus2["Active"] = 0] = "Active";
+  PositionStatus2[PositionStatus2["Liquidated"] = 1] = "Liquidated";
+  PositionStatus2[PositionStatus2["Closed"] = 2] = "Closed";
+  return PositionStatus2;
+})(PositionStatus || {});
 export {
   AggregationStatus,
   OrderStatus,
-  PoolType
+  PoolType,
+  PositionStatus
 };

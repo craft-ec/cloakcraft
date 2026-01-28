@@ -28,6 +28,7 @@ import {
 } from '@cloakcraft/sdk';
 import type {
   DecryptedNote,
+  DecryptedLpNote,
   TransactionResult,
 } from '@cloakcraft/types';
 import type {
@@ -103,7 +104,7 @@ interface AddPerpsLiquidityOptions {
 
 interface RemovePerpsLiquidityOptions {
   /** LP token note to burn */
-  lpInput: DecryptedNote;
+  lpInput: DecryptedLpNote;
   /** Perps pool */
   pool: PerpsPoolState & { address: PublicKey };
   /** Token index to withdraw */
@@ -352,22 +353,31 @@ export function useOpenPosition() {
 
         onProgress?.('generating');
 
-        // Build and execute open position transaction
-        // Note: Full implementation would call client.openPerpsPosition() similar to client.swap()
-        // For now, we prepare the parameters for the multi-phase operation
+        // Get market ID from market state
+        const marketId = market.marketId || new Uint8Array(32);
 
-        onProgress?.('building');
-        onProgress?.('approving');
-        onProgress?.('executing');
+        // Build merkle root from commitment (same pattern as swap)
+        // Commitment existence is verified on-chain via Light Protocol account lookup.
+        const merkleRoot = freshInput.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
 
-        // Placeholder for actual transaction execution
-        // The SDK needs openPerpsPosition method on CloakCraftClient
-        const result: TransactionResult = {
-          signature: 'pending_implementation',
-          slot: 0,
-        };
-
-        onProgress?.('confirming');
+        // Call SDK openPerpsPosition method
+        const result = await client.openPerpsPosition({
+          input: freshInput,
+          poolId: pool.address,
+          marketId: marketId,
+          direction,
+          marginAmount,
+          leverage,
+          oraclePrice,
+          positionRecipient,
+          changeRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress,
+        });
 
         // Wait for indexer
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -439,26 +449,41 @@ export function useClosePosition() {
         const { stealthAddress: settlementRecipient } = generateStealthAddress(wallet.publicKey);
 
         onProgress?.('generating');
-        onProgress?.('building');
-        onProgress?.('approving');
-        onProgress?.('executing');
 
-        // Placeholder for actual transaction execution
-        const result: TransactionResult = {
-          signature: 'pending_implementation',
-          slot: 0,
-        };
+        // Get market ID and settlement token
+        const marketId = market.marketId || new Uint8Array(32);
+        const settlementTokenIndex = position.direction === 'long'
+          ? market.quoteTokenIndex
+          : market.baseTokenIndex;
+        const settlementToken = pool.tokens[settlementTokenIndex];
 
-        onProgress?.('confirming');
+        if (!settlementToken) {
+          throw new Error('Settlement token not found in pool');
+        }
+
+        // Build merkle root from commitment (same pattern as swap)
+        const merkleRoot = position.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
+
+        // Call SDK closePerpsPosition method
+        const result = await client.closePerpsPosition({
+          positionInput: position as any,
+          poolId: pool.address,
+          marketId: marketId,
+          settlementTokenMint: settlementToken.mint,
+          oraclePrice,
+          settlementRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress,
+        });
 
         // Wait for indexer
         await new Promise(resolve => setTimeout(resolve, 2000));
 
         // Sync notes for settlement token
-        const settlementTokenIndex = position.direction === 'long'
-          ? market.quoteTokenIndex
-          : market.baseTokenIndex;
-        const settlementToken = pool.tokens[settlementTokenIndex];
         if (settlementToken) {
           await sync(settlementToken.mint, true);
         }
@@ -555,17 +580,27 @@ export function usePerpsAddLiquidity() {
         }
 
         onProgress?.('generating');
-        onProgress?.('building');
-        onProgress?.('approving');
-        onProgress?.('executing');
 
-        // Placeholder for actual transaction execution
-        const result: TransactionResult = {
-          signature: 'pending_implementation',
-          slot: 0,
-        };
+        // Build merkle root from commitment (same pattern as swap)
+        const merkleRoot = freshInput.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
 
-        onProgress?.('confirming');
+        // Call SDK addPerpsLiquidity method
+        const result = await client.addPerpsLiquidity({
+          input: freshInput,
+          poolId: pool.address,
+          tokenIndex,
+          depositAmount,
+          lpAmount,
+          oraclePrices,
+          lpRecipient,
+          changeRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress,
+        });
 
         // Wait for indexer
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -674,17 +709,27 @@ export function usePerpsRemoveLiquidity() {
         }
 
         onProgress?.('generating');
-        onProgress?.('building');
-        onProgress?.('approving');
-        onProgress?.('executing');
 
-        // Placeholder for actual transaction execution
-        const result: TransactionResult = {
-          signature: 'pending_implementation',
-          slot: 0,
-        };
+        // Build merkle root from commitment (same pattern as swap)
+        const merkleRoot = freshInput.commitment;
+        const dummyPath = Array(32).fill(new Uint8Array(32));
+        const dummyIndices = Array(32).fill(0);
 
-        onProgress?.('confirming');
+        // Call SDK removePerpsLiquidity method
+        const result = await client.removePerpsLiquidity({
+          lpInput: freshInput as unknown as DecryptedLpNote,
+          poolId: pool.address,
+          tokenIndex,
+          lpAmount,
+          withdrawAmount,
+          oraclePrices,
+          withdrawRecipient,
+          lpChangeRecipient,
+          merkleRoot,
+          merklePath: dummyPath,
+          merkleIndices: dummyIndices,
+          onProgress,
+        });
 
         // Wait for indexer
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -892,6 +937,9 @@ export function usePositionValidation(
 // Position Scanning Hook
 // =============================================================================
 
+/** Position status from PositionMeta */
+export type PositionMetaStatus = 'active' | 'liquidated' | 'closed' | 'unknown';
+
 /** Scanned position data for UI display */
 export interface ScannedPerpsPosition {
   /** Position commitment hash */
@@ -914,8 +962,44 @@ export interface ScannedPerpsPosition {
   randomness: Uint8Array;
   /** Pool this position belongs to */
   pool: PublicKey;
-  /** Whether position is closed/spent */
+  /** Whether position is closed/spent (from nullifier check) */
   spent: boolean;
+  // =========================================================================
+  // Position Metadata (from PositionMeta compressed account)
+  // =========================================================================
+  /** Position status from metadata (Active/Liquidated/Closed) */
+  status: PositionMetaStatus;
+  /** Liquidation price from metadata */
+  liquidationPrice?: bigint;
+  /** Timestamp when position was opened */
+  createdAt?: number;
+  /** Whether PositionMeta was found for this position */
+  hasMetadata: boolean;
+}
+
+/**
+ * Convert numeric status to PositionMetaStatus
+ */
+function toPositionStatus(status: number): PositionMetaStatus {
+  switch (status) {
+    case 0: return 'active';
+    case 1: return 'liquidated';
+    case 2: return 'closed';
+    default: return 'unknown';
+  }
+}
+
+/**
+ * Derive position ID from position data
+ * position_id = hash(pool_id, market_id, nullifier_key_derived, randomness)
+ * For now, we use commitment as a proxy since we don't have access to nullifier_key here
+ */
+function derivePositionId(commitment: Uint8Array, randomness: Uint8Array): Uint8Array {
+  // Position ID is derived in the ZK circuit. For matching with PositionMeta,
+  // we need to derive it the same way. Since we have the position data, we can
+  // match by commitment hash or randomness as fallback.
+  // For now, return commitment as the position identifier for metadata lookup.
+  return commitment;
 }
 
 /**
@@ -923,6 +1007,7 @@ export interface ScannedPerpsPosition {
  *
  * Scans Light Protocol compressed accounts for position notes
  * belonging to the current user's stealth wallet.
+ * Also fetches public PositionMeta for status/liquidation info.
  *
  * @param positionPool - Position pool address (perps pool's position commitment pool)
  */
@@ -946,23 +1031,52 @@ export function usePerpsPositions(positionPool: PublicKey | null) {
       // which includes: commitment, accountHash, marketId, isLong, margin, size, leverage, entryPrice, randomness, pool, spent
       const scannedPositions = await client.scanPositionNotes(positionPool);
 
-      // Map to our UI format
-      const uiPositions: ScannedPerpsPosition[] = scannedPositions.map((pos: any) => ({
-        commitment: pos.commitment,
-        accountHash: pos.accountHash,
-        marketId: pos.marketId,
-        isLong: pos.isLong,
-        margin: pos.margin,
-        size: pos.size,
-        leverage: pos.leverage,
-        entryPrice: pos.entryPrice,
-        randomness: pos.randomness,
-        pool: pos.pool,
-        spent: pos.spent,
-      }));
+      if (scannedPositions.length === 0) {
+        setPositions([]);
+        return;
+      }
 
-      // Filter out spent/closed positions
-      setPositions(uiPositions.filter(p => !p.spent));
+      // Fetch position metadata for all positions
+      // Use commitment as position ID for lookup (PositionMeta is keyed by position_id)
+      const positionIds = scannedPositions.map((pos: any) =>
+        derivePositionId(pos.commitment, pos.randomness)
+      );
+
+      let metadataMap: Map<string, any> = new Map();
+      try {
+        metadataMap = await client.fetchPositionMetas(positionPool, positionIds);
+      } catch (metaErr) {
+        // Metadata fetch is optional - positions still work without it
+        console.warn('[usePerpsPositions] Failed to fetch position metadata:', metaErr);
+      }
+
+      // Map to our UI format with metadata
+      const uiPositions: ScannedPerpsPosition[] = scannedPositions.map((pos: any) => {
+        const positionIdHex = Buffer.from(derivePositionId(pos.commitment, pos.randomness)).toString('hex');
+        const meta = metadataMap.get(positionIdHex);
+
+        return {
+          commitment: pos.commitment,
+          accountHash: pos.accountHash,
+          marketId: pos.marketId,
+          isLong: pos.isLong,
+          margin: pos.margin,
+          size: pos.size,
+          leverage: pos.leverage,
+          entryPrice: pos.entryPrice,
+          randomness: pos.randomness,
+          pool: pos.pool,
+          spent: pos.spent,
+          // Metadata fields
+          status: meta ? toPositionStatus(meta.status) : (pos.spent ? 'closed' : 'active'),
+          liquidationPrice: meta?.liquidationPrice,
+          createdAt: meta?.createdAt,
+          hasMetadata: !!meta,
+        };
+      });
+
+      // Filter out spent/closed positions (but keep liquidated for display)
+      setPositions(uiPositions.filter(p => !p.spent && p.status !== 'closed'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to scan positions');
       setPositions([]);
@@ -1099,4 +1213,191 @@ export function usePythPrices(symbols: string[], refreshInterval: number = 10000
     error,
     refresh,
   };
+}
+
+// =============================================================================
+// Keeper Hooks
+// =============================================================================
+
+export interface LiquidatablePosition {
+  position: ScannedPerpsPosition;
+  reason: 'underwater' | 'profit_bound';
+  currentPrice: bigint;
+  pnl: bigint;
+  isProfit: boolean;
+  ownerRemainder: bigint;
+  liquidatorReward: bigint;
+}
+
+/**
+ * Hook for keeper to monitor positions for liquidation
+ *
+ * Polls positions and prices, identifies liquidatable positions.
+ *
+ * @param pool - Perps pool state
+ * @param positionPool - Position pool address (Light Protocol)
+ * @param pollInterval - Polling interval in ms (default: 5000)
+ */
+export function useKeeperMonitor(
+  pool: PerpsPoolState | null,
+  positionPool: PublicKey | null,
+  pollInterval: number = 5000
+) {
+  const { positions, isLoading: isScanning, refresh: refreshPositions } = usePerpsPositions(positionPool);
+  const [liquidatable, setLiquidatable] = useState<LiquidatablePosition[]>([]);
+  const [isChecking, setIsChecking] = useState(false);
+  const [lastCheck, setLastCheck] = useState<number>(0);
+
+  // Get token symbols for price fetching
+  const tokenSymbols = useMemo(() => {
+    if (!pool) return [];
+    return pool.tokens
+      .filter(t => t.isActive)
+      .map(t => {
+        // Map mint to symbol (simplified - in production use a lookup)
+        const mintStr = t.mint.toBase58();
+        if (mintStr.includes('So1')) return 'SOL';
+        if (mintStr.includes('USDC') || mintStr.includes('EPj')) return 'USDC';
+        return 'SOL'; // Default
+      });
+  }, [pool]);
+
+  const { prices, refresh: refreshPrices } = usePythPrices(tokenSymbols, pollInterval);
+
+  // Check positions for liquidation
+  const checkPositions = useCallback(async () => {
+    if (!pool || !positions.length || !prices.size) {
+      setLiquidatable([]);
+      return;
+    }
+
+    setIsChecking(true);
+    try {
+      // Import liquidation helpers from SDK
+      const sdk = await import('@cloakcraft/sdk');
+      const shouldLiquidateFn = (sdk as any).shouldLiquidate;
+      const calculateLiquidationAmountsFn = (sdk as any).calculateLiquidationAmounts;
+
+      if (!shouldLiquidateFn || !calculateLiquidationAmountsFn) {
+        console.warn('Liquidation functions not available in SDK');
+        setLiquidatable([]);
+        return;
+      }
+
+      const liquidatablePositions: LiquidatablePosition[] = [];
+
+      for (const position of positions) {
+        // Skip spent positions
+        if (position.spent) continue;
+
+        // Get current price for the position's market
+        // Simplified: use first price available
+        const currentPrice = prices.values().next().value || 0n;
+        if (currentPrice === 0n) continue;
+
+        const result = shouldLiquidateFn(
+          {
+            margin: position.margin,
+            size: position.size,
+            entryPrice: position.entryPrice,
+            direction: position.isLong ? 'long' : 'short',
+          },
+          currentPrice,
+          { liquidationThresholdBps: pool.liquidationThresholdBps }
+        );
+
+        if (result.shouldLiquidate && result.reason) {
+          const amounts = calculateLiquidationAmountsFn(
+            position.margin,
+            result.pnl,
+            result.isProfit,
+            pool.liquidationPenaltyBps
+          );
+
+          liquidatablePositions.push({
+            position,
+            reason: result.reason,
+            currentPrice,
+            pnl: result.pnl,
+            isProfit: result.isProfit,
+            ownerRemainder: amounts.ownerRemainder,
+            liquidatorReward: amounts.liquidatorReward,
+          });
+        }
+      }
+
+      setLiquidatable(liquidatablePositions);
+      setLastCheck(Date.now());
+    } finally {
+      setIsChecking(false);
+    }
+  }, [pool, positions, prices]);
+
+  // Poll on interval
+  useEffect(() => {
+    checkPositions();
+
+    if (pollInterval > 0) {
+      const interval = setInterval(() => {
+        refreshPositions();
+        refreshPrices();
+        checkPositions();
+      }, pollInterval);
+      return () => clearInterval(interval);
+    }
+  }, [checkPositions, pollInterval, refreshPositions, refreshPrices]);
+
+  return {
+    /** All scanned positions */
+    positions,
+    /** Positions ready for liquidation */
+    liquidatable,
+    /** Is currently scanning/checking */
+    isLoading: isScanning || isChecking,
+    /** Last check timestamp */
+    lastCheck,
+    /** Manual refresh */
+    refresh: checkPositions,
+  };
+}
+
+/**
+ * Hook for executing liquidation
+ */
+export function useLiquidate() {
+  const { client, wallet } = useCloakCraft();
+  const [isLiquidating, setIsLiquidating] = useState(false);
+
+  const liquidate = useCallback(async (options: {
+    position: LiquidatablePosition;
+    pool: PerpsPoolState;
+    market: PerpsMarketState;
+    liquidatorRecipient: any; // StealthAddress
+    onProgress?: (stage: PerpsProgressStage, phase?: number) => void;
+  }): Promise<{ signature: string } | null> => {
+    const { position, pool, market, liquidatorRecipient, onProgress } = options;
+    const program = client?.getProgram();
+
+    if (!program || !wallet) {
+      throw new Error('Program or wallet not available');
+    }
+
+    setIsLiquidating(true);
+    try {
+      onProgress?.('building');
+
+      // Note: Full implementation would need to:
+      // 1. Generate ZK proof for liquidation
+      // 2. Get Light Protocol params
+      // 3. Build multi-phase transactions
+      // 4. Execute all phases
+
+      // For now, return a placeholder
+      throw new Error('Liquidation proof generation not yet implemented');
+    } finally {
+      setIsLiquidating(false);
+    }
+  }, [client, wallet]);
+
+  return { liquidate, isLiquidating };
 }

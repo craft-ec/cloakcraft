@@ -65,7 +65,7 @@ import {
   LightCommitmentClient,
   DEVNET_LIGHT_TREES,
 } from "../packages/sdk/src/light";
-import { clearCircomCache, loadCircomArtifacts, generateSnarkjsProof } from "../packages/sdk/src/snarkjs-prover";
+import { clearCircomCache, loadCircomArtifacts, generateSnarkjsProofFromCircuit } from "../packages/sdk/src/snarkjs-prover";
 import { calculateAddLiquidityAmounts, calculateSwapOutputUnified, calculateRemoveLiquidityOutput, PoolType } from "../packages/sdk/src/amm/calculations";
 import { computeAmmStateHash } from "../packages/sdk/src/amm/pool";
 import { generateVoteSnapshotInputs, generateChangeVoteSnapshotInputs, generateVoteSpendInputs, generateClaimInputs } from "../packages/sdk/src/voting/proofs";
@@ -3959,7 +3959,7 @@ async function main() {
         noteCommitment: inputNote.commitment || new Uint8Array(32),
         noteAmount: inputNote.amount,
         noteRandomness: inputNote.randomness || generateRandomness(),
-        stealthPubX: inputNote.stealthPubX || fieldToBytes(derivePublicKey(bytesToField(wallet.keypair.spending.sk)).x),
+        stealthPubX: inputNote.stealthPubX || derivePublicKey(bytesToField(wallet.keypair.spending.sk)).x,
         stealthSpendingKey: wallet.keypair.spending.sk,
         voteChoice: 0, // Vote for option 0
         snapshotMerkleRoot,
@@ -3981,12 +3981,12 @@ async function main() {
 
       // Generate actual ZK proof
       console.log("   [Phase 0] Generating ZK proof...");
-      const proofResult = await generateSnarkjsProof(
+      const proofResult = await generateSnarkjsProofFromCircuit(
         'voting/vote_snapshot',
         inputs,
         path.join(__dirname, '..', 'circom-circuits', 'build')
       );
-      console.log(`   Proof generated: ${proofResult.proof.length} bytes`);
+      console.log(`   Proof generated: ${proofResult.length} bytes`);
 
       // Generate operation ID
       const operationId = generateOperationId();
@@ -4005,7 +4005,7 @@ async function main() {
           voteChoice: 0,
           amount: inputNote.amount,
           weight: inputNote.amount, // weight = amount for linear formula
-          proof: proofResult.proof,
+          proof: proofResult,
           outputRandomness: voteRandomness,
         },
         operationId,
@@ -4304,12 +4304,12 @@ async function main() {
 
         // Generate ZK proof
         console.log("   [Phase 0] Generating ZK proof...");
-        const proofResult = await generateSnarkjsProof(
+        const proofResult = await generateSnarkjsProofFromCircuit(
           'voting/change_vote_snapshot',
           inputs,
           path.join(__dirname, '..', 'circom-circuits', 'build')
         );
-        console.log(`   Proof generated: ${proofResult.proof.length} bytes`);
+        console.log(`   Proof generated: ${proofResult.length} bytes`);
 
         // Generate operation ID
         const operationId = generateOperationId();
@@ -4329,7 +4329,7 @@ async function main() {
             oldVoteChoice: 0,
             newVoteChoice: 1,
             weight: voteSnapshotResult.weight,
-            proof: proofResult.proof,
+            proof: proofResult,
           },
           operationId,
           payer.publicKey,
@@ -4546,12 +4546,11 @@ async function main() {
           noteCommitment: inputNote.commitment || new Uint8Array(32),
           noteAmount: inputNote.amount,
           noteRandomness: inputNote.randomness || generateRandomness(),
-          stealthPubX: inputNote.stealthPubX || fieldToBytes(derivePublicKey(bytesToField(wallet.keypair.spending.sk)).x),
           stealthSpendingKey: wallet.keypair.spending.sk,
           voteChoice: 0,
           merklePath: spendMerkleProof.proof.map((p: any) => p instanceof Uint8Array ? p : new Uint8Array(32)),
           merklePathIndices: spendMerkleProof.pathIndices,
-          merkleRoot: spendMerkleProof.merkleRoot || new Uint8Array(32),
+          leafIndex: spendMerkleProof.leafIndex ?? 0,
         };
 
         const { spendingNullifier, positionCommitment, positionRandomness, inputs } =
@@ -4562,12 +4561,12 @@ async function main() {
 
         // Generate ZK proof
         console.log("   [Phase 0] Generating ZK proof...");
-        const proofResult = await generateSnarkjsProof(
+        const proofResult = await generateSnarkjsProofFromCircuit(
           'voting/vote_spend',
           inputs,
           path.join(__dirname, '..', 'circom-circuits', 'build')
         );
-        console.log(`   Proof generated: ${proofResult.proof.length} bytes`);
+        console.log(`   Proof generated: ${proofResult.length} bytes`);
 
         // Track for claim test (even if we don't execute full flow without SpendToVote ballot)
         voteSpendResult = {
@@ -4581,7 +4580,7 @@ async function main() {
         };
 
         logTest("Voting: Vote Spend (Complete)", "PASS",
-          `Proof generated: ${proofResult.proof.length} bytes (full flow requires SpendToVote ballot)`,
+          `Proof generated: ${proofResult.length} bytes (full flow requires SpendToVote ballot)`,
           performance.now() - startTime);
       }
     } catch (err: any) {
@@ -4673,12 +4672,12 @@ async function main() {
 
       // Generate ZK proof
       console.log("   [Phase 0] Generating claim ZK proof...");
-      const proofResult = await generateSnarkjsProof(
+      const proofResult = await generateSnarkjsProofFromCircuit(
         'voting/claim',
         inputs,
         path.join(__dirname, '..', 'circom-circuits', 'build')
       );
-      console.log(`   Proof generated: ${proofResult.proof.length} bytes`);
+      console.log(`   Proof generated: ${proofResult.length} bytes`);
 
       // Verify payout calculation
       const expectedGross = (voteSpendResult.weight * mockBallotState.totalPool) / mockBallotState.winnerWeight;
@@ -4687,7 +4686,7 @@ async function main() {
 
       if (grossPayout === expectedGross && netPayout === expectedNet) {
         logTest("Voting: Claim (Complete)", "PASS",
-          `Proof: ${proofResult.proof.length} bytes, payout: ${Number(netPayout) / 1_000_000_000} tokens`,
+          `Proof: ${proofResult.length} bytes, payout: ${Number(netPayout) / 1_000_000_000} tokens`,
           performance.now() - startTime);
       } else {
         logTest("Voting: Claim (Complete)", "FAIL",

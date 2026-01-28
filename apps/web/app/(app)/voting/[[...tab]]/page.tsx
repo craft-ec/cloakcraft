@@ -15,9 +15,16 @@ import {
   useClaim,
   useVoteValidation,
   useCanClaim,
+  useResolveBallot,
+  useFinalizeBallot,
+  useDecryptTally,
+  useChangeVote,
+  useCloseVotePosition,
+  useIsBallotAuthority,
   type VotingProgressStage,
   type BallotWithAddress,
 } from '@cloakcraft/hooks';
+import { useWallet } from '@solana/wallet-adapter-react';
 import type { DecryptedNote } from '@cloakcraft/sdk';
 import {
   Vote,
@@ -33,6 +40,10 @@ import {
   Eye,
   Lock,
   LockKeyhole,
+  Settings,
+  Unlock,
+  LogOut,
+  RotateCcw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -61,6 +72,7 @@ import {
   TransactionOverlay,
   TransactionStep,
 } from '@/components/operations';
+import { CreateBallotDialog } from '@/components/voting';
 import { SUPPORTED_TOKENS, TokenInfo } from '@/lib/constants';
 import { formatAmount, parseAmount, toBigInt } from '@/lib/utils';
 
@@ -97,11 +109,20 @@ const revealLabels: Record<number, { label: string; icon: React.ReactNode }> = {
   2: { label: 'Private', icon: <LockKeyhole className="h-3 w-3" /> },
 };
 
-function formatBigInt(value: bigint, decimals: number = 6): string {
-  if (value === 0n) return '0';
+// Vote type labels
+const voteTypeLabels: Record<number, string> = {
+  0: 'Single Choice',
+  1: 'Approval',
+  2: 'Ranked Choice',
+  3: 'Weighted',
+};
+
+function formatBigIntValue(value: bigint | { toString(): string } | number | null | undefined, decimals: number = 6): string {
+  const val = toBigInt(value);
+  if (val === 0n) return '0';
   const divisor = BigInt(10 ** decimals);
-  const intPart = value / divisor;
-  const fracPart = Math.abs(Number((value % divisor) * 100n / divisor));
+  const intPart = val / divisor;
+  const fracPart = Math.abs(Number((val % divisor) * 100n / divisor));
   if (fracPart === 0) return intPart.toLocaleString();
   return `${intPart.toLocaleString()}.${fracPart.toString().padStart(2, '0')}`;
 }
@@ -181,7 +202,7 @@ function BallotCard({
           </span>
           <span className="flex items-center gap-1">
             <Coins className="h-3 w-3" />
-            {formatBigInt(ballot.totalWeight, decimals)} {symbol}
+            {formatBigIntValue(ballot.totalWeight, decimals)} {symbol}
           </span>
         </div>
 
@@ -205,12 +226,15 @@ function BallotDetail({
   ballot,
   tokenInfo,
   onBack,
+  onRefresh,
 }: {
   ballot: BallotWithAddress;
   tokenInfo?: TokenInfo;
   onBack: () => void;
+  onRefresh?: () => void;
 }) {
   const { notes, isConnected } = useCloakCraft();
+  const { publicKey: walletPubkey } = useWallet();
   const timeStatus = useBallotTimeStatus(ballot);
   const tally = useBallotTally(ballot);
   const decimals = tokenInfo?.decimals || 6;
@@ -221,25 +245,88 @@ function BallotDetail({
   const [isVoting, setIsVoting] = useState(false);
   const [isClaiming, setIsClaiming] = useState(false);
   const [showVoteForm, setShowVoteForm] = useState(false);
+  
+  // Vote type-specific state
+  const [approvalSelections, setApprovalSelections] = useState<Set<number>>(new Set());
+  const [rankings, setRankings] = useState<number[]>([]);
+  
+  // Change vote state
+  const [showChangeVoteForm, setShowChangeVoteForm] = useState(false);
+  const [hasVoted, setHasVoted] = useState(false); // TODO: Track from on-chain data
+  const [userVoteChoice, setUserVoteChoice] = useState<number | null>(null);
+  
+  // SpendToVote position state
+  const [hasPosition, setHasPosition] = useState(false); // TODO: Track from on-chain data
+  const [userPositionAmount, setUserPositionAmount] = useState<bigint>(0n);
+  
+  // Admin state
+  const [resolveOutcome, setResolveOutcome] = useState<number>(0);
 
   // Filter notes that match the ballot token
   const eligibleNotes = useMemo(() => {
     return notes.filter(n => n.tokenMint.equals(ballot.tokenMint));
   }, [notes, ballot.tokenMint]);
 
-  // Hooks
+  // Voter hooks
   const { vote: voteSnapshot, isVoting: isSnapshotVoting } = useVoteSnapshot();
   const { vote: voteSpend, isVoting: isSpendVoting } = useVoteSpend();
   const { claim, isClaiming: isClaimInProgress } = useClaim();
+  const { changeVote, isChanging } = useChangeVote();
+  const { closePosition, isClosing } = useCloseVotePosition();
+  
+  // Admin hooks
+  const { resolve, isResolving } = useResolveBallot();
+  const { finalize, isFinalizing } = useFinalizeBallot();
+  const { decrypt, isDecrypting } = useDecryptTally();
+  const isAuthority = useIsBallotAuthority(ballot, walletPubkey);
 
-  const validation = useVoteValidation(ballot, selectedNote, selectedOption || 0);
+  // Compute effective vote choice based on vote type
+  const effectiveVoteChoice = useMemo(() => {
+    switch (ballot.voteType) {
+      case 0: // Single Choice
+      case 3: // Weighted (same as single for now)
+        return selectedOption ?? 0;
+      case 1: // Approval - encode as bitmap
+        return Array.from(approvalSelections).reduce((acc, i) => acc | (1 << i), 0);
+      case 2: // Ranked Choice - pack into u64 (4 bits per position)
+        return rankings.reduce((acc, optIdx, rankPos) => acc | (optIdx << (rankPos * 4)), 0);
+      default:
+        return selectedOption ?? 0;
+    }
+  }, [ballot.voteType, selectedOption, approvalSelections, rankings]);
+
+  const validation = useVoteValidation(ballot, selectedNote, effectiveVoteChoice);
   const canClaim = useCanClaim(ballot, null); // TODO: track user's vote
 
   const isSnapshot = ballot.bindingMode === 0;
   const canVote = timeStatus?.isVotingPeriod && isConnected;
+  
+  // Conditions for change vote and close position
+  const canChangeVote = isSnapshot && hasVoted && timeStatus?.isVotingPeriod;
+  const canClosePosition = ballot.bindingMode === 1 && hasPosition && ballot.status < 3;
+  
+  // Admin action conditions
+  const canResolve = isAuthority && ballot.status === 2; // Closed
+  const canFinalize = isAuthority && ballot.status === 3; // Resolved
+  const canDecrypt = isAuthority && ballot.revealMode === 1 && ballot.status >= 2; // TimeLocked after voting
 
   const handleVote = useCallback(async () => {
-    if (!selectedNote || selectedOption === null) return;
+    // Validate based on vote type
+    const hasValidSelection = (() => {
+      switch (ballot.voteType) {
+        case 0: // Single Choice
+        case 3: // Weighted
+          return selectedOption !== null;
+        case 1: // Approval
+          return approvalSelections.size > 0;
+        case 2: // Ranked Choice
+          return rankings.length === ballot.numOptions;
+        default:
+          return selectedOption !== null;
+      }
+    })();
+    
+    if (!selectedNote || !hasValidSelection) return;
 
     setIsVoting(true);
     try {
@@ -248,7 +335,7 @@ function BallotDetail({
       const result = await voteFunc({
         ballot,
         note: selectedNote,
-        voteChoice: selectedOption,
+        voteChoice: effectiveVoteChoice,
         ...(isSnapshot
           ? {
             snapshotMerkleRoot: new Uint8Array(32),
@@ -268,13 +355,69 @@ function BallotDetail({
       if (result) {
         toast.success('Vote submitted successfully!');
         setShowVoteForm(false);
+        setHasVoted(true);
+        setUserVoteChoice(effectiveVoteChoice);
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Vote failed');
     } finally {
       setIsVoting(false);
     }
-  }, [selectedNote, selectedOption, isSnapshot, voteSnapshot, voteSpend, ballot]);
+  }, [selectedNote, selectedOption, approvalSelections, rankings, isSnapshot, voteSnapshot, voteSpend, ballot, effectiveVoteChoice]);
+
+  // Handle change vote
+  const handleChangeVote = useCallback(async () => {
+    if (!selectedNote) return;
+    
+    try {
+      const result = await changeVote({
+        ballot,
+        note: selectedNote,
+        newVoteChoice: effectiveVoteChoice,
+        // Would need actual vote position data
+        oldVoteCommitment: new Uint8Array(32),
+        merklePath: Array(32).fill(new Uint8Array(32)),
+        merklePathIndices: Array(32).fill(0),
+        onProgress: (stage: VotingProgressStage) => {
+          console.log('Change vote progress:', stage);
+        },
+      } as any);
+
+      if (result) {
+        toast.success('Vote changed successfully!');
+        setShowChangeVoteForm(false);
+        setUserVoteChoice(effectiveVoteChoice);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to change vote');
+    }
+  }, [changeVote, ballot, selectedNote, effectiveVoteChoice]);
+
+  // Handle close position (exit SpendToVote)
+  const handleClosePosition = useCallback(async () => {
+    try {
+      const result = await closePosition({
+        ballot,
+        // Would need actual position data
+        positionCommitment: new Uint8Array(32),
+        voteChoice: userVoteChoice ?? 0,
+        amount: userPositionAmount,
+        weight: userPositionAmount,
+        positionRandomness: new Uint8Array(32),
+        onProgress: (stage: VotingProgressStage) => {
+          console.log('Close position progress:', stage);
+        },
+      } as any);
+
+      if (result) {
+        toast.success('Position closed successfully! Tokens returned.');
+        setHasPosition(false);
+        onRefresh?.();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to close position');
+    }
+  }, [closePosition, ballot, userVoteChoice, userPositionAmount, decimals, symbol, onRefresh]);
 
   const handleClaim = useCallback(async () => {
     setIsClaiming(true);
@@ -293,7 +436,7 @@ function BallotDetail({
       });
 
       if (result) {
-        toast.success(`Claimed ${formatBigInt(result.netPayout, decimals)} ${symbol}!`);
+        toast.success(`Claimed ${formatBigIntValue(result.netPayout, decimals)} ${symbol}!`);
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Claim failed');
@@ -301,6 +444,68 @@ function BallotDetail({
       setIsClaiming(false);
     }
   }, [claim, ballot, decimals, symbol]);
+
+  // Admin: Resolve ballot
+  const handleResolve = useCallback(async () => {
+    try {
+      const result = await resolve({
+        ballot,
+        outcome: ballot.resolutionMode === 2 ? resolveOutcome : undefined, // Authority mode needs outcome
+        onProgress: (stage) => {
+          console.log('Resolve progress:', stage);
+        },
+      });
+
+      if (result) {
+        toast.success('Ballot resolved successfully!');
+        onRefresh?.();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to resolve ballot');
+    }
+  }, [resolve, ballot, resolveOutcome, onRefresh]);
+
+  // Admin: Finalize ballot
+  const handleFinalize = useCallback(async () => {
+    try {
+      const result = await finalize({
+        ballot,
+        onProgress: (stage) => {
+          console.log('Finalize progress:', stage);
+        },
+      });
+
+      if (result) {
+        toast.success('Ballot finalized successfully!');
+        onRefresh?.();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to finalize ballot');
+    }
+  }, [finalize, ballot, onRefresh]);
+
+  // Admin: Decrypt tally (would need actual decryption key)
+  const handleDecrypt = useCallback(async () => {
+    try {
+      // In production, you'd get this from a timelock service
+      const decryptionKey = new Uint8Array(32); // Placeholder
+      
+      const result = await decrypt({
+        ballot,
+        decryptionKey,
+        onProgress: (stage) => {
+          console.log('Decrypt progress:', stage);
+        },
+      });
+
+      if (result) {
+        toast.success('Tally decrypted successfully!');
+        onRefresh?.();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to decrypt tally');
+    }
+  }, [decrypt, ballot, onRefresh]);
 
   return (
     <div className="space-y-4">
@@ -353,6 +558,127 @@ function BallotDetail({
         </Card>
       )}
 
+      {/* Admin Actions */}
+      {isAuthority && (canResolve || canFinalize || canDecrypt) && (
+        <Card className="border-blue-500/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Authority Actions
+            </CardTitle>
+            <CardDescription>
+              You are the ballot authority
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Resolve Ballot */}
+            {canResolve && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  Voting has ended. Resolve the ballot to determine the outcome.
+                </p>
+                {ballot.resolutionMode === 2 && ( // Authority mode
+                  <div className="flex gap-2 items-center">
+                    <Label>Winner:</Label>
+                    <Select 
+                      value={resolveOutcome.toString()} 
+                      onValueChange={(v) => setResolveOutcome(parseInt(v))}
+                    >
+                      <SelectTrigger className="w-32">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: ballot.numOptions }).map((_, i) => (
+                          <SelectItem key={i} value={i.toString()}>
+                            Option {i + 1}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {ballot.resolutionMode === 0 && ( // TallyBased
+                  <p className="text-xs text-muted-foreground">
+                    Winner will be determined by highest vote weight.
+                  </p>
+                )}
+                <Button 
+                  onClick={handleResolve} 
+                  disabled={isResolving}
+                  className="w-full"
+                >
+                  {isResolving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Resolving...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Resolve Ballot
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+
+            {/* Finalize Ballot */}
+            {canFinalize && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  Ballot resolved. Finalize to distribute remaining funds to treasury.
+                </p>
+                <Button 
+                  onClick={handleFinalize} 
+                  disabled={isFinalizing}
+                  className="w-full"
+                  variant="secondary"
+                >
+                  {isFinalizing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Finalizing...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Finalize Ballot
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+
+            {/* Decrypt Tally */}
+            {canDecrypt && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  Time-locked ballot. Decrypt to reveal vote tallies.
+                </p>
+                <Button 
+                  onClick={handleDecrypt} 
+                  disabled={isDecrypting}
+                  className="w-full"
+                  variant="outline"
+                >
+                  {isDecrypting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Decrypting...
+                    </>
+                  ) : (
+                    <>
+                      <Unlock className="h-4 w-4 mr-2" />
+                      Decrypt Tally
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Tally Results */}
       <Card>
         <CardHeader>
@@ -377,7 +703,7 @@ function BallotDetail({
                   className={`h-2 ${isWinner ? '[&>div]:bg-yellow-500' : ''}`}
                 />
                 <div className="text-xs text-muted-foreground mt-1">
-                  {formatBigInt(opt.weight, decimals)} {symbol}
+                  {formatBigIntValue(opt.weight, decimals)} {symbol}
                 </div>
               </div>
             );
@@ -393,8 +719,8 @@ function BallotDetail({
             </div>
             <Progress value={tally?.quorumProgress || 0} className="h-1.5" />
             <div className="flex justify-between text-xs text-muted-foreground mt-1">
-              <span>{formatBigInt(ballot.totalWeight, decimals)} {symbol}</span>
-              <span>{formatBigInt(ballot.quorumThreshold, decimals)} {symbol} required</span>
+              <span>{formatBigIntValue(ballot.totalWeight, decimals)} {symbol}</span>
+              <span>{formatBigIntValue(ballot.quorumThreshold, decimals)} {symbol} required</span>
             </div>
           </div>
         </CardContent>
@@ -446,7 +772,7 @@ function BallotDetail({
                         key={note.commitment ? Buffer.from(note.commitment).toString('hex') : ''}
                         value={note.commitment ? Buffer.from(note.commitment).toString('hex') : ''}
                       >
-                        {formatBigInt(note.amount, decimals)} {symbol}
+                        {formatBigIntValue(note.amount, decimals)} {symbol}
                       </SelectItem>
                     ))
                   )}
@@ -454,33 +780,151 @@ function BallotDetail({
               </Select>
               {selectedNote && (
                 <div className="text-xs text-muted-foreground mt-1">
-                  Voting weight: {formatBigInt(selectedNote.amount, decimals)} {symbol}
+                  Voting weight: {formatBigIntValue(selectedNote.amount, decimals)} {symbol}
                 </div>
               )}
             </div>
 
-            {/* Option Selection */}
+            {/* Option Selection - varies by vote type */}
             <div className="space-y-2">
-              <Label>Select Option</Label>
-              {Array.from({ length: ballot.numOptions }).map((_, i) => (
-                <Button
-                  key={i}
-                  variant={selectedOption === i ? 'default' : 'outline'}
-                  className="w-full justify-start"
-                  onClick={() => setSelectedOption(i)}
-                >
-                  Option {i + 1}
-                  {tally?.optionStats[i] && (
-                    <span className="ml-auto text-xs text-muted-foreground">
-                      {tally.optionStats[i].percentage.toFixed(1)}%
-                    </span>
+              <Label>
+                {ballot.voteType === 0 && 'Select One Option'}
+                {ballot.voteType === 1 && 'Select All That Apply'}
+                {ballot.voteType === 2 && 'Rank Options (drag or use numbers)'}
+                {ballot.voteType === 3 && 'Select Option'}
+              </Label>
+              
+              {/* Single Choice (voteType=0) or Weighted (voteType=3) */}
+              {(ballot.voteType === 0 || ballot.voteType === 3) && (
+                <>
+                  {Array.from({ length: ballot.numOptions }).map((_, i) => (
+                    <Button
+                      key={i}
+                      variant={selectedOption === i ? 'default' : 'outline'}
+                      className="w-full justify-start"
+                      onClick={() => setSelectedOption(i)}
+                    >
+                      Option {i + 1}
+                      {tally?.optionStats[i] && (
+                        <span className="ml-auto text-xs text-muted-foreground">
+                          {tally.optionStats[i].percentage.toFixed(1)}%
+                        </span>
+                      )}
+                    </Button>
+                  ))}
+                </>
+              )}
+              
+              {/* Approval Vote (voteType=1) - Multi-select checkboxes */}
+              {ballot.voteType === 1 && (
+                <>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Select all options you approve of
+                  </p>
+                  {Array.from({ length: ballot.numOptions }).map((_, i) => (
+                    <Button
+                      key={i}
+                      variant={approvalSelections.has(i) ? 'default' : 'outline'}
+                      className="w-full justify-start"
+                      onClick={() => {
+                        const newSelections = new Set(approvalSelections);
+                        if (newSelections.has(i)) {
+                          newSelections.delete(i);
+                        } else {
+                          newSelections.add(i);
+                        }
+                        setApprovalSelections(newSelections);
+                      }}
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={`w-4 h-4 border rounded flex items-center justify-center ${approvalSelections.has(i) ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
+                          {approvalSelections.has(i) && <CheckCircle className="h-3 w-3 text-primary-foreground" />}
+                        </div>
+                        <span>Option {i + 1}</span>
+                        {tally?.optionStats[i] && (
+                          <span className="ml-auto text-xs text-muted-foreground">
+                            {tally.optionStats[i].percentage.toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
+                    </Button>
+                  ))}
+                  {approvalSelections.size > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Selected: {Array.from(approvalSelections).map(i => `Option ${i + 1}`).join(', ')}
+                    </p>
                   )}
-                </Button>
-              ))}
+                </>
+              )}
+              
+              {/* Ranked Choice (voteType=2) - Number inputs for ranking */}
+              {ballot.voteType === 2 && (
+                <>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Assign a rank to each option (1 = most preferred)
+                  </p>
+                  {Array.from({ length: ballot.numOptions }).map((_, i) => {
+                    const currentRank = rankings.indexOf(i);
+                    return (
+                      <div key={i} className="flex items-center gap-2">
+                        <Select
+                          value={currentRank >= 0 ? (currentRank + 1).toString() : ''}
+                          onValueChange={(v) => {
+                            const newRank = parseInt(v) - 1;
+                            const newRankings = [...rankings];
+                            // Remove this option from current position
+                            const existingPos = newRankings.indexOf(i);
+                            if (existingPos >= 0) {
+                              newRankings.splice(existingPos, 1);
+                            }
+                            // Insert at new rank position
+                            newRankings.splice(newRank, 0, i);
+                            setRankings(newRankings);
+                          }}
+                        >
+                          <SelectTrigger className="w-20">
+                            <SelectValue placeholder="#" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Array.from({ length: ballot.numOptions }).map((_, rank) => (
+                              <SelectItem key={rank} value={(rank + 1).toString()}>
+                                {rank + 1}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <div className="flex-1 p-2 border rounded-md">
+                          Option {i + 1}
+                          {tally?.optionStats[i] && (
+                            <span className="ml-2 text-xs text-muted-foreground">
+                              ({tally.optionStats[i].percentage.toFixed(1)}%)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {rankings.length > 0 && rankings.length < ballot.numOptions && (
+                    <p className="text-xs text-yellow-600">
+                      ⚠️ Rank all {ballot.numOptions} options to submit
+                    </p>
+                  )}
+                  {rankings.length === ballot.numOptions && (
+                    <p className="text-xs text-muted-foreground">
+                      Your ranking: {rankings.map((optIdx, rank) => `${rank + 1}. Option ${optIdx + 1}`).join(' → ')}
+                    </p>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Validation Error */}
-            {!validation.isValid && selectedNote && selectedOption !== null && (
+            {!validation.isValid && selectedNote && (
+              (ballot.voteType === 0 && selectedOption !== null) ||
+              (ballot.voteType === 1 && approvalSelections.size > 0) ||
+              (ballot.voteType === 2 && rankings.length === ballot.numOptions) ||
+              (ballot.voteType === 3 && selectedOption !== null)
+            ) && (
               <div className="text-sm text-red-500 flex items-center gap-1">
                 <AlertCircle className="h-4 w-4" />
                 {validation.error}
@@ -506,6 +950,155 @@ function BallotDetail({
               )}
             </Button>
           </CardFooter>
+        </Card>
+      )}
+
+      {/* Change Vote Section (for Snapshot voters who already voted) */}
+      {canChangeVote && !showChangeVoteForm && (
+        <Card className="border-blue-500/50">
+          <CardContent className="pt-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium flex items-center gap-2">
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                  You voted for Option {(userVoteChoice ?? 0) + 1}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Snapshot voting allows you to change your vote
+                </p>
+              </div>
+              <Button variant="outline" onClick={() => setShowChangeVoteForm(true)}>
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Change Vote
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Change Vote Form */}
+      {showChangeVoteForm && (
+        <Card className="border-blue-500">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <RotateCcw className="h-5 w-5" />
+              Change Your Vote
+            </CardTitle>
+            <CardDescription>
+              Current vote: Option {(userVoteChoice ?? 0) + 1}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Note Selection */}
+            <div>
+              <Label>Voting With</Label>
+              <Select
+                value={selectedNote?.commitment ? Buffer.from(selectedNote.commitment).toString('hex') : ''}
+                onValueChange={(v) => {
+                  const note = eligibleNotes.find(n =>
+                    n.commitment && Buffer.from(n.commitment).toString('hex') === v
+                  );
+                  setSelectedNote(note || null);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a note" />
+                </SelectTrigger>
+                <SelectContent>
+                  {eligibleNotes.map((note) => (
+                    <SelectItem
+                      key={note.commitment ? Buffer.from(note.commitment).toString('hex') : ''}
+                      value={note.commitment ? Buffer.from(note.commitment).toString('hex') : ''}
+                    >
+                      {formatBigIntValue(note.amount, decimals)} {symbol}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* New Option Selection */}
+            <div className="space-y-2">
+              <Label>New Vote</Label>
+              {Array.from({ length: ballot.numOptions }).map((_, i) => (
+                <Button
+                  key={i}
+                  variant={selectedOption === i ? 'default' : 'outline'}
+                  className="w-full justify-start"
+                  onClick={() => setSelectedOption(i)}
+                  disabled={i === userVoteChoice}
+                >
+                  Option {i + 1}
+                  {i === userVoteChoice && (
+                    <span className="ml-auto text-xs">(current)</span>
+                  )}
+                  {tally?.optionStats[i] && i !== userVoteChoice && (
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {tally.optionStats[i].percentage.toFixed(1)}%
+                    </span>
+                  )}
+                </Button>
+              ))}
+            </div>
+          </CardContent>
+          <CardFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowChangeVoteForm(false)} className="flex-1">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleChangeVote}
+              disabled={selectedOption === null || selectedOption === userVoteChoice || isChanging || !selectedNote}
+              className="flex-1"
+            >
+              {isChanging ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Changing...
+                </>
+              ) : (
+                'Change Vote'
+              )}
+            </Button>
+          </CardFooter>
+        </Card>
+      )}
+
+      {/* Close Position Section (for SpendToVote before resolution) */}
+      {canClosePosition && (
+        <Card className="border-yellow-500/50">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Lock className="h-5 w-5 text-yellow-500" />
+              Active Position
+            </CardTitle>
+            <CardDescription>
+              You have {formatBigIntValue(userPositionAmount, decimals)} {symbol} locked in this ballot
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground mb-4">
+              Exit your position early to recover your tokens. Note: Early exit may incur a fee
+              and you forfeit potential winnings.
+            </p>
+            <Button 
+              variant="outline" 
+              onClick={handleClosePosition} 
+              disabled={isClosing}
+              className="w-full"
+            >
+              {isClosing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Closing Position...
+                </>
+              ) : (
+                <>
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Exit Position Early
+                </>
+              )}
+            </Button>
+          </CardContent>
         </Card>
       )}
 
@@ -549,17 +1142,17 @@ function BallotDetail({
             </div>
             <div>
               <div className="text-muted-foreground">Total Weight</div>
-              <div className="font-medium">{formatBigInt(ballot.totalWeight, decimals)} {symbol}</div>
+              <div className="font-medium">{formatBigIntValue(ballot.totalWeight, decimals)} {symbol}</div>
             </div>
             {ballot.bindingMode === 1 && (
               <>
                 <div>
                   <div className="text-muted-foreground">Pool Balance</div>
-                  <div className="font-medium">{formatBigInt(ballot.poolBalance, decimals)} {symbol}</div>
+                  <div className="font-medium">{formatBigIntValue(ballot.poolBalance, decimals)} {symbol}</div>
                 </div>
                 <div>
                   <div className="text-muted-foreground">Fees Collected</div>
-                  <div className="font-medium">{formatBigInt(ballot.feesCollected, decimals)} {symbol}</div>
+                  <div className="font-medium">{formatBigIntValue(ballot.feesCollected, decimals)} {symbol}</div>
                 </div>
               </>
             )}
@@ -615,13 +1208,23 @@ export default function VotingPage() {
     );
   }, [selectedBallot]);
 
+  // Track user's voted ballots (placeholder - would come from on-chain data)
+  const [userVotedBallots, setUserVotedBallots] = useState<Set<string>>(new Set());
+  const [userPositions, setUserPositions] = useState<Map<string, bigint>>(new Map());
+  
   // Ballots to display based on tab
   const displayBallots = useMemo(() => {
     if (currentTab === 'active') return activeBallots;
     if (currentTab === 'all') return allBallots;
-    // TODO: Implement my-votes filtering
+    if (currentTab === 'my-votes') {
+      // Filter to ballots where user has voted or has a position
+      return allBallots.filter(b => 
+        userVotedBallots.has(b.address.toString()) || 
+        userPositions.has(b.address.toString())
+      );
+    }
     return [];
-  }, [currentTab, activeBallots, allBallots]);
+  }, [currentTab, activeBallots, allBallots, userVotedBallots, userPositions]);
 
   // Show setup required message if stealth wallet not connected
   if (!isStealthConnected) {
@@ -660,6 +1263,7 @@ export default function VotingPage() {
           ballot={selectedBallot}
           tokenInfo={selectedTokenInfo}
           onBack={() => setSelectedBallotAddress(null)}
+          onRefresh={refreshBallots}
         />
       </div>
     );
@@ -667,11 +1271,14 @@ export default function VotingPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Voting</h1>
-        <p className="text-muted-foreground">
-          Participate in private governance votes.
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Voting</h1>
+          <p className="text-muted-foreground">
+            Participate in private governance votes.
+          </p>
+        </div>
+        <CreateBallotDialog onSuccess={() => refreshBallots()} />
       </div>
 
       <Tabs value={currentTab} onValueChange={handleTabChange} className="max-w-4xl mx-auto">

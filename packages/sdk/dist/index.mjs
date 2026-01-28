@@ -17,7 +17,7 @@ import {
   getStateTreeSet,
   sleep,
   withRetry
-} from "./chunk-FQAUM77X.mjs";
+} from "./chunk-RGNH2QAL.mjs";
 import {
   buildShieldInstructions,
   buildShieldInstructionsForVersionedTx,
@@ -3938,12 +3938,187 @@ async function buildAddMarketWithProgram(program, params) {
   });
   return { tx };
 }
+async function buildUpdatePoolConfigWithProgram(program, params) {
+  const updateParams = {
+    maxLeverage: params.maxLeverage ?? null,
+    positionFeeBps: params.positionFeeBps ?? null,
+    maxUtilizationBps: params.maxUtilizationBps ?? null,
+    liquidationThresholdBps: params.liquidationThresholdBps ?? null,
+    liquidationPenaltyBps: params.liquidationPenaltyBps ?? null,
+    baseBorrowRateBps: params.baseBorrowRateBps ?? null,
+    maxImbalanceFeeBps: params.maxImbalanceFeeBps ?? null,
+    isActive: params.isActive ?? null
+  };
+  const tx = await program.methods.updatePerpsPoolConfig(updateParams).accountsStrict({
+    perpsPool: params.perpsPool,
+    authority: params.authority
+  });
+  return { tx };
+}
+async function buildUpdateTokenStatusWithProgram(program, params) {
+  const tx = await program.methods.updatePerpsTokenStatus(params.tokenIndex, params.isActive).accountsStrict({
+    perpsPool: params.perpsPool,
+    authority: params.authority
+  });
+  return { tx };
+}
+async function buildUpdateMarketStatusWithProgram(program, params) {
+  const tx = await program.methods.updatePerpsMarketStatus(params.isActive).accountsStrict({
+    perpsPool: params.perpsPool,
+    perpsMarket: params.market,
+    authority: params.authority
+  });
+  return { tx };
+}
 async function buildUpdateBorrowFeesWithProgram(program, perpsPool, keeper) {
   const tx = await program.methods.updatePerpsBorrowFees().accountsStrict({
     perpsPool,
     keeper
   });
   return { tx };
+}
+async function buildLiquidatePositionWithProgram(program, params) {
+  const programId = program.programId;
+  const operationId = generateOperationId(
+    params.positionNullifier,
+    params.ownerCommitment,
+    Date.now()
+  );
+  const [pendingOpPda] = derivePendingOperationPda(operationId, programId);
+  const [vkPda] = deriveVerificationKeyPda("perps_liquidate", programId);
+  const phase0Tx = await program.methods.createPendingWithProofLiquidate(
+    Array.from(operationId),
+    Buffer.from(params.proof),
+    Array.from(params.merkleRoot),
+    Array.from(params.positionCommitment),
+    Array.from(params.positionNullifier),
+    Array.from(params.ownerCommitment),
+    Array.from(params.liquidatorCommitment),
+    new BN3(params.currentPrice.toString()),
+    new BN3(params.liquidatorReward.toString()),
+    new BN3(params.ownerRemainder.toString())
+  ).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    perpsMarket: params.market,
+    verificationKey: vkPda,
+    pendingOperation: pendingOpPda,
+    keeper: params.keeper,
+    systemProgram: SystemProgram2.programId
+  }).preInstructions([
+    ComputeBudgetProgram4.setComputeUnitLimit({ units: 8e5 })
+  ]);
+  const phase1Tx = await program.methods.verifyCommitmentExists(Array.from(operationId), 0, params.lightVerifyParams).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.keeper
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    ComputeBudgetProgram4.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase2Tx = await program.methods.createNullifierAndPending(Array.from(operationId), 0, params.lightNullifierParams).accountsStrict({
+    pool: params.settlementPool,
+    pendingOperation: pendingOpPda,
+    relayer: params.keeper
+  }).remainingAccounts(params.remainingAccounts).preInstructions([
+    ComputeBudgetProgram4.setComputeUnitLimit({ units: 4e5 })
+  ]);
+  const phase3Tx = await program.methods.executeLiquidate(
+    Array.from(operationId),
+    new BN3(params.positionMargin.toString()),
+    new BN3(params.positionSize.toString()),
+    params.isLong
+  ).accountsStrict({
+    settlementPool: params.settlementPool,
+    perpsPool: params.perpsPool,
+    perpsMarket: params.market,
+    pendingOperation: pendingOpPda,
+    keeper: params.keeper,
+    oracle: params.oracle
+  }).preInstructions([
+    ComputeBudgetProgram4.setComputeUnitLimit({ units: 3e5 })
+  ]);
+  const pendingCommitments = [];
+  if (params.ownerRemainder > 0n) {
+    const ownerNote = {
+      stealthPubX: params.ownerRecipient.stealthPubkey.x,
+      tokenMint: params.tokenMint,
+      amount: params.ownerRemainder,
+      randomness: params.ownerRandomness
+    };
+    const ownerEncrypted = encryptNote(ownerNote, params.ownerRecipient.stealthPubkey);
+    pendingCommitments.push({
+      pool: params.settlementPool,
+      commitment: params.ownerCommitment,
+      stealthEphemeralPubkey: new Uint8Array([
+        ...params.ownerRecipient.ephemeralPubkey.x,
+        ...params.ownerRecipient.ephemeralPubkey.y
+      ]),
+      encryptedNote: serializeEncryptedNote(ownerEncrypted)
+    });
+  }
+  if (params.liquidatorReward > 0n) {
+    const liquidatorNote = {
+      stealthPubX: params.liquidatorRecipient.stealthPubkey.x,
+      tokenMint: params.tokenMint,
+      amount: params.liquidatorReward,
+      randomness: params.liquidatorRandomness
+    };
+    const liquidatorEncrypted = encryptNote(liquidatorNote, params.liquidatorRecipient.stealthPubkey);
+    pendingCommitments.push({
+      pool: params.settlementPool,
+      commitment: params.liquidatorCommitment,
+      stealthEphemeralPubkey: new Uint8Array([
+        ...params.liquidatorRecipient.ephemeralPubkey.x,
+        ...params.liquidatorRecipient.ephemeralPubkey.y
+      ]),
+      encryptedNote: serializeEncryptedNote(liquidatorEncrypted)
+    });
+  }
+  return {
+    tx: phase0Tx,
+    phase1Tx,
+    phase2Tx,
+    phase3Tx,
+    operationId,
+    pendingCommitments
+  };
+}
+function shouldLiquidate(position, currentPrice, pool) {
+  const { margin, size, entryPrice, direction } = position;
+  let pnl;
+  let isProfit;
+  if (direction === "long") {
+    if (currentPrice > entryPrice) {
+      pnl = (currentPrice - entryPrice) * size / entryPrice;
+      isProfit = true;
+    } else {
+      pnl = (entryPrice - currentPrice) * size / entryPrice;
+      isProfit = false;
+    }
+  } else {
+    if (currentPrice < entryPrice) {
+      pnl = (entryPrice - currentPrice) * size / entryPrice;
+      isProfit = true;
+    } else {
+      pnl = (currentPrice - entryPrice) * size / entryPrice;
+      isProfit = false;
+    }
+  }
+  if (isProfit && pnl >= margin) {
+    return { shouldLiquidate: true, reason: "profit_bound", pnl, isProfit };
+  }
+  const effectiveMargin = isProfit ? margin + pnl : margin - pnl;
+  const liquidationThreshold = margin * BigInt(pool.liquidationThresholdBps) / 10000n;
+  if (effectiveMargin < liquidationThreshold) {
+    return { shouldLiquidate: true, reason: "underwater", pnl, isProfit };
+  }
+  return { shouldLiquidate: false, reason: null, pnl, isProfit };
+}
+function calculateLiquidationAmounts(margin, pnl, isProfit, liquidationPenaltyBps) {
+  const effectiveMargin = isProfit ? margin + pnl : margin > pnl ? margin - pnl : 0n;
+  const liquidatorReward = margin * BigInt(liquidationPenaltyBps) / 10000n;
+  const ownerRemainder = effectiveMargin > liquidatorReward ? effectiveMargin - liquidatorReward : 0n;
+  return { ownerRemainder, liquidatorReward };
 }
 
 // src/perps/oracle.ts
@@ -7805,6 +7980,43 @@ var CloakCraftClient = class {
     );
     return this.lightClient.scanLpNotesWithStatus(viewingKey, nullifierKey, this.programId, lpPoolPda);
   }
+  /**
+   * Fetch position metadata for given position IDs
+   *
+   * Queries public PositionMeta compressed accounts to get status,
+   * liquidation price, and other metadata for positions.
+   *
+   * @param poolId - Pool address (will be converted to bytes)
+   * @param positionIds - Array of position IDs to fetch
+   * @returns Map of position ID (hex) to PositionMeta
+   */
+  async fetchPositionMetas(poolId, positionIds) {
+    if (!this.lightClient) {
+      throw new Error("Light client not initialized");
+    }
+    return this.lightClient.fetchPositionMetas(
+      this.programId,
+      poolId.toBytes(),
+      positionIds
+    );
+  }
+  /**
+   * Fetch all active position metas for a pool
+   *
+   * Useful for keepers to monitor all positions for liquidation.
+   *
+   * @param poolId - Pool address to scan
+   * @returns Array of active PositionMeta
+   */
+  async fetchActivePositionMetas(poolId) {
+    if (!this.lightClient) {
+      throw new Error("Light client not initialized");
+    }
+    return this.lightClient.fetchActivePositionMetas(
+      this.programId,
+      poolId.toBytes()
+    );
+  }
 };
 
 // src/crypto/index.ts
@@ -11115,7 +11327,7 @@ var VotingClient = class {
     signatures.push(phase2Sig);
     report(2, `Phase 2 complete: ${phase2Sig}`);
     report(3, "Creating vote commitment...");
-    const { DEVNET_LIGHT_TREES: DEVNET_LIGHT_TREES2 } = await import("./light-C2KRCIX6.mjs");
+    const { DEVNET_LIGHT_TREES: DEVNET_LIGHT_TREES2 } = await import("./light-MZMGOHNW.mjs");
     const createCommitmentIx = await this.program.methods.createCommitment(
       Array.from(operationId),
       0
@@ -11973,6 +12185,7 @@ export {
   buildInitializeCommitmentCounterWithProgram,
   buildInitializePerpsPoolWithProgram,
   buildInitializePoolWithProgram,
+  buildLiquidatePositionWithProgram,
   buildOpenPositionWithProgram,
   buildRemoveLiquidityWithProgram,
   buildRemovePerpsLiquidityWithProgram,
@@ -11984,6 +12197,9 @@ export {
   buildSwapWithProgram,
   buildTransactWithProgram,
   buildUpdateBorrowFeesWithProgram,
+  buildUpdateMarketStatusWithProgram,
+  buildUpdatePoolConfigWithProgram,
+  buildUpdateTokenStatusWithProgram,
   buildVerifyVoteCommitmentExistsInstruction,
   buildVersionedTransaction,
   buildVoteSnapshotExecuteInstruction,
@@ -12000,6 +12216,7 @@ export {
   calculateBorrowRate,
   calculateImbalanceFee,
   calculateInvariant,
+  calculateLiquidationAmounts,
   calculateLiquidationPrice,
   calculateLpMintAmount,
   calculateLpValue,
@@ -12160,6 +12377,7 @@ export {
   serializeGroth16Proof,
   serializeLpNote,
   serializePositionNote,
+  shouldLiquidate,
   sleep,
   storeCommitments,
   tryDecryptAnyNote,
