@@ -20,7 +20,10 @@ export function getRpcUrl(): string {
 
 // For static imports where function can't be used
 export const RPC_URL = DIRECT_RPC_URL;
-export const WSS_URL = process.env.NEXT_PUBLIC_WSS_URL; // WebSocket URL for transaction confirmations
+
+// WebSocket URL - derive from RPC URL (https -> wss)
+export const WSS_URL = process.env.NEXT_PUBLIC_WSS_URL || 
+  DIRECT_RPC_URL.replace('https://', 'wss://').replace('http://', 'ws://');
 export const INDEXER_URL = process.env.NEXT_PUBLIC_INDEXER_URL || 'https://indexer.cloakcraft.io';
 export const NETWORK = (process.env.NEXT_PUBLIC_NETWORK || 'devnet') as 'devnet' | 'mainnet-beta';
 export const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
