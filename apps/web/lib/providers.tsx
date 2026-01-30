@@ -5,6 +5,7 @@ import { ConnectionProvider, WalletProvider, useWallet as useSolanaWallet, useCo
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { WalletError } from '@solana/wallet-adapter-base';
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
+import { useStandardWalletAdapters } from '@solana/wallet-standard-wallet-adapter-react';
 import { useCloakCraft, CloakCraftProvider } from '@cloakcraft/hooks';
 import { DIRECT_RPC_URL, WSS_URL, INDEXER_URL, NETWORK, HELIUS_API_KEY, ADDRESS_LOOKUP_TABLES, PROGRAM_ID } from './constants';
 import { DevWalletAdapter } from './dev-wallet-adapter';
@@ -62,6 +63,34 @@ function CloakCraftWrapper({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * Base wallet adapters (legacy)
+ */
+const baseWallets = [new PhantomWalletAdapter(), new SolflareWalletAdapter()];
+
+/**
+ * Inner wallet provider that combines standard wallets with legacy adapters
+ * This enables auto-detection of Wallet Standard wallets like Backpack
+ */
+function WalletProviderWithStandard({ 
+  children, 
+  onError 
+}: { 
+  children: React.ReactNode; 
+  onError: (error: WalletError) => void;
+}) {
+  // Combine standard wallets (Backpack, etc.) with legacy adapters
+  const wallets = useStandardWalletAdapters(baseWallets);
+
+  return (
+    <WalletProvider wallets={wallets} autoConnect onError={onError}>
+      <WalletModalProvider>
+        <CloakCraftWrapper>{children}</CloakCraftWrapper>
+      </WalletModalProvider>
+    </WalletProvider>
+  );
+}
+
+/**
  * Root providers for the application
  */
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -88,11 +117,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
     }
   }, [rpcUrl]);
 
-  const wallets = useMemo(
-    () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
-    []
-  );
-
   // Connection config with WebSocket for transaction confirmations
   const connectionConfig = useMemo(() => ({
     commitment: 'confirmed' as const,
@@ -114,11 +138,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <ConnectionProvider endpoint={rpcUrl} config={connectionConfig}>
-      <WalletProvider wallets={wallets} autoConnect onError={onError}>
-        <WalletModalProvider>
-          <CloakCraftWrapper>{children}</CloakCraftWrapper>
-        </WalletModalProvider>
-      </WalletProvider>
+      <WalletProviderWithStandard onError={onError}>
+        {children}
+      </WalletProviderWithStandard>
     </ConnectionProvider>
   );
 }

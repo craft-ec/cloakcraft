@@ -75,6 +75,9 @@ import {
 import { CreateBallotDialog } from '@/components/voting';
 import { SUPPORTED_TOKENS, TokenInfo } from '@/lib/constants';
 import { formatAmount, parseAmount, toBigInt } from '@/lib/utils';
+import { useBallotContentFetch, useBallotContentFetcher } from '@/hooks/useBallotContent';
+import type { BallotContent } from '@/lib/ballot-content';
+import { getBallotMetadataCid } from '@/lib/ballot-metadata-store';
 
 const VALID_TABS = ['active', 'all', 'my-votes'] as const;
 type TabValue = (typeof VALID_TABS)[number];
@@ -150,6 +153,18 @@ function BallotCard({
   const decimals = tokenInfo?.decimals || 6;
   const symbol = tokenInfo?.symbol || 'TOKEN';
 
+  // Fetch ballot metadata from IPFS
+  const metadataCid = useMemo(() => getBallotMetadataCid(ballot.ballotId), [ballot.ballotId]);
+  const { content: metadata, isLoading: metadataLoading } = useBallotContentFetch(metadataCid || undefined);
+
+  // Get option labels from metadata or fallback to generic
+  const getOptionLabel = useCallback((index: number) => {
+    if (metadata?.options?.[index]?.label) {
+      return metadata.options[index].label;
+    }
+    return `Option ${index + 1}`;
+  }, [metadata]);
+
   return (
     <Card
       className="cursor-pointer hover:bg-accent/50 transition-colors"
@@ -157,14 +172,25 @@ function BallotCard({
     >
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
-          <CardTitle className="text-base line-clamp-1">
-            Ballot #{Buffer.from(ballot.ballotId).toString('hex').slice(0, 8)}
+          <CardTitle className="text-base line-clamp-2">
+            {metadataLoading ? (
+              <Skeleton className="h-5 w-40" />
+            ) : metadata?.title ? (
+              metadata.title
+            ) : (
+              `Ballot #${Buffer.from(ballot.ballotId).toString('hex').slice(0, 8)}`
+            )}
           </CardTitle>
           <Badge className={statusColors[ballot.status]}>
             {statusLabels[ballot.status]}
           </Badge>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        {metadata?.description && (
+          <CardDescription className="line-clamp-2 text-xs">
+            {metadata.description}
+          </CardDescription>
+        )}
+        <div className="flex gap-2 flex-wrap mt-1">
           <Badge variant="outline" className="text-xs gap-1">
             {bindingLabels[ballot.bindingMode]?.icon}
             {bindingLabels[ballot.bindingMode]?.label}
@@ -181,7 +207,7 @@ function BallotCard({
           {tally?.optionStats.slice(0, 3).map((opt, i) => (
             <div key={i}>
               <div className="flex justify-between text-sm mb-1">
-                <span>Option {i + 1}</span>
+                <span className="truncate max-w-[60%]">{getOptionLabel(i)}</span>
                 <span className="text-muted-foreground">{opt.percentage.toFixed(1)}%</span>
               </div>
               <Progress value={opt.percentage} className="h-1.5" />
@@ -239,6 +265,23 @@ function BallotDetail({
   const tally = useBallotTally(ballot);
   const decimals = tokenInfo?.decimals || 6;
   const symbol = tokenInfo?.symbol || 'TOKEN';
+
+  // Fetch ballot metadata from IPFS
+  const metadataCid = useMemo(() => getBallotMetadataCid(ballot.ballotId), [ballot.ballotId]);
+  const { content: metadata, isLoading: metadataLoading } = useBallotContentFetch(metadataCid || undefined);
+
+  // Get option label from metadata or fallback
+  const getOptionLabel = useCallback((index: number) => {
+    if (metadata?.options?.[index]?.label) {
+      return metadata.options[index].label;
+    }
+    return `Option ${index + 1}`;
+  }, [metadata]);
+
+  // Get option description from metadata
+  const getOptionDescription = useCallback((index: number) => {
+    return metadata?.options?.[index]?.description || null;
+  }, [metadata]);
 
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [selectedNote, setSelectedNote] = useState<DecryptedNote | null>(null);
@@ -516,9 +559,15 @@ function BallotDetail({
         </Button>
         <div className="flex-1">
           <h2 className="text-xl font-semibold">
-            Ballot #{Buffer.from(ballot.ballotId).toString('hex').slice(0, 8)}
+            {metadataLoading ? (
+              <Skeleton className="h-6 w-64" />
+            ) : metadata?.title ? (
+              metadata.title
+            ) : (
+              `Ballot #${Buffer.from(ballot.ballotId).toString('hex').slice(0, 8)}`
+            )}
           </h2>
-          <div className="flex gap-2 mt-1">
+          <div className="flex gap-2 mt-1 flex-wrap">
             <Badge className={statusColors[ballot.status]}>
               {statusLabels[ballot.status]}
             </Badge>
@@ -533,6 +582,17 @@ function BallotDetail({
           </div>
         </div>
       </div>
+
+      {/* Ballot Description */}
+      {metadata?.description && (
+        <Card>
+          <CardContent className="pt-4">
+            <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+              {metadata.description}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Time Status */}
       {timeStatus && (
@@ -687,17 +747,23 @@ function BallotDetail({
         <CardContent className="space-y-4">
           {tally?.optionStats.map((opt, i) => {
             const isWinner = ballot.hasOutcome && ballot.outcome === i;
+            const optionDesc = getOptionDescription(i);
             return (
               <div key={i}>
                 <div className="flex justify-between items-center mb-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium">Option {i + 1}</span>
+                    <span className="font-medium">{getOptionLabel(i)}</span>
                     {isWinner && <Trophy className="h-4 w-4 text-yellow-500" />}
                   </div>
                   <span className="text-sm text-muted-foreground">
                     {opt.percentage.toFixed(1)}%
                   </span>
                 </div>
+                {optionDesc && (
+                  <p className="text-xs text-muted-foreground mb-1 line-clamp-2">
+                    {optionDesc}
+                  </p>
+                )}
                 <Progress
                   value={opt.percentage}
                   className={`h-2 ${isWinner ? '[&>div]:bg-yellow-500' : ''}`}
@@ -797,21 +863,28 @@ function BallotDetail({
               {/* Single Choice (voteType=0) or Weighted (voteType=3) */}
               {(ballot.voteType === 0 || ballot.voteType === 3) && (
                 <>
-                  {Array.from({ length: ballot.numOptions }).map((_, i) => (
-                    <Button
-                      key={i}
-                      variant={selectedOption === i ? 'default' : 'outline'}
-                      className="w-full justify-start"
-                      onClick={() => setSelectedOption(i)}
-                    >
-                      Option {i + 1}
-                      {tally?.optionStats[i] && (
-                        <span className="ml-auto text-xs text-muted-foreground">
-                          {tally.optionStats[i].percentage.toFixed(1)}%
-                        </span>
-                      )}
-                    </Button>
-                  ))}
+                  {Array.from({ length: ballot.numOptions }).map((_, i) => {
+                    const optionDesc = getOptionDescription(i);
+                    return (
+                      <div key={i} className="space-y-1">
+                        <Button
+                          variant={selectedOption === i ? 'default' : 'outline'}
+                          className="w-full justify-start"
+                          onClick={() => setSelectedOption(i)}
+                        >
+                          {getOptionLabel(i)}
+                          {tally?.optionStats[i] && (
+                            <span className="ml-auto text-xs text-muted-foreground">
+                              {tally.optionStats[i].percentage.toFixed(1)}%
+                            </span>
+                          )}
+                        </Button>
+                        {optionDesc && selectedOption !== i && (
+                          <p className="text-xs text-muted-foreground pl-3 line-clamp-2">{optionDesc}</p>
+                        )}
+                      </div>
+                    );
+                  })}
                 </>
               )}
               
@@ -821,37 +894,44 @@ function BallotDetail({
                   <p className="text-xs text-muted-foreground mb-2">
                     Select all options you approve of
                   </p>
-                  {Array.from({ length: ballot.numOptions }).map((_, i) => (
-                    <Button
-                      key={i}
-                      variant={approvalSelections.has(i) ? 'default' : 'outline'}
-                      className="w-full justify-start"
-                      onClick={() => {
-                        const newSelections = new Set(approvalSelections);
-                        if (newSelections.has(i)) {
-                          newSelections.delete(i);
-                        } else {
-                          newSelections.add(i);
-                        }
-                        setApprovalSelections(newSelections);
-                      }}
-                    >
-                      <div className="flex items-center gap-2 w-full">
-                        <div className={`w-4 h-4 border rounded flex items-center justify-center ${approvalSelections.has(i) ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
-                          {approvalSelections.has(i) && <CheckCircle className="h-3 w-3 text-primary-foreground" />}
-                        </div>
-                        <span>Option {i + 1}</span>
-                        {tally?.optionStats[i] && (
-                          <span className="ml-auto text-xs text-muted-foreground">
-                            {tally.optionStats[i].percentage.toFixed(1)}%
-                          </span>
+                  {Array.from({ length: ballot.numOptions }).map((_, i) => {
+                    const optionDesc = getOptionDescription(i);
+                    return (
+                      <div key={i} className="space-y-1">
+                        <Button
+                          variant={approvalSelections.has(i) ? 'default' : 'outline'}
+                          className="w-full justify-start"
+                          onClick={() => {
+                            const newSelections = new Set(approvalSelections);
+                            if (newSelections.has(i)) {
+                              newSelections.delete(i);
+                            } else {
+                              newSelections.add(i);
+                            }
+                            setApprovalSelections(newSelections);
+                          }}
+                        >
+                          <div className="flex items-center gap-2 w-full">
+                            <div className={`w-4 h-4 border rounded flex items-center justify-center ${approvalSelections.has(i) ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
+                              {approvalSelections.has(i) && <CheckCircle className="h-3 w-3 text-primary-foreground" />}
+                            </div>
+                            <span>{getOptionLabel(i)}</span>
+                            {tally?.optionStats[i] && (
+                              <span className="ml-auto text-xs text-muted-foreground">
+                                {tally.optionStats[i].percentage.toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
+                        </Button>
+                        {optionDesc && (
+                          <p className="text-xs text-muted-foreground pl-8 line-clamp-2">{optionDesc}</p>
                         )}
                       </div>
-                    </Button>
-                  ))}
+                    );
+                  })}
                   {approvalSelections.size > 0 && (
                     <p className="text-xs text-muted-foreground">
-                      Selected: {Array.from(approvalSelections).map(i => `Option ${i + 1}`).join(', ')}
+                      Selected: {Array.from(approvalSelections).map(i => getOptionLabel(i)).join(', ')}
                     </p>
                   )}
                 </>
@@ -894,7 +974,7 @@ function BallotDetail({
                           </SelectContent>
                         </Select>
                         <div className="flex-1 p-2 border rounded-md">
-                          Option {i + 1}
+                          {getOptionLabel(i)}
                           {tally?.optionStats[i] && (
                             <span className="ml-2 text-xs text-muted-foreground">
                               ({tally.optionStats[i].percentage.toFixed(1)}%)
@@ -911,7 +991,7 @@ function BallotDetail({
                   )}
                   {rankings.length === ballot.numOptions && (
                     <p className="text-xs text-muted-foreground">
-                      Your ranking: {rankings.map((optIdx, rank) => `${rank + 1}. Option ${optIdx + 1}`).join(' → ')}
+                      Your ranking: {rankings.map((optIdx, rank) => `${rank + 1}. ${getOptionLabel(optIdx)}`).join(' → ')}
                     </p>
                   )}
                 </>

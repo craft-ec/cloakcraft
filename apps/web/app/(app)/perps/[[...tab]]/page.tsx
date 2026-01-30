@@ -18,6 +18,11 @@ import {
   useTokenUtilization,
   usePythPrice,
   usePythPrices,
+  // Admin hooks
+  useInitializePerpsPool,
+  useAddPerpsToken,
+  useAddPerpsMarket,
+  useUpdatePerpsPoolConfig,
   type PerpsProgressStage,
   type ScannedPerpsPosition,
 } from '@cloakcraft/hooks';
@@ -40,6 +45,10 @@ import {
   Info,
   Skull,
   Activity,
+  Settings,
+  Plus,
+  RefreshCw,
+  ExternalLink,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -68,10 +77,10 @@ import {
   TransactionOverlay,
   TransactionStep,
 } from '@/components/operations';
-import { SUPPORTED_TOKENS, TokenInfo } from '@/lib/constants';
+import { SUPPORTED_TOKENS, TokenInfo, getExplorerAddressUrl, PROGRAM_ID } from '@/lib/constants';
 import { formatAmount, parseAmount, toBigInt } from '@/lib/utils';
 
-const VALID_TABS = ['trade', 'positions', 'liquidity'] as const;
+const VALID_TABS = ['trade', 'positions', 'liquidity', 'admin'] as const;
 type TabValue = (typeof VALID_TABS)[number];
 
 export default function PerpsPage() {
@@ -142,7 +151,7 @@ export default function PerpsPage() {
       </div>
 
       <Tabs value={currentTab} onValueChange={handleTabChange} className="max-w-2xl mx-auto">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="trade" className="gap-1 xs:gap-2 px-2 xs:px-3 text-xs xs:text-sm">
             <TrendingUp className="h-4 w-4 shrink-0" />
             <span className="hidden xs:inline">Trade</span>
@@ -154,6 +163,10 @@ export default function PerpsPage() {
           <TabsTrigger value="liquidity" className="gap-1 xs:gap-2 px-2 xs:px-3 text-xs xs:text-sm">
             <Droplets className="h-4 w-4 shrink-0" />
             <span className="hidden xs:inline">Liquidity</span>
+          </TabsTrigger>
+          <TabsTrigger value="admin" className="gap-1 xs:gap-2 px-2 xs:px-3 text-xs xs:text-sm">
+            <Settings className="h-4 w-4 shrink-0" />
+            <span className="hidden xs:inline">Admin</span>
           </TabsTrigger>
         </TabsList>
 
@@ -185,6 +198,14 @@ export default function PerpsPage() {
             isProgramReady={isProgramReady}
             isProverReady={isProverReady}
             notes={notes}
+            refreshPools={refreshPools}
+          />
+        </TabsContent>
+
+        <TabsContent value="admin">
+          <AdminTab
+            pools={pools}
+            poolsLoading={poolsLoading}
             refreshPools={refreshPools}
           />
         </TabsContent>
@@ -1307,5 +1328,771 @@ function LiquidityTab({
         onClose={() => setShowOverlay(false)}
       />
     </>
+  );
+}
+
+// =============================================================================
+// Admin Tab - Pool Management
+// =============================================================================
+
+function AdminTab({
+  pools,
+  poolsLoading,
+  refreshPools,
+}: {
+  pools: Array<PerpsPoolState & { address: PublicKey }>;
+  poolsLoading: boolean;
+  refreshPools: () => void;
+}) {
+  const { solanaPublicKey } = useCloakCraft();
+  
+  // Admin hooks
+  const { initialize, isInitializing, error: initError } = useInitializePerpsPool();
+  const { addToken, isAdding: isAddingToken, error: addTokenError } = useAddPerpsToken();
+  const { addMarket, isAdding: isAddingMarket, error: addMarketError } = useAddPerpsMarket();
+  const { updateConfig, isUpdating, error: updateError } = useUpdatePerpsPoolConfig();
+
+  // Initialize pool form state
+  const [showInitForm, setShowInitForm] = useState(false);
+  const [initPoolId, setInitPoolId] = useState('');
+  const [initMaxLeverage, setInitMaxLeverage] = useState('100');
+  const [initPositionFeeBps, setInitPositionFeeBps] = useState('10');
+  const [initMaxUtilizationBps, setInitMaxUtilizationBps] = useState('8000');
+  const [initLiquidationThresholdBps, setInitLiquidationThresholdBps] = useState('500');
+  const [initLiquidationPenaltyBps, setInitLiquidationPenaltyBps] = useState('200');
+  const [initBaseBorrowRateBps, setInitBaseBorrowRateBps] = useState('100');
+
+  // Add token form state
+  const [showAddTokenForm, setShowAddTokenForm] = useState(false);
+  const [selectedPoolForToken, setSelectedPoolForToken] = useState<string>('');
+  const [tokenMint, setTokenMint] = useState('');
+  const [pythFeedId, setPythFeedId] = useState('');
+
+  // Add market form state
+  const [showAddMarketForm, setShowAddMarketForm] = useState(false);
+  const [selectedPoolForMarket, setSelectedPoolForMarket] = useState<string>('');
+  const [marketId, setMarketId] = useState('');
+  const [baseTokenIndex, setBaseTokenIndex] = useState('0');
+  const [quoteTokenIndex, setQuoteTokenIndex] = useState('1');
+  const [maxPositionSize, setMaxPositionSize] = useState('1000000000000'); // 1M with 6 decimals
+
+  // Update config form state
+  const [showUpdateForm, setShowUpdateForm] = useState(false);
+  const [selectedPoolForUpdate, setSelectedPoolForUpdate] = useState<string>('');
+  const [updateMaxLeverage, setUpdateMaxLeverage] = useState('');
+  const [updatePositionFeeBps, setUpdatePositionFeeBps] = useState('');
+  const [updateMaxUtilizationBps, setUpdateMaxUtilizationBps] = useState('');
+  const [updateIsActive, setUpdateIsActive] = useState<boolean | null>(null);
+
+  // Handle initialize pool
+  const handleInitializePool = async () => {
+    if (!initPoolId) {
+      toast.error('Pool ID is required');
+      return;
+    }
+
+    try {
+      const poolIdPubkey = new PublicKey(initPoolId);
+      const result = await initialize({
+        poolId: poolIdPubkey,
+        maxLeverage: parseInt(initMaxLeverage),
+        positionFeeBps: parseInt(initPositionFeeBps),
+        maxUtilizationBps: parseInt(initMaxUtilizationBps),
+        liquidationThresholdBps: parseInt(initLiquidationThresholdBps),
+        liquidationPenaltyBps: parseInt(initLiquidationPenaltyBps),
+        baseBorrowRateBps: parseInt(initBaseBorrowRateBps),
+      });
+
+      if (result) {
+        toast.success('Pool initialized successfully!');
+        setShowInitForm(false);
+        setInitPoolId('');
+        refreshPools();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to initialize pool');
+    }
+  };
+
+  // Handle add token
+  const handleAddToken = async () => {
+    if (!selectedPoolForToken || !tokenMint || !pythFeedId) {
+      toast.error('All fields are required');
+      return;
+    }
+
+    try {
+      // Convert hex string to Uint8Array for Pyth feed ID
+      const feedIdBytes = new Uint8Array(
+        pythFeedId.replace('0x', '').match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
+      );
+
+      const result = await addToken({
+        perpsPool: new PublicKey(selectedPoolForToken),
+        tokenMint: new PublicKey(tokenMint),
+        pythFeedId: feedIdBytes,
+      });
+
+      if (result) {
+        toast.success('Token added successfully!');
+        setShowAddTokenForm(false);
+        setTokenMint('');
+        setPythFeedId('');
+        refreshPools();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add token');
+    }
+  };
+
+  // Handle add market
+  const handleAddMarket = async () => {
+    if (!selectedPoolForMarket || !marketId) {
+      toast.error('All fields are required');
+      return;
+    }
+
+    try {
+      // Convert market ID string to bytes (padded to 32 bytes)
+      const marketIdBytes = new Uint8Array(32);
+      const encoder = new TextEncoder();
+      const encoded = encoder.encode(marketId);
+      marketIdBytes.set(encoded.slice(0, 32));
+
+      const result = await addMarket({
+        perpsPool: new PublicKey(selectedPoolForMarket),
+        marketId: marketIdBytes,
+        baseTokenIndex: parseInt(baseTokenIndex),
+        quoteTokenIndex: parseInt(quoteTokenIndex),
+        maxPositionSize: BigInt(maxPositionSize),
+      });
+
+      if (result) {
+        toast.success('Market added successfully!');
+        setShowAddMarketForm(false);
+        setMarketId('');
+        refreshPools();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add market');
+    }
+  };
+
+  // Handle update config
+  const handleUpdateConfig = async () => {
+    if (!selectedPoolForUpdate) {
+      toast.error('Select a pool');
+      return;
+    }
+
+    try {
+      const result = await updateConfig({
+        perpsPool: new PublicKey(selectedPoolForUpdate),
+        maxLeverage: updateMaxLeverage ? parseInt(updateMaxLeverage) : undefined,
+        positionFeeBps: updatePositionFeeBps ? parseInt(updatePositionFeeBps) : undefined,
+        maxUtilizationBps: updateMaxUtilizationBps ? parseInt(updateMaxUtilizationBps) : undefined,
+        isActive: updateIsActive !== null ? updateIsActive : undefined,
+      });
+
+      if (result) {
+        toast.success('Pool config updated!');
+        setShowUpdateForm(false);
+        refreshPools();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update config');
+    }
+  };
+
+  // Check if user is admin (has Solana wallet connected)
+  if (!solanaPublicKey) {
+    return (
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center gap-3 text-muted-foreground">
+            <AlertCircle className="h-5 w-5" />
+            <div>
+              <p className="font-medium">Wallet required</p>
+              <p className="text-sm">
+                Connect your Solana wallet to access admin functions.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Admin Actions */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Pool Administration</CardTitle>
+              <CardDescription>
+                Manage perpetual futures pools, tokens, and markets
+              </CardDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={refreshPools}
+              disabled={poolsLoading}
+            >
+              <RefreshCw className={`h-4 w-4 ${poolsLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Quick Actions */}
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowInitForm(!showInitForm)}
+              className="justify-start"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Initialize Pool
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setShowAddTokenForm(!showAddTokenForm)}
+              disabled={pools.length === 0}
+              className="justify-start"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Token
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setShowAddMarketForm(!showAddMarketForm)}
+              disabled={pools.length === 0}
+              className="justify-start"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Market
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setShowUpdateForm(!showUpdateForm)}
+              disabled={pools.length === 0}
+              className="justify-start"
+            >
+              <Settings className="h-4 w-4 mr-2" />
+              Update Config
+            </Button>
+          </div>
+
+          {/* Initialize Pool Form */}
+          {showInitForm && (
+            <div className="rounded-lg border p-4 space-y-4">
+              <h4 className="font-medium">Initialize New Pool</h4>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Pool ID (PublicKey)</Label>
+                  <Input
+                    placeholder="Enter pool ID public key"
+                    value={initPoolId}
+                    onChange={(e) => setInitPoolId(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Generate a new keypair and use its public key as the pool ID
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Max Leverage</Label>
+                    <Input
+                      type="number"
+                      value={initMaxLeverage}
+                      onChange={(e) => setInitMaxLeverage(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Position Fee (bps)</Label>
+                    <Input
+                      type="number"
+                      value={initPositionFeeBps}
+                      onChange={(e) => setInitPositionFeeBps(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Max Utilization (bps)</Label>
+                    <Input
+                      type="number"
+                      value={initMaxUtilizationBps}
+                      onChange={(e) => setInitMaxUtilizationBps(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Liq. Threshold (bps)</Label>
+                    <Input
+                      type="number"
+                      value={initLiquidationThresholdBps}
+                      onChange={(e) => setInitLiquidationThresholdBps(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Liq. Penalty (bps)</Label>
+                    <Input
+                      type="number"
+                      value={initLiquidationPenaltyBps}
+                      onChange={(e) => setInitLiquidationPenaltyBps(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Base Borrow Rate (bps)</Label>
+                    <Input
+                      type="number"
+                      value={initBaseBorrowRateBps}
+                      onChange={(e) => setInitBaseBorrowRateBps(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleInitializePool}
+                  disabled={isInitializing || !initPoolId}
+                >
+                  {isInitializing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Initializing...
+                    </>
+                  ) : (
+                    'Initialize Pool'
+                  )}
+                </Button>
+                <Button variant="ghost" onClick={() => setShowInitForm(false)}>
+                  Cancel
+                </Button>
+              </div>
+              {initError && (
+                <p className="text-sm text-destructive">{initError}</p>
+              )}
+            </div>
+          )}
+
+          {/* Add Token Form */}
+          {showAddTokenForm && (
+            <div className="rounded-lg border p-4 space-y-4">
+              <h4 className="font-medium">Add Token to Pool</h4>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Pool</Label>
+                  <Select
+                    value={selectedPoolForToken}
+                    onValueChange={setSelectedPoolForToken}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select pool" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {pools.map((pool) => (
+                        <SelectItem key={pool.address.toBase58()} value={pool.address.toBase58()}>
+                          Pool {pool.address.toBase58().slice(0, 8)}...
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Token Mint</Label>
+                  <Select
+                    value={tokenMint}
+                    onValueChange={setTokenMint}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select token" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SUPPORTED_TOKENS.map((token) => (
+                        <SelectItem key={token.mint.toBase58()} value={token.mint.toBase58()}>
+                          {token.symbol} - {token.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Pyth Feed ID (hex)</Label>
+                  <Input
+                    placeholder="0x..."
+                    value={pythFeedId}
+                    onChange={(e) => setPythFeedId(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Get feed IDs from{' '}
+                    <a
+                      href="https://pyth.network/developers/price-feed-ids"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      Pyth Network
+                    </a>
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleAddToken}
+                  disabled={isAddingToken || !selectedPoolForToken || !tokenMint || !pythFeedId}
+                >
+                  {isAddingToken ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    'Add Token'
+                  )}
+                </Button>
+                <Button variant="ghost" onClick={() => setShowAddTokenForm(false)}>
+                  Cancel
+                </Button>
+              </div>
+              {addTokenError && (
+                <p className="text-sm text-destructive">{addTokenError}</p>
+              )}
+            </div>
+          )}
+
+          {/* Add Market Form */}
+          {showAddMarketForm && (
+            <div className="rounded-lg border p-4 space-y-4">
+              <h4 className="font-medium">Add Market to Pool</h4>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Pool</Label>
+                  <Select
+                    value={selectedPoolForMarket}
+                    onValueChange={setSelectedPoolForMarket}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select pool" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {pools.map((pool) => (
+                        <SelectItem key={pool.address.toBase58()} value={pool.address.toBase58()}>
+                          Pool {pool.address.toBase58().slice(0, 8)}...
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Market ID</Label>
+                  <Input
+                    placeholder="e.g., SOL-USDC-PERP"
+                    value={marketId}
+                    onChange={(e) => setMarketId(e.target.value)}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Base Token Index</Label>
+                    <Input
+                      type="number"
+                      value={baseTokenIndex}
+                      onChange={(e) => setBaseTokenIndex(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Quote Token Index</Label>
+                    <Input
+                      type="number"
+                      value={quoteTokenIndex}
+                      onChange={(e) => setQuoteTokenIndex(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Max Position Size</Label>
+                  <Input
+                    type="text"
+                    value={maxPositionSize}
+                    onChange={(e) => setMaxPositionSize(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    In base units (e.g., 1000000000000 for 1M with 6 decimals)
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleAddMarket}
+                  disabled={isAddingMarket || !selectedPoolForMarket || !marketId}
+                >
+                  {isAddingMarket ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    'Add Market'
+                  )}
+                </Button>
+                <Button variant="ghost" onClick={() => setShowAddMarketForm(false)}>
+                  Cancel
+                </Button>
+              </div>
+              {addMarketError && (
+                <p className="text-sm text-destructive">{addMarketError}</p>
+              )}
+            </div>
+          )}
+
+          {/* Update Config Form */}
+          {showUpdateForm && (
+            <div className="rounded-lg border p-4 space-y-4">
+              <h4 className="font-medium">Update Pool Configuration</h4>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Pool</Label>
+                  <Select
+                    value={selectedPoolForUpdate}
+                    onValueChange={(value) => {
+                      setSelectedPoolForUpdate(value);
+                      const pool = pools.find(p => p.address.toBase58() === value);
+                      if (pool) {
+                        setUpdateMaxLeverage(pool.maxLeverage.toString());
+                        setUpdatePositionFeeBps(pool.positionFeeBps?.toString() || '');
+                        setUpdateMaxUtilizationBps(pool.maxUtilizationBps?.toString() || '');
+                        setUpdateIsActive(pool.isActive ?? true);
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select pool" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {pools.map((pool) => (
+                        <SelectItem key={pool.address.toBase58()} value={pool.address.toBase58()}>
+                          Pool {pool.address.toBase58().slice(0, 8)}...
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Max Leverage</Label>
+                    <Input
+                      type="number"
+                      placeholder="Leave empty to keep current"
+                      value={updateMaxLeverage}
+                      onChange={(e) => setUpdateMaxLeverage(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Position Fee (bps)</Label>
+                    <Input
+                      type="number"
+                      placeholder="Leave empty to keep current"
+                      value={updatePositionFeeBps}
+                      onChange={(e) => setUpdatePositionFeeBps(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Max Utilization (bps)</Label>
+                    <Input
+                      type="number"
+                      placeholder="Leave empty to keep current"
+                      value={updateMaxUtilizationBps}
+                      onChange={(e) => setUpdateMaxUtilizationBps(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Pool Active</Label>
+                    <Select
+                      value={updateIsActive === null ? '' : updateIsActive.toString()}
+                      onValueChange={(v) => setUpdateIsActive(v === '' ? null : v === 'true')}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Keep current" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">Keep current</SelectItem>
+                        <SelectItem value="true">Active</SelectItem>
+                        <SelectItem value="false">Inactive</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleUpdateConfig}
+                  disabled={isUpdating || !selectedPoolForUpdate}
+                >
+                  {isUpdating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Updating...
+                    </>
+                  ) : (
+                    'Update Config'
+                  )}
+                </Button>
+                <Button variant="ghost" onClick={() => setShowUpdateForm(false)}>
+                  Cancel
+                </Button>
+              </div>
+              {updateError && (
+                <p className="text-sm text-destructive">{updateError}</p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Existing Pools Overview */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Existing Pools</CardTitle>
+          <CardDescription>
+            {pools.length} pool(s) found
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {poolsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : pools.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <p>No pools found. Initialize a new pool to get started.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {pools.map((pool) => (
+                <PoolCard key={pool.address.toBase58()} pool={pool} />
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// Pool card component for displaying pool info
+function PoolCard({ pool }: { pool: PerpsPoolState & { address: PublicKey } }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const { markets, isLoading: marketsLoading } = usePerpsMarkets(pool.address);
+
+  return (
+    <div className="rounded-lg border p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Badge variant={pool.isActive ? 'default' : 'secondary'}>
+            {pool.isActive ? 'Active' : 'Inactive'}
+          </Badge>
+          <span className="font-mono text-sm">
+            {pool.address.toBase58().slice(0, 8)}...{pool.address.toBase58().slice(-8)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <a
+            href={getExplorerAddressUrl(pool.address)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-primary hover:underline flex items-center gap-1"
+          >
+            Explorer
+            <ExternalLink className="h-3 w-3" />
+          </a>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsExpanded(!isExpanded)}
+          >
+            {isExpanded ? 'Hide' : 'Details'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 text-sm">
+        <div>
+          <p className="text-muted-foreground">Max Leverage</p>
+          <p className="font-medium">{pool.maxLeverage}x</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Tokens</p>
+          <p className="font-medium">{pool.numTokens}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">LP Supply</p>
+          <p className="font-medium">{formatAmount(pool.lpSupply, 6)}</p>
+        </div>
+      </div>
+
+      {isExpanded && (
+        <div className="pt-3 border-t space-y-3">
+          {/* Pool Config */}
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p className="text-muted-foreground">Position Fee</p>
+              <p className="font-medium">{pool.positionFeeBps || 0} bps</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Max Utilization</p>
+              <p className="font-medium">{(pool.maxUtilizationBps || 0) / 100}%</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Liq. Threshold</p>
+              <p className="font-medium">{(pool.liquidationThresholdBps || 0) / 100}%</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Liq. Penalty</p>
+              <p className="font-medium">{(pool.liquidationPenaltyBps || 0) / 100}%</p>
+            </div>
+          </div>
+
+          {/* Tokens */}
+          <div>
+            <p className="text-sm font-medium mb-2">Tokens</p>
+            <div className="space-y-2">
+              {pool.tokens.slice(0, pool.numTokens).map((token, idx) => {
+                const tokenInfo = SUPPORTED_TOKENS.find(t => t.mint.equals(token.mint));
+                return (
+                  <div key={idx} className="flex items-center justify-between text-sm bg-muted/50 rounded px-3 py-2">
+                    <span>{tokenInfo?.symbol || token.mint.toBase58().slice(0, 8)}</span>
+                    <span className="text-muted-foreground">
+                      Balance: {formatAmount(token.balance, tokenInfo?.decimals || 6)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Markets */}
+          <div>
+            <p className="text-sm font-medium mb-2">
+              Markets {marketsLoading && <Loader2 className="h-3 w-3 animate-spin inline ml-1" />}
+            </p>
+            {markets.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No markets configured</p>
+            ) : (
+              <div className="space-y-2">
+                {markets.map((market, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-sm bg-muted/50 rounded px-3 py-2">
+                    <span className="font-mono">{market.address.toBase58().slice(0, 8)}...</span>
+                    <span className="text-muted-foreground">
+                      Base: {market.baseTokenIndex} / Quote: {market.quoteTokenIndex}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
