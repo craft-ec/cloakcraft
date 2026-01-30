@@ -29,6 +29,10 @@ apps/demo/public/circom/
 apps/demo/public/wasm/
 scripts/sunspot
 
+# Allow circom artifacts in web public folder for client-side proving
+!apps/web/public/circom/**/*.wasm
+!apps/web/public/circom/**/*.zkey
+
 # IDE
 .idea/
 .vscode/
