@@ -13,6 +13,10 @@ circom-circuits/
 *.sym
 *.zkey
 
+# Allow circom artifacts in web public folder for client-side proving
+!apps/web/public/circom/**/*.wasm
+!apps/web/public/circom/**/*.zkey
+
 # Build tools
 tools/
 tinygo/
