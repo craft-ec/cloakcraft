@@ -160,6 +160,7 @@ export interface LightVerifyParams {
     queuePubkeyIndex: number;
     leafIndex: number;
     rootIndex: number;
+    proveByIndex: boolean;
   };
   commitmentInclusionProof: {
     a: number[];

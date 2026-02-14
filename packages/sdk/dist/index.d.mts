@@ -1295,6 +1295,7 @@ declare class CloakCraftClient {
                 queuePubkeyIndex: number;
                 leafIndex: number;
                 rootIndex: number;
+                proveByIndex: boolean;
             };
             commitmentInclusionProof: {
                 a: number[];
@@ -2417,6 +2418,16 @@ declare class LightProtocol {
      */
     getInclusionProofByHash(accountHash: string): Promise<_lightprotocol_stateless_js.MerkleContextWithMerkleProof>;
     /**
+     * Get inclusion validity proof for verifying a compressed account exists.
+     *
+     * Uses getValidityProofV0 which returns a compressed ZK proof suitable
+     * for on-chain verification, along with leafIndices, rootIndices, and
+     * proveByIndices that indicate whether the account is still in the
+     * output queue (prove_by_index=true) or has been batched into the
+     * state tree (prove_by_index=false).
+     */
+    getInclusionValidityProof(accountHash: string, tree: PublicKey, queue: PublicKey): Promise<_lightprotocol_stateless_js.ValidityProofWithContext>;
+    /**
      * Build remaining accounts for Light Protocol CPI (simple version - no commitment)
      */
     buildRemainingAccounts(): {
@@ -2485,6 +2496,7 @@ interface LightTransactParams {
         queuePubkeyIndex: number;
         leafIndex: number;
         rootIndex: number;
+        proveByIndex: boolean;
     };
     /** Commitment inclusion proof (SECURITY: proves commitment exists) */
     commitmentInclusionProof: {
@@ -5295,6 +5307,7 @@ interface LightVerifyParams {
         queuePubkeyIndex: number;
         leafIndex: number;
         rootIndex: number;
+        proveByIndex: boolean;
     };
     commitmentInclusionProof: {
         a: number[];

@@ -370,9 +370,6 @@ pub fn verify_commitment_inclusion<'info>(
     msg!("Root index: {}", commitment_merkle_context.root_index);
     msg!("State tree index: {}", commitment_merkle_context.merkle_tree_pubkey_index);
 
-    // Convert IDL-safe types to Light SDK types
-    let proof: ValidityProof = inclusion_proof.into();
-
     // Setup Light CPI accounts
     let light_cpi_accounts = CpiAccounts::new(
         fee_payer,
@@ -387,6 +384,10 @@ pub fn verify_commitment_inclusion<'info>(
 
     // Build the packed read-only account for verification
     use light_compressed_account::compressed_account::{PackedReadOnlyCompressedAccount, PackedMerkleContext};
+    use light_compressed_account::instruction_data::compressed_proof::CompressedProof;
+    use light_compressed_account::instruction_data::with_readonly::InstructionDataInvokeCpiWithReadOnly;
+
+    let prove_by_index = commitment_merkle_context.prove_by_index;
 
     let read_only_account = PackedReadOnlyCompressedAccount {
         account_hash: commitment_address,
@@ -394,23 +395,30 @@ pub fn verify_commitment_inclusion<'info>(
             merkle_tree_pubkey_index: commitment_merkle_context.merkle_tree_pubkey_index,
             queue_pubkey_index: commitment_merkle_context.queue_pubkey_index,
             leaf_index: commitment_merkle_context.leaf_index,
-            prove_by_index: true,
+            prove_by_index,
         },
         root_index: commitment_merkle_context.root_index,
     };
 
-    msg!("Verifying commitment with Light Protocol CPI...");
+    msg!("Verifying commitment with Light Protocol CPI (prove_by_index={})...", prove_by_index);
 
-    // SECURITY: Build CPI instruction for read-only verification WITHOUT a separate proof
-    // The error 0x1782 "ProofIsSome but no input accounts" occurs when proof=Some but no accounts.
-    // For read-only verification, the merkle context IS the proof - we don't need a separate ZK proof.
-    // The read_only_account contains the merkle tree position and root for verification.
-    use light_compressed_account::instruction_data::with_account_info::InstructionDataInvokeCpiWithAccountInfo;
+    // Build the proof parameter:
+    // - prove_by_index=true: account is in output queue, no ZK proof needed
+    // - prove_by_index=false: account is batched in state tree, need validity proof
+    let cpi_proof = if prove_by_index {
+        None
+    } else {
+        Some(CompressedProof {
+            a: inclusion_proof.a,
+            b: inclusion_proof.b,
+            c: inclusion_proof.c,
+        })
+    };
 
-    let mut cpi_instruction = InstructionDataInvokeCpiWithAccountInfo {
+    let cpi_instruction = InstructionDataInvokeCpiWithReadOnly {
         bump: LIGHT_CPI_SIGNER.bump,
         invoking_program_id: LIGHT_CPI_SIGNER.program_id.into(),
-        proof: None, // No ZK proof needed - merkle context in read_only_account is the verification
+        proof: cpi_proof,
         mode: 1, // v2 mode
         read_only_accounts: vec![read_only_account],
         ..Default::default()

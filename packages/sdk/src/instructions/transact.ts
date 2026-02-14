@@ -288,13 +288,21 @@ export async function buildTransactWithProgram(
   const commitmentProof = await lightProtocol.getInclusionProofByHash(params.input.accountHash);
   console.log('[Transact] Commitment proof:', JSON.stringify(commitmentProof, null, 2));
 
-  console.log('[Transact] Fetching nullifier non-inclusion proof...');
-  const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, nullifier);
-  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-
   // Extract tree, queue, and CPI context from commitment proof (where it was actually created)
   const commitmentTree = new PublicKey(commitmentProof.treeInfo.tree);
   const commitmentQueue = new PublicKey(commitmentProof.treeInfo.queue);
+
+  // Get inclusion validity proof (compressed ZK proof for on-chain verification)
+  console.log('[Transact] Fetching inclusion validity proof...');
+  const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+    params.input.accountHash, commitmentTree, commitmentQueue
+  );
+  const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
+  console.log('[Transact] proveByIndex:', proveByIndex);
+
+  console.log('[Transact] Fetching nullifier non-inclusion proof...');
+  const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, nullifier);
+  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
   const commitmentCpiContext = commitmentProof.treeInfo.cpiContext
     ? new PublicKey(commitmentProof.treeInfo.cpiContext)
     : null;
@@ -333,11 +341,12 @@ export async function buildTransactWithProgram(
     commitmentMerkleContext: {
       merkleTreePubkeyIndex: commitmentStateTreeIndex, // STATE tree from proof (for data/merkle verification)
       queuePubkeyIndex: commitmentQueueIndex,          // Queue from proof
-      leafIndex: commitmentProof.leafIndex,
-      rootIndex: commitmentProof.rootIndex,
+      leafIndex: inclusionValidityProof.leafIndices?.[0] ?? commitmentProof.leafIndex,
+      rootIndex: inclusionValidityProof.rootIndices?.[0] ?? commitmentProof.rootIndex,
+      proveByIndex,
     },
-    // SECURITY: Convert commitment inclusion proof (Groth16 SNARK)
-    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    // SECURITY: Convert commitment inclusion proof (compressed ZK proof from validity proof)
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProof),
     // VERIFY existing commitment: Address tree for CPI address derivation
     commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,           // CURRENT address tree (for CPI address derivation)
@@ -758,8 +767,16 @@ export async function buildConsolidationWithProgram(
         packedAccounts.insertOrGet(new PublicKey(commitmentProof.treeInfo.cpiContext));
       }
 
+      // Get inclusion validity proof for on-chain verification
+      const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+        input.accountHash, commitmentTree, commitmentQueue
+      );
+      const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
+
       return {
         commitmentProof,
+        inclusionValidityProof,
+        proveByIndex,
         treeIndex,
         queueIndex,
       };
@@ -812,10 +829,11 @@ export async function buildConsolidationWithProgram(
         commitmentMerkleContext: {
           merkleTreePubkeyIndex: proof.treeIndex,
           queuePubkeyIndex: proof.queueIndex,
-          leafIndex: proof.commitmentProof.leafIndex,
-          rootIndex: proof.commitmentProof.rootIndex,
+          leafIndex: proof.inclusionValidityProof.leafIndices?.[0] ?? proof.commitmentProof.leafIndex,
+          rootIndex: proof.inclusionValidityProof.rootIndices?.[0] ?? proof.commitmentProof.rootIndex,
+          proveByIndex: proof.proveByIndex,
         },
-        commitmentInclusionProof: LightProtocol.convertCompressedProof(proof.commitmentProof),
+        commitmentInclusionProof: LightProtocol.convertCompressedProof(proof.inclusionValidityProof),
         commitmentAddressTreeInfo: {
           addressMerkleTreePubkeyIndex: addressTreeIndex,
           addressQueuePubkeyIndex: addressTreeIndex,

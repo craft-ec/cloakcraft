@@ -348,16 +348,24 @@ export async function buildSwapWithProgram(
   console.log('[Swap] Fetching commitment inclusion proof...');
   const commitmentProof = await lightProtocol.getInclusionProofByHash(params.accountHash);
 
-  console.log('[Swap] Fetching nullifier non-inclusion proof...');
-  const nullifierAddress = lightProtocol.deriveNullifierAddress(params.inputPool, params.nullifier);
-  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-
   // Extract tree info from commitment proof
   const commitmentTree = new PublicKey(commitmentProof.treeInfo.tree);
   const commitmentQueue = new PublicKey(commitmentProof.treeInfo.queue);
   const commitmentCpiContext = commitmentProof.treeInfo.cpiContext
     ? new PublicKey(commitmentProof.treeInfo.cpiContext)
     : null;
+
+  // Get inclusion validity proof (compressed ZK proof for on-chain verification)
+  console.log('[Swap] Fetching inclusion validity proof...');
+  const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+    params.accountHash, commitmentTree, commitmentQueue
+  );
+  const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
+  console.log('[Swap] proveByIndex:', proveByIndex);
+
+  console.log('[Swap] Fetching nullifier non-inclusion proof...');
+  const nullifierAddress = lightProtocol.deriveNullifierAddress(params.inputPool, params.nullifier);
+  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
 
   // Build packed accounts
   const { SystemAccountMetaConfig, PackedAccounts } = await import('@lightprotocol/stateless.js');
@@ -384,10 +392,11 @@ export async function buildSwapWithProgram(
     commitmentMerkleContext: {
       merkleTreePubkeyIndex: commitmentStateTreeIndex,
       queuePubkeyIndex: commitmentQueueIndex,
-      leafIndex: commitmentProof.leafIndex,
-      rootIndex: commitmentProof.rootIndex,
+      leafIndex: inclusionValidityProof.leafIndices?.[0] ?? commitmentProof.leafIndex,
+      rootIndex: inclusionValidityProof.rootIndices?.[0] ?? commitmentProof.rootIndex,
+      proveByIndex,
     },
-    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProof),
     commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
@@ -740,14 +749,6 @@ export async function buildAddLiquidityWithProgram(
   console.log('[AddLiquidity] Fetching commitment B inclusion proof...');
   const commitmentBProof = await lightProtocol.getInclusionProofByHash(params.accountHashB);
 
-  console.log('[AddLiquidity] Fetching nullifier A non-inclusion proof...');
-  const nullifierAAddress = lightProtocol.deriveNullifierAddress(params.poolA, params.nullifierA);
-  const nullifierAProof = await lightProtocol.getValidityProof([nullifierAAddress]);
-
-  console.log('[AddLiquidity] Fetching nullifier B non-inclusion proof...');
-  const nullifierBAddress = lightProtocol.deriveNullifierAddress(params.poolB, params.nullifierB);
-  const nullifierBProof = await lightProtocol.getValidityProof([nullifierBAddress]);
-
   // Extract tree info from commitment proofs
   const commitmentATree = new PublicKey(commitmentAProof.treeInfo.tree);
   const commitmentAQueue = new PublicKey(commitmentAProof.treeInfo.queue);
@@ -760,6 +761,26 @@ export async function buildAddLiquidityWithProgram(
   const commitmentBCpiContext = commitmentBProof.treeInfo.cpiContext
     ? new PublicKey(commitmentBProof.treeInfo.cpiContext)
     : null;
+
+  // Get inclusion validity proofs (compressed ZK proofs for on-chain verification)
+  console.log('[AddLiquidity] Fetching inclusion validity proofs...');
+  const inclusionValidityProofA = await lightProtocol.getInclusionValidityProof(
+    params.accountHashA, commitmentATree, commitmentAQueue
+  );
+  const proveByIndexA = inclusionValidityProofA.proveByIndices?.[0] ?? true;
+
+  const inclusionValidityProofB = await lightProtocol.getInclusionValidityProof(
+    params.accountHashB, commitmentBTree, commitmentBQueue
+  );
+  const proveByIndexB = inclusionValidityProofB.proveByIndices?.[0] ?? true;
+
+  console.log('[AddLiquidity] Fetching nullifier A non-inclusion proof...');
+  const nullifierAAddress = lightProtocol.deriveNullifierAddress(params.poolA, params.nullifierA);
+  const nullifierAProof = await lightProtocol.getValidityProof([nullifierAAddress]);
+
+  console.log('[AddLiquidity] Fetching nullifier B non-inclusion proof...');
+  const nullifierBAddress = lightProtocol.deriveNullifierAddress(params.poolB, params.nullifierB);
+  const nullifierBProof = await lightProtocol.getValidityProof([nullifierBAddress]);
 
   // Build packed accounts
   const { SystemAccountMetaConfig, PackedAccounts } = await import('@lightprotocol/stateless.js');
@@ -791,10 +812,11 @@ export async function buildAddLiquidityWithProgram(
     commitmentMerkleContext: {
       merkleTreePubkeyIndex: commitmentAStateTreeIndex,
       queuePubkeyIndex: commitmentAQueueIndex,
-      leafIndex: commitmentAProof.leafIndex,
-      rootIndex: commitmentAProof.rootIndex,
+      leafIndex: inclusionValidityProofA.leafIndices?.[0] ?? commitmentAProof.leafIndex,
+      rootIndex: inclusionValidityProofA.rootIndices?.[0] ?? commitmentAProof.rootIndex,
+      proveByIndex: proveByIndexA,
     },
-    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentAProof),
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProofA),
     commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
@@ -815,10 +837,11 @@ export async function buildAddLiquidityWithProgram(
     commitmentMerkleContext: {
       merkleTreePubkeyIndex: commitmentBStateTreeIndex,
       queuePubkeyIndex: commitmentBQueueIndex,
-      leafIndex: commitmentBProof.leafIndex,
-      rootIndex: commitmentBProof.rootIndex,
+      leafIndex: inclusionValidityProofB.leafIndices?.[0] ?? commitmentBProof.leafIndex,
+      rootIndex: inclusionValidityProofB.rootIndices?.[0] ?? commitmentBProof.rootIndex,
+      proveByIndex: proveByIndexB,
     },
-    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentBProof),
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProofB),
     commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
@@ -1414,16 +1437,23 @@ export async function buildRemoveLiquidityWithProgram(
   console.log('[RemoveLiquidity] Fetching LP commitment inclusion proof...');
   const commitmentProof = await lightProtocol.getInclusionProofByHash(params.accountHash);
 
-  console.log('[RemoveLiquidity] Fetching LP nullifier non-inclusion proof...');
-  const nullifierAddress = lightProtocol.deriveNullifierAddress(params.lpPool, params.lpNullifier);
-  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-
   // Extract tree info from commitment proof
   const commitmentTree = new PublicKey(commitmentProof.treeInfo.tree);
   const commitmentQueue = new PublicKey(commitmentProof.treeInfo.queue);
   const commitmentCpiContext = commitmentProof.treeInfo.cpiContext
     ? new PublicKey(commitmentProof.treeInfo.cpiContext)
     : null;
+
+  // Get inclusion validity proof (compressed ZK proof for on-chain verification)
+  console.log('[RemoveLiquidity] Fetching inclusion validity proof...');
+  const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+    params.accountHash, commitmentTree, commitmentQueue
+  );
+  const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
+
+  console.log('[RemoveLiquidity] Fetching LP nullifier non-inclusion proof...');
+  const nullifierAddress = lightProtocol.deriveNullifierAddress(params.lpPool, params.lpNullifier);
+  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
 
   // Build packed accounts
   const { SystemAccountMetaConfig, PackedAccounts } = await import('@lightprotocol/stateless.js');
@@ -1450,10 +1480,11 @@ export async function buildRemoveLiquidityWithProgram(
     commitmentMerkleContext: {
       merkleTreePubkeyIndex: commitmentStateTreeIndex,
       queuePubkeyIndex: commitmentQueueIndex,
-      leafIndex: commitmentProof.leafIndex,
-      rootIndex: commitmentProof.rootIndex,
+      leafIndex: inclusionValidityProof.leafIndices?.[0] ?? commitmentProof.leafIndex,
+      rootIndex: inclusionValidityProof.rootIndices?.[0] ?? commitmentProof.rootIndex,
+      proveByIndex,
     },
-    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProof),
     commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,

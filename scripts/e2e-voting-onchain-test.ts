@@ -1729,8 +1729,9 @@ async function main() {
               queuePubkeyIndex: commitmentQueueIndex,
               leafIndex: spendMerkleProofResult.leafIndex,
               rootIndex: spendMerkleProofResult.rootIndex ?? 0,
+              proveByIndex: true, // fresh commitment still in output queue
             },
-            // Note: On-chain code sets proof: None, so these values aren't used
+            // Note: When proveByIndex=true, proof is not used (set to None on-chain)
             // but we still need to pass the struct
             commitmentInclusionProof: {
               a: Array(32).fill(0),

@@ -2367,6 +2367,22 @@ var init_light_helpers = __esm({
         return this.rpc.getCompressedAccountProof(hashBn);
       }
       /**
+       * Get inclusion validity proof for verifying a compressed account exists.
+       *
+       * Uses getValidityProofV0 which returns a compressed ZK proof suitable
+       * for on-chain verification, along with leafIndices, rootIndices, and
+       * proveByIndices that indicate whether the account is still in the
+       * output queue (prove_by_index=true) or has been batched into the
+       * state tree (prove_by_index=false).
+       */
+      async getInclusionValidityProof(accountHash, tree, queue) {
+        const hashBytes = new import_web36.PublicKey(accountHash).toBytes();
+        return this.rpc.getValidityProofV0(
+          [{ hash: (0, import_stateless2.bn)(hashBytes), tree, queue }],
+          []
+        );
+      }
+      /**
        * Build remaining accounts for Light Protocol CPI (simple version - no commitment)
        */
       buildRemainingAccounts() {
@@ -2681,12 +2697,20 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
   ];
   console.log("[Swap] Fetching commitment inclusion proof...");
   const commitmentProof = await lightProtocol.getInclusionProofByHash(params.accountHash);
-  console.log("[Swap] Fetching nullifier non-inclusion proof...");
-  const nullifierAddress = lightProtocol.deriveNullifierAddress(params.inputPool, params.nullifier);
-  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
   const commitmentTree = new import_web38.PublicKey(commitmentProof.treeInfo.tree);
   const commitmentQueue = new import_web38.PublicKey(commitmentProof.treeInfo.queue);
   const commitmentCpiContext = commitmentProof.treeInfo.cpiContext ? new import_web38.PublicKey(commitmentProof.treeInfo.cpiContext) : null;
+  console.log("[Swap] Fetching inclusion validity proof...");
+  const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+    params.accountHash,
+    commitmentTree,
+    commitmentQueue
+  );
+  const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
+  console.log("[Swap] proveByIndex:", proveByIndex);
+  console.log("[Swap] Fetching nullifier non-inclusion proof...");
+  const nullifierAddress = lightProtocol.deriveNullifierAddress(params.inputPool, params.nullifier);
+  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
   const { SystemAccountMetaConfig: SystemAccountMetaConfig2, PackedAccounts: PackedAccounts2 } = await import("@lightprotocol/stateless.js");
   const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await Promise.resolve().then(() => (init_constants(), constants_exports));
   const systemConfig = SystemAccountMetaConfig2.new(lightProtocol.programId);
@@ -2705,10 +2729,11 @@ async function buildSwapWithProgram(program, params, rpcUrl) {
     commitmentMerkleContext: {
       merkleTreePubkeyIndex: commitmentStateTreeIndex,
       queuePubkeyIndex: commitmentQueueIndex,
-      leafIndex: commitmentProof.leafIndex,
-      rootIndex: commitmentProof.rootIndex
+      leafIndex: inclusionValidityProof.leafIndices?.[0] ?? commitmentProof.leafIndex,
+      rootIndex: inclusionValidityProof.rootIndices?.[0] ?? commitmentProof.rootIndex,
+      proveByIndex
     },
-    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProof),
     commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
@@ -2896,18 +2921,31 @@ async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
   const commitmentAProof = await lightProtocol.getInclusionProofByHash(params.accountHashA);
   console.log("[AddLiquidity] Fetching commitment B inclusion proof...");
   const commitmentBProof = await lightProtocol.getInclusionProofByHash(params.accountHashB);
-  console.log("[AddLiquidity] Fetching nullifier A non-inclusion proof...");
-  const nullifierAAddress = lightProtocol.deriveNullifierAddress(params.poolA, params.nullifierA);
-  const nullifierAProof = await lightProtocol.getValidityProof([nullifierAAddress]);
-  console.log("[AddLiquidity] Fetching nullifier B non-inclusion proof...");
-  const nullifierBAddress = lightProtocol.deriveNullifierAddress(params.poolB, params.nullifierB);
-  const nullifierBProof = await lightProtocol.getValidityProof([nullifierBAddress]);
   const commitmentATree = new import_web38.PublicKey(commitmentAProof.treeInfo.tree);
   const commitmentAQueue = new import_web38.PublicKey(commitmentAProof.treeInfo.queue);
   const commitmentACpiContext = commitmentAProof.treeInfo.cpiContext ? new import_web38.PublicKey(commitmentAProof.treeInfo.cpiContext) : null;
   const commitmentBTree = new import_web38.PublicKey(commitmentBProof.treeInfo.tree);
   const commitmentBQueue = new import_web38.PublicKey(commitmentBProof.treeInfo.queue);
   const commitmentBCpiContext = commitmentBProof.treeInfo.cpiContext ? new import_web38.PublicKey(commitmentBProof.treeInfo.cpiContext) : null;
+  console.log("[AddLiquidity] Fetching inclusion validity proofs...");
+  const inclusionValidityProofA = await lightProtocol.getInclusionValidityProof(
+    params.accountHashA,
+    commitmentATree,
+    commitmentAQueue
+  );
+  const proveByIndexA = inclusionValidityProofA.proveByIndices?.[0] ?? true;
+  const inclusionValidityProofB = await lightProtocol.getInclusionValidityProof(
+    params.accountHashB,
+    commitmentBTree,
+    commitmentBQueue
+  );
+  const proveByIndexB = inclusionValidityProofB.proveByIndices?.[0] ?? true;
+  console.log("[AddLiquidity] Fetching nullifier A non-inclusion proof...");
+  const nullifierAAddress = lightProtocol.deriveNullifierAddress(params.poolA, params.nullifierA);
+  const nullifierAProof = await lightProtocol.getValidityProof([nullifierAAddress]);
+  console.log("[AddLiquidity] Fetching nullifier B non-inclusion proof...");
+  const nullifierBAddress = lightProtocol.deriveNullifierAddress(params.poolB, params.nullifierB);
+  const nullifierBProof = await lightProtocol.getValidityProof([nullifierBAddress]);
   const { SystemAccountMetaConfig: SystemAccountMetaConfig2, PackedAccounts: PackedAccounts2 } = await import("@lightprotocol/stateless.js");
   const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await Promise.resolve().then(() => (init_constants(), constants_exports));
   const systemConfig = SystemAccountMetaConfig2.new(lightProtocol.programId);
@@ -2931,10 +2969,11 @@ async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
     commitmentMerkleContext: {
       merkleTreePubkeyIndex: commitmentAStateTreeIndex,
       queuePubkeyIndex: commitmentAQueueIndex,
-      leafIndex: commitmentAProof.leafIndex,
-      rootIndex: commitmentAProof.rootIndex
+      leafIndex: inclusionValidityProofA.leafIndices?.[0] ?? commitmentAProof.leafIndex,
+      rootIndex: inclusionValidityProofA.rootIndices?.[0] ?? commitmentAProof.rootIndex,
+      proveByIndex: proveByIndexA
     },
-    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentAProof),
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProofA),
     commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
@@ -2953,10 +2992,11 @@ async function buildAddLiquidityWithProgram(program, params, rpcUrl) {
     commitmentMerkleContext: {
       merkleTreePubkeyIndex: commitmentBStateTreeIndex,
       queuePubkeyIndex: commitmentBQueueIndex,
-      leafIndex: commitmentBProof.leafIndex,
-      rootIndex: commitmentBProof.rootIndex
+      leafIndex: inclusionValidityProofB.leafIndices?.[0] ?? commitmentBProof.leafIndex,
+      rootIndex: inclusionValidityProofB.rootIndices?.[0] ?? commitmentBProof.rootIndex,
+      proveByIndex: proveByIndexB
     },
-    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentBProof),
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProofB),
     commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
@@ -3267,12 +3307,19 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
   ];
   console.log("[RemoveLiquidity] Fetching LP commitment inclusion proof...");
   const commitmentProof = await lightProtocol.getInclusionProofByHash(params.accountHash);
-  console.log("[RemoveLiquidity] Fetching LP nullifier non-inclusion proof...");
-  const nullifierAddress = lightProtocol.deriveNullifierAddress(params.lpPool, params.lpNullifier);
-  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
   const commitmentTree = new import_web38.PublicKey(commitmentProof.treeInfo.tree);
   const commitmentQueue = new import_web38.PublicKey(commitmentProof.treeInfo.queue);
   const commitmentCpiContext = commitmentProof.treeInfo.cpiContext ? new import_web38.PublicKey(commitmentProof.treeInfo.cpiContext) : null;
+  console.log("[RemoveLiquidity] Fetching inclusion validity proof...");
+  const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+    params.accountHash,
+    commitmentTree,
+    commitmentQueue
+  );
+  const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
+  console.log("[RemoveLiquidity] Fetching LP nullifier non-inclusion proof...");
+  const nullifierAddress = lightProtocol.deriveNullifierAddress(params.lpPool, params.lpNullifier);
+  const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
   const { SystemAccountMetaConfig: SystemAccountMetaConfig2, PackedAccounts: PackedAccounts2 } = await import("@lightprotocol/stateless.js");
   const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await Promise.resolve().then(() => (init_constants(), constants_exports));
   const systemConfig = SystemAccountMetaConfig2.new(lightProtocol.programId);
@@ -3291,10 +3338,11 @@ async function buildRemoveLiquidityWithProgram(program, params, rpcUrl) {
     commitmentMerkleContext: {
       merkleTreePubkeyIndex: commitmentStateTreeIndex,
       queuePubkeyIndex: commitmentQueueIndex,
-      leafIndex: commitmentProof.leafIndex,
-      rootIndex: commitmentProof.rootIndex
+      leafIndex: inclusionValidityProof.leafIndices?.[0] ?? commitmentProof.leafIndex,
+      rootIndex: inclusionValidityProof.rootIndices?.[0] ?? commitmentProof.rootIndex,
+      proveByIndex
     },
-    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProof),
     commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
       addressQueuePubkeyIndex: addressTreeIndex,
@@ -6445,6 +6493,277 @@ var cloakcraft_default = {
       ]
     },
     {
+      name: "create_pending_with_proof_change_vote_spend",
+      docs: [
+        "Create Pending with Proof - Change Vote Spend (Phase 0)",
+        "",
+        "SpendToVote mode: Atomic vote change (old position -> new position)."
+      ],
+      discriminator: [
+        116,
+        105,
+        71,
+        15,
+        101,
+        194,
+        230,
+        208
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot being voted on"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pool",
+          docs: [
+            "Token pool (for verification reference)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "ballot.token_mint",
+                account: "Ballot"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for change_vote_spend circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "const",
+                value: [
+                  99,
+                  104,
+                  97,
+                  110,
+                  103,
+                  101,
+                  95,
+                  118,
+                  111,
+                  116,
+                  101,
+                  95,
+                  115,
+                  112,
+                  101,
+                  110,
+                  100,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation account (created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer executing the transaction"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for account creation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "old_position_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "old_position_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "new_position_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "old_vote_choice",
+          type: "u64"
+        },
+        {
+          name: "new_vote_choice",
+          type: "u64"
+        },
+        {
+          name: "amount",
+          type: "u64"
+        },
+        {
+          name: "weight",
+          type: "u64"
+        },
+        {
+          name: "old_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "new_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "output_randomness",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
       name: "create_pending_with_proof_claim",
       docs: [
         "Create Pending with Proof - Claim (Phase 0)",
@@ -8700,7 +9019,7 @@ var cloakcraft_default = {
         "Create Pending with Proof - Vote Snapshot (Phase 0)",
         "",
         "Verifies ZK proof for snapshot voting and creates PendingOperation.",
-        "Uses indexer attestation for balance verification."
+        "User proves ownership of shielded note WITHOUT spending it."
       ],
       discriminator: [
         154,
@@ -8869,6 +9188,24 @@ var cloakcraft_default = {
           type: "bytes"
         },
         {
+          name: "snapshot_merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "note_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
           name: "vote_nullifier",
           type: {
             array: [
@@ -8891,30 +9228,12 @@ var cloakcraft_default = {
           type: "u64"
         },
         {
-          name: "total_amount",
+          name: "amount",
           type: "u64"
         },
         {
           name: "weight",
           type: "u64"
-        },
-        {
-          name: "indexer_pubkey_x",
-          type: {
-            array: [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          name: "indexer_pubkey_y",
-          type: {
-            array: [
-              "u8",
-              32
-            ]
-          }
         },
         {
           name: "encrypted_contributions",
@@ -10063,6 +10382,129 @@ var cloakcraft_default = {
         218,
         182,
         195
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot being voted on (mutable for tally update)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation (must have proof verified, input verified, nullifier created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "old_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "new_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "execute_change_vote_spend",
+      docs: [
+        "Execute Change Vote Spend (Phase 3)",
+        "",
+        "Updates ballot tally for SpendToVote vote change: decrements old, increments new."
+      ],
+      discriminator: [
+        207,
+        176,
+        177,
+        79,
+        110,
+        184,
+        148,
+        190
       ],
       accounts: [
         {
@@ -14939,6 +15381,122 @@ var cloakcraft_default = {
           }
         }
       ]
+    },
+    {
+      name: "verify_vote_commitment_exists",
+      docs: [
+        "Verify Vote Commitment Exists (Phase 1)",
+        "",
+        "Voting-specific commitment verification for operations that spend existing commitments.",
+        "Uses Ballot account instead of Pool account."
+      ],
+      discriminator: [
+        76,
+        132,
+        220,
+        91,
+        78,
+        223,
+        179,
+        81
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot (used instead of Pool for voting operations)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "commitment_index",
+          type: "u8"
+        },
+        {
+          name: "light_params",
+          type: {
+            defined: {
+              name: "LightVerifyVoteCommitmentParams"
+            }
+          }
+        }
+      ]
     }
   ],
   accounts: [
@@ -15710,178 +16268,228 @@ var cloakcraft_default = {
     },
     {
       code: 6116,
+      name: "PositionMetaNotFound",
+      msg: "Position metadata not found"
+    },
+    {
+      code: 6117,
+      name: "PositionMetaCreationFailed",
+      msg: "Failed to create position metadata"
+    },
+    {
+      code: 6118,
+      name: "PositionMetaUpdateFailed",
+      msg: "Failed to update position metadata"
+    },
+    {
+      code: 6119,
+      name: "PositionNotActive",
+      msg: "Position is not active - may be liquidated or closed"
+    },
+    {
+      code: 6120,
+      name: "PositionAlreadyLiquidated",
+      msg: "Position has already been liquidated"
+    },
+    {
+      code: 6121,
+      name: "PositionAlreadyClosed",
+      msg: "Position has already been closed"
+    },
+    {
+      code: 6122,
+      name: "LiquidationNullifierFailed",
+      msg: "Failed to create liquidation nullifier"
+    },
+    {
+      code: 6123,
+      name: "PositionIdMismatch",
+      msg: "Position ID mismatch between commitment and metadata"
+    },
+    {
+      code: 6124,
+      name: "NullifierHashMismatch",
+      msg: "Nullifier hash mismatch"
+    },
+    {
+      code: 6125,
       name: "BallotNotFound",
       msg: "Ballot not found"
     },
     {
-      code: 6117,
+      code: 6126,
       name: "BallotNotActive",
       msg: "Ballot is not active for voting"
     },
     {
-      code: 6118,
+      code: 6127,
       name: "BallotNotResolved",
       msg: "Ballot has not been resolved yet"
     },
     {
-      code: 6119,
+      code: 6128,
       name: "BallotNotFinalized",
       msg: "Ballot has not been finalized yet"
     },
     {
-      code: 6120,
+      code: 6129,
       name: "BallotAlreadyFinalized",
       msg: "Ballot has already been finalized"
     },
     {
-      code: 6121,
+      code: 6130,
       name: "BallotAlreadyResolved",
       msg: "Ballot is already resolved"
     },
     {
-      code: 6122,
+      code: 6131,
       name: "InvalidVoteOptionRange",
       msg: "Invalid vote option - exceeds num_options"
     },
     {
-      code: 6123,
+      code: 6132,
       name: "VoteNullifierNotFound",
       msg: "Vote nullifier not found - user must vote before changing"
     },
     {
-      code: 6124,
+      code: 6133,
       name: "InvalidBindingMode",
       msg: "Invalid binding mode for this operation"
     },
     {
-      code: 6125,
+      code: 6134,
       name: "InvalidVoteTypeForBallot",
       msg: "Invalid vote type for this ballot"
     },
     {
-      code: 6126,
+      code: 6135,
       name: "InvalidRevealModeForOperation",
       msg: "Invalid reveal mode for this operation"
     },
     {
-      code: 6127,
+      code: 6136,
       name: "NotEligible",
       msg: "User not eligible to vote (not in whitelist)"
     },
     {
-      code: 6128,
+      code: 6137,
       name: "ZeroAmount",
       msg: "Cannot vote with zero amount"
     },
     {
-      code: 6129,
+      code: 6138,
       name: "QuorumNotMet",
       msg: "Quorum threshold not met"
     },
     {
-      code: 6130,
+      code: 6139,
       name: "InvalidOutcomeValue",
       msg: "Invalid outcome value"
     },
     {
-      code: 6131,
+      code: 6140,
       name: "ClaimsNotAllowed",
       msg: "Claims not allowed for Snapshot mode"
     },
     {
-      code: 6132,
+      code: 6141,
       name: "ClaimAlreadyProcessed",
       msg: "Position already claimed (nullifier exists)"
     },
     {
-      code: 6133,
+      code: 6142,
       name: "ClaimDeadlinePassed",
       msg: "Claim deadline has passed"
     },
     {
-      code: 6134,
+      code: 6143,
       name: "TimelockNotExpired",
       msg: "Timelock has not expired yet"
     },
     {
-      code: 6135,
+      code: 6144,
       name: "InvalidDecryptionKey",
       msg: "Invalid decryption key - does not match time_lock_pubkey"
     },
     {
-      code: 6136,
+      code: 6145,
       name: "InvalidAttestationSignature",
       msg: "Invalid attestation signature"
     },
     {
-      code: 6137,
+      code: 6146,
       name: "InvalidWeightFormula",
       msg: "Invalid weight formula - evaluation error"
     },
     {
-      code: 6138,
+      code: 6147,
       name: "PositionCloseNotAllowed",
       msg: "Position close not allowed outside voting period"
     },
     {
-      code: 6139,
+      code: 6148,
       name: "InvalidSnapshotSlot",
       msg: "Invalid snapshot slot"
     },
     {
-      code: 6140,
+      code: 6149,
       name: "InvalidBallotTiming",
       msg: "Invalid ballot timing - start_time must be before end_time"
     },
     {
-      code: 6141,
+      code: 6150,
       name: "InvalidNumOptions",
       msg: "Invalid number of options - must be between 1 and 16"
     },
     {
-      code: 6142,
+      code: 6151,
       name: "VotingNotStarted",
       msg: "Voting period has not started yet"
     },
     {
-      code: 6143,
+      code: 6152,
       name: "VotingEnded",
       msg: "Voting period has ended"
     },
     {
-      code: 6144,
+      code: 6153,
       name: "UnauthorizedResolver",
       msg: "Only authority can resolve in Authority mode"
     },
     {
-      code: 6145,
+      code: 6154,
       name: "OracleOutcomeNotSubmitted",
       msg: "Oracle has not submitted outcome"
     },
     {
-      code: 6146,
+      code: 6155,
       name: "TallyNotDecrypted",
       msg: "Tally must be decrypted before resolution"
     },
     {
-      code: 6147,
+      code: 6156,
       name: "InvalidEligibilityProof",
       msg: "Invalid eligibility proof"
     },
     {
-      code: 6148,
+      code: 6157,
       name: "WeightFormulaTooLong",
       msg: "Weight formula too long"
     },
     {
-      code: 6149,
+      code: 6158,
       name: "TooManyWeightParams",
       msg: "Too many weight parameters"
     },
     {
-      code: 6150,
+      code: 6159,
       name: "ProtocolFeeExceedsMax",
       msg: "Protocol fee exceeds maximum (10000 bps = 100%)"
+    },
+    {
+      code: 6160,
+      name: "BallotIdMismatch",
+      msg: "Ballot ID mismatch - does not match expected ballot"
     }
   ],
   types: [
@@ -17414,6 +18022,62 @@ var cloakcraft_default = {
             name: "commitment_inclusion_proof",
             docs: [
               "Inclusion proof for commitment (from getInclusionProofByHash)"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "commitment_address_tree_info",
+            docs: [
+              "Address tree info for commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      name: "LightVerifyVoteCommitmentParams",
+      docs: [
+        "Parameters for vote commitment inclusion verification"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "commitment_account_hash",
+            docs: [
+              "Account hash of commitment to verify (from Light Protocol indexer)"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "commitment_merkle_context",
+            docs: [
+              "Merkle context proving commitment exists"
+            ],
+            type: {
+              defined: {
+                name: "VoteCommitmentMerkleContext"
+              }
+            }
+          },
+          {
+            name: "commitment_inclusion_proof",
+            docs: [
+              "Inclusion proof for commitment"
             ],
             type: {
               defined: {
@@ -18994,6 +19658,33 @@ var cloakcraft_default = {
       }
     },
     {
+      name: "VoteCommitmentMerkleContext",
+      docs: [
+        "Merkle context for commitment verification"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "merkle_tree_pubkey_index",
+            type: "u8"
+          },
+          {
+            name: "queue_pubkey_index",
+            type: "u8"
+          },
+          {
+            name: "leaf_index",
+            type: "u32"
+          },
+          {
+            name: "root_index",
+            type: "u16"
+          }
+        ]
+      }
+    },
+    {
       name: "VoteType",
       docs: [
         "Vote type - how votes are counted"
@@ -19039,6 +19730,10 @@ var cloakcraft_default = {
           {
             name: "root_index",
             type: "u16"
+          },
+          {
+            name: "prove_by_index",
+            type: "bool"
           }
         ]
       }
@@ -21322,11 +22017,19 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
   console.log("[Transact] Fetching commitment inclusion proof...");
   const commitmentProof = await lightProtocol.getInclusionProofByHash(params.input.accountHash);
   console.log("[Transact] Commitment proof:", JSON.stringify(commitmentProof, null, 2));
+  const commitmentTree = new import_web39.PublicKey(commitmentProof.treeInfo.tree);
+  const commitmentQueue = new import_web39.PublicKey(commitmentProof.treeInfo.queue);
+  console.log("[Transact] Fetching inclusion validity proof...");
+  const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+    params.input.accountHash,
+    commitmentTree,
+    commitmentQueue
+  );
+  const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
+  console.log("[Transact] proveByIndex:", proveByIndex);
   console.log("[Transact] Fetching nullifier non-inclusion proof...");
   const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, nullifier);
   const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-  const commitmentTree = new import_web39.PublicKey(commitmentProof.treeInfo.tree);
-  const commitmentQueue = new import_web39.PublicKey(commitmentProof.treeInfo.queue);
   const commitmentCpiContext = commitmentProof.treeInfo.cpiContext ? new import_web39.PublicKey(commitmentProof.treeInfo.cpiContext) : null;
   const { SystemAccountMetaConfig: SystemAccountMetaConfig2, PackedAccounts: PackedAccounts2 } = await import("@lightprotocol/stateless.js");
   const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await Promise.resolve().then(() => (init_constants(), constants_exports));
@@ -21351,11 +22054,12 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
       // STATE tree from proof (for data/merkle verification)
       queuePubkeyIndex: commitmentQueueIndex,
       // Queue from proof
-      leafIndex: commitmentProof.leafIndex,
-      rootIndex: commitmentProof.rootIndex
+      leafIndex: inclusionValidityProof.leafIndices?.[0] ?? commitmentProof.leafIndex,
+      rootIndex: inclusionValidityProof.rootIndices?.[0] ?? commitmentProof.rootIndex,
+      proveByIndex
     },
-    // SECURITY: Convert commitment inclusion proof (Groth16 SNARK)
-    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    // SECURITY: Convert commitment inclusion proof (compressed ZK proof from validity proof)
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProof),
     // VERIFY existing commitment: Address tree for CPI address derivation
     commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
@@ -21619,8 +22323,16 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
       if (commitmentProof.treeInfo.cpiContext) {
         packedAccounts.insertOrGet(new import_web39.PublicKey(commitmentProof.treeInfo.cpiContext));
       }
+      const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+        input.accountHash,
+        commitmentTree,
+        commitmentQueue
+      );
+      const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
       return {
         commitmentProof,
+        inclusionValidityProof,
+        proveByIndex,
         treeIndex,
         queueIndex
       };
@@ -21667,10 +22379,11 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
         commitmentMerkleContext: {
           merkleTreePubkeyIndex: proof.treeIndex,
           queuePubkeyIndex: proof.queueIndex,
-          leafIndex: proof.commitmentProof.leafIndex,
-          rootIndex: proof.commitmentProof.rootIndex
+          leafIndex: proof.inclusionValidityProof.leafIndices?.[0] ?? proof.commitmentProof.leafIndex,
+          rootIndex: proof.inclusionValidityProof.rootIndices?.[0] ?? proof.commitmentProof.rootIndex,
+          proveByIndex: proof.proveByIndex
         },
-        commitmentInclusionProof: LightProtocol.convertCompressedProof(proof.commitmentProof),
+        commitmentInclusionProof: LightProtocol.convertCompressedProof(proof.inclusionValidityProof),
         commitmentAddressTreeInfo: {
           addressMerkleTreePubkeyIndex: addressTreeIndex,
           addressQueuePubkeyIndex: addressTreeIndex,
@@ -23602,11 +24315,19 @@ var CloakCraftClient = class {
     console.log("[buildLightProtocolParams] Fetching commitment inclusion proof...");
     const commitmentProof = await lightProtocol.getInclusionProofByHash(accountHash);
     console.log("[buildLightProtocolParams] Commitment proof leaf index:", commitmentProof.leafIndex);
+    const commitmentTree = new import_web316.PublicKey(commitmentProof.treeInfo.tree);
+    const commitmentQueue = new import_web316.PublicKey(commitmentProof.treeInfo.queue);
+    console.log("[buildLightProtocolParams] Fetching inclusion validity proof...");
+    const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+      accountHash,
+      commitmentTree,
+      commitmentQueue
+    );
+    const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
+    console.log("[buildLightProtocolParams] proveByIndex:", proveByIndex);
     console.log("[buildLightProtocolParams] Fetching nullifier non-inclusion proof...");
     const nullifierAddress = lightProtocol.deriveNullifierAddress(pool, nullifier);
     const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-    const commitmentTree = new import_web316.PublicKey(commitmentProof.treeInfo.tree);
-    const commitmentQueue = new import_web316.PublicKey(commitmentProof.treeInfo.queue);
     const systemConfig = SystemAccountMetaConfig2.new(this.programId);
     const packedAccounts = PackedAccounts2.newWithSystemAccountsV2(systemConfig);
     const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES2.OUTPUT_QUEUE);
@@ -23624,15 +24345,18 @@ var CloakCraftClient = class {
       isWritable: Boolean(acc.isWritable),
       isSigner: Boolean(acc.isSigner)
     }));
+    const leafIndex = inclusionValidityProof.leafIndices?.[0] ?? commitmentProof.leafIndex;
+    const rootIndex = inclusionValidityProof.rootIndices?.[0] ?? commitmentProof.rootIndex;
     const lightVerifyParams = {
       commitmentAccountHash: Array.from(new import_web316.PublicKey(accountHash).toBytes()),
       commitmentMerkleContext: {
         merkleTreePubkeyIndex: commitmentStateTreeIndex,
         queuePubkeyIndex: commitmentQueueIndex,
-        leafIndex: commitmentProof.leafIndex,
-        rootIndex: commitmentProof.rootIndex
+        leafIndex,
+        rootIndex,
+        proveByIndex
       },
-      commitmentInclusionProof: LightProtocol2.convertCompressedProof(commitmentProof),
+      commitmentInclusionProof: LightProtocol2.convertCompressedProof(inclusionValidityProof),
       commitmentAddressTreeInfo: {
         addressMerkleTreePubkeyIndex: addressTreeIndex,
         addressQueuePubkeyIndex: addressTreeIndex,

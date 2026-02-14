@@ -255,6 +255,7 @@ export class CloakCraftClient {
         queuePubkeyIndex: number;
         leafIndex: number;
         rootIndex: number;
+        proveByIndex: boolean;
       };
       commitmentInclusionProof: { a: number[]; b: number[]; c: number[] };
       commitmentAddressTreeInfo: {
@@ -280,19 +281,27 @@ export class CloakCraftClient {
 
     const lightProtocol = new LightProtocol(rpcUrl, this.programId);
 
-    // Get commitment inclusion proof
+    // Get commitment inclusion proof (for tree/queue discovery)
     console.log('[buildLightProtocolParams] Fetching commitment inclusion proof...');
     const commitmentProof = await lightProtocol.getInclusionProofByHash(accountHash);
     console.log('[buildLightProtocolParams] Commitment proof leaf index:', commitmentProof.leafIndex);
+
+    // Extract trees from proof
+    const commitmentTree = new PublicKey(commitmentProof.treeInfo.tree);
+    const commitmentQueue = new PublicKey(commitmentProof.treeInfo.queue);
+
+    // Get inclusion validity proof (compressed ZK proof for on-chain verification)
+    console.log('[buildLightProtocolParams] Fetching inclusion validity proof...');
+    const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+      accountHash, commitmentTree, commitmentQueue
+    );
+    const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
+    console.log('[buildLightProtocolParams] proveByIndex:', proveByIndex);
 
     // Get nullifier non-inclusion proof
     console.log('[buildLightProtocolParams] Fetching nullifier non-inclusion proof...');
     const nullifierAddress = lightProtocol.deriveNullifierAddress(pool, nullifier);
     const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-
-    // Extract trees from proof
-    const commitmentTree = new PublicKey(commitmentProof.treeInfo.tree);
-    const commitmentQueue = new PublicKey(commitmentProof.treeInfo.queue);
 
     // Build packed accounts
     const systemConfig = SystemAccountMetaConfig.new(this.programId);
@@ -324,16 +333,20 @@ export class CloakCraftClient {
       isSigner: Boolean(acc.isSigner),
     }));
 
-    // Build verify params
+    // Build verify params using validity proof data
+    const leafIndex = inclusionValidityProof.leafIndices?.[0] ?? commitmentProof.leafIndex;
+    const rootIndex = inclusionValidityProof.rootIndices?.[0] ?? commitmentProof.rootIndex;
+
     const lightVerifyParams = {
       commitmentAccountHash: Array.from(new PublicKey(accountHash).toBytes()),
       commitmentMerkleContext: {
         merkleTreePubkeyIndex: commitmentStateTreeIndex,
         queuePubkeyIndex: commitmentQueueIndex,
-        leafIndex: commitmentProof.leafIndex,
-        rootIndex: commitmentProof.rootIndex,
+        leafIndex,
+        rootIndex,
+        proveByIndex,
       },
-      commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+      commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProof),
       commitmentAddressTreeInfo: {
         addressMerkleTreePubkeyIndex: addressTreeIndex,
         addressQueuePubkeyIndex: addressTreeIndex,

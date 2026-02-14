@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useWallet as useSolanaWallet } from '@solana/wallet-adapter-react';
 import { useWallet, useCloakCraft, WALLET_DERIVATION_MESSAGE } from '@cloakcraft/hooks';
-import { Eye, EyeOff, Plus, Loader2, Key } from 'lucide-react';
+import { Eye, EyeOff, Plus, Loader2, Key, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,7 +14,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
+import { copyToClipboard, truncateAddress } from '@/lib/utils';
 
 export function StealthWalletButton() {
   const { publicKey: solanaPublicKey, signMessage } = useSolanaWallet();
@@ -43,6 +52,23 @@ export function StealthWalletButton() {
       setIsDeriving(false);
     }
   }, [signMessage, solanaPublicKey, deriveFromSignature]);
+
+  const stealthPubKeyHex = useMemo(() => {
+    if (!publicKey) return null;
+    const xHex = Buffer.from(publicKey.x).toString('hex');
+    const yHex = Buffer.from(publicKey.y).toString('hex');
+    return xHex + yHex;
+  }, [publicKey]);
+
+  const handleCopy = useCallback(async () => {
+    if (!stealthPubKeyHex) return;
+    const success = await copyToClipboard(stealthPubKeyHex);
+    if (success) {
+      toast.success('Stealth wallet address copied to clipboard');
+    } else {
+      toast.error('Failed to copy address');
+    }
+  }, [stealthPubKeyHex]);
 
   // Not connected to Solana wallet
   if (!solanaPublicKey) {
@@ -116,10 +142,22 @@ export function StealthWalletButton() {
   // Stealth wallet connected
   return (
     <div className="flex items-center gap-2">
-      <Badge variant="outline" className="gap-1">
-        <Eye className="h-3 w-3" />
-        Stealth
-      </Badge>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" className="gap-1 font-mono text-xs">
+            <Eye className="h-3 w-3" />
+            {stealthPubKeyHex ? truncateAddress(stealthPubKeyHex, 4) : 'Stealth'}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuLabel>Stealth Wallet</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={handleCopy}>
+            <Copy className="mr-2 h-4 w-4" />
+            Copy Stealth Address
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       {!isProverReady && (
         <Badge variant="secondary" className="gap-1">
           <Loader2 className="h-3 w-3 animate-spin" />

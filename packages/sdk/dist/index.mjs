@@ -1,7 +1,4 @@
 import {
-  cloakcraft_default
-} from "./chunk-QO6UOFEI.mjs";
-import {
   DEVNET_LIGHT_TREES,
   LightClient,
   LightCommitmentClient,
@@ -22,7 +19,7 @@ import {
   buildShieldInstructions,
   buildShieldInstructionsForVersionedTx,
   buildShieldWithProgram
-} from "./chunk-MAO47QW7.mjs";
+} from "./chunk-2KMHQKJ3.mjs";
 import {
   buildAddLiquidityWithProgram,
   buildClosePendingOperationWithProgram,
@@ -34,7 +31,7 @@ import {
   canonicalTokenOrder,
   derivePendingOperationPda,
   generateOperationId
-} from "./chunk-Y7AZCOB6.mjs";
+} from "./chunk-HBYOZALJ.mjs";
 import {
   DOMAIN_ACTION_NULLIFIER,
   DOMAIN_COMMITMENT,
@@ -99,7 +96,7 @@ import {
 } from "./chunk-GZDL4HRF.mjs";
 import {
   LightProtocol
-} from "./chunk-E6R2YCRL.mjs";
+} from "./chunk-4CDKJ75Y.mjs";
 import {
   BPS_DIVISOR,
   DEFAULT_FEE_CONFIG,
@@ -146,6 +143,15803 @@ import {
 } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { Program, AnchorProvider, BN as BN4 } from "@coral-xyz/anchor";
+
+// src/idl/cloakcraft.json
+var cloakcraft_default = {
+  address: "2VWF9TxMFgzHwbd5WPpYKoqHvtzk3fN66Ka3tVV82nZG",
+  metadata: {
+    name: "cloakcraft",
+    version: "0.1.0",
+    spec: "0.1.0"
+  },
+  instructions: [
+    {
+      name: "add_market",
+      docs: [
+        "Add a trading market to a perps pool",
+        "",
+        "Creates a new trading pair (e.g., SOL/USD)."
+      ],
+      discriminator: [
+        41,
+        137,
+        185,
+        126,
+        69,
+        139,
+        254,
+        55
+      ],
+      accounts: [
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool account (boxed due to large size)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_market",
+          docs: [
+            "Market account"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              },
+              {
+                kind: "arg",
+                path: "market_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Pool authority"
+          ],
+          signer: true,
+          relations: [
+            "perps_pool"
+          ]
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "market_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "base_token_index",
+          type: "u8"
+        },
+        {
+          name: "quote_token_index",
+          type: "u8"
+        },
+        {
+          name: "max_position_size",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "add_token_to_pool",
+      docs: [
+        "Add a token to a perps pool",
+        "",
+        "Adds a new supported token with its own vault and Pyth price feed."
+      ],
+      discriminator: [
+        35,
+        121,
+        233,
+        111,
+        213,
+        155,
+        197,
+        192
+      ],
+      accounts: [
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool account (boxed due to large size)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "token_mint",
+          docs: [
+            "Token mint to add"
+          ]
+        },
+        {
+          name: "token_vault",
+          docs: [
+            "Token vault for the pool (ATA owned by pool)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "account",
+                path: "perps_pool"
+              },
+              {
+                kind: "const",
+                value: [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                kind: "account",
+                path: "token_mint"
+              }
+            ],
+            program: {
+              kind: "const",
+              value: [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Pool authority"
+          ],
+          signer: true,
+          relations: [
+            "perps_pool"
+          ]
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          name: "associated_token_program",
+          docs: [
+            "Associated token program"
+          ],
+          address: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        }
+      ],
+      args: [
+        {
+          name: "pyth_feed_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "append_verification_key_data",
+      docs: [
+        "Append verification key data to an existing account",
+        "Used for chunked upload of large VKs"
+      ],
+      discriminator: [
+        21,
+        242,
+        226,
+        2,
+        197,
+        148,
+        11,
+        181
+      ],
+      accounts: [
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key account (must already be initialized)",
+            "Realloc to max size to support larger VK updates"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "arg",
+                path: "circuit_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority"
+          ],
+          signer: true,
+          relations: [
+            "verification_key"
+          ]
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for reallocation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program for reallocation"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "circuit_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "data_chunk",
+          type: "bytes"
+        }
+      ]
+    },
+    {
+      name: "cancel_order",
+      docs: [
+        "Cancel an order"
+      ],
+      discriminator: [
+        95,
+        129,
+        237,
+        240,
+        8,
+        49,
+        223,
+        132
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "commitment_counter",
+          docs: [
+            "Commitment counter for this pool"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "order",
+          docs: [
+            "Order being cancelled"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                kind: "arg",
+                path: "order_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key (boxed to reduce stack usage)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer/maker (pays for compressed account creation)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "escrow_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "order_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "refund_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "encrypted_note",
+          type: "bytes"
+        },
+        {
+          name: "light_params",
+          type: {
+            option: {
+              defined: {
+                name: "LightCancelOrderParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "check_perps_profit_bound",
+      docs: [
+        "Check if a position is at profit bound"
+      ],
+      discriminator: [
+        242,
+        173,
+        27,
+        80,
+        189,
+        52,
+        119,
+        168
+      ],
+      accounts: [
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_market",
+          docs: [
+            "Market"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              },
+              {
+                kind: "account",
+                path: "perps_market.market_id",
+                account: "PerpsMarket"
+              }
+            ]
+          }
+        },
+        {
+          name: "oracle",
+          docs: [
+            "Oracle for current price"
+          ]
+        },
+        {
+          name: "keeper",
+          docs: [
+            "Keeper"
+          ],
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "position_margin",
+          type: "u64"
+        },
+        {
+          name: "position_size",
+          type: "u64"
+        },
+        {
+          name: "entry_price",
+          type: "u64"
+        },
+        {
+          name: "is_long",
+          type: "bool"
+        },
+        {
+          name: "current_price",
+          type: "u64"
+        }
+      ],
+      returns: "bool"
+    },
+    {
+      name: "close_pending_operation",
+      docs: [
+        "Close pending operation after all nullifiers and commitments created or expired"
+      ],
+      discriminator: [
+        251,
+        131,
+        94,
+        64,
+        37,
+        41,
+        43,
+        157
+      ],
+      accounts: [
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (receives rent back)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "create_ballot",
+      docs: [
+        "Create a voting ballot",
+        "",
+        "Initializes a new ballot with the specified configuration.",
+        "Supports Snapshot (tokens liquid) and SpendToVote (tokens locked) modes.",
+        "For SpendToVote mode, creates a token vault."
+      ],
+      discriminator: [
+        143,
+        185,
+        213,
+        35,
+        169,
+        149,
+        14,
+        28
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot account to create"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "token_mint",
+          docs: [
+            "Token mint for voting power"
+          ]
+        },
+        {
+          name: "ballot_vault",
+          docs: [
+            "Token vault for SpendToVote mode (optional, only needed for SpendToVote)",
+            "Must be a PDA owned by this program"
+          ],
+          writable: true,
+          optional: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority who creates and can manage the ballot"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for account creation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "config",
+          type: {
+            defined: {
+              name: "BallotConfigInput"
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "create_commitment",
+      docs: [
+        "Create a commitment for a pending operation",
+        "",
+        "This is a generic instruction that can be used by any multi-phase operation",
+        "to create commitments one at a time. Each call creates ONE commitment to stay",
+        "within transaction size limits.",
+        "",
+        "IMPORTANT: All nullifiers must be created before any commitments."
+      ],
+      discriminator: [
+        232,
+        31,
+        118,
+        65,
+        229,
+        2,
+        2,
+        170
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool for this commitment"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "commitment_counter",
+          docs: [
+            "Commitment counter for the pool"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must be same as operation creator)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "commitment_index",
+          type: "u8"
+        },
+        {
+          name: "stealth_ephemeral_pubkey",
+          type: {
+            array: [
+              "u8",
+              64
+            ]
+          }
+        },
+        {
+          name: "encrypted_note",
+          type: "bytes"
+        },
+        {
+          name: "light_params",
+          type: {
+            defined: {
+              name: "LightCreateCommitmentParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "create_nullifier",
+      docs: [
+        "Create a nullifier for a pending operation",
+        "",
+        "This is a generic instruction that can be used by any multi-phase operation",
+        "to create nullifiers one at a time. Each call creates ONE nullifier to stay",
+        "within transaction size limits.",
+        "",
+        "Must be called after the operation's Phase 1 (e.g., add_liquidity) and before",
+        "any commitments can be created."
+      ],
+      discriminator: [
+        171,
+        144,
+        50,
+        154,
+        87,
+        170,
+        57,
+        66
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool for this nullifier"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must be same as operation creator)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "nullifier_index",
+          type: "u8"
+        },
+        {
+          name: "light_params",
+          type: {
+            defined: {
+              name: "LightCreateNullifierParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "create_nullifier_and_pending",
+      docs: [
+        "Create Nullifier and Pending Operation Phase 2 (GENERIC)",
+        "",
+        "CRITICAL POINT: After this, nullifier exists and outputs MUST be created.",
+        "Works for ALL operations: transfer, swap, add/remove liquidity, market.",
+        "",
+        "Phase 2: Create nullifier from pending operation (APPEND PATTERN)",
+        "",
+        "SECURITY: Reads nullifier from PendingOperation (created in Phase 0).",
+        "This prevents nullifier swap attacks - attacker cannot substitute a different nullifier.",
+        "",
+        "For multi-input operations (add_liquidity), call this instruction multiple times:",
+        "- First call with nullifier_index=0 for input A",
+        "- Second call with nullifier_index=1 for input B"
+      ],
+      discriminator: [
+        72,
+        148,
+        152,
+        177,
+        52,
+        246,
+        217,
+        202
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool for this nullifier"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)",
+            "Note: commitment_verified and nullifier_created constraints removed - now checked per-input via bitmask in function"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for nullifier creation, must match pending operation)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "nullifier_index",
+          type: "u8"
+        },
+        {
+          name: "light_params",
+          type: {
+            defined: {
+              name: "LightCreateNullifierAndPendingParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "create_order",
+      docs: [
+        "Create a limit order"
+      ],
+      discriminator: [
+        141,
+        54,
+        37,
+        207,
+        237,
+        210,
+        250,
+        215
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool for the offer token (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "commitment_counter",
+          docs: [
+            "Commitment counter for this pool"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "order",
+          docs: [
+            "Order account"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                kind: "arg",
+                path: "order_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key (boxed to reduce stack usage)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer (pays for compressed account creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "order_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "escrow_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "terms_hash",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "expiry",
+          type: "i64"
+        },
+        {
+          name: "encrypted_escrow",
+          type: "bytes"
+        },
+        {
+          name: "light_params",
+          type: {
+            option: {
+              defined: {
+                name: "LightOrderParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof",
+      docs: [
+        "Create Pending with Proof Phase 0 - verify ZK proof and create PendingOperation (Transfer-specific)",
+        "",
+        "Append Pattern multi-phase operation flow:",
+        "Phase 0 (this): Verify ZK proof + Create PendingOperation (binds all phases)",
+        "Phase 1: Verify commitment exists (GENERIC, binds to Phase 0)",
+        "Phase 2: Create nullifier (GENERIC, binds to Phase 0)",
+        "Phase 3: Process unshield (operation-specific)",
+        "Phase 4+: Create commitments (GENERIC)",
+        "Final: Close pending operation (GENERIC)",
+        "",
+        "SECURITY: ZK proof verified, binding fields stored in PendingOperation.",
+        "Fee amount is a public input verified in the ZK proof."
+      ],
+      discriminator: [
+        115,
+        102,
+        69,
+        37,
+        52,
+        183,
+        212,
+        240
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for the circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (created in this instruction)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for PDA creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "input_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "out_commitments",
+          type: {
+            vec: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          }
+        },
+        {
+          name: "output_recipients",
+          type: {
+            vec: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          }
+        },
+        {
+          name: "output_amounts",
+          type: {
+            vec: "u64"
+          }
+        },
+        {
+          name: "output_randomness",
+          type: {
+            vec: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          }
+        },
+        {
+          name: "stealth_ephemeral_pubkeys",
+          type: {
+            vec: {
+              array: [
+                "u8",
+                64
+              ]
+            }
+          }
+        },
+        {
+          name: "transfer_amount",
+          type: "u64"
+        },
+        {
+          name: "unshield_amount",
+          type: "u64"
+        },
+        {
+          name: "fee_amount",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_add_liquidity",
+      docs: [
+        "Create Pending with Proof Phase 0 - Add Liquidity (Append Pattern)",
+        "",
+        "Flow:",
+        "Phase 0 (this): Verify ZK proof + Create PendingOperation",
+        "Phase 1a: verify_commitment_exists(index=0) for deposit A",
+        "Phase 1b: verify_commitment_exists(index=1) for deposit B",
+        "Phase 2a: create_nullifier_and_pending(index=0) for deposit A",
+        "Phase 2b: create_nullifier_and_pending(index=1) for deposit B",
+        "Phase 3: execute_add_liquidity to update AMM state",
+        "Phase 4+: create_commitment for LP token and change outputs",
+        "Final: close_pending_operation"
+      ],
+      discriminator: [
+        65,
+        218,
+        153,
+        125,
+        62,
+        172,
+        209,
+        39
+      ],
+      accounts: [
+        {
+          name: "pool_a",
+          docs: [
+            "Token A pool (for deposit A)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool_a.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pool_b",
+          docs: [
+            "Token B pool (for deposit B)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool_b.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "lp_pool",
+          docs: [
+            "LP token pool (where LP tokens are minted to)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "lp_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "amm_pool",
+          docs: [
+            "AMM pool state"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_a_mint",
+                account: "AmmPool"
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_b_mint",
+                account: "AmmPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for the add liquidity circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (created in this instruction)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for PDA creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "input_commitment_a",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "input_commitment_b",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "nullifier_a",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "nullifier_b",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "lp_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "change_a_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "change_b_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "deposit_a",
+          type: "u64"
+        },
+        {
+          name: "deposit_b",
+          type: "u64"
+        },
+        {
+          name: "lp_amount",
+          type: "u64"
+        },
+        {
+          name: "min_lp_amount",
+          type: "u64"
+        },
+        {
+          name: "num_commitments",
+          type: "u8"
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_add_perps_liquidity",
+      docs: [
+        "Create Pending with Proof Phase 0 - Add Perps Liquidity"
+      ],
+      discriminator: [
+        45,
+        13,
+        145,
+        184,
+        173,
+        121,
+        130,
+        145
+      ],
+      accounts: [
+        {
+          name: "deposit_pool",
+          docs: [
+            "Deposit token pool (where the token commitment is spent from)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "deposit_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "lp_pool",
+          docs: [
+            "LP token pool (where LP token commitment will be created)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "lp_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for the add perps liquidity circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (created in this instruction)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for PDA creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "input_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "lp_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "token_index",
+          type: "u8"
+        },
+        {
+          name: "deposit_amount",
+          type: "u64"
+        },
+        {
+          name: "lp_amount_minted",
+          type: "u64"
+        },
+        {
+          name: "fee_amount",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_change_vote_snapshot",
+      docs: [
+        "Create Pending with Proof - Change Vote Snapshot (Phase 0)",
+        "",
+        "Atomic vote change: nullifies old vote_commitment and creates new one."
+      ],
+      discriminator: [
+        184,
+        170,
+        141,
+        161,
+        120,
+        153,
+        54,
+        35
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot being voted on"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for change_vote_snapshot circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "const",
+                value: [
+                  99,
+                  104,
+                  97,
+                  110,
+                  103,
+                  101,
+                  95,
+                  118,
+                  111,
+                  116,
+                  101,
+                  95,
+                  115,
+                  110,
+                  97,
+                  112,
+                  115,
+                  104,
+                  111,
+                  116,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation account (created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer executing the transaction"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for account creation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "old_vote_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "old_vote_commitment_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "new_vote_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "vote_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "old_vote_choice",
+          type: "u64"
+        },
+        {
+          name: "new_vote_choice",
+          type: "u64"
+        },
+        {
+          name: "weight",
+          type: "u64"
+        },
+        {
+          name: "old_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "new_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "output_randomness",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_change_vote_spend",
+      docs: [
+        "Create Pending with Proof - Change Vote Spend (Phase 0)",
+        "",
+        "SpendToVote mode: Atomic vote change (old position -> new position)."
+      ],
+      discriminator: [
+        116,
+        105,
+        71,
+        15,
+        101,
+        194,
+        230,
+        208
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot being voted on"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pool",
+          docs: [
+            "Token pool (for verification reference)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "ballot.token_mint",
+                account: "Ballot"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for change_vote_spend circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "const",
+                value: [
+                  99,
+                  104,
+                  97,
+                  110,
+                  103,
+                  101,
+                  95,
+                  118,
+                  111,
+                  116,
+                  101,
+                  95,
+                  115,
+                  112,
+                  101,
+                  110,
+                  100,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation account (created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer executing the transaction"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for account creation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "old_position_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "old_position_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "new_position_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "old_vote_choice",
+          type: "u64"
+        },
+        {
+          name: "new_vote_choice",
+          type: "u64"
+        },
+        {
+          name: "amount",
+          type: "u64"
+        },
+        {
+          name: "weight",
+          type: "u64"
+        },
+        {
+          name: "old_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "new_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "output_randomness",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_claim",
+      docs: [
+        "Create Pending with Proof - Claim (Phase 0)",
+        "",
+        "Allows winners to claim their payout."
+      ],
+      discriminator: [
+        113,
+        180,
+        7,
+        31,
+        252,
+        1,
+        205,
+        4
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot (must be resolved)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for claim circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "const",
+                value: [
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation account (created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer executing the transaction"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for account creation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "position_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "position_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "payout_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "user_vote_choice",
+          type: "u64"
+        },
+        {
+          name: "user_weight",
+          type: "u64"
+        },
+        {
+          name: "gross_payout",
+          type: "u64"
+        },
+        {
+          name: "net_payout",
+          type: "u64"
+        },
+        {
+          name: "output_randomness",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_close_position",
+      docs: [
+        "Create Pending with Proof Phase 0 - Close Position"
+      ],
+      discriminator: [
+        18,
+        208,
+        74,
+        198,
+        104,
+        122,
+        129,
+        21
+      ],
+      accounts: [
+        {
+          name: "position_pool",
+          docs: [
+            "Position pool (where position commitment is read from)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "position_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "settlement_pool",
+          docs: [
+            "Settlement token pool (where settlement commitment goes)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "settlement_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_market",
+          docs: [
+            "Market being traded"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              },
+              {
+                kind: "account",
+                path: "perps_market.market_id",
+                account: "PerpsMarket"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for the close position circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (created in this instruction)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for PDA creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "position_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "position_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "settlement_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "is_long",
+          type: "bool"
+        },
+        {
+          name: "exit_price",
+          type: "u64"
+        },
+        {
+          name: "close_fee",
+          type: "u64"
+        },
+        {
+          name: "pnl_amount",
+          type: "u64"
+        },
+        {
+          name: "is_profit",
+          type: "bool"
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_close_vote_position",
+      docs: [
+        "Create Pending with Proof - Close Position (Phase 0)",
+        "",
+        "Allows closing position during voting to change vote or exit."
+      ],
+      discriminator: [
+        43,
+        87,
+        195,
+        136,
+        171,
+        106,
+        175,
+        37
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot (position is being closed)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for close_position circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "const",
+                value: [
+                  99,
+                  108,
+                  111,
+                  115,
+                  101,
+                  95,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation account (created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer executing the transaction"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for account creation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "position_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "position_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "token_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "vote_choice",
+          type: "u64"
+        },
+        {
+          name: "amount",
+          type: "u64"
+        },
+        {
+          name: "weight",
+          type: "u64"
+        },
+        {
+          name: "encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "output_randomness",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_consolidation",
+      docs: [
+        "Create Pending with Proof Phase 0 - Consolidation (Append Pattern)",
+        "",
+        "Consolidates up to 3 notes into 1 using the consolidate_3x1 circuit.",
+        "This is a FREE operation (no protocol fee) - just reorganizing user's own notes.",
+        "",
+        "Flow:",
+        "Phase 0 (this): Verify ZK consolidation proof + Create PendingOperation",
+        "Phase 1: verify_commitment_exists for each input (1-3 times)",
+        "Phase 2: create_nullifier_and_pending for each input (1-3 times)",
+        "Phase 3: (skipped - no unshield for consolidation)",
+        "Phase 4: create_commitment for single output",
+        "Final: close_pending_operation"
+      ],
+      discriminator: [
+        59,
+        97,
+        237,
+        177,
+        118,
+        164,
+        58,
+        81
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for the consolidate_3x1 circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (created in this instruction)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for PDA creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "num_inputs",
+          type: "u8"
+        },
+        {
+          name: "input_commitments",
+          type: {
+            vec: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          }
+        },
+        {
+          name: "nullifiers",
+          type: {
+            vec: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          }
+        },
+        {
+          name: "out_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "output_recipient",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "output_amount",
+          type: "u64"
+        },
+        {
+          name: "output_randomness",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "stealth_ephemeral_pubkey",
+          type: {
+            array: [
+              "u8",
+              64
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_liquidate",
+      docs: [
+        "Create Pending with Proof Phase 0 - Liquidate"
+      ],
+      discriminator: [
+        114,
+        140,
+        105,
+        161,
+        93,
+        58,
+        197,
+        244
+      ],
+      accounts: [
+        {
+          name: "settlement_pool",
+          docs: [
+            "Settlement pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "settlement_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_market",
+          docs: [
+            "Market"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              },
+              {
+                kind: "account",
+                path: "perps_market.market_id",
+                account: "PerpsMarket"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for liquidate circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "keeper",
+          docs: [
+            "Keeper (initiates liquidation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "position_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "position_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "owner_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "liquidator_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "current_price",
+          type: "u64"
+        },
+        {
+          name: "liquidator_reward",
+          type: "u64"
+        },
+        {
+          name: "owner_remainder",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_open_position",
+      docs: [
+        "Create Pending with Proof Phase 0 - Open Position",
+        "",
+        "Flow:",
+        "Phase 0 (this): Verify ZK proof + Create PendingOperation",
+        "Phase 1: verify_commitment_exists for margin",
+        "Phase 2: create_nullifier_and_pending for margin",
+        "Phase 3: execute_open_position to lock tokens",
+        "Phase 4: create_commitment for position",
+        "Final: close_pending_operation"
+      ],
+      discriminator: [
+        226,
+        174,
+        223,
+        251,
+        81,
+        153,
+        185,
+        125
+      ],
+      accounts: [
+        {
+          name: "margin_pool",
+          docs: [
+            "Margin token pool (where the margin commitment is spent from)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "margin_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "position_pool",
+          docs: [
+            "Position pool (where position commitments are stored)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "position_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_market",
+          docs: [
+            "Market being traded"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              },
+              {
+                kind: "account",
+                path: "perps_market.market_id",
+                account: "PerpsMarket"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for the open position circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (created in this instruction)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for PDA creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "input_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "position_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "change_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "is_long",
+          type: "bool"
+        },
+        {
+          name: "margin_amount",
+          type: "u64"
+        },
+        {
+          name: "leverage",
+          type: "u8"
+        },
+        {
+          name: "position_fee",
+          type: "u64"
+        },
+        {
+          name: "change_amount",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_remove_liquidity",
+      docs: [
+        "Create Pending with Proof Phase 0 - Remove Liquidity (Append Pattern)",
+        "",
+        "Flow:",
+        "Phase 0 (this): Verify ZK proof + Create PendingOperation",
+        "Phase 1: verify_commitment_exists for LP input",
+        "Phase 2: create_nullifier_and_pending for LP input",
+        "Phase 3: execute_remove_liquidity to update AMM state",
+        "Phase 4+: create_commitment for token outputs",
+        "Final: close_pending_operation"
+      ],
+      discriminator: [
+        60,
+        19,
+        211,
+        251,
+        49,
+        5,
+        103,
+        176
+      ],
+      accounts: [
+        {
+          name: "lp_pool",
+          docs: [
+            "LP token pool (where LP tokens are burned from)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "lp_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pool_a",
+          docs: [
+            "Token A pool (where output A goes)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool_a.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pool_b",
+          docs: [
+            "Token B pool (where output B goes)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool_b.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "amm_pool",
+          docs: [
+            "AMM pool state"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_a_mint",
+                account: "AmmPool"
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_b_mint",
+                account: "AmmPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for the remove liquidity circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (created in this instruction)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for PDA creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "lp_input_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "lp_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "out_a_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "out_b_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "old_state_hash",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "new_state_hash",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "lp_amount_burned",
+          type: "u64"
+        },
+        {
+          name: "withdraw_a_amount",
+          type: "u64"
+        },
+        {
+          name: "withdraw_b_amount",
+          type: "u64"
+        },
+        {
+          name: "num_commitments",
+          type: "u8"
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_remove_perps_liquidity",
+      docs: [
+        "Create Pending with Proof Phase 0 - Remove Perps Liquidity"
+      ],
+      discriminator: [
+        122,
+        52,
+        28,
+        5,
+        51,
+        176,
+        82,
+        219
+      ],
+      accounts: [
+        {
+          name: "withdrawal_pool",
+          docs: [
+            "Withdrawal token pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "withdrawal_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "lp_pool",
+          docs: [
+            "LP token pool (for LP input and change commitments)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "lp_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for the remove perps liquidity circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (created in this instruction)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for PDA creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "lp_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "lp_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "out_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "change_lp_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "token_index",
+          type: "u8"
+        },
+        {
+          name: "withdraw_amount",
+          type: "u64"
+        },
+        {
+          name: "lp_amount_burned",
+          type: "u64"
+        },
+        {
+          name: "fee_amount",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_swap",
+      docs: [
+        "Create Pending with Proof Phase 0 - Swap (Append Pattern)",
+        "",
+        "Flow:",
+        "Phase 0 (this): Verify ZK proof + Create PendingOperation",
+        "Phase 1: verify_commitment_exists for input",
+        "Phase 2: create_nullifier_and_pending for input",
+        "Phase 3: execute_swap to update AMM state",
+        "Phase 4+: create_commitment for outputs",
+        "Final: close_pending_operation"
+      ],
+      discriminator: [
+        250,
+        231,
+        89,
+        171,
+        94,
+        41,
+        47,
+        245
+      ],
+      accounts: [
+        {
+          name: "input_pool",
+          docs: [
+            "Input token pool (where the input commitment is spent from)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "input_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "output_pool",
+          docs: [
+            "Output token pool (where the swapped tokens go)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "output_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "amm_pool",
+          docs: [
+            "AMM pool state"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_a_mint",
+                account: "AmmPool"
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_b_mint",
+                account: "AmmPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for the swap circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (created in this instruction)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for PDA creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "input_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "out_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "change_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "min_output",
+          type: "u64"
+        },
+        {
+          name: "swap_amount",
+          type: "u64"
+        },
+        {
+          name: "output_amount",
+          type: "u64"
+        },
+        {
+          name: "swap_a_to_b",
+          type: "bool"
+        },
+        {
+          name: "num_commitments",
+          type: "u8"
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_vote_snapshot",
+      docs: [
+        "Create Pending with Proof - Vote Snapshot (Phase 0)",
+        "",
+        "Verifies ZK proof for snapshot voting and creates PendingOperation.",
+        "User proves ownership of shielded note WITHOUT spending it."
+      ],
+      discriminator: [
+        154,
+        186,
+        239,
+        245,
+        157,
+        252,
+        209,
+        213
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot being voted on"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for vote_snapshot circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "const",
+                value: [
+                  118,
+                  111,
+                  116,
+                  101,
+                  95,
+                  115,
+                  110,
+                  97,
+                  112,
+                  115,
+                  104,
+                  111,
+                  116,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation account (created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer executing the transaction"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for account creation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "snapshot_merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "note_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "vote_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "vote_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "vote_choice",
+          type: "u64"
+        },
+        {
+          name: "amount",
+          type: "u64"
+        },
+        {
+          name: "weight",
+          type: "u64"
+        },
+        {
+          name: "encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "encrypted_preimage",
+          type: {
+            option: "bytes"
+          }
+        },
+        {
+          name: "output_randomness",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "create_pending_with_proof_vote_spend",
+      docs: [
+        "Create Pending with Proof - Vote Spend (Phase 0)",
+        "",
+        "SpendToVote mode: Locks tokens in ballot vault."
+      ],
+      discriminator: [
+        121,
+        101,
+        52,
+        45,
+        181,
+        24,
+        248,
+        55
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot being voted on"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pool",
+          docs: [
+            "Token pool (for note verification)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "ballot.token_mint",
+                account: "Ballot"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for vote_spend circuit"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "const",
+                value: [
+                  118,
+                  111,
+                  116,
+                  101,
+                  95,
+                  115,
+                  112,
+                  101,
+                  110,
+                  100,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95,
+                  95
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation account (created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer executing the transaction"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for account creation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "input_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "spending_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "position_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "vote_choice",
+          type: "u64"
+        },
+        {
+          name: "amount",
+          type: "u64"
+        },
+        {
+          name: "weight",
+          type: "u64"
+        },
+        {
+          name: "encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "encrypted_preimage",
+          type: {
+            option: "bytes"
+          }
+        },
+        {
+          name: "output_randomness",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "create_vote_commitment",
+      docs: [
+        "Create Vote Commitment (Phase 3)",
+        "",
+        "Creates the vote_commitment via Light Protocol.",
+        "Uses ballot_id for commitment address derivation."
+      ],
+      discriminator: [
+        165,
+        146,
+        239,
+        8,
+        166,
+        54,
+        3,
+        188
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot for this vote"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for commitment creation, must match pending operation)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "commitment_index",
+          type: "u8"
+        },
+        {
+          name: "encrypted_preimage",
+          type: {
+            array: [
+              "u8",
+              128
+            ]
+          }
+        },
+        {
+          name: "encryption_type",
+          type: "u8"
+        },
+        {
+          name: "light_params",
+          type: {
+            defined: {
+              name: "LightCreateVoteCommitmentParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "create_vote_nullifier",
+      docs: [
+        "Create Vote Nullifier (Phase 1)",
+        "",
+        "Creates the vote_nullifier via Light Protocol.",
+        "Uses action_nullifier with ballot_id as aggregation_id."
+      ],
+      discriminator: [
+        33,
+        125,
+        29,
+        9,
+        192,
+        226,
+        105,
+        173
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot for this vote"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for nullifier creation, must match pending operation)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "nullifier_index",
+          type: "u8"
+        },
+        {
+          name: "light_params",
+          type: {
+            defined: {
+              name: "LightCreateVoteNullifierParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "decrypt_tally",
+      docs: [
+        "Decrypt voting tally",
+        "",
+        "Called after timelock expires for TimeLocked and PermanentPrivate modes.",
+        "Decrypts the homomorphic tally to reveal aggregate vote counts.",
+        "For PermanentPrivate mode, this reveals ONLY aggregates, not individual votes."
+      ],
+      discriminator: [
+        35,
+        58,
+        172,
+        153,
+        3,
+        216,
+        134,
+        230
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot to decrypt"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "caller",
+          docs: [
+            "Anyone can call decrypt_tally after timelock expires",
+            "The decryption key itself proves authorization"
+          ],
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "decryption_key",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "decrypted_weights",
+          type: {
+            vec: "u64"
+          }
+        }
+      ]
+    },
+    {
+      name: "disable_adapt_module",
+      docs: [
+        "Disable an adapter module"
+      ],
+      discriminator: [
+        226,
+        114,
+        232,
+        9,
+        230,
+        15,
+        68,
+        225
+      ],
+      accounts: [
+        {
+          name: "adapt_module",
+          docs: [
+            "Adapter module"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  97,
+                  100,
+                  97,
+                  112,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "adapt_module.program_id",
+                account: "AdaptModule"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority"
+          ],
+          signer: true,
+          relations: [
+            "adapt_module"
+          ]
+        }
+      ],
+      args: []
+    },
+    {
+      name: "emit_perps_profit_bound_event",
+      docs: [
+        "Emit profit bound event for keeper detection"
+      ],
+      discriminator: [
+        161,
+        213,
+        122,
+        121,
+        146,
+        211,
+        120,
+        106
+      ],
+      accounts: [
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_market",
+          docs: [
+            "Market"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              },
+              {
+                kind: "account",
+                path: "perps_market.market_id",
+                account: "PerpsMarket"
+              }
+            ]
+          }
+        },
+        {
+          name: "keeper",
+          docs: [
+            "Keeper"
+          ],
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "position_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "margin",
+          type: "u64"
+        },
+        {
+          name: "pnl",
+          type: "u64"
+        },
+        {
+          name: "current_price",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "execute_add_liquidity",
+      docs: [
+        "Execute Add Liquidity Phase 3 - Update AMM state (Append Pattern)",
+        "",
+        "Must be called after verify_commitment_exists and create_nullifier_and_pending for both deposits.",
+        "Updates AMM pool reserves and LP supply based on verified liquidity addition."
+      ],
+      discriminator: [
+        31,
+        200,
+        193,
+        210,
+        136,
+        205,
+        216,
+        24
+      ],
+      accounts: [
+        {
+          name: "pool_a",
+          docs: [
+            "Token A pool (for reference)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool_a.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pool_b",
+          docs: [
+            "Token B pool (for reference)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool_b.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "lp_pool",
+          docs: [
+            "LP token pool (for reference)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "lp_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "amm_pool",
+          docs: [
+            "AMM pool state (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_a_mint",
+                account: "AmmPool"
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_b_mint",
+                account: "AmmPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "min_lp_amount",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "execute_add_perps_liquidity",
+      docs: [
+        "Execute Add Perps Liquidity Phase 3"
+      ],
+      discriminator: [
+        207,
+        85,
+        131,
+        134,
+        222,
+        254,
+        248,
+        203
+      ],
+      accounts: [
+        {
+          name: "deposit_pool",
+          docs: [
+            "Deposit token pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "deposit_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "lp_mint",
+          docs: [
+            "LP token mint (for minting LP tokens)"
+          ],
+          writable: true
+        },
+        {
+          name: "token_vault",
+          docs: [
+            "Token vault for the deposited token"
+          ],
+          writable: true
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        },
+        {
+          name: "price_update",
+          docs: [
+            "Pyth price update account for the deposit token"
+          ]
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "oracle_prices",
+          type: {
+            array: [
+              "u64",
+              8
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "execute_change_vote_snapshot",
+      docs: [
+        "Execute Change Vote Snapshot (Phase 3)",
+        "",
+        "Updates ballot tally for vote change: decrements old, increments new."
+      ],
+      discriminator: [
+        36,
+        232,
+        114,
+        236,
+        99,
+        218,
+        182,
+        195
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot being voted on (mutable for tally update)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation (must have proof verified, input verified, nullifier created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "old_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "new_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "execute_change_vote_spend",
+      docs: [
+        "Execute Change Vote Spend (Phase 3)",
+        "",
+        "Updates ballot tally for SpendToVote vote change: decrements old, increments new."
+      ],
+      discriminator: [
+        207,
+        176,
+        177,
+        79,
+        110,
+        184,
+        148,
+        190
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot being voted on (mutable for tally update)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation (must have proof verified, input verified, nullifier created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "old_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        },
+        {
+          name: "new_encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "execute_claim",
+      docs: [
+        "Execute Claim (Phase 3)",
+        "",
+        "Transfers payout from ballot vault."
+      ],
+      discriminator: [
+        186,
+        104,
+        236,
+        95,
+        252,
+        189,
+        167,
+        99
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot (must be resolved)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "ballot_vault",
+          docs: [
+            "Ballot vault (source of payout)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "protocol_treasury",
+          docs: [
+            "Protocol treasury (receives fee)"
+          ],
+          writable: true
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "execute_close_position",
+      docs: [
+        "Execute Close Position Phase 3"
+      ],
+      discriminator: [
+        196,
+        191,
+        155,
+        142,
+        229,
+        185,
+        92,
+        229
+      ],
+      accounts: [
+        {
+          name: "settlement_pool",
+          docs: [
+            "Settlement token pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "settlement_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_market",
+          docs: [
+            "Market being traded (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              },
+              {
+                kind: "account",
+                path: "perps_market.market_id",
+                account: "PerpsMarket"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        },
+        {
+          name: "price_update",
+          docs: [
+            "Pyth price update account for the base token"
+          ]
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "position_margin",
+          type: "u64"
+        },
+        {
+          name: "position_size",
+          type: "u64"
+        },
+        {
+          name: "entry_price",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "execute_close_vote_position",
+      docs: [
+        "Execute Close Vote Position (Phase 3)",
+        "",
+        "Decrements ballot tally and releases tokens."
+      ],
+      discriminator: [
+        249,
+        60,
+        175,
+        202,
+        45,
+        50,
+        135,
+        168
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot (position is being closed)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "execute_liquidate",
+      docs: [
+        "Execute Liquidate Phase 3"
+      ],
+      discriminator: [
+        153,
+        46,
+        46,
+        219,
+        247,
+        2,
+        99,
+        232
+      ],
+      accounts: [
+        {
+          name: "settlement_pool",
+          docs: [
+            "Settlement pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "settlement_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_market",
+          docs: [
+            "Market (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              },
+              {
+                kind: "account",
+                path: "perps_market.market_id",
+                account: "PerpsMarket"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "keeper",
+          docs: [
+            "Keeper"
+          ],
+          signer: true
+        },
+        {
+          name: "oracle",
+          docs: [
+            "Oracle"
+          ]
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "position_margin",
+          type: "u64"
+        },
+        {
+          name: "position_size",
+          type: "u64"
+        },
+        {
+          name: "is_long",
+          type: "bool"
+        }
+      ]
+    },
+    {
+      name: "execute_open_position",
+      docs: [
+        "Execute Open Position Phase 3"
+      ],
+      discriminator: [
+        240,
+        148,
+        192,
+        97,
+        135,
+        229,
+        49,
+        244
+      ],
+      accounts: [
+        {
+          name: "margin_pool",
+          docs: [
+            "Margin token pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "margin_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_market",
+          docs: [
+            "Market being traded (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              },
+              {
+                kind: "account",
+                path: "perps_market.market_id",
+                account: "PerpsMarket"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        },
+        {
+          name: "price_update",
+          docs: [
+            "Pyth price update account for the base token"
+          ]
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "entry_price",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "execute_remove_liquidity",
+      docs: [
+        "Execute Remove Liquidity Phase 3 - Update AMM state (Append Pattern)",
+        "",
+        "Must be called after verify_commitment_exists and create_nullifier_and_pending.",
+        "Updates AMM pool reserves and LP supply based on verified liquidity removal."
+      ],
+      discriminator: [
+        21,
+        226,
+        243,
+        31,
+        221,
+        192,
+        31,
+        201
+      ],
+      accounts: [
+        {
+          name: "lp_pool",
+          docs: [
+            "LP token pool (for reference)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "lp_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pool_a",
+          docs: [
+            "Token A pool (authority for vault_a transfers)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool_a.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pool_b",
+          docs: [
+            "Token B pool (authority for vault_b transfers)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool_b.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "amm_pool",
+          docs: [
+            "AMM pool state (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_a_mint",
+                account: "AmmPool"
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_b_mint",
+                account: "AmmPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "vault_a",
+          docs: [
+            "Token A vault (source for protocol fee transfer)"
+          ],
+          writable: true
+        },
+        {
+          name: "vault_b",
+          docs: [
+            "Token B vault (source for protocol fee transfer)"
+          ],
+          writable: true
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        },
+        {
+          name: "protocol_config",
+          docs: [
+            "Protocol config (required - enforces fee collection)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "treasury_ata_a",
+          docs: [
+            "Treasury token account for token A (receives protocol fees)"
+          ],
+          writable: true,
+          optional: true
+        },
+        {
+          name: "treasury_ata_b",
+          docs: [
+            "Treasury token account for token B (receives protocol fees)"
+          ],
+          writable: true,
+          optional: true
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program for transfers"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "new_state_hash",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "execute_remove_perps_liquidity",
+      docs: [
+        "Execute Remove Perps Liquidity Phase 3"
+      ],
+      discriminator: [
+        46,
+        31,
+        102,
+        209,
+        147,
+        205,
+        196,
+        29
+      ],
+      accounts: [
+        {
+          name: "withdrawal_pool",
+          docs: [
+            "Withdrawal token pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "withdrawal_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "lp_mint",
+          docs: [
+            "LP token mint (for burning LP tokens)"
+          ],
+          writable: true
+        },
+        {
+          name: "token_vault",
+          docs: [
+            "Token vault for the withdrawal token"
+          ],
+          writable: true
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        },
+        {
+          name: "price_update",
+          docs: [
+            "Pyth price update account for the withdrawal token"
+          ]
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "oracle_prices",
+          type: {
+            array: [
+              "u64",
+              8
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "execute_swap",
+      docs: [
+        "Execute Swap Phase 3 - Update AMM state (Append Pattern)",
+        "",
+        "Must be called after verify_commitment_exists and create_nullifier_and_pending.",
+        "Updates AMM pool reserves based on verified swap."
+      ],
+      discriminator: [
+        56,
+        182,
+        124,
+        215,
+        155,
+        140,
+        157,
+        102
+      ],
+      accounts: [
+        {
+          name: "input_pool",
+          docs: [
+            "Input token pool (has vault for input token)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "input_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "output_pool",
+          docs: [
+            "Output token pool (for reference)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "output_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "amm_pool",
+          docs: [
+            "AMM pool state (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_a_mint",
+                account: "AmmPool"
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_b_mint",
+                account: "AmmPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "input_vault",
+          docs: [
+            "Input token vault (source for protocol fee transfer)"
+          ],
+          writable: true
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        },
+        {
+          name: "protocol_config",
+          docs: [
+            "Protocol config (required - enforces fee collection)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "treasury_ata",
+          docs: [
+            "Treasury token account (receives protocol fees)",
+            "Only required if fees are enabled and fee > 0"
+          ],
+          writable: true,
+          optional: true
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program for transfers"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "execute_vote_snapshot",
+      docs: [
+        "Execute Vote Snapshot (Phase 2)",
+        "",
+        "Updates ballot tally based on the verified vote."
+      ],
+      discriminator: [
+        73,
+        17,
+        216,
+        207,
+        210,
+        195,
+        175,
+        54
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot being voted on (mutable for tally update)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation (must have proof verified and nullifier created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "execute_vote_spend",
+      docs: [
+        "Execute Vote Spend (Phase 3)",
+        "",
+        "Updates ballot tally and locks tokens."
+      ],
+      discriminator: [
+        17,
+        112,
+        255,
+        194,
+        200,
+        212,
+        19,
+        143
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot being voted on (mutable for tally update)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "ballot_vault",
+          docs: [
+            "Ballot vault (tokens are locked here)",
+            "Note: Actual token transfer happens via the shielded pool mechanism",
+            "The vault balance is tracked in ballot.pool_balance"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation (must have proof verified, input verified, nullifier created)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          signer: true
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "encrypted_contributions",
+          type: {
+            option: {
+              defined: {
+                name: "EncryptedContributions"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "fill_order",
+      docs: [
+        "Fill an order atomically"
+      ],
+      discriminator: [
+        232,
+        122,
+        115,
+        25,
+        199,
+        143,
+        136,
+        162
+      ],
+      accounts: [
+        {
+          name: "maker_pool",
+          docs: [
+            "Maker's offer token pool (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "maker_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "maker_commitment_counter",
+          docs: [
+            "Commitment counter for maker pool"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                kind: "account",
+                path: "maker_pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "taker_pool",
+          docs: [
+            "Taker's payment token pool (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "taker_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "taker_commitment_counter",
+          docs: [
+            "Commitment counter for taker pool"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                kind: "account",
+                path: "taker_pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "order",
+          docs: [
+            "Order being filled"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                kind: "arg",
+                path: "order_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key (boxed to reduce stack usage)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for compressed account creation)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "maker_proof",
+          type: "bytes"
+        },
+        {
+          name: "taker_proof",
+          type: "bytes"
+        },
+        {
+          name: "escrow_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "taker_nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "order_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "maker_out_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "taker_out_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "encrypted_notes",
+          type: {
+            vec: "bytes"
+          }
+        },
+        {
+          name: "light_params",
+          type: {
+            option: {
+              defined: {
+                name: "LightFillOrderParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "finalize_ballot",
+      docs: [
+        "Finalize a voting ballot",
+        "",
+        "Called after claim period expires (SpendToVote only).",
+        "Transfers unclaimed tokens from vault to protocol treasury."
+      ],
+      discriminator: [
+        212,
+        43,
+        85,
+        58,
+        158,
+        34,
+        41,
+        42
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot to finalize"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "ballot_vault",
+          docs: [
+            "Ballot vault holding remaining tokens"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "protocol_treasury",
+          docs: [
+            "Protocol treasury to receive unclaimed tokens"
+          ],
+          writable: true
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority (anyone can call finalize after deadline)"
+          ],
+          signer: true
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      args: [
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      name: "initialize_amm_pool",
+      docs: [
+        "Initialize a liquidity pool",
+        "",
+        "Supports two pool types:",
+        "- ConstantProduct (pool_type=0): x * y = k formula, best for volatile pairs",
+        "- StableSwap (pool_type=1): Curve-style formula, best for pegged assets",
+        "",
+        "For StableSwap pools, amplification should be 100-1000 (typical: 200 for stablecoins).",
+        "For ConstantProduct pools, amplification is ignored (can pass 0)."
+      ],
+      discriminator: [
+        20,
+        58,
+        19,
+        89,
+        14,
+        193,
+        139,
+        31
+      ],
+      accounts: [
+        {
+          name: "amm_pool",
+          docs: [
+            "AMM pool account"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "arg",
+                path: "token_a_mint"
+              },
+              {
+                kind: "arg",
+                path: "token_b_mint"
+              }
+            ]
+          }
+        },
+        {
+          name: "lp_mint",
+          docs: [
+            "LP token mint (PDA derived from token pair)",
+            "Using Anchor's init macro ensures simulation works correctly"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  108,
+                  112,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "token_a_mint"
+              },
+              {
+                kind: "arg",
+                path: "token_b_mint"
+              }
+            ]
+          }
+        },
+        {
+          name: "token_a_mint_account",
+          docs: [
+            "Token A mint"
+          ]
+        },
+        {
+          name: "token_b_mint_account",
+          docs: [
+            "Token B mint"
+          ]
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      args: [
+        {
+          name: "token_a_mint",
+          type: "pubkey"
+        },
+        {
+          name: "token_b_mint",
+          type: "pubkey"
+        },
+        {
+          name: "fee_bps",
+          type: "u16"
+        },
+        {
+          name: "pool_type",
+          type: {
+            defined: {
+              name: "PoolType"
+            }
+          }
+        },
+        {
+          name: "amplification",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "initialize_commitment_counter",
+      docs: [
+        "Initialize commitment counter for a pool",
+        "",
+        "Must be called after initialize_pool to enable commitment tracking."
+      ],
+      discriminator: [
+        158,
+        181,
+        246,
+        128,
+        22,
+        64,
+        90,
+        146
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool to initialize counter for"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "commitment_counter",
+          docs: [
+            "Commitment counter PDA"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for account creation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: []
+    },
+    {
+      name: "initialize_perps_pool",
+      docs: [
+        "Initialize a perpetual futures pool",
+        "",
+        "Creates a multi-token pool with a single LP token.",
+        "Tokens are added separately via add_token_to_pool."
+      ],
+      discriminator: [
+        246,
+        147,
+        238,
+        44,
+        78,
+        181,
+        140,
+        46
+      ],
+      accounts: [
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool account"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "arg",
+                path: "pool_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "lp_mint",
+          docs: [
+            "LP token mint (PDA derived from perps pool)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  108,
+                  112,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "position_mint",
+          docs: [
+            "Position token mint (PDA derived from perps pool, for position commitments)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  115,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Pool authority (admin)"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          name: "rent",
+          docs: [
+            "Rent sysvar"
+          ],
+          address: "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "pool_id",
+          type: "pubkey"
+        },
+        {
+          name: "params",
+          type: {
+            defined: {
+              name: "InitializePerpsPoolParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "initialize_pool",
+      docs: [
+        "Initialize a new shielded pool for a token"
+      ],
+      discriminator: [
+        95,
+        180,
+        10,
+        172,
+        84,
+        174,
+        232,
+        40
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool account to initialize (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          name: "token_vault",
+          docs: [
+            "Token vault PDA"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          name: "token_mint",
+          docs: [
+            "Token mint"
+          ]
+        },
+        {
+          name: "authority",
+          docs: [
+            "Pool authority"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          name: "rent",
+          docs: [
+            "Rent sysvar"
+          ],
+          address: "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      args: []
+    },
+    {
+      name: "initialize_protocol_config",
+      docs: [
+        "Initialize protocol configuration with fee rates",
+        "",
+        "Creates the global ProtocolConfig account. Can only be called once.",
+        "Fee rates are in basis points. swap_fee_share_bps is protocol's share of LP fees (2000 = 20%)."
+      ],
+      discriminator: [
+        28,
+        50,
+        43,
+        233,
+        244,
+        98,
+        123,
+        118
+      ],
+      accounts: [
+        {
+          name: "protocol_config",
+          docs: [
+            "Protocol config account (singleton PDA)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "treasury",
+          docs: [
+            "Treasury account that will receive fees"
+          ]
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority that can update config (typically a multisig or governance)"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for account creation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "transfer_fee_bps",
+          type: "u16"
+        },
+        {
+          name: "unshield_fee_bps",
+          type: "u16"
+        },
+        {
+          name: "swap_fee_share_bps",
+          type: "u16"
+        },
+        {
+          name: "remove_liquidity_fee_bps",
+          type: "u16"
+        },
+        {
+          name: "fees_enabled",
+          type: "bool"
+        }
+      ]
+    },
+    {
+      name: "process_unshield",
+      docs: [
+        "Process Unshield Phase 3 - process unshield only (Transfer-specific)",
+        "",
+        "Must be called after create_nullifier_and_pending (Phase 2) and before create_commitment (Phase 4+).",
+        "This phase has NO Light Protocol CPI calls.",
+        "",
+        "NOTE: Encrypted notes are NOT stored in PDA (saves ~1680 bytes).",
+        "SDK must regenerate encrypted notes in Phase 4 from randomness stored in PendingOperation."
+      ],
+      discriminator: [
+        139,
+        41,
+        106,
+        165,
+        62,
+        234,
+        120,
+        132
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "token_vault",
+          docs: [
+            "Token vault (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "protocol_config",
+          docs: [
+            "Protocol config (required - enforces fee verification)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "treasury_token_account",
+          docs: [
+            "Treasury token account for receiving fees (required if fee > 0)"
+          ],
+          writable: true,
+          optional: true
+        },
+        {
+          name: "unshield_recipient",
+          docs: [
+            "Unshield recipient (optional, boxed to reduce stack usage)"
+          ],
+          writable: true,
+          optional: true
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match operation creator)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "unshield_amount",
+          type: "u64"
+        }
+      ]
+    },
+    {
+      name: "register_adapt_module",
+      docs: [
+        "Register an adapter module"
+      ],
+      discriminator: [
+        106,
+        98,
+        19,
+        132,
+        158,
+        99,
+        214,
+        47
+      ],
+      accounts: [
+        {
+          name: "adapt_module",
+          docs: [
+            "Adapter module account"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  97,
+                  100,
+                  97,
+                  112,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "adapter_program"
+              }
+            ]
+          }
+        },
+        {
+          name: "adapter_program",
+          docs: [
+            "Adapter program"
+          ]
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "interface_version",
+          type: "u8"
+        }
+      ]
+    },
+    {
+      name: "register_threshold_committee",
+      docs: [
+        "Register a threshold committee"
+      ],
+      discriminator: [
+        93,
+        46,
+        75,
+        78,
+        68,
+        136,
+        109,
+        217
+      ],
+      accounts: [
+        {
+          name: "committee",
+          docs: [
+            "Committee account"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  116,
+                  101,
+                  101
+                ]
+              },
+              {
+                kind: "arg",
+                path: "committee_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "committee_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "members",
+          type: {
+            vec: "pubkey"
+          }
+        },
+        {
+          name: "threshold_pubkey",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "threshold",
+          type: "u8"
+        }
+      ]
+    },
+    {
+      name: "register_verification_key",
+      docs: [
+        "Register a verification key for a circuit"
+      ],
+      discriminator: [
+        252,
+        136,
+        235,
+        8,
+        197,
+        79,
+        40,
+        67
+      ],
+      accounts: [
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key account"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "arg",
+                path: "circuit_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority"
+          ],
+          signer: true
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "circuit_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "vk_data",
+          type: "bytes"
+        }
+      ]
+    },
+    {
+      name: "reset_amm_pool",
+      docs: [
+        "Reset AMM pool state (admin only)",
+        "Used to fix corrupted pool state"
+      ],
+      discriminator: [
+        67,
+        206,
+        131,
+        179,
+        253,
+        87,
+        240,
+        165
+      ],
+      accounts: [
+        {
+          name: "amm_pool",
+          docs: [
+            "AMM pool to reset"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  97,
+                  109,
+                  109,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_a_mint",
+                account: "AmmPool"
+              },
+              {
+                kind: "account",
+                path: "amm_pool.token_b_mint",
+                account: "AmmPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Pool authority (must match)"
+          ],
+          signer: true,
+          relations: [
+            "amm_pool"
+          ]
+        }
+      ],
+      args: []
+    },
+    {
+      name: "resolve_ballot",
+      docs: [
+        "Resolve a voting ballot",
+        "",
+        "Determines the outcome based on the configured resolution mode:",
+        "- TallyBased: Winner = argmax(option_weights[])",
+        "- Oracle: Reads outcome from oracle",
+        "- Authority: Designated resolver sets outcome"
+      ],
+      discriminator: [
+        67,
+        63,
+        34,
+        133,
+        20,
+        164,
+        64,
+        4
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot to resolve"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "resolver",
+          docs: [
+            "Resolver (required for Authority mode, optional otherwise)",
+            "Must match ballot.resolver for Authority mode"
+          ],
+          signer: true,
+          optional: true
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority (required for non-Authority modes if resolver not set)"
+          ],
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "outcome",
+          type: {
+            option: "u8"
+          }
+        }
+      ]
+    },
+    {
+      name: "set_verification_key_data",
+      docs: [
+        "Set verification key data on an existing account",
+        "Used for large VKs that exceed transaction size limits"
+      ],
+      discriminator: [
+        117,
+        234,
+        100,
+        99,
+        128,
+        32,
+        44,
+        101
+      ],
+      accounts: [
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key account (must already be initialized)",
+            "Realloc to max size to support larger VK updates"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "arg",
+                path: "circuit_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority"
+          ],
+          signer: true,
+          relations: [
+            "verification_key"
+          ]
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for reallocation"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program for reallocation"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "circuit_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "vk_data",
+          type: "bytes"
+        }
+      ]
+    },
+    {
+      name: "shield",
+      docs: [
+        "Shield tokens - deposit public tokens into the shielded pool",
+        "",
+        "Uses Light Protocol compressed accounts for commitment storage.",
+        "The light_params enable on-chain commitment storage via Light Protocol.",
+        "The stealth_ephemeral_pubkey is stored so recipient can derive",
+        "the stealth private key for decryption."
+      ],
+      discriminator: [
+        220,
+        198,
+        253,
+        246,
+        231,
+        84,
+        147,
+        98
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool to shield into (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "commitment_counter",
+          docs: [
+            "Commitment counter for this pool"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "token_vault",
+          docs: [
+            "Token vault"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "user_token_account",
+          docs: [
+            "User's token account (source)"
+          ],
+          writable: true
+        },
+        {
+          name: "user",
+          docs: [
+            "User (pays for compressed account creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      args: [
+        {
+          name: "commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "amount",
+          type: "u64"
+        },
+        {
+          name: "stealth_ephemeral_pubkey",
+          type: {
+            array: [
+              "u8",
+              64
+            ]
+          }
+        },
+        {
+          name: "encrypted_note",
+          type: "bytes"
+        },
+        {
+          name: "light_params",
+          type: {
+            option: {
+              defined: {
+                name: "LightCommitmentParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "store_commitment",
+      docs: [
+        "Store a commitment as a Light Protocol compressed account",
+        "",
+        "Called after transact to persist commitments on-chain.",
+        "Can be called in separate transactions to avoid size limits."
+      ],
+      discriminator: [
+        188,
+        162,
+        140,
+        134,
+        138,
+        242,
+        159,
+        54
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer/submitter (pays for compressed account creation)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "params",
+          type: {
+            defined: {
+              name: "StoreCommitmentParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "test_verify_proof",
+      docs: [
+        "Test proof verification (development only)",
+        "Verifies a proof without pool state checks"
+      ],
+      discriminator: [
+        252,
+        208,
+        59,
+        22,
+        178,
+        59,
+        46,
+        253
+      ],
+      accounts: [
+        {
+          name: "verification_key",
+          docs: [
+            "The verification key account"
+          ]
+        },
+        {
+          name: "payer",
+          docs: [
+            "Payer for the transaction"
+          ],
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "public_inputs",
+          type: {
+            vec: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "transact",
+      docs: [
+        "Transact Phase 1 (DEPRECATED) - private transfer with optional unshield",
+        "",
+        "DEPRECATED: Use the new multi-phase flow instead:",
+        "1. verify_proof_for_transact (Phase 0)",
+        "2. verify_commitment_for_transact (Phase 1)",
+        "3. create_nullifier (Phase 2)",
+        "4. process_unshield (Phase 3)",
+        "5. create_commitment (Phase 4+)",
+        "6. close_pending_operation (Final)",
+        "",
+        "This old instruction exceeds transaction size limits and should not be used."
+      ],
+      discriminator: [
+        217,
+        149,
+        130,
+        143,
+        221,
+        52,
+        252,
+        119
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (created in this instruction)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "token_vault",
+          docs: [
+            "Token vault"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key for the circuit (boxed to reduce stack usage)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "unshield_recipient",
+          docs: [
+            "Unshield recipient (optional, can be any account)"
+          ],
+          writable: true,
+          optional: true
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer/submitter (pays for compressed account creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          name: "system_program",
+          docs: [
+            "System program"
+          ],
+          address: "11111111111111111111111111111111"
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "merkle_root",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "input_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "out_commitments",
+          type: {
+            vec: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          }
+        },
+        {
+          name: "encrypted_notes",
+          type: {
+            vec: "bytes"
+          }
+        },
+        {
+          name: "unshield_amount",
+          type: "u64"
+        },
+        {
+          name: "num_commitments",
+          type: "u8"
+        },
+        {
+          name: "light_params",
+          type: {
+            defined: {
+              name: "LightTransactParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "transact_adapt",
+      docs: [
+        "Transact via adapter - swap through external DEX"
+      ],
+      discriminator: [
+        240,
+        109,
+        123,
+        193,
+        132,
+        96,
+        145,
+        122
+      ],
+      accounts: [
+        {
+          name: "input_pool",
+          docs: [
+            "Input token pool (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "input_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "output_pool",
+          docs: [
+            "Output token pool (boxed to reduce stack usage)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "output_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "output_commitment_counter",
+          docs: [
+            "Commitment counter for output pool"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  109,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                kind: "account",
+                path: "output_pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "input_vault",
+          docs: [
+            "Input token vault"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "input_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "output_vault",
+          docs: [
+            "Output token vault"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "output_pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "adapt_module",
+          docs: [
+            "Adapter module"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  97,
+                  100,
+                  97,
+                  112,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "adapt_module.program_id",
+                account: "AdaptModule"
+              }
+            ]
+          }
+        },
+        {
+          name: "verification_key",
+          docs: [
+            "Verification key (boxed to reduce stack usage)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  118,
+                  107
+                ]
+              },
+              {
+                kind: "account",
+                path: "verification_key.circuit_id",
+                account: "VerificationKey"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for compressed account creation)"
+          ],
+          writable: true,
+          signer: true
+        },
+        {
+          name: "token_program",
+          docs: [
+            "Token program"
+          ],
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      args: [
+        {
+          name: "proof",
+          type: "bytes"
+        },
+        {
+          name: "nullifier",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "input_amount",
+          type: "u64"
+        },
+        {
+          name: "min_output",
+          type: "u64"
+        },
+        {
+          name: "adapt_params",
+          type: "bytes"
+        },
+        {
+          name: "out_commitment",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "encrypted_note",
+          type: "bytes"
+        },
+        {
+          name: "light_params",
+          type: {
+            option: {
+              defined: {
+                name: "LightAdaptParams"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "update_perps_borrow_fees",
+      docs: [
+        "Update borrow fee accumulators for all tokens",
+        "",
+        "Keeper instruction - anyone can call to update fees."
+      ],
+      discriminator: [
+        151,
+        120,
+        43,
+        40,
+        162,
+        202,
+        198,
+        242
+      ],
+      accounts: [
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool (will be updated)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "keeper",
+          docs: [
+            "Keeper (anyone can call this)"
+          ],
+          signer: true
+        }
+      ],
+      args: []
+    },
+    {
+      name: "update_perps_market_status",
+      docs: [
+        "Update market status"
+      ],
+      discriminator: [
+        135,
+        231,
+        26,
+        105,
+        251,
+        160,
+        241,
+        48
+      ],
+      accounts: [
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool account (boxed due to large size)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "perps_market",
+          docs: [
+            "Market account"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool"
+              },
+              {
+                kind: "account",
+                path: "perps_market.market_id",
+                account: "PerpsMarket"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Pool authority"
+          ],
+          signer: true,
+          relations: [
+            "perps_pool"
+          ]
+        }
+      ],
+      args: [
+        {
+          name: "is_active",
+          type: "bool"
+        }
+      ]
+    },
+    {
+      name: "update_perps_pool_config",
+      docs: [
+        "Update perps pool configuration"
+      ],
+      discriminator: [
+        28,
+        193,
+        134,
+        255,
+        202,
+        194,
+        54,
+        56
+      ],
+      accounts: [
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool account (boxed due to large size)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Pool authority"
+          ],
+          signer: true,
+          relations: [
+            "perps_pool"
+          ]
+        }
+      ],
+      args: [
+        {
+          name: "params",
+          type: {
+            defined: {
+              name: "UpdatePoolConfigParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "update_perps_token_status",
+      docs: [
+        "Update token status in perps pool"
+      ],
+      discriminator: [
+        233,
+        63,
+        249,
+        50,
+        165,
+        122,
+        230,
+        98
+      ],
+      accounts: [
+        {
+          name: "perps_pool",
+          docs: [
+            "Perps pool account (boxed due to large size)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  114,
+                  112,
+                  115,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "perps_pool.pool_id",
+                account: "PerpsPool"
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Pool authority"
+          ],
+          signer: true,
+          relations: [
+            "perps_pool"
+          ]
+        }
+      ],
+      args: [
+        {
+          name: "token_index",
+          type: "u8"
+        },
+        {
+          name: "is_active",
+          type: "bool"
+        }
+      ]
+    },
+    {
+      name: "update_protocol_authority",
+      docs: [
+        "Transfer protocol authority to a new account",
+        "",
+        "Only callable by the current authority."
+      ],
+      discriminator: [
+        207,
+        19,
+        17,
+        100,
+        133,
+        169,
+        89,
+        253
+      ],
+      accounts: [
+        {
+          name: "protocol_config",
+          docs: [
+            "Protocol config account"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "new_authority",
+          docs: [
+            "New authority"
+          ]
+        },
+        {
+          name: "authority",
+          docs: [
+            "Current authority"
+          ],
+          signer: true,
+          relations: [
+            "protocol_config"
+          ]
+        }
+      ],
+      args: []
+    },
+    {
+      name: "update_protocol_fees",
+      docs: [
+        "Update protocol fee rates",
+        "",
+        "Only callable by the protocol authority. Allows updating individual",
+        "fee rates or toggling fees on/off."
+      ],
+      discriminator: [
+        158,
+        219,
+        253,
+        143,
+        54,
+        45,
+        113,
+        182
+      ],
+      accounts: [
+        {
+          name: "protocol_config",
+          docs: [
+            "Protocol config account"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority that can update fees"
+          ],
+          signer: true,
+          relations: [
+            "protocol_config"
+          ]
+        }
+      ],
+      args: [
+        {
+          name: "transfer_fee_bps",
+          type: {
+            option: "u16"
+          }
+        },
+        {
+          name: "unshield_fee_bps",
+          type: {
+            option: "u16"
+          }
+        },
+        {
+          name: "swap_fee_share_bps",
+          type: {
+            option: "u16"
+          }
+        },
+        {
+          name: "remove_liquidity_fee_bps",
+          type: {
+            option: "u16"
+          }
+        },
+        {
+          name: "fees_enabled",
+          type: {
+            option: "bool"
+          }
+        }
+      ]
+    },
+    {
+      name: "update_treasury",
+      docs: [
+        "Update protocol treasury address",
+        "",
+        "Only callable by the protocol authority. Changes where fees are sent."
+      ],
+      discriminator: [
+        60,
+        16,
+        243,
+        66,
+        96,
+        59,
+        254,
+        131
+      ],
+      accounts: [
+        {
+          name: "protocol_config",
+          docs: [
+            "Protocol config account"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          name: "new_treasury",
+          docs: [
+            "New treasury account"
+          ]
+        },
+        {
+          name: "authority",
+          docs: [
+            "Authority that can update treasury"
+          ],
+          signer: true,
+          relations: [
+            "protocol_config"
+          ]
+        }
+      ],
+      args: []
+    },
+    {
+      name: "verify_commitment_exists",
+      docs: [
+        "Verify Commitment Exists Phase 1 - verify commitment in Light Protocol state tree (GENERIC)",
+        "",
+        "SECURITY CRITICAL: This prevents spending non-existent commitments.",
+        "Works for ALL spend operations: transfer, swap, remove liquidity, market operations.",
+        "",
+        "This phase uses Light Protocol CPI with inclusion proof (~8 Light accounts).",
+        "NO state changes - if fails, no cleanup needed.",
+        "",
+        "For multi-input operations (add_liquidity), call this instruction multiple times:",
+        "- First call with commitment_index=0 for input A",
+        "- Second call with commitment_index=1 for input B"
+      ],
+      discriminator: [
+        126,
+        11,
+        155,
+        178,
+        177,
+        176,
+        157,
+        136
+      ],
+      accounts: [
+        {
+          name: "pool",
+          docs: [
+            "Pool"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                kind: "account",
+                path: "pool.token_mint",
+                account: "Pool"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)",
+            "Note: commitment_verified constraint removed - now checked per-input via bitmask in function"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (pays for Light Protocol CPI, must match pending operation)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "commitment_index",
+          type: "u8"
+        },
+        {
+          name: "light_params",
+          type: {
+            defined: {
+              name: "LightVerifyCommitmentParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      name: "verify_vote_commitment_exists",
+      docs: [
+        "Verify Vote Commitment Exists (Phase 1)",
+        "",
+        "Voting-specific commitment verification for operations that spend existing commitments.",
+        "Uses Ballot account instead of Pool account."
+      ],
+      discriminator: [
+        76,
+        132,
+        220,
+        91,
+        78,
+        223,
+        179,
+        81
+      ],
+      accounts: [
+        {
+          name: "ballot",
+          docs: [
+            "Ballot (used instead of Pool for voting operations)"
+          ],
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  98,
+                  97,
+                  108,
+                  108,
+                  111,
+                  116
+                ]
+              },
+              {
+                kind: "arg",
+                path: "ballot_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "pending_operation",
+          docs: [
+            "Pending operation PDA (from Phase 0)"
+          ],
+          writable: true,
+          pda: {
+            seeds: [
+              {
+                kind: "const",
+                value: [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  111,
+                  112
+                ]
+              },
+              {
+                kind: "arg",
+                path: "operation_id"
+              }
+            ]
+          }
+        },
+        {
+          name: "relayer",
+          docs: [
+            "Relayer (must match pending operation)"
+          ],
+          writable: true,
+          signer: true
+        }
+      ],
+      args: [
+        {
+          name: "operation_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "ballot_id",
+          type: {
+            array: [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          name: "commitment_index",
+          type: "u8"
+        },
+        {
+          name: "light_params",
+          type: {
+            defined: {
+              name: "LightVerifyVoteCommitmentParams"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  accounts: [
+    {
+      name: "AdaptModule",
+      discriminator: [
+        104,
+        31,
+        171,
+        41,
+        105,
+        229,
+        28,
+        169
+      ]
+    },
+    {
+      name: "AmmPool",
+      discriminator: [
+        54,
+        82,
+        185,
+        138,
+        179,
+        191,
+        211,
+        169
+      ]
+    },
+    {
+      name: "Ballot",
+      discriminator: [
+        3,
+        232,
+        121,
+        204,
+        232,
+        137,
+        138,
+        164
+      ]
+    },
+    {
+      name: "Order",
+      discriminator: [
+        134,
+        173,
+        223,
+        185,
+        77,
+        86,
+        28,
+        51
+      ]
+    },
+    {
+      name: "PendingOperation",
+      discriminator: [
+        124,
+        146,
+        84,
+        123,
+        121,
+        210,
+        217,
+        118
+      ]
+    },
+    {
+      name: "PerpsMarket",
+      discriminator: [
+        183,
+        30,
+        212,
+        45,
+        203,
+        82,
+        36,
+        185
+      ]
+    },
+    {
+      name: "PerpsPool",
+      discriminator: [
+        144,
+        115,
+        10,
+        89,
+        166,
+        167,
+        55,
+        164
+      ]
+    },
+    {
+      name: "Pool",
+      discriminator: [
+        241,
+        154,
+        109,
+        4,
+        17,
+        177,
+        109,
+        188
+      ]
+    },
+    {
+      name: "PoolCommitmentCounter",
+      discriminator: [
+        104,
+        144,
+        242,
+        34,
+        19,
+        153,
+        118,
+        196
+      ]
+    },
+    {
+      name: "PriceUpdateV2",
+      discriminator: [
+        34,
+        241,
+        35,
+        99,
+        157,
+        126,
+        244,
+        205
+      ]
+    },
+    {
+      name: "ProtocolConfig",
+      discriminator: [
+        207,
+        91,
+        250,
+        28,
+        152,
+        179,
+        215,
+        209
+      ]
+    },
+    {
+      name: "ThresholdCommittee",
+      discriminator: [
+        28,
+        130,
+        118,
+        105,
+        148,
+        110,
+        97,
+        147
+      ]
+    },
+    {
+      name: "VerificationKey",
+      discriminator: [
+        57,
+        106,
+        137,
+        188,
+        100,
+        187,
+        148,
+        137
+      ]
+    }
+  ],
+  events: [
+    {
+      name: "ProfitBoundReached",
+      discriminator: [
+        202,
+        251,
+        230,
+        179,
+        158,
+        47,
+        20,
+        242
+      ]
+    }
+  ],
+  errors: [
+    {
+      code: 6e3,
+      name: "InvalidProof",
+      msg: "Invalid zero-knowledge proof"
+    },
+    {
+      code: 6001,
+      name: "ProofVerificationFailed",
+      msg: "Proof verification failed"
+    },
+    {
+      code: 6002,
+      name: "InvalidPublicInputs",
+      msg: "Invalid public inputs for proof"
+    },
+    {
+      code: 6003,
+      name: "InvalidMerkleRoot",
+      msg: "Merkle root not found in current or historical roots"
+    },
+    {
+      code: 6004,
+      name: "TreeFull",
+      msg: "Merkle tree is full"
+    },
+    {
+      code: 6005,
+      name: "InvalidMerkleProof",
+      msg: "Invalid merkle proof"
+    },
+    {
+      code: 6006,
+      name: "NullifierAlreadyUsed",
+      msg: "Nullifier has already been used"
+    },
+    {
+      code: 6007,
+      name: "InvalidNullifier",
+      msg: "Invalid nullifier derivation"
+    },
+    {
+      code: 6008,
+      name: "InvalidCommitment",
+      msg: "Invalid commitment"
+    },
+    {
+      code: 6009,
+      name: "CommitmentExists",
+      msg: "Commitment already exists"
+    },
+    {
+      code: 6010,
+      name: "CommitmentNotFound",
+      msg: "Commitment not found in Light Protocol state tree"
+    },
+    {
+      code: 6011,
+      name: "CommitmentInclusionFailed",
+      msg: "Commitment inclusion proof verification failed"
+    },
+    {
+      code: 6012,
+      name: "CommitmentAccountHashMismatch",
+      msg: "Commitment account hash does not match derived address"
+    },
+    {
+      code: 6013,
+      name: "CommitmentMismatch",
+      msg: "Commitment value mismatch"
+    },
+    {
+      code: 6014,
+      name: "InsufficientBalance",
+      msg: "Insufficient balance"
+    },
+    {
+      code: 6015,
+      name: "AmountOverflow",
+      msg: "Amount overflow"
+    },
+    {
+      code: 6016,
+      name: "InvalidAmount",
+      msg: "Invalid amount"
+    },
+    {
+      code: 6017,
+      name: "InvalidTokenMint",
+      msg: "Invalid token mint"
+    },
+    {
+      code: 6018,
+      name: "TokenMintMismatch",
+      msg: "Token mint mismatch"
+    },
+    {
+      code: 6019,
+      name: "PoolAlreadyInitialized",
+      msg: "Pool already initialized"
+    },
+    {
+      code: 6020,
+      name: "PoolNotFound",
+      msg: "Pool not found"
+    },
+    {
+      code: 6021,
+      name: "OrderNotFound",
+      msg: "Order not found"
+    },
+    {
+      code: 6022,
+      name: "OrderAlreadyFilled",
+      msg: "Order already filled"
+    },
+    {
+      code: 6023,
+      name: "OrderExpired",
+      msg: "Order expired"
+    },
+    {
+      code: 6024,
+      name: "OrderNotExpired",
+      msg: "Order not expired yet"
+    },
+    {
+      code: 6025,
+      name: "InvalidOrderTerms",
+      msg: "Invalid order terms"
+    },
+    {
+      code: 6026,
+      name: "AmmPoolNotFound",
+      msg: "AMM pool not found"
+    },
+    {
+      code: 6027,
+      name: "TokensNotInCanonicalOrder",
+      msg: "Tokens must be in canonical order (token_a < token_b by bytes)"
+    },
+    {
+      code: 6028,
+      name: "SlippageExceeded",
+      msg: "Slippage exceeded"
+    },
+    {
+      code: 6029,
+      name: "InsufficientLiquidity",
+      msg: "Insufficient liquidity"
+    },
+    {
+      code: 6030,
+      name: "InvalidPoolState",
+      msg: "Invalid pool state transition"
+    },
+    {
+      code: 6031,
+      name: "InvariantViolated",
+      msg: "Constant product invariant violated"
+    },
+    {
+      code: 6032,
+      name: "InvalidLpAmount",
+      msg: "Invalid LP token amount - must match calculated amount"
+    },
+    {
+      code: 6033,
+      name: "InvalidSwapOutput",
+      msg: "Swap output amount does not match AMM formula calculation"
+    },
+    {
+      code: 6034,
+      name: "InvalidAmplification",
+      msg: "Invalid amplification coefficient for StableSwap pool"
+    },
+    {
+      code: 6035,
+      name: "AggregationNotFound",
+      msg: "Aggregation not found"
+    },
+    {
+      code: 6036,
+      name: "AggregationNotActive",
+      msg: "Aggregation not active"
+    },
+    {
+      code: 6037,
+      name: "AggregationDeadlinePassed",
+      msg: "Aggregation deadline passed"
+    },
+    {
+      code: 6038,
+      name: "AlreadyVoted",
+      msg: "Already voted on this proposal"
+    },
+    {
+      code: 6039,
+      name: "InvalidVoteOption",
+      msg: "Invalid vote option"
+    },
+    {
+      code: 6040,
+      name: "DecryptionNotComplete",
+      msg: "Decryption not complete"
+    },
+    {
+      code: 6041,
+      name: "InvalidDecryptionShare",
+      msg: "Invalid decryption share"
+    },
+    {
+      code: 6042,
+      name: "ThresholdNotMet",
+      msg: "Threshold not met"
+    },
+    {
+      code: 6043,
+      name: "AdapterNotRegistered",
+      msg: "Adapter module not registered"
+    },
+    {
+      code: 6044,
+      name: "AdapterDisabled",
+      msg: "Adapter module disabled"
+    },
+    {
+      code: 6045,
+      name: "AdapterExecutionFailed",
+      msg: "Adapter execution failed"
+    },
+    {
+      code: 6046,
+      name: "Unauthorized",
+      msg: "Unauthorized"
+    },
+    {
+      code: 6047,
+      name: "InvalidVerificationKey",
+      msg: "Invalid verification key"
+    },
+    {
+      code: 6048,
+      name: "VerificationKeyNotFound",
+      msg: "Verification key not found"
+    },
+    {
+      code: 6049,
+      name: "CommitteeNotFound",
+      msg: "Committee not found"
+    },
+    {
+      code: 6050,
+      name: "NotCommitteeMember",
+      msg: "Not a committee member"
+    },
+    {
+      code: 6051,
+      name: "InvalidEncryptedNote",
+      msg: "Invalid encrypted note"
+    },
+    {
+      code: 6052,
+      name: "DecryptionFailed",
+      msg: "Decryption failed"
+    },
+    {
+      code: 6053,
+      name: "InvalidCiphertext",
+      msg: "Invalid ciphertext"
+    },
+    {
+      code: 6054,
+      name: "LightProtocolError",
+      msg: "Light Protocol CPI failed"
+    },
+    {
+      code: 6055,
+      name: "LightCpiError",
+      msg: "Light Protocol CPI operation failed"
+    },
+    {
+      code: 6056,
+      name: "NullifierTreeError",
+      msg: "Nullifier tree error"
+    },
+    {
+      code: 6057,
+      name: "NullifierInsertionFailed",
+      msg: "Failed to insert nullifier"
+    },
+    {
+      code: 6058,
+      name: "NullifierAlreadySpent",
+      msg: "Nullifier has already been spent (compressed account exists)"
+    },
+    {
+      code: 6059,
+      name: "ActionNullifierAlreadyUsed",
+      msg: "Action nullifier has already been used (already voted)"
+    },
+    {
+      code: 6060,
+      name: "CommitmentCreationFailed",
+      msg: "Failed to create commitment compressed account"
+    },
+    {
+      code: 6061,
+      name: "CommitmentProofFailed",
+      msg: "Commitment merkle proof verification failed"
+    },
+    {
+      code: 6062,
+      name: "PoseidonHashError",
+      msg: "Poseidon hash computation failed"
+    },
+    {
+      code: 6063,
+      name: "InvalidProofLength",
+      msg: "Invalid proof length"
+    },
+    {
+      code: 6064,
+      name: "Bn254MulError",
+      msg: "BN254 scalar multiplication failed"
+    },
+    {
+      code: 6065,
+      name: "Bn254AddError",
+      msg: "BN254 point addition failed"
+    },
+    {
+      code: 6066,
+      name: "Bn254PairingError",
+      msg: "BN254 pairing check failed"
+    },
+    {
+      code: 6067,
+      name: "AdapterSwapFailed",
+      msg: "Adapter swap execution failed"
+    },
+    {
+      code: 6068,
+      name: "TooManyPendingCommitments",
+      msg: "Too many pending commitments"
+    },
+    {
+      code: 6069,
+      name: "PendingOperationExpired",
+      msg: "Pending operation has expired"
+    },
+    {
+      code: 6070,
+      name: "PendingOperationNotComplete",
+      msg: "Pending operation not complete or expired"
+    },
+    {
+      code: 6071,
+      name: "InvalidCommitmentIndex",
+      msg: "Invalid commitment index"
+    },
+    {
+      code: 6072,
+      name: "CommitmentAlreadyCreated",
+      msg: "Commitment already created"
+    },
+    {
+      code: 6073,
+      name: "PoolMismatch",
+      msg: "Pool mismatch for commitment"
+    },
+    {
+      code: 6074,
+      name: "InvalidRelayer",
+      msg: "Invalid relayer for pending operation"
+    },
+    {
+      code: 6075,
+      name: "InvalidNullifierIndex",
+      msg: "Invalid nullifier index"
+    },
+    {
+      code: 6076,
+      name: "NullifierAlreadyCreated",
+      msg: "Nullifier already created"
+    },
+    {
+      code: 6077,
+      name: "NullifiersNotComplete",
+      msg: "Not all nullifiers have been created yet"
+    },
+    {
+      code: 6078,
+      name: "NullifiersNotCreated",
+      msg: "Nullifiers have not been created - required before processing unshield"
+    },
+    {
+      code: 6079,
+      name: "ProofNotVerified",
+      msg: "ZK proof has not been verified - Phase 0 required"
+    },
+    {
+      code: 6080,
+      name: "CommitmentNotVerified",
+      msg: "Commitment existence has not been verified - Phase 1 required"
+    },
+    {
+      code: 6081,
+      name: "CommitmentAlreadyVerified",
+      msg: "Commitment has already been verified"
+    },
+    {
+      code: 6082,
+      name: "NullifierNotCreated",
+      msg: "Nullifier has not been created - Phase 2 required"
+    },
+    {
+      code: 6083,
+      name: "Deprecated",
+      msg: "This instruction is deprecated - use append pattern instead"
+    },
+    {
+      code: 6084,
+      name: "InvalidInputCount",
+      msg: "Invalid input count - must be between 2 and 3 for consolidation"
+    },
+    {
+      code: 6085,
+      name: "InvalidVault",
+      msg: "Invalid vault account"
+    },
+    {
+      code: 6086,
+      name: "InvalidTreasury",
+      msg: "Treasury ATA required when protocol fees are enabled"
+    },
+    {
+      code: 6087,
+      name: "InsufficientFee",
+      msg: "Fee amount is less than required minimum"
+    },
+    {
+      code: 6088,
+      name: "PerpsPoolNotFound",
+      msg: "Perps pool not found"
+    },
+    {
+      code: 6089,
+      name: "PerpsPoolNotActive",
+      msg: "Perps pool is not active"
+    },
+    {
+      code: 6090,
+      name: "PerpsMarketNotFound",
+      msg: "Perps market not found"
+    },
+    {
+      code: 6091,
+      name: "PerpsMarketNotActive",
+      msg: "Perps market is not active"
+    },
+    {
+      code: 6092,
+      name: "MaxTokensReached",
+      msg: "Maximum tokens in pool reached"
+    },
+    {
+      code: 6093,
+      name: "TokenAlreadyInPool",
+      msg: "Token already exists in pool"
+    },
+    {
+      code: 6094,
+      name: "TokenNotInPool",
+      msg: "Token not found in pool"
+    },
+    {
+      code: 6095,
+      name: "TokenNotActive",
+      msg: "Token is not active"
+    },
+    {
+      code: 6096,
+      name: "UtilizationLimitExceeded",
+      msg: "Utilization limit exceeded"
+    },
+    {
+      code: 6097,
+      name: "InsufficientAvailableLiquidity",
+      msg: "Insufficient available liquidity"
+    },
+    {
+      code: 6098,
+      name: "PositionSizeExceeded",
+      msg: "Position size exceeds maximum"
+    },
+    {
+      code: 6099,
+      name: "LeverageExceeded",
+      msg: "Leverage exceeds maximum allowed"
+    },
+    {
+      code: 6100,
+      name: "InvalidLeverage",
+      msg: "Invalid leverage value"
+    },
+    {
+      code: 6101,
+      name: "PositionNotLiquidatable",
+      msg: "Position not liquidatable"
+    },
+    {
+      code: 6102,
+      name: "PositionAtProfitBound",
+      msg: "Position at profit bound - must close"
+    },
+    {
+      code: 6103,
+      name: "InvalidOraclePrice",
+      msg: "Invalid oracle price"
+    },
+    {
+      code: 6104,
+      name: "StaleOraclePrice",
+      msg: "Oracle price is stale"
+    },
+    {
+      code: 6105,
+      name: "InvalidPriceFeed",
+      msg: "Invalid Pyth price feed - feed ID mismatch"
+    },
+    {
+      code: 6106,
+      name: "PriceStale",
+      msg: "Pyth price is stale - exceeds maximum age"
+    },
+    {
+      code: 6107,
+      name: "PriceConfidenceTooHigh",
+      msg: "Pyth price confidence interval too high"
+    },
+    {
+      code: 6108,
+      name: "InvalidPositionDirection",
+      msg: "Invalid position direction"
+    },
+    {
+      code: 6109,
+      name: "InvalidMarginAmount",
+      msg: "Invalid margin amount"
+    },
+    {
+      code: 6110,
+      name: "InvalidPositionSize",
+      msg: "Invalid position size"
+    },
+    {
+      code: 6111,
+      name: "LpAmountMismatch",
+      msg: "LP token amount mismatch"
+    },
+    {
+      code: 6112,
+      name: "WithdrawalExceedsAvailable",
+      msg: "Withdrawal exceeds available balance"
+    },
+    {
+      code: 6113,
+      name: "InvalidBorrowFee",
+      msg: "Invalid borrow fee calculation"
+    },
+    {
+      code: 6114,
+      name: "SameBaseQuoteToken",
+      msg: "Market base and quote tokens must be different"
+    },
+    {
+      code: 6115,
+      name: "InvalidTokenIndex",
+      msg: "Invalid token index"
+    },
+    {
+      code: 6116,
+      name: "PositionMetaNotFound",
+      msg: "Position metadata not found"
+    },
+    {
+      code: 6117,
+      name: "PositionMetaCreationFailed",
+      msg: "Failed to create position metadata"
+    },
+    {
+      code: 6118,
+      name: "PositionMetaUpdateFailed",
+      msg: "Failed to update position metadata"
+    },
+    {
+      code: 6119,
+      name: "PositionNotActive",
+      msg: "Position is not active - may be liquidated or closed"
+    },
+    {
+      code: 6120,
+      name: "PositionAlreadyLiquidated",
+      msg: "Position has already been liquidated"
+    },
+    {
+      code: 6121,
+      name: "PositionAlreadyClosed",
+      msg: "Position has already been closed"
+    },
+    {
+      code: 6122,
+      name: "LiquidationNullifierFailed",
+      msg: "Failed to create liquidation nullifier"
+    },
+    {
+      code: 6123,
+      name: "PositionIdMismatch",
+      msg: "Position ID mismatch between commitment and metadata"
+    },
+    {
+      code: 6124,
+      name: "NullifierHashMismatch",
+      msg: "Nullifier hash mismatch"
+    },
+    {
+      code: 6125,
+      name: "BallotNotFound",
+      msg: "Ballot not found"
+    },
+    {
+      code: 6126,
+      name: "BallotNotActive",
+      msg: "Ballot is not active for voting"
+    },
+    {
+      code: 6127,
+      name: "BallotNotResolved",
+      msg: "Ballot has not been resolved yet"
+    },
+    {
+      code: 6128,
+      name: "BallotNotFinalized",
+      msg: "Ballot has not been finalized yet"
+    },
+    {
+      code: 6129,
+      name: "BallotAlreadyFinalized",
+      msg: "Ballot has already been finalized"
+    },
+    {
+      code: 6130,
+      name: "BallotAlreadyResolved",
+      msg: "Ballot is already resolved"
+    },
+    {
+      code: 6131,
+      name: "InvalidVoteOptionRange",
+      msg: "Invalid vote option - exceeds num_options"
+    },
+    {
+      code: 6132,
+      name: "VoteNullifierNotFound",
+      msg: "Vote nullifier not found - user must vote before changing"
+    },
+    {
+      code: 6133,
+      name: "InvalidBindingMode",
+      msg: "Invalid binding mode for this operation"
+    },
+    {
+      code: 6134,
+      name: "InvalidVoteTypeForBallot",
+      msg: "Invalid vote type for this ballot"
+    },
+    {
+      code: 6135,
+      name: "InvalidRevealModeForOperation",
+      msg: "Invalid reveal mode for this operation"
+    },
+    {
+      code: 6136,
+      name: "NotEligible",
+      msg: "User not eligible to vote (not in whitelist)"
+    },
+    {
+      code: 6137,
+      name: "ZeroAmount",
+      msg: "Cannot vote with zero amount"
+    },
+    {
+      code: 6138,
+      name: "QuorumNotMet",
+      msg: "Quorum threshold not met"
+    },
+    {
+      code: 6139,
+      name: "InvalidOutcomeValue",
+      msg: "Invalid outcome value"
+    },
+    {
+      code: 6140,
+      name: "ClaimsNotAllowed",
+      msg: "Claims not allowed for Snapshot mode"
+    },
+    {
+      code: 6141,
+      name: "ClaimAlreadyProcessed",
+      msg: "Position already claimed (nullifier exists)"
+    },
+    {
+      code: 6142,
+      name: "ClaimDeadlinePassed",
+      msg: "Claim deadline has passed"
+    },
+    {
+      code: 6143,
+      name: "TimelockNotExpired",
+      msg: "Timelock has not expired yet"
+    },
+    {
+      code: 6144,
+      name: "InvalidDecryptionKey",
+      msg: "Invalid decryption key - does not match time_lock_pubkey"
+    },
+    {
+      code: 6145,
+      name: "InvalidAttestationSignature",
+      msg: "Invalid attestation signature"
+    },
+    {
+      code: 6146,
+      name: "InvalidWeightFormula",
+      msg: "Invalid weight formula - evaluation error"
+    },
+    {
+      code: 6147,
+      name: "PositionCloseNotAllowed",
+      msg: "Position close not allowed outside voting period"
+    },
+    {
+      code: 6148,
+      name: "InvalidSnapshotSlot",
+      msg: "Invalid snapshot slot"
+    },
+    {
+      code: 6149,
+      name: "InvalidBallotTiming",
+      msg: "Invalid ballot timing - start_time must be before end_time"
+    },
+    {
+      code: 6150,
+      name: "InvalidNumOptions",
+      msg: "Invalid number of options - must be between 1 and 16"
+    },
+    {
+      code: 6151,
+      name: "VotingNotStarted",
+      msg: "Voting period has not started yet"
+    },
+    {
+      code: 6152,
+      name: "VotingEnded",
+      msg: "Voting period has ended"
+    },
+    {
+      code: 6153,
+      name: "UnauthorizedResolver",
+      msg: "Only authority can resolve in Authority mode"
+    },
+    {
+      code: 6154,
+      name: "OracleOutcomeNotSubmitted",
+      msg: "Oracle has not submitted outcome"
+    },
+    {
+      code: 6155,
+      name: "TallyNotDecrypted",
+      msg: "Tally must be decrypted before resolution"
+    },
+    {
+      code: 6156,
+      name: "InvalidEligibilityProof",
+      msg: "Invalid eligibility proof"
+    },
+    {
+      code: 6157,
+      name: "WeightFormulaTooLong",
+      msg: "Weight formula too long"
+    },
+    {
+      code: 6158,
+      name: "TooManyWeightParams",
+      msg: "Too many weight parameters"
+    },
+    {
+      code: 6159,
+      name: "ProtocolFeeExceedsMax",
+      msg: "Protocol fee exceeds maximum (10000 bps = 100%)"
+    },
+    {
+      code: 6160,
+      name: "BallotIdMismatch",
+      msg: "Ballot ID mismatch - does not match expected ballot"
+    }
+  ],
+  types: [
+    {
+      name: "AdaptModule",
+      docs: [
+        "Registered adapter module"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "program_id",
+            docs: [
+              "Adapter program address"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "interface_version",
+            docs: [
+              "Interface version (for compatibility)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "enabled",
+            docs: [
+              "Is enabled"
+            ],
+            type: "bool"
+          },
+          {
+            name: "authority",
+            docs: [
+              "Authority who can manage"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "registered_at",
+            docs: [
+              "Registration timestamp"
+            ],
+            type: "i64"
+          },
+          {
+            name: "bump",
+            docs: [
+              "PDA bump"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "AmmPool",
+      docs: [
+        "AMM pool for a token pair"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "pool_id",
+            docs: [
+              "Pool ID (PDA seed)"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "token_a_mint",
+            docs: [
+              "Token A mint"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "token_b_mint",
+            docs: [
+              "Token B mint"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "lp_mint",
+            docs: [
+              "LP token mint (created by pool)"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "state_hash",
+            docs: [
+              "Current state hash (hash of reserves + lp_supply)",
+              "Used for ZK proof verification of state transitions"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "reserve_a",
+            docs: [
+              "Reserve A (committed, updated via ZK proofs)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "reserve_b",
+            docs: [
+              "Reserve B (committed, updated via ZK proofs)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "lp_supply",
+            docs: [
+              "Total LP token supply"
+            ],
+            type: "u64"
+          },
+          {
+            name: "fee_bps",
+            docs: [
+              "Fee in basis points (e.g., 30 = 0.3%)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "authority",
+            docs: [
+              "Pool authority"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "is_active",
+            docs: [
+              "Is pool active"
+            ],
+            type: "bool"
+          },
+          {
+            name: "bump",
+            docs: [
+              "PDA bump"
+            ],
+            type: "u8"
+          },
+          {
+            name: "lp_mint_bump",
+            docs: [
+              "LP mint bump"
+            ],
+            type: "u8"
+          },
+          {
+            name: "pool_type",
+            docs: [
+              "Pool type (ConstantProduct or StableSwap)"
+            ],
+            type: {
+              defined: {
+                name: "PoolType"
+              }
+            }
+          },
+          {
+            name: "amplification",
+            docs: [
+              "Amplification coefficient for StableSwap (ignored for ConstantProduct)",
+              "Higher values = more like constant sum (lower slippage at peg)",
+              "Typical values: 100-1000 for stablecoins",
+              "Stored as actual value (not scaled)"
+            ],
+            type: "u64"
+          }
+        ]
+      }
+    },
+    {
+      name: "Ballot",
+      docs: [
+        "Main ballot account storing all voting configuration and state"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "ballot_id",
+            docs: [
+              "Unique ballot identifier"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "authority",
+            docs: [
+              "Authority who can resolve (for Authority mode) or manage ballot"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "token_mint",
+            docs: [
+              "Token mint for voting power"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "token_pool",
+            docs: [
+              "Token vault PDA (SpendToVote only, holds locked tokens)"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "binding_mode",
+            docs: [
+              "How tokens participate in voting"
+            ],
+            type: {
+              defined: {
+                name: "VoteBindingMode"
+              }
+            }
+          },
+          {
+            name: "reveal_mode",
+            docs: [
+              "When and how votes are revealed"
+            ],
+            type: {
+              defined: {
+                name: "RevealMode"
+              }
+            }
+          },
+          {
+            name: "vote_type",
+            docs: [
+              "How votes are counted"
+            ],
+            type: {
+              defined: {
+                name: "VoteType"
+              }
+            }
+          },
+          {
+            name: "resolution_mode",
+            docs: [
+              "How outcome is determined"
+            ],
+            type: {
+              defined: {
+                name: "ResolutionMode"
+              }
+            }
+          },
+          {
+            name: "status",
+            docs: [
+              "Current ballot status"
+            ],
+            type: {
+              defined: {
+                name: "BallotStatus"
+              }
+            }
+          },
+          {
+            name: "num_options",
+            docs: [
+              "Number of voting options (max 16)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "quorum_threshold",
+            docs: [
+              "Minimum weight/amount required for valid outcome (0 = no quorum)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "protocol_fee_bps",
+            docs: [
+              "Protocol fee in basis points (SpendToVote only, max 10000 = 100%)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "protocol_treasury",
+            docs: [
+              "Treasury account for fee collection"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "start_time",
+            docs: [
+              "When voting starts"
+            ],
+            type: "i64"
+          },
+          {
+            name: "end_time",
+            docs: [
+              "When voting ends"
+            ],
+            type: "i64"
+          },
+          {
+            name: "snapshot_slot",
+            docs: [
+              "For Snapshot mode: slot at which balances are checked"
+            ],
+            type: "u64"
+          },
+          {
+            name: "indexer_pubkey",
+            docs: [
+              "Trusted indexer public key for balance attestation (Snapshot mode)"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "eligibility_root",
+            docs: [
+              "Merkle root of eligible addresses (None = open to all token holders)"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "has_eligibility_root",
+            docs: [
+              "Whether eligibility_root is set (workaround for Option not being well-supported)"
+            ],
+            type: "bool"
+          },
+          {
+            name: "weight_formula",
+            docs: [
+              "Weight formula operations (evaluated left to right)"
+            ],
+            type: {
+              array: [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            name: "weight_formula_len",
+            docs: [
+              "Number of operations in weight_formula"
+            ],
+            type: "u8"
+          },
+          {
+            name: "weight_params",
+            docs: [
+              "Parameters for PushConst operations"
+            ],
+            type: {
+              array: [
+                "u64",
+                8
+              ]
+            }
+          },
+          {
+            name: "option_weights",
+            docs: [
+              "Weight per option (after weight formula applied)"
+            ],
+            type: {
+              array: [
+                "u64",
+                16
+              ]
+            }
+          },
+          {
+            name: "option_amounts",
+            docs: [
+              "Raw amounts per option (before weight formula)"
+            ],
+            type: {
+              array: [
+                "u64",
+                16
+              ]
+            }
+          },
+          {
+            name: "total_weight",
+            docs: [
+              "Total weight across all votes"
+            ],
+            type: "u64"
+          },
+          {
+            name: "total_amount",
+            docs: [
+              "Total amount across all votes"
+            ],
+            type: "u64"
+          },
+          {
+            name: "vote_count",
+            docs: [
+              "Number of votes cast"
+            ],
+            type: "u64"
+          },
+          {
+            name: "pool_balance",
+            docs: [
+              "Current balance in the vault"
+            ],
+            type: "u64"
+          },
+          {
+            name: "total_distributed",
+            docs: [
+              "Total payouts distributed during claims"
+            ],
+            type: "u64"
+          },
+          {
+            name: "fees_collected",
+            docs: [
+              "Total fees collected during claims"
+            ],
+            type: "u64"
+          },
+          {
+            name: "encrypted_tally",
+            docs: [
+              "ElGamal ciphertexts for homomorphic vote counting",
+              "Note: Used for AGGREGATE counting only",
+              "Individual vote_choice hidden by commitment hash, NOT by this encryption"
+            ],
+            type: {
+              array: [
+                {
+                  array: [
+                    "u8",
+                    64
+                  ]
+                },
+                16
+              ]
+            }
+          },
+          {
+            name: "time_lock_pubkey",
+            docs: [
+              "Public key for timelock encryption"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "unlock_slot",
+            docs: [
+              "Slot after which timelock key is released"
+            ],
+            type: "u64"
+          },
+          {
+            name: "outcome",
+            docs: [
+              "Winning option index (None if no winner or quorum not met)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "has_outcome",
+            docs: [
+              "Whether outcome has been set"
+            ],
+            type: "bool"
+          },
+          {
+            name: "winner_weight",
+            docs: [
+              "Total weight that voted for winner (for payout calculation)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "resolver",
+            docs: [
+              "Designated resolver for Authority mode"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "has_resolver",
+            docs: [
+              "Whether resolver is set"
+            ],
+            type: "bool"
+          },
+          {
+            name: "oracle",
+            docs: [
+              "Oracle account for Oracle mode"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "has_oracle",
+            docs: [
+              "Whether oracle is set"
+            ],
+            type: "bool"
+          },
+          {
+            name: "claim_deadline",
+            docs: [
+              "Deadline for claims (SpendToVote only, 0 for Snapshot)"
+            ],
+            type: "i64"
+          },
+          {
+            name: "bump",
+            docs: [
+              "PDA bump seed"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "BallotConfigInput",
+      docs: [
+        "Input configuration for creating a ballot"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "binding_mode",
+            type: {
+              defined: {
+                name: "VoteBindingMode"
+              }
+            }
+          },
+          {
+            name: "reveal_mode",
+            type: {
+              defined: {
+                name: "RevealMode"
+              }
+            }
+          },
+          {
+            name: "vote_type",
+            type: {
+              defined: {
+                name: "VoteType"
+              }
+            }
+          },
+          {
+            name: "resolution_mode",
+            type: {
+              defined: {
+                name: "ResolutionMode"
+              }
+            }
+          },
+          {
+            name: "num_options",
+            type: "u8"
+          },
+          {
+            name: "quorum_threshold",
+            type: "u64"
+          },
+          {
+            name: "protocol_fee_bps",
+            type: "u16"
+          },
+          {
+            name: "protocol_treasury",
+            type: "pubkey"
+          },
+          {
+            name: "start_time",
+            type: "i64"
+          },
+          {
+            name: "end_time",
+            type: "i64"
+          },
+          {
+            name: "snapshot_slot",
+            type: "u64"
+          },
+          {
+            name: "indexer_pubkey",
+            type: "pubkey"
+          },
+          {
+            name: "eligibility_root",
+            type: {
+              option: {
+                array: [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            name: "weight_formula",
+            type: "bytes"
+          },
+          {
+            name: "weight_params",
+            type: {
+              vec: "u64"
+            }
+          },
+          {
+            name: "time_lock_pubkey",
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "unlock_slot",
+            type: "u64"
+          },
+          {
+            name: "resolver",
+            type: {
+              option: "pubkey"
+            }
+          },
+          {
+            name: "oracle",
+            type: {
+              option: "pubkey"
+            }
+          },
+          {
+            name: "claim_deadline",
+            type: "i64"
+          }
+        ]
+      }
+    },
+    {
+      name: "BallotStatus",
+      docs: [
+        "Ballot status lifecycle"
+      ],
+      type: {
+        kind: "enum",
+        variants: [
+          {
+            name: "Pending"
+          },
+          {
+            name: "Active"
+          },
+          {
+            name: "Closed"
+          },
+          {
+            name: "Resolved"
+          },
+          {
+            name: "Finalized"
+          }
+        ]
+      }
+    },
+    {
+      name: "EncryptedContributions",
+      docs: [
+        "Encrypted contributions for tally update (encrypted modes only)",
+        "One ciphertext per option - program adds all to tally without knowing which is non-zero"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "ciphertexts",
+            docs: [
+              "Array of ElGamal ciphertexts, one per option",
+              "Only one has non-zero weight (circuit enforces this)"
+            ],
+            type: {
+              vec: {
+                array: [
+                  "u8",
+                  64
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      name: "InitializePerpsPoolParams",
+      docs: [
+        "Parameters for initializing a perps pool"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "max_leverage",
+            docs: [
+              "Maximum leverage (1-100)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "position_fee_bps",
+            docs: [
+              "Position fee in basis points (e.g., 6 = 0.06%)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "max_utilization_bps",
+            docs: [
+              "Maximum utilization per token in basis points (e.g., 8000 = 80%)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "liquidation_threshold_bps",
+            docs: [
+              "Liquidation threshold in basis points (e.g., 50 = 0.5% margin remaining)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "liquidation_penalty_bps",
+            docs: [
+              "Liquidation penalty in basis points (e.g., 50 = 0.5%)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "base_borrow_rate_bps",
+            docs: [
+              "Base borrow rate per hour in basis points"
+            ],
+            type: "u16"
+          },
+          {
+            name: "max_imbalance_fee_bps",
+            docs: [
+              "Maximum imbalance fee in basis points (e.g., 3 = 0.03%)"
+            ],
+            type: "u16"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightAdaptParams",
+      docs: [
+        "Parameters for Light Protocol operations"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "nullifier_proof",
+            docs: [
+              "Validity proof for nullifier (proves it doesn't exist)"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "nullifier_address_tree_info",
+            docs: [
+              "Address tree info for nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "commitment_proof",
+            docs: [
+              "Validity proof for output commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "commitment_address_tree_info",
+            docs: [
+              "Address tree info for commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightAddressTreeInfo",
+      docs: [
+        "IDL-safe wrapper for Light Protocol address tree info",
+        "",
+        "Contains tree configuration for compressed account address derivation."
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "address_merkle_tree_pubkey_index",
+            docs: [
+              "Index of the address merkle tree pubkey in remaining_accounts"
+            ],
+            type: "u8"
+          },
+          {
+            name: "address_queue_pubkey_index",
+            docs: [
+              "Index of the address queue pubkey in remaining_accounts"
+            ],
+            type: "u8"
+          },
+          {
+            name: "root_index",
+            docs: [
+              "Root index for the merkle tree"
+            ],
+            type: "u16"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightCancelOrderParams",
+      docs: [
+        "Parameters for Light Protocol operations"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "nullifier_proof",
+            docs: [
+              "Validity proof for nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "nullifier_address_tree_info",
+            docs: [
+              "Address tree info for nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "commitment_proof",
+            docs: [
+              "Validity proof for refund commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "commitment_address_tree_info",
+            docs: [
+              "Address tree info for refund commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightCommitmentParams",
+      docs: [
+        "Parameters for Light Protocol commitment creation"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "validity_proof",
+            docs: [
+              "Validity proof from Helius indexer"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "address_tree_info",
+            docs: [
+              "Address tree info for compressed account address derivation"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index for the new compressed account"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightCreateCommitmentParams",
+      docs: [
+        "Parameters for Light Protocol commitment creation"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "proof",
+            docs: [
+              "Validity proof for commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "address_tree_info",
+            docs: [
+              "Address tree info for commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightCreateNullifierAndPendingParams",
+      docs: [
+        "Parameters for Light Protocol nullifier creation"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "proof",
+            docs: [
+              "Validity proof for nullifier (non-inclusion proof)"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "address_tree_info",
+            docs: [
+              "Address tree info for nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightCreateNullifierParams",
+      docs: [
+        "Parameters for Light Protocol nullifier creation"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "proof",
+            docs: [
+              "Validity proof for nullifier (non-inclusion proof)"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "address_tree_info",
+            docs: [
+              "Address tree info for nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightCreateVoteCommitmentParams",
+      docs: [
+        "Parameters for Light Protocol vote commitment creation"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "validity_proof",
+            docs: [
+              "Validity proof for commitment (non-inclusion proof)"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "address_tree_info",
+            docs: [
+              "Address tree info for commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightCreateVoteNullifierParams",
+      docs: [
+        "Parameters for Light Protocol vote nullifier creation"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "validity_proof",
+            docs: [
+              "Validity proof for nullifier (non-inclusion proof)"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "address_tree_info",
+            docs: [
+              "Address tree info for nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightFillOrderParams",
+      docs: [
+        "Parameters for Light Protocol operations in fill order"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "escrow_nullifier_proof",
+            docs: [
+              "Validity proof for escrow nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "escrow_nullifier_address_tree_info",
+            docs: [
+              "Address tree info for escrow nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "taker_nullifier_proof",
+            docs: [
+              "Validity proof for taker nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "taker_nullifier_address_tree_info",
+            docs: [
+              "Address tree info for taker nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "maker_commitment_proof",
+            docs: [
+              "Validity proof for maker output commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "maker_commitment_address_tree_info",
+            docs: [
+              "Address tree info for maker output commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "taker_commitment_proof",
+            docs: [
+              "Validity proof for taker output commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "taker_commitment_address_tree_info",
+            docs: [
+              "Address tree info for taker output commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightOrderParams",
+      docs: [
+        "Parameters for Light Protocol operations"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "nullifier_proof",
+            docs: [
+              "Validity proof for nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "nullifier_address_tree_info",
+            docs: [
+              "Address tree info for nullifier"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "commitment_proof",
+            docs: [
+              "Validity proof for commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "commitment_address_tree_info",
+            docs: [
+              "Address tree info for commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightTransactParams",
+      docs: [
+        "Parameters for transact Phase 1",
+        "SECURITY CRITICAL: Verifies commitment exists + creates nullifier"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "commitment_account_hash",
+            docs: [
+              "Account hash of input commitment (for verification)"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "commitment_merkle_context",
+            docs: [
+              "Merkle context proving commitment exists in state tree"
+            ],
+            type: {
+              defined: {
+                name: "cloakcraft::instructions::pool::transact::CommitmentMerkleContext"
+              }
+            }
+          },
+          {
+            name: "commitment_inclusion_proof",
+            docs: [
+              "Commitment inclusion proof (SECURITY: proves commitment EXISTS)"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "commitment_address_tree_info",
+            docs: [
+              "Address tree info for commitment verification"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "nullifier_non_inclusion_proof",
+            docs: [
+              "Nullifier non-inclusion proof (proves nullifier doesn't exist yet)"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "nullifier_address_tree_info",
+            docs: [
+              "Address tree info for nullifier creation"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index for new nullifier account"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "LightValidityProof",
+      docs: [
+        "IDL-safe wrapper for Light Protocol validity proof",
+        "",
+        "Contains the serialized proof data that can be deserialized",
+        "into a ValidityProof for Light CPI operations."
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "a",
+            docs: [
+              "Compressed proof point A (32 bytes)"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "b",
+            docs: [
+              "Compressed proof point B (64 bytes)"
+            ],
+            type: {
+              array: [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            name: "c",
+            docs: [
+              "Compressed proof point C (32 bytes)"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      name: "LightVerifyCommitmentParams",
+      docs: [
+        "Parameters for commitment inclusion verification"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "commitment_account_hash",
+            docs: [
+              "Account hash of commitment to verify"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "commitment_merkle_context",
+            docs: [
+              "Merkle context proving commitment exists"
+            ],
+            type: {
+              defined: {
+                name: "cloakcraft::instructions::generic::verify_commitment_exists::CommitmentMerkleContext"
+              }
+            }
+          },
+          {
+            name: "commitment_inclusion_proof",
+            docs: [
+              "Inclusion proof for commitment (from getInclusionProofByHash)"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "commitment_address_tree_info",
+            docs: [
+              "Address tree info for commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      name: "LightVerifyVoteCommitmentParams",
+      docs: [
+        "Parameters for vote commitment inclusion verification"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "commitment_account_hash",
+            docs: [
+              "Account hash of commitment to verify (from Light Protocol indexer)"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "commitment_merkle_context",
+            docs: [
+              "Merkle context proving commitment exists"
+            ],
+            type: {
+              defined: {
+                name: "VoteCommitmentMerkleContext"
+              }
+            }
+          },
+          {
+            name: "commitment_inclusion_proof",
+            docs: [
+              "Inclusion proof for commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "commitment_address_tree_info",
+            docs: [
+              "Address tree info for commitment"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      name: "Order",
+      docs: [
+        "Market order (escrow)"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "order_id",
+            docs: [
+              "Unique order ID (derived from nullifier + terms)"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "escrow_commitment",
+            docs: [
+              "Escrow commitment (locked maker funds)"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "terms_hash",
+            docs: [
+              "Hash of order terms (offer_token, offer_amount, ask_token, ask_amount, maker_receive)"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "encrypted_escrow",
+            docs: [
+              "Encrypted escrow note (for maker to decrypt)"
+            ],
+            type: "bytes"
+          },
+          {
+            name: "expiry",
+            docs: [
+              "Expiry timestamp"
+            ],
+            type: "i64"
+          },
+          {
+            name: "status",
+            docs: [
+              "Order status"
+            ],
+            type: {
+              defined: {
+                name: "OrderStatus"
+              }
+            }
+          },
+          {
+            name: "created_at",
+            docs: [
+              "Creation timestamp"
+            ],
+            type: "i64"
+          },
+          {
+            name: "bump",
+            docs: [
+              "PDA bump"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "OrderStatus",
+      docs: [
+        "Order status"
+      ],
+      type: {
+        kind: "enum",
+        variants: [
+          {
+            name: "Open"
+          },
+          {
+            name: "Filled"
+          },
+          {
+            name: "Cancelled"
+          }
+        ]
+      }
+    },
+    {
+      name: "PendingOperation",
+      docs: [
+        "Pending operation for multi-phase commit with append pattern",
+        "",
+        "SECURITY: Append pattern binds all phases together",
+        "Phase 0: Verify ZK proof \u2192 stores input_commitment, nullifier, outputs",
+        "Phase 1: Verify commitment exists \u2192 must match input_commitment from Phase 0",
+        "Phase 2: Create nullifier \u2192 must match nullifier from Phase 0",
+        "Phase 3+: Execute operation \u2192 requires all verifications complete",
+        "",
+        "This prevents commitment/nullifier swap attacks.",
+        "",
+        "DESIGN CHOICE: Store randomness instead of encrypted notes",
+        "- Encrypted notes = ~200 bytes per output (10 outputs = 2000 bytes!)",
+        "- Randomness = 32 bytes per output (10 outputs = 320 bytes)",
+        "- Savings: 1680 bytes (~0.012 SOL temporary rent reduction)",
+        "",
+        "Trade-off: Must regenerate encrypted notes if Phase 4 fails",
+        "- Normal case: Generate once in Phase 4, no regeneration needed",
+        "- Failure case: SDK reads randomness from PDA, regenerates encrypted notes",
+        "- Compute is cheap, storage is expensive on Solana"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "bump",
+            docs: [
+              "Bump seed for PDA derivation"
+            ],
+            type: "u8"
+          },
+          {
+            name: "operation_id",
+            docs: [
+              "Operation ID (unique per operation, derived from inputs)"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "relayer",
+            docs: [
+              "Relayer who initiated the operation"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "operation_type",
+            docs: [
+              "Operation type (not used for logic, only for logging/debugging)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "proof_verified",
+            docs: [
+              "SECURITY: State machine flags (prevent phase skipping)",
+              "Phase 0 sets proof_verified"
+            ],
+            type: "bool"
+          },
+          {
+            name: "input_commitments",
+            docs: [
+              "SECURITY: Input commitment from ZK proof (binds Phase 0 to Phase 1)",
+              "Phase 0 extracts from proof public inputs",
+              "Phase 1 must verify THIS exact commitment",
+              "For single-input operations (swap, remove_liquidity): Uses index 0",
+              "For multi-input operations (add_liquidity): Uses indices 0 and 1"
+            ],
+            type: {
+              array: [
+                {
+                  array: [
+                    "u8",
+                    32
+                  ]
+                },
+                3
+              ]
+            }
+          },
+          {
+            name: "expected_nullifiers",
+            docs: [
+              "SECURITY: Expected nullifiers from ZK proof (binds Phase 0 to Phase 2)",
+              "Phase 0 extracts from proof public inputs",
+              "Phase 2 must create THIS exact nullifier",
+              "Matches input_commitments indices"
+            ],
+            type: {
+              array: [
+                {
+                  array: [
+                    "u8",
+                    32
+                  ]
+                },
+                3
+              ]
+            }
+          },
+          {
+            name: "input_pools",
+            docs: [
+              "SECURITY: Input pools for each input commitment (binds Phase 1/2 to correct pool)",
+              "Phase 0 stores which pool each input commitment belongs to",
+              "Phase 1 must verify commitment EXISTS in THIS exact pool",
+              "Phase 2 must create nullifier in THIS exact pool",
+              "This prevents pool confusion attacks in multi-pool operations (e.g., swap)",
+              "Matches input_commitments and expected_nullifiers indices"
+            ],
+            type: {
+              array: [
+                {
+                  array: [
+                    "u8",
+                    32
+                  ]
+                },
+                3
+              ]
+            }
+          },
+          {
+            name: "num_inputs",
+            docs: [
+              "Number of input commitments to verify (1 for swap/remove, 2 for add_liquidity)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "inputs_verified_mask",
+            docs: [
+              "Bitmask tracking which input commitments have been verified",
+              "Bit i = 1 means input_commitments[i] was verified"
+            ],
+            type: "u8"
+          },
+          {
+            name: "nullifier_completed_mask",
+            docs: [
+              "Which nullifiers have been created (bitmask)",
+              "Uses same indices as expected_nullifiers array"
+            ],
+            type: "u8"
+          },
+          {
+            name: "num_commitments",
+            docs: [
+              "Number of pending commitments"
+            ],
+            type: "u8"
+          },
+          {
+            name: "pools",
+            docs: [
+              "Pools for each commitment"
+            ],
+            type: {
+              array: [
+                {
+                  array: [
+                    "u8",
+                    32
+                  ]
+                },
+                8
+              ]
+            }
+          },
+          {
+            name: "commitments",
+            docs: [
+              "Commitment hashes"
+            ],
+            type: {
+              array: [
+                {
+                  array: [
+                    "u8",
+                    32
+                  ]
+                },
+                8
+              ]
+            }
+          },
+          {
+            name: "leaf_indices",
+            docs: [
+              "Leaf indices for each commitment"
+            ],
+            type: {
+              array: [
+                "u64",
+                8
+              ]
+            }
+          },
+          {
+            name: "stealth_ephemeral_pubkeys",
+            docs: [
+              "Stealth ephemeral pubkeys (64 bytes each: X + Y coordinates)",
+              "Used by scanner to derive stealth private key for decryption"
+            ],
+            type: {
+              array: [
+                {
+                  array: [
+                    "u8",
+                    64
+                  ]
+                },
+                8
+              ]
+            }
+          },
+          {
+            name: "output_recipients",
+            docs: [
+              "Output recipients (stealth public key X coordinate)",
+              "Used to regenerate encrypted notes"
+            ],
+            type: {
+              array: [
+                {
+                  array: [
+                    "u8",
+                    32
+                  ]
+                },
+                8
+              ]
+            }
+          },
+          {
+            name: "output_amounts",
+            docs: [
+              "Output amounts",
+              "Used to regenerate encrypted notes"
+            ],
+            type: {
+              array: [
+                "u64",
+                8
+              ]
+            }
+          },
+          {
+            name: "output_randomness",
+            docs: [
+              "Output randomness (from ZK proof)",
+              "CRITICAL: Used to regenerate encrypted notes",
+              "Must match what was used in commitment computation"
+            ],
+            type: {
+              array: [
+                {
+                  array: [
+                    "u8",
+                    32
+                  ]
+                },
+                8
+              ]
+            }
+          },
+          {
+            name: "completed_mask",
+            docs: [
+              "Which commitments have been created (bitmask)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "expires_at",
+            docs: [
+              "Expiry timestamp (operation expires after this)"
+            ],
+            type: "i64"
+          },
+          {
+            name: "created_at",
+            docs: [
+              "Creation timestamp"
+            ],
+            type: "i64"
+          },
+          {
+            name: "swap_amount",
+            docs: [
+              "Swap: Input amount being swapped",
+              "Add Liquidity: Token A deposit amount",
+              "Remove Liquidity: LP tokens burned"
+            ],
+            type: "u64"
+          },
+          {
+            name: "output_amount",
+            docs: [
+              "Swap: Output amount received (recalculated on-chain for flexibility)",
+              "Add Liquidity: Token B deposit amount",
+              "Remove Liquidity: Token A withdrawn"
+            ],
+            type: "u64"
+          },
+          {
+            name: "min_output",
+            docs: [
+              "Swap: Minimum acceptable output (slippage protection)",
+              "Verified on-chain: recalculated_output >= min_output",
+              "Add Liquidity/Remove Liquidity: unused"
+            ],
+            type: "u64"
+          },
+          {
+            name: "extra_amount",
+            docs: [
+              "Swap: unused",
+              "Add Liquidity: LP tokens minted",
+              "Remove Liquidity: Token B withdrawn"
+            ],
+            type: "u64"
+          },
+          {
+            name: "swap_a_to_b",
+            docs: [
+              "Swap: Direction (1 = A->B, 0 = B->A)",
+              "Add Liquidity: unused",
+              "Remove Liquidity: unused"
+            ],
+            type: "bool"
+          },
+          {
+            name: "fee_amount",
+            docs: [
+              "Protocol fee amount (verified in ZK proof)",
+              "Transfer/Unshield: Fee deducted from transfer amount",
+              "Swap: Fee deducted from swap output",
+              "Remove Liquidity: Fee deducted from withdrawal"
+            ],
+            type: "u64"
+          },
+          {
+            name: "unshield_amount",
+            docs: [
+              "Unshield amount (for process_unshield phase)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "transfer_amount",
+            docs: [
+              "Transfer amount (public for on-chain fee verification)",
+              "This is the amount going to the recipient (out_amount_1 in circuit)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "fee_processed",
+            docs: [
+              "Whether fee has been processed (transferred to treasury)"
+            ],
+            type: "bool"
+          }
+        ]
+      }
+    },
+    {
+      name: "PerpsMarket",
+      docs: [
+        "Perpetual futures market for a trading pair"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "market_id",
+            docs: [
+              "Unique market identifier (32-byte hash)"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "pool",
+            docs: [
+              "Associated perps pool"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "base_token_index",
+            docs: [
+              "Base token index in pool.tokens (e.g., SOL for SOL/USD)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "quote_token_index",
+            docs: [
+              "Quote token index in pool.tokens (e.g., USDC for SOL/USD)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "long_open_interest",
+            docs: [
+              "Total long open interest (in base token units)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "short_open_interest",
+            docs: [
+              "Total short open interest (in base token units)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "max_position_size",
+            docs: [
+              "Maximum position size (in base token units, 0 = unlimited)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "is_active",
+            docs: [
+              "Whether the market is active for trading"
+            ],
+            type: "bool"
+          },
+          {
+            name: "bump",
+            docs: [
+              "PDA bump seed"
+            ],
+            type: "u8"
+          },
+          {
+            name: "_reserved",
+            docs: [
+              "Reserved for future use"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      name: "PerpsPool",
+      docs: [
+        "Multi-token perpetual futures liquidity pool"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "pool_id",
+            docs: [
+              "Unique pool identifier (used as PDA seed)"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "lp_mint",
+            docs: [
+              "LP token mint (single token for entire pool)"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "position_mint",
+            docs: [
+              "Position token mint (for position commitments)"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "lp_supply",
+            docs: [
+              "Total LP token supply"
+            ],
+            type: "u64"
+          },
+          {
+            name: "authority",
+            docs: [
+              "Pool authority (admin)"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "num_tokens",
+            docs: [
+              "Number of active tokens in the pool"
+            ],
+            type: "u8"
+          },
+          {
+            name: "tokens",
+            docs: [
+              "Token configurations (up to MAX_PERPS_TOKENS)"
+            ],
+            type: {
+              array: [
+                {
+                  defined: {
+                    name: "PerpsToken"
+                  }
+                },
+                8
+              ]
+            }
+          },
+          {
+            name: "max_leverage",
+            docs: [
+              "Maximum leverage allowed (e.g., 100 = 100x)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "position_fee_bps",
+            docs: [
+              "Position fee in basis points (e.g., 6 = 0.06%)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "max_utilization_bps",
+            docs: [
+              "Maximum utilization per token in basis points (e.g., 8000 = 80%)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "liquidation_threshold_bps",
+            docs: [
+              "Liquidation threshold in basis points (e.g., 50 = 0.5% margin remaining)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "liquidation_penalty_bps",
+            docs: [
+              "Liquidation penalty in basis points (e.g., 50 = 0.5%)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "base_borrow_rate_bps",
+            docs: [
+              "Base borrow rate per hour in basis points (e.g., 1 = 0.01%/hour)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "max_imbalance_fee_bps",
+            docs: [
+              "Maximum imbalance fee in basis points (e.g., 3 = 0.03%)"
+            ],
+            type: "u16"
+          },
+          {
+            name: "is_active",
+            docs: [
+              "Whether the pool is active for trading"
+            ],
+            type: "bool"
+          },
+          {
+            name: "bump",
+            docs: [
+              "PDA bump seed"
+            ],
+            type: "u8"
+          },
+          {
+            name: "lp_mint_bump",
+            docs: [
+              "LP mint bump seed"
+            ],
+            type: "u8"
+          },
+          {
+            name: "position_mint_bump",
+            docs: [
+              "Position mint bump seed"
+            ],
+            type: "u8"
+          },
+          {
+            name: "_reserved",
+            docs: [
+              "Reserved for future use (reduced from 32 to accommodate position_mint + bump)"
+            ],
+            type: {
+              array: [
+                "u8",
+                31
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      name: "PerpsToken",
+      docs: [
+        "Individual token configuration within the perps pool"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "mint",
+            docs: [
+              "Token mint address"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "vault",
+            docs: [
+              "Token vault PDA holding pool assets"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "pyth_feed_id",
+            docs: [
+              "Pyth price feed ID (32 bytes hex)",
+              "Used to validate the passed price update account"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "balance",
+            docs: [
+              "Total balance in the pool (deposited by LPs)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "locked",
+            docs: [
+              "Amount locked in positions (borrowed + held)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "cumulative_borrow_fee",
+            docs: [
+              "Cumulative borrow fee per token (scaled by 1e18)",
+              "Used for fee accrual calculation"
+            ],
+            type: "u128"
+          },
+          {
+            name: "last_fee_update",
+            docs: [
+              "Last timestamp when borrow fee was updated"
+            ],
+            type: "i64"
+          },
+          {
+            name: "decimals",
+            docs: [
+              "Token decimals (for price calculations)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "is_active",
+            docs: [
+              "Whether this token slot is active"
+            ],
+            type: "bool"
+          },
+          {
+            name: "vault_bump",
+            docs: [
+              "Vault bump seed"
+            ],
+            type: "u8"
+          },
+          {
+            name: "_reserved",
+            docs: [
+              "Reserved for future use"
+            ],
+            type: {
+              array: [
+                "u8",
+                5
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      name: "Pool",
+      docs: [
+        "Shielded pool for a single token",
+        "",
+        "Note: Merkle tree state (commitments, roots) is now stored in Light Protocol",
+        "compressed accounts. The PoolCommitmentCounter tracks leaf indices."
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "token_mint",
+            docs: [
+              "SPL token mint address"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "token_vault",
+            docs: [
+              "PDA holding shielded tokens"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "total_shielded",
+            docs: [
+              "Total value locked (for analytics)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "authority",
+            docs: [
+              "Pool authority (for upgrades)"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "bump",
+            docs: [
+              "PDA bump seed"
+            ],
+            type: "u8"
+          },
+          {
+            name: "vault_bump",
+            docs: [
+              "Vault bump seed"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "PoolCommitmentCounter",
+      docs: [
+        "Pool commitment counter - tracks next leaf index",
+        "",
+        "This is a regular PDA (not compressed) that tracks the",
+        "next available leaf index for each pool. Needed for",
+        "sequential leaf index assignment."
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "pool",
+            docs: [
+              "Pool this counter belongs to"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "next_leaf_index",
+            docs: [
+              "Next available leaf index"
+            ],
+            type: "u64"
+          },
+          {
+            name: "total_commitments",
+            docs: [
+              "Total commitments created"
+            ],
+            type: "u64"
+          },
+          {
+            name: "bump",
+            docs: [
+              "PDA bump seed"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "PoolType",
+      docs: [
+        "Pool type determining which AMM formula to use"
+      ],
+      type: {
+        kind: "enum",
+        variants: [
+          {
+            name: "ConstantProduct"
+          },
+          {
+            name: "StableSwap"
+          }
+        ]
+      }
+    },
+    {
+      name: "PriceFeedMessage",
+      repr: {
+        kind: "c"
+      },
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "feed_id",
+            docs: [
+              "`FeedId` but avoid the type alias because of compatibility issues with Anchor's `idl-build` feature."
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "price",
+            type: "i64"
+          },
+          {
+            name: "conf",
+            type: "u64"
+          },
+          {
+            name: "exponent",
+            type: "i32"
+          },
+          {
+            name: "publish_time",
+            docs: [
+              "The timestamp of this price update in seconds"
+            ],
+            type: "i64"
+          },
+          {
+            name: "prev_publish_time",
+            docs: [
+              "The timestamp of the previous price update. This field is intended to allow users to",
+              "identify the single unique price update for any moment in time:",
+              "for any time t, the unique update is the one such that prev_publish_time < t <= publish_time.",
+              "",
+              "Note that there may not be such an update while we are migrating to the new message-sending logic,",
+              "as some price updates on pythnet may not be sent to other chains (because the message-sending",
+              "logic may not have triggered). We can solve this problem by making the message-sending mandatory",
+              "(which we can do once publishers have migrated over).",
+              "",
+              "Additionally, this field may be equal to publish_time if the message is sent on a slot where",
+              "where the aggregation was unsuccesful. This problem will go away once all publishers have",
+              "migrated over to a recent version of pyth-agent."
+            ],
+            type: "i64"
+          },
+          {
+            name: "ema_price",
+            type: "i64"
+          },
+          {
+            name: "ema_conf",
+            type: "u64"
+          }
+        ]
+      }
+    },
+    {
+      name: "PriceUpdateV2",
+      docs: [
+        "A price update account. This account is used by the Pyth Receiver program to store a verified price update from a Pyth price feed.",
+        "It contains:",
+        "- `write_authority`: The write authority for this account. This authority can close this account to reclaim rent or update the account to contain a different price update.",
+        "- `verification_level`: The [`VerificationLevel`] of this price update. This represents how many Wormhole guardian signatures have been verified for this price update.",
+        "- `price_message`: The actual price update.",
+        "- `posted_slot`: The slot at which this price update was posted."
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "write_authority",
+            type: "pubkey"
+          },
+          {
+            name: "verification_level",
+            type: {
+              defined: {
+                name: "VerificationLevel"
+              }
+            }
+          },
+          {
+            name: "price_message",
+            type: {
+              defined: {
+                name: "PriceFeedMessage"
+              }
+            }
+          },
+          {
+            name: "posted_slot",
+            type: "u64"
+          }
+        ]
+      }
+    },
+    {
+      name: "ProfitBoundReached",
+      docs: [
+        "Event emitted when a position is at profit bound",
+        "Keepers can listen for this to initiate close position flow"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "pool",
+            type: "pubkey"
+          },
+          {
+            name: "market",
+            type: "pubkey"
+          },
+          {
+            name: "position_commitment",
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "margin",
+            type: "u64"
+          },
+          {
+            name: "pnl",
+            type: "u64"
+          },
+          {
+            name: "current_price",
+            type: "u64"
+          }
+        ]
+      }
+    },
+    {
+      name: "ProtocolConfig",
+      docs: [
+        "Protocol configuration account",
+        "",
+        "Stores fee rates in basis points (10000 = 100%) and treasury address.",
+        "Fee rates can be updated by the authority."
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "authority",
+            docs: [
+              "Authority that can update fees"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "treasury",
+            docs: [
+              "Treasury account that receives protocol fees"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "transfer_fee_bps",
+            docs: [
+              "Transfer fee in basis points (e.g., 10 = 0.1%)",
+              "Applied to private \u2192 private transfers"
+            ],
+            type: "u16"
+          },
+          {
+            name: "unshield_fee_bps",
+            docs: [
+              "Unshield fee in basis points (e.g., 25 = 0.25%)",
+              "Applied to private \u2192 public withdrawals"
+            ],
+            type: "u16"
+          },
+          {
+            name: "swap_fee_share_bps",
+            docs: [
+              "Protocol's share of LP swap fees in basis points (e.g., 2000 = 20%)",
+              "Protocol fee = LP fee * swap_fee_share_bps / 10000",
+              "Example: 0.3% LP fee * 20% = 0.06% protocol fee"
+            ],
+            type: "u16"
+          },
+          {
+            name: "remove_liquidity_fee_bps",
+            docs: [
+              "Remove liquidity fee in basis points (e.g., 25 = 0.25%)",
+              "Applied to LP token withdrawals"
+            ],
+            type: "u16"
+          },
+          {
+            name: "fees_enabled",
+            docs: [
+              "Whether fees are enabled (can be paused)"
+            ],
+            type: "bool"
+          },
+          {
+            name: "bump",
+            docs: [
+              "PDA bump seed"
+            ],
+            type: "u8"
+          },
+          {
+            name: "_reserved",
+            docs: [
+              "Reserved for future use"
+            ],
+            type: {
+              array: [
+                "u8",
+                62
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      name: "ResolutionMode",
+      docs: [
+        "Resolution mode - how the outcome is determined"
+      ],
+      type: {
+        kind: "enum",
+        variants: [
+          {
+            name: "TallyBased"
+          },
+          {
+            name: "Oracle"
+          },
+          {
+            name: "Authority"
+          }
+        ]
+      }
+    },
+    {
+      name: "RevealMode",
+      docs: [
+        "Reveal mode - when and how vote information is revealed"
+      ],
+      type: {
+        kind: "enum",
+        variants: [
+          {
+            name: "Public"
+          },
+          {
+            name: "TimeLocked"
+          },
+          {
+            name: "PermanentPrivate"
+          }
+        ]
+      }
+    },
+    {
+      name: "StoreCommitmentParams",
+      docs: [
+        "Parameters for storing a single commitment"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "commitment",
+            docs: [
+              "The commitment hash"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "leaf_index",
+            docs: [
+              "Leaf index (read from commitment counter before transact)"
+            ],
+            type: "u64"
+          },
+          {
+            name: "stealth_ephemeral_pubkey",
+            docs: [
+              "Stealth ephemeral pubkey for deriving decryption key (64 bytes: X + Y)",
+              "If all zeros, decrypt with original spending key (internal operations)"
+            ],
+            type: {
+              array: [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            name: "encrypted_note",
+            docs: [
+              "Encrypted note data (Vec to avoid heap issues during deserialization)"
+            ],
+            type: "bytes"
+          },
+          {
+            name: "validity_proof",
+            docs: [
+              "Validity proof for the commitment address (non-inclusion)"
+            ],
+            type: {
+              defined: {
+                name: "LightValidityProof"
+              }
+            }
+          },
+          {
+            name: "address_tree_info",
+            docs: [
+              "Address tree info"
+            ],
+            type: {
+              defined: {
+                name: "LightAddressTreeInfo"
+              }
+            }
+          },
+          {
+            name: "output_tree_index",
+            docs: [
+              "Output state tree index"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "ThresholdCommittee",
+      docs: [
+        "Threshold committee"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "committee_id",
+            docs: [
+              "Committee identifier"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "threshold_pubkey",
+            docs: [
+              "Combined threshold public key"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "members",
+            docs: [
+              "Committee members"
+            ],
+            type: {
+              vec: "pubkey"
+            }
+          },
+          {
+            name: "threshold",
+            docs: [
+              "Threshold (t of n)"
+            ],
+            type: "u8"
+          },
+          {
+            name: "authority",
+            docs: [
+              "Authority who can manage"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "is_active",
+            docs: [
+              "Is active"
+            ],
+            type: "bool"
+          },
+          {
+            name: "bump",
+            docs: [
+              "PDA bump"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "UpdatePoolConfigParams",
+      docs: [
+        "Parameters that can be updated"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "max_leverage",
+            docs: [
+              "Maximum leverage (1-100), None to keep current"
+            ],
+            type: {
+              option: "u8"
+            }
+          },
+          {
+            name: "position_fee_bps",
+            docs: [
+              "Position fee in basis points, None to keep current"
+            ],
+            type: {
+              option: "u16"
+            }
+          },
+          {
+            name: "max_utilization_bps",
+            docs: [
+              "Maximum utilization per token in basis points, None to keep current"
+            ],
+            type: {
+              option: "u16"
+            }
+          },
+          {
+            name: "liquidation_threshold_bps",
+            docs: [
+              "Liquidation threshold in basis points, None to keep current"
+            ],
+            type: {
+              option: "u16"
+            }
+          },
+          {
+            name: "liquidation_penalty_bps",
+            docs: [
+              "Liquidation penalty in basis points, None to keep current"
+            ],
+            type: {
+              option: "u16"
+            }
+          },
+          {
+            name: "base_borrow_rate_bps",
+            docs: [
+              "Base borrow rate per hour in basis points, None to keep current"
+            ],
+            type: {
+              option: "u16"
+            }
+          },
+          {
+            name: "max_imbalance_fee_bps",
+            docs: [
+              "Maximum imbalance fee in basis points, None to keep current"
+            ],
+            type: {
+              option: "u16"
+            }
+          },
+          {
+            name: "is_active",
+            docs: [
+              "Pool active status, None to keep current"
+            ],
+            type: {
+              option: "bool"
+            }
+          }
+        ]
+      }
+    },
+    {
+      name: "VerificationKey",
+      docs: [
+        "Verification key for a circuit"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "circuit_id",
+            docs: [
+              "Circuit identifier"
+            ],
+            type: {
+              array: [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            name: "vk_data",
+            docs: [
+              "Groth16 verification key components (serialized)",
+              "Format: alpha_g1 (64) + beta_g2 (128) + gamma_g2 (128) + delta_g2 (128) + ic_len (4) + ic (64 * ic_len)"
+            ],
+            type: "bytes"
+          },
+          {
+            name: "authority",
+            docs: [
+              "Authority who can update"
+            ],
+            type: "pubkey"
+          },
+          {
+            name: "is_active",
+            docs: [
+              "Is active"
+            ],
+            type: "bool"
+          },
+          {
+            name: "bump",
+            docs: [
+              "PDA bump"
+            ],
+            type: "u8"
+          }
+        ]
+      }
+    },
+    {
+      name: "VerificationLevel",
+      docs: [
+        "Pyth price updates are bridged to all blockchains via Wormhole.",
+        "Using the price updates on another chain requires verifying the signatures of the Wormhole guardians.",
+        "The usual process is to check the signatures for two thirds of the total number of guardians, but this can be cumbersome on Solana because of the transaction size limits,",
+        "so we also allow for partial verification.",
+        "",
+        "This enum represents how much a price update has been verified:",
+        "- If `Full`, we have verified the signatures for two thirds of the current guardians.",
+        "- If `Partial`, only `num_signatures` guardian signatures have been checked.",
+        "",
+        "# Warning",
+        "Using partially verified price updates is dangerous, as it lowers the threshold of guardians that need to collude to produce a malicious price update."
+      ],
+      type: {
+        kind: "enum",
+        variants: [
+          {
+            name: "Partial",
+            fields: [
+              {
+                name: "num_signatures",
+                type: "u8"
+              }
+            ]
+          },
+          {
+            name: "Full"
+          }
+        ]
+      }
+    },
+    {
+      name: "VoteBindingMode",
+      docs: [
+        "Vote binding mode - how tokens participate in voting"
+      ],
+      type: {
+        kind: "enum",
+        variants: [
+          {
+            name: "Snapshot"
+          },
+          {
+            name: "SpendToVote"
+          }
+        ]
+      }
+    },
+    {
+      name: "VoteCommitmentMerkleContext",
+      docs: [
+        "Merkle context for commitment verification"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "merkle_tree_pubkey_index",
+            type: "u8"
+          },
+          {
+            name: "queue_pubkey_index",
+            type: "u8"
+          },
+          {
+            name: "leaf_index",
+            type: "u32"
+          },
+          {
+            name: "root_index",
+            type: "u16"
+          }
+        ]
+      }
+    },
+    {
+      name: "VoteType",
+      docs: [
+        "Vote type - how votes are counted"
+      ],
+      type: {
+        kind: "enum",
+        variants: [
+          {
+            name: "Single"
+          },
+          {
+            name: "Approval"
+          },
+          {
+            name: "Ranked"
+          },
+          {
+            name: "Weighted"
+          }
+        ]
+      }
+    },
+    {
+      name: "cloakcraft::instructions::generic::verify_commitment_exists::CommitmentMerkleContext",
+      docs: [
+        "Merkle context for commitment verification"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "merkle_tree_pubkey_index",
+            type: "u8"
+          },
+          {
+            name: "queue_pubkey_index",
+            type: "u8"
+          },
+          {
+            name: "leaf_index",
+            type: "u32"
+          },
+          {
+            name: "root_index",
+            type: "u16"
+          },
+          {
+            name: "prove_by_index",
+            type: "bool"
+          }
+        ]
+      }
+    },
+    {
+      name: "cloakcraft::instructions::pool::transact::CommitmentMerkleContext",
+      docs: [
+        "Merkle context for verifying commitment exists in state tree"
+      ],
+      type: {
+        kind: "struct",
+        fields: [
+          {
+            name: "merkle_tree_pubkey_index",
+            type: "u8"
+          },
+          {
+            name: "leaf_index",
+            type: "u32"
+          },
+          {
+            name: "root_index",
+            type: "u16"
+          }
+        ]
+      }
+    }
+  ]
+};
 
 // src/wallet.ts
 init_babyjubjub();
@@ -2359,7 +18153,7 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
     encryptedNotes.push(Buffer.alloc(0));
     outputAmounts.push(0n);
   }
-  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-ZK5X5ODM.mjs");
+  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-GPEM3MC7.mjs");
   const operationId = generateOperationId3(
     nullifier,
     outputCommitments[0],
@@ -2386,11 +18180,19 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
   console.log("[Transact] Fetching commitment inclusion proof...");
   const commitmentProof = await lightProtocol.getInclusionProofByHash(params.input.accountHash);
   console.log("[Transact] Commitment proof:", JSON.stringify(commitmentProof, null, 2));
+  const commitmentTree = new PublicKey3(commitmentProof.treeInfo.tree);
+  const commitmentQueue = new PublicKey3(commitmentProof.treeInfo.queue);
+  console.log("[Transact] Fetching inclusion validity proof...");
+  const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+    params.input.accountHash,
+    commitmentTree,
+    commitmentQueue
+  );
+  const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
+  console.log("[Transact] proveByIndex:", proveByIndex);
   console.log("[Transact] Fetching nullifier non-inclusion proof...");
   const nullifierAddress = lightProtocol.deriveNullifierAddress(poolPda, nullifier);
   const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-  const commitmentTree = new PublicKey3(commitmentProof.treeInfo.tree);
-  const commitmentQueue = new PublicKey3(commitmentProof.treeInfo.queue);
   const commitmentCpiContext = commitmentProof.treeInfo.cpiContext ? new PublicKey3(commitmentProof.treeInfo.cpiContext) : null;
   const { SystemAccountMetaConfig, PackedAccounts } = await import("@lightprotocol/stateless.js");
   const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-ZW3YX7HL.mjs");
@@ -2415,11 +18217,12 @@ async function buildTransactWithProgram(program, params, rpcUrl, circuitId = CIR
       // STATE tree from proof (for data/merkle verification)
       queuePubkeyIndex: commitmentQueueIndex,
       // Queue from proof
-      leafIndex: commitmentProof.leafIndex,
-      rootIndex: commitmentProof.rootIndex
+      leafIndex: inclusionValidityProof.leafIndices?.[0] ?? commitmentProof.leafIndex,
+      rootIndex: inclusionValidityProof.rootIndices?.[0] ?? commitmentProof.rootIndex,
+      proveByIndex
     },
-    // SECURITY: Convert commitment inclusion proof (Groth16 SNARK)
-    commitmentInclusionProof: LightProtocol.convertCompressedProof(commitmentProof),
+    // SECURITY: Convert commitment inclusion proof (compressed ZK proof from validity proof)
+    commitmentInclusionProof: LightProtocol.convertCompressedProof(inclusionValidityProof),
     // VERIFY existing commitment: Address tree for CPI address derivation
     commitmentAddressTreeInfo: {
       addressMerkleTreePubkeyIndex: addressTreeIndex,
@@ -2638,7 +18441,7 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
   }
   const [poolPda] = derivePoolPda(params.tokenMint, programId);
   const [vkPda] = deriveVerificationKeyPda(circuitId, programId);
-  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-ZK5X5ODM.mjs");
+  const { generateOperationId: generateOperationId3, derivePendingOperationPda: derivePendingOperationPda3 } = await import("./swap-GPEM3MC7.mjs");
   const operationId = generateOperationId3(
     params.nullifiers[0],
     params.outputCommitment,
@@ -2683,8 +18486,16 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
       if (commitmentProof.treeInfo.cpiContext) {
         packedAccounts.insertOrGet(new PublicKey3(commitmentProof.treeInfo.cpiContext));
       }
+      const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+        input.accountHash,
+        commitmentTree,
+        commitmentQueue
+      );
+      const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
       return {
         commitmentProof,
+        inclusionValidityProof,
+        proveByIndex,
         treeIndex,
         queueIndex
       };
@@ -2731,10 +18542,11 @@ async function buildConsolidationWithProgram(program, params, rpcUrl) {
         commitmentMerkleContext: {
           merkleTreePubkeyIndex: proof.treeIndex,
           queuePubkeyIndex: proof.queueIndex,
-          leafIndex: proof.commitmentProof.leafIndex,
-          rootIndex: proof.commitmentProof.rootIndex
+          leafIndex: proof.inclusionValidityProof.leafIndices?.[0] ?? proof.commitmentProof.leafIndex,
+          rootIndex: proof.inclusionValidityProof.rootIndices?.[0] ?? proof.commitmentProof.rootIndex,
+          proveByIndex: proof.proveByIndex
         },
-        commitmentInclusionProof: LightProtocol.convertCompressedProof(proof.commitmentProof),
+        commitmentInclusionProof: LightProtocol.convertCompressedProof(proof.inclusionValidityProof),
         commitmentAddressTreeInfo: {
           addressMerkleTreePubkeyIndex: addressTreeIndex,
           addressQueuePubkeyIndex: addressTreeIndex,
@@ -4659,18 +20471,26 @@ var CloakCraftClient = class {
    * @param rpcUrl - Helius RPC URL for Light Protocol queries
    */
   async buildLightProtocolParams(accountHash, nullifier, pool, rpcUrl) {
-    const { LightProtocol: LightProtocol2 } = await import("./light-helpers-DCAHIINJ.mjs");
+    const { LightProtocol: LightProtocol2 } = await import("./light-helpers-7772HQ4Q.mjs");
     const { SystemAccountMetaConfig, PackedAccounts } = await import("@lightprotocol/stateless.js");
     const { DEVNET_V2_TREES: DEVNET_V2_TREES2 } = await import("./constants-ZW3YX7HL.mjs");
     const lightProtocol = new LightProtocol2(rpcUrl, this.programId);
     console.log("[buildLightProtocolParams] Fetching commitment inclusion proof...");
     const commitmentProof = await lightProtocol.getInclusionProofByHash(accountHash);
     console.log("[buildLightProtocolParams] Commitment proof leaf index:", commitmentProof.leafIndex);
+    const commitmentTree = new PublicKey9(commitmentProof.treeInfo.tree);
+    const commitmentQueue = new PublicKey9(commitmentProof.treeInfo.queue);
+    console.log("[buildLightProtocolParams] Fetching inclusion validity proof...");
+    const inclusionValidityProof = await lightProtocol.getInclusionValidityProof(
+      accountHash,
+      commitmentTree,
+      commitmentQueue
+    );
+    const proveByIndex = inclusionValidityProof.proveByIndices?.[0] ?? true;
+    console.log("[buildLightProtocolParams] proveByIndex:", proveByIndex);
     console.log("[buildLightProtocolParams] Fetching nullifier non-inclusion proof...");
     const nullifierAddress = lightProtocol.deriveNullifierAddress(pool, nullifier);
     const nullifierProof = await lightProtocol.getValidityProof([nullifierAddress]);
-    const commitmentTree = new PublicKey9(commitmentProof.treeInfo.tree);
-    const commitmentQueue = new PublicKey9(commitmentProof.treeInfo.queue);
     const systemConfig = SystemAccountMetaConfig.new(this.programId);
     const packedAccounts = PackedAccounts.newWithSystemAccountsV2(systemConfig);
     const outputTreeIndex = packedAccounts.insertOrGet(DEVNET_V2_TREES2.OUTPUT_QUEUE);
@@ -4688,15 +20508,18 @@ var CloakCraftClient = class {
       isWritable: Boolean(acc.isWritable),
       isSigner: Boolean(acc.isSigner)
     }));
+    const leafIndex = inclusionValidityProof.leafIndices?.[0] ?? commitmentProof.leafIndex;
+    const rootIndex = inclusionValidityProof.rootIndices?.[0] ?? commitmentProof.rootIndex;
     const lightVerifyParams = {
       commitmentAccountHash: Array.from(new PublicKey9(accountHash).toBytes()),
       commitmentMerkleContext: {
         merkleTreePubkeyIndex: commitmentStateTreeIndex,
         queuePubkeyIndex: commitmentQueueIndex,
-        leafIndex: commitmentProof.leafIndex,
-        rootIndex: commitmentProof.rootIndex
+        leafIndex,
+        rootIndex,
+        proveByIndex
       },
-      commitmentInclusionProof: LightProtocol2.convertCompressedProof(commitmentProof),
+      commitmentInclusionProof: LightProtocol2.convertCompressedProof(inclusionValidityProof),
       commitmentAddressTreeInfo: {
         addressMerkleTreePubkeyIndex: addressTreeIndex,
         addressQueuePubkeyIndex: addressTreeIndex,
@@ -5053,7 +20876,7 @@ var CloakCraftClient = class {
       user: payer.publicKey
     };
     console.log("[Shield] Building transaction with Anchor...");
-    const { buildShieldWithProgram: buildShieldWithProgram2 } = await import("./shield-U4E47T3Z.mjs");
+    const { buildShieldWithProgram: buildShieldWithProgram2 } = await import("./shield-HF543EYG.mjs");
     const { tx: anchorTx, commitment, randomness } = await buildShieldWithProgram2(
       this.program,
       instructionParams,
@@ -5285,7 +21108,7 @@ var CloakCraftClient = class {
       console.error("[Transfer] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-GPEM3MC7.mjs");
     console.log("[Transfer] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -5726,7 +21549,7 @@ var CloakCraftClient = class {
       console.error("[Consolidation] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-GPEM3MC7.mjs");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
     for (let i = 0; i < phase1Txs.length; i++) {
@@ -6163,7 +21986,7 @@ var CloakCraftClient = class {
       console.error("[Swap] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-GPEM3MC7.mjs");
     console.log("[Swap] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -6378,7 +22201,7 @@ var CloakCraftClient = class {
       console.error("[Add Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-GPEM3MC7.mjs");
     console.log("[Add Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -6606,7 +22429,7 @@ var CloakCraftClient = class {
       console.error("[Remove Liquidity] FAILED to build phase transactions:", error);
       throw error;
     }
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-GPEM3MC7.mjs");
     console.log("[Remove Liquidity] Building all transactions for batch signing...");
     const transactionBuilders = [];
     transactionBuilders.push({ name: "Phase 0 (Create Pending)", builder: phase0Tx });
@@ -7160,7 +22983,7 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-GPEM3MC7.mjs");
     const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();
@@ -7364,7 +23187,7 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-GPEM3MC7.mjs");
     const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();
@@ -7559,7 +23382,7 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-GPEM3MC7.mjs");
     const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();
@@ -7768,7 +23591,7 @@ var CloakCraftClient = class {
       instructionParams
     );
     params.onProgress?.("approving");
-    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-ZK5X5ODM.mjs");
+    const { buildCreateCommitmentWithProgram: buildCreateCommitmentWithProgram2, buildClosePendingOperationWithProgram: buildClosePendingOperationWithProgram2 } = await import("./swap-GPEM3MC7.mjs");
     const { VersionedTransaction: VersionedTransaction4, TransactionMessage: TransactionMessage3 } = await import("@solana/web3.js");
     const { blockhash } = await this.connection.getLatestBlockhash("confirmed");
     const lookupTables = await this.getAddressLookupTables();

@@ -29,6 +29,7 @@ pub struct CommitmentMerkleContext {
     pub queue_pubkey_index: u8,
     pub leaf_index: u32,
     pub root_index: u16,
+    pub prove_by_index: bool,
 }
 
 /// Parameters for commitment inclusion verification
